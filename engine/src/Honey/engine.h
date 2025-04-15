@@ -3,7 +3,7 @@
 
 namespace Honey {
 
-    class ENGINE_API Engine {
+    class HONEY_API Engine {
         public:
         Engine();
         virtual ~Engine();

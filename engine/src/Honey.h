@@ -1,6 +1,9 @@
 #pragma once
 
 //For use my Honey applications
-#include "core/engine.h"
+#include "Honey/engine.h"
 
-#include "core/entry_point.h"
+//#include "Honey/entry_point.h"
+
+#include "Honey/log.h"
+
