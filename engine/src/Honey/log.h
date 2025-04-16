@@ -3,10 +3,11 @@
 #include <memory>
 
 #include "core.h"
-//#include <spdlog.h>
-#include "../vendor/spdlog/include/spdlog.h"
-#include <logger.h>
-#include <sinks/stdout_color_sinks.h>
+
+
+#include "vendor/spdlog/include/spdlog/spdlog.h"
+#include "vendor/spdlog/include/spdlog/logger.h"
+#include "vendor/spdlog/include/spdlog/sinks/stdout_color_sinks.h"
 
 namespace Honey {
 
@@ -26,3 +27,16 @@ namespace Honey {
 
 }
 
+//core log macros
+#define HN_CORE_FATAL(...)   ::Honey::Log::get_core_logger()->fatal(__VA_ARGS__)
+#define HN_CORE_ERROR(...)   ::Honey::Log::get_core_logger()->error(__VA_ARGS__)
+#define HN_CORE_WARN(...)    ::Honey::Log::get_core_logger()->warn(__VA_ARGS__)
+#define HN_CORE_INFO(...)    ::Honey::Log::get_core_logger()->info(__VA_ARGS__)
+#define HN_CORE_TRACE(...)   ::Honey::Log::get_core_logger()->trace(__VA_ARGS__)
+
+//client log macros
+#define HN_FATAL(...)        ::Honey::Log::get_client_logger()->fatal(__VA_ARGS__)
+#define HN_ERROR(...)        ::Honey::Log::get_client_logger()->error(__VA_ARGS__)
+#define HN_WARN(...)         ::Honey::Log::get_client_logger()->warn(__VA_ARGS__)
+#define HN_INFO(...)         ::Honey::Log::get_client_logger()->info(__VA_ARGS__)
+#define HN_TRACE(...)        ::Honey::Log::get_client_logger()->trace(__VA_ARGS__)
