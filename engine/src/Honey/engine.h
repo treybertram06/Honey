@@ -1,16 +1,17 @@
 
 #include "core.h"
+#include "events/event.h"
 
 namespace Honey {
 
-    class HONEY_API Engine {
+    class HONEY_API Application {
         public:
-        Engine();
-        virtual ~Engine();
+        Application();
+        virtual ~Application();
 
-        void Run();
+        void run();
     };
 
     //To be defined in client
-    Engine* create_application();
+    HONEY_API Application* create_application();
 }

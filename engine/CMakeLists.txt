@@ -8,12 +8,18 @@
          src/Honey/entry_point.h
          src/Honey/log.h
          src/Honey/log.cpp
+         src/Honey/events/event.h
+         src/Honey/events/key_event.h
+         src/Honey/events/mouse_event.h
+         src/Honey/events/application_event.h
+         src/hnpch.cpp
  )
 
 
 
  # Make the engine header accessible to other targets
  target_include_directories(engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+ target_include_directories(engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
  # On Windows, if you need to handle DLL export/import, you can define a macro (see below)
 target_compile_definitions(engine PUBLIC HN_PLATFORM_WINDOWS HN_BUILD_DLL)

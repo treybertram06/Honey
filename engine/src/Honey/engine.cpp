@@ -2,20 +2,19 @@
 
 #include "engine.h"
 namespace Honey {
-    Engine::Engine() {
+    Application::Application() {
 
     }
-    Engine::~Engine() {
+    Application::~Application() {
 
     }
 
-    void Engine::Run() {
+    void Application::run() {
         while (true);
     }
 
-    Engine* create_application() {
-        Engine* eng;
-        return eng;
+    HONEY_API Application* create_application() {
+        return new Application();
     }
 
 }
