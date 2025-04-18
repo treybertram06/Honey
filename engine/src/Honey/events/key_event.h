@@ -2,7 +2,6 @@
 
 #include "event.h"
 
-#include <sstream>
 
 namespace Honey {
 

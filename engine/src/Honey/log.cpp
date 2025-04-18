@@ -1,6 +1,3 @@
-//
-// Created by treyb on 2025-04-14.
-//
 
 #include "log.h"
 

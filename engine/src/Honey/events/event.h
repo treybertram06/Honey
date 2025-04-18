@@ -2,8 +2,6 @@
 
 #include "Honey/core.h"
 
-#include <string>
-#include <functional>
 
 namespace Honey {
     /*events are currently blocking, meaning that when an event occurs

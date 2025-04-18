@@ -2,8 +2,6 @@
 
 #include "event.h"
 
-#include <sstream>
-
 namespace Honey {
 
     class HONEY_API MouseMovedEvent : public Event {

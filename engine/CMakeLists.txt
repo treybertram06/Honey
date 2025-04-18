@@ -15,7 +15,10 @@
          src/hnpch.cpp
  )
 
-
+target_precompile_headers(engine
+        PRIVATE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/hnpch.h>
+)
 
  # Make the engine header accessible to other targets
  target_include_directories(engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
