@@ -3,6 +3,18 @@ project(game_engine)
 
 set(CMAKE_CXX_STANDARD 20)
 
+# GLFW ---------------------------------------------------
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_DOCS     OFF CACHE BOOL "" FORCE)
+set(GLFW_INSTALL        OFF CACHE BOOL "" FORCE)
+
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/engine/vendor/glfw)
+
+
+
+
+
 add_subdirectory(engine)
 
 add_subdirectory(${CMAKE_SOURCE_DIR}/engine/vendor/spdlog)
@@ -12,7 +24,7 @@ add_subdirectory(application)
 target_include_directories(application PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
 target_include_directories(application PRIVATE ${CMAKE_SOURCE_DIR}/vendor)
 
-target_link_libraries(application PRIVATE spdlog_header_only)
+target_link_libraries(application PRIVATE spdlog_header_only glfw)
 
 if(APPLE)
     # Option A: direct framework link

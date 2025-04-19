@@ -1,5 +1,8 @@
 #engine/CMakeLists.txt
 
+
+option(ENABLE_ASSERTS "Enable HN_ASSERT / HN_CORE_ASSERT checks" ON)
+
  # Create a shared library named "engine"
  add_library(engine SHARED
          src/Honey/engine.cpp
@@ -13,6 +16,9 @@
          src/Honey/events/mouse_event.h
          src/Honey/events/application_event.h
          src/hnpch.cpp
+         src/window.h
+         src/platform/macos/macos_window.h
+         src/platform/macos/macos_window.cpp
  )
 
 target_precompile_headers(engine
@@ -47,7 +53,11 @@ else()
  message(FATAL_ERROR "Unsupported platform: ${CMAKE_SYSTEM_NAME}")
 endif()
 
-target_link_libraries(engine PRIVATE spdlog_header_only)
+if(ENABLE_ASSERTS)
+ target_compile_definitions(engine PUBLIC HN_ENABLE_ASSERTS)
+endif()
+
+target_link_libraries(engine PRIVATE spdlog_header_only glfw)
 
 add_custom_command(TARGET engine POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different

@@ -12,7 +12,6 @@
 #include <unordered_map>
 #include <unordered_set>
 
-
 #if defined(HN_PLATFORM_WINDOWS)
   // slim down Windows.h
   #ifndef WIN32_LEAN_AND_MEAN

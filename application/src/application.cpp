@@ -4,17 +4,28 @@
 #include "Honey/events/application_event.h"
 
 namespace Honey {
+/*
+        Application::Application() {
+                m_window = std::unique_ptr<Window>(Window::create());
+        }*/
 
-        Application::Application() {}
+        Application::Application() {
+                HN_CORE_INFO("About to call Window::create");
+                Window* raw = Window::create();                 // uses the default WindowProps
+                HN_CORE_INFO("Window::create returned {0}", (void*)raw);
+                HN_CORE_ASSERT(raw, "Window::create() returned nullptr!");
+                m_window.reset(raw);
+        }
 
         Application::~Application() {}
 
         void Application::run() {
 
-                WindowResizeEvent e(1280, 720);
-                HN_TRACE(e);
+                while (m_running) {
+                        m_window->on_update();
 
-                while (true);
+                }
+
         }
 
 }
