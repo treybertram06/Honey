@@ -62,6 +62,7 @@ namespace Honey {
                 m_event.m_handled = func(*(T*)&m_event);
                 return true;
             }
+            return false;
         }
 
     private:

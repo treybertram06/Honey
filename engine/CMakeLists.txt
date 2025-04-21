@@ -40,6 +40,7 @@ if (WIN32)
 elseif (APPLE)
  message(STATUS "Configuring for macOS")
  target_compile_definitions(engine PUBLIC
+         GL_SILENCE_DEPRECATION
          HN_PLATFORM_MACOS
          HN_BUILD_DYLIB    # or HN_BUILD_SHARED if you prefer
  )
@@ -58,6 +59,20 @@ if(ENABLE_ASSERTS)
 endif()
 
 target_link_libraries(engine PRIVATE spdlog_header_only glfw)
+
+if (APPLE)
+ #   find OpenGL.framework and link it
+ find_library(OPENGL_FRAMEWORK OpenGL)
+ if(NOT OPENGL_FRAMEWORK)
+  message(FATAL_ERROR "Could not find OpenGL.framework")
+ endif()
+ target_link_libraries(engine PRIVATE ${OPENGL_FRAMEWORK})
+elseif (WIN32)
+ target_link_libraries(engine PRIVATE opengl32)     # native .lib
+elseif (UNIX)        # Linux / BSD
+ find_package(OpenGL REQUIRED)
+ target_link_libraries(engine PRIVATE OpenGL::GL)
+endif()
 
 add_custom_command(TARGET engine POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different

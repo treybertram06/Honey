@@ -33,7 +33,7 @@ namespace Honey {
 
         std::string to_string() const override {
             std::stringstream ss;
-            ss << "MouseScrolledEvent: " << get_xoffset << ", " << get_yoffset;
+            ss << "MouseScrolledEvent: " << get_xoffset() << ", " << get_yoffset();
             return ss.str();
         }
 
@@ -56,7 +56,8 @@ namespace Honey {
         int m_button;
     };
 
-    class HONEY_API MouseButtonPressedEvent : MouseButtonEvent {
+    class HONEY_API MouseButtonPressedEvent : public MouseButtonEvent {
+    public:
         MouseButtonPressedEvent(int button) : MouseButtonEvent(button) {}
 
         std::string to_string() const override {
@@ -68,7 +69,8 @@ namespace Honey {
         EVENT_CLASS_TYPE(mouse_button_pressed)
     };
 
-    class HONEY_API MouseButtonReleasedEvent : MouseButtonEvent {
+    class HONEY_API MouseButtonReleasedEvent : public MouseButtonEvent {
+    public:
         MouseButtonReleasedEvent(int button) : MouseButtonEvent(button) {}
 
         std::string to_string() const override {
