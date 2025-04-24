@@ -19,6 +19,10 @@ option(ENABLE_ASSERTS "Enable HN_ASSERT / HN_CORE_ASSERT checks" ON)
          src/window.h
          src/platform/macos/macos_window.h
          src/platform/macos/macos_window.cpp
+         src/Honey/layer.cpp
+         src/Honey/layer.h
+         src/Honey/layer_stack.cpp
+         src/Honey/layer_stack.h
  )
 
 target_precompile_headers(engine

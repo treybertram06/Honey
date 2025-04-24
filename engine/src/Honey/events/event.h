@@ -45,6 +45,8 @@ namespace Honey {
             return get_category_flags() & category;
         }
 
+        inline bool handled() { return m_handled; }
+
     protected:
         bool m_handled = false;
     };

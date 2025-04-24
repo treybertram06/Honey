@@ -13,6 +13,16 @@ namespace Honey {
 
     Application::~Application() {}
 
+    void Application::push_layer(Layer *layer) {
+        m_layer_stack.push_layer(layer);
+    }
+
+    void Application::push_overlay(Layer *layer) {
+        m_layer_stack.push_overlay(layer);
+    }
+
+
+
     void Application::on_event(Event& e) {
         EventDispatcher dispatcher(e);
 
@@ -21,7 +31,16 @@ namespace Honey {
         });
 
         HN_CORE_TRACE(e);
+
+        for (auto it = m_layer_stack.end(); it != m_layer_stack.begin(); ) {
+            (*--it)->on_event(e);
+            if (e.handled()) {
+                break;
+            }
+        }
     }
+
+
 
 
 
@@ -32,6 +51,11 @@ namespace Honey {
         {
             glClearColor(1, 0, 1, 1);
             glClear(GL_COLOR_BUFFER_BIT);
+
+            for (Layer* layer : m_layer_stack) {
+                layer->on_update();
+            }
+
             m_window->on_update();
         }
     }
