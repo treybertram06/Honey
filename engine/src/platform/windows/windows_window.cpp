@@ -1,16 +1,17 @@
 
 
-#ifdef HN_PLATFORM_MACOS
-
+#ifdef HN_PLATFORM_WINDOWS
 
 #include "hnpch.h"
-#include "macos_window.h"
+#include "windows_window.h"
 
 #include "Honey.h"
 
 #include "Honey/events/application_event.h"
 #include "Honey/events/key_event.h"
 #include "Honey/events/mouse_event.h"
+
+#include <glad/glad.h>
 
 namespace Honey {
 
@@ -21,18 +22,18 @@ namespace Honey {
     }
 
     Window *Window::create(const WindowProps &props) {
-        return new MacOSWindow(props);
+        return new WindowsWindow(props);
     }
 
-    MacOSWindow::MacOSWindow(const WindowProps& props) {
+    WindowsWindow::WindowsWindow(const WindowProps& props) {
         init(props);
     }
 
-    MacOSWindow::~MacOSWindow() {
+    WindowsWindow::~WindowsWindow() {
         shutdown();
     }
 
-    void MacOSWindow::init(const WindowProps& props) {
+    void WindowsWindow::init(const WindowProps& props) {
         m_data.title = props.title;
         m_data.width = props.width;
         m_data.height = props.height;
@@ -58,6 +59,9 @@ namespace Honey {
         HN_CORE_ASSERT(m_window, "GLFW window creation failed!");
 
         glfwMakeContextCurrent(m_window);
+        int status = gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
+        HN_CORE_ASSERT(status, "Failed to init GLAD!");
+
         glfwSetWindowUserPointer(m_window, &m_data);
         set_vsync(true);
 
@@ -131,18 +135,27 @@ namespace Honey {
             data.event_callback(event);
         });
 
+        glfwSetCharCallback(m_window, [](GLFWwindow* window, unsigned int keycode) {
+            WindowData& data = *(WindowData*)glfwGetWindowUserPointer(window);
+
+            KeyTypedEvent event(keycode);
+            data.event_callback(event);
+        });
+
     }
 
-    void MacOSWindow::shutdown() {
+
+
+    void WindowsWindow::shutdown() {
         glfwDestroyWindow(m_window);
     }
 
-    void MacOSWindow::on_update() {
+    void WindowsWindow::on_update() {
         glfwPollEvents();
         glfwSwapBuffers(m_window);
     }
 
-    void MacOSWindow::set_vsync(bool enabled) {
+    void WindowsWindow::set_vsync(bool enabled) {
         if (enabled) {
             glfwSwapInterval(1);
         } else {
@@ -152,11 +165,10 @@ namespace Honey {
         m_data.vsync = enabled;
     }
 
-    bool MacOSWindow::is_vsync() const {
+    bool WindowsWindow::is_vsync() const {
         return m_data.vsync;
     }
 
 }
-
 
 #endif

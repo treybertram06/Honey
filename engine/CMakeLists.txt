@@ -23,12 +23,21 @@ option(ENABLE_ASSERTS "Enable HN_ASSERT / HN_CORE_ASSERT checks" ON)
          src/Honey/layer.h
          src/Honey/layer_stack.cpp
          src/Honey/layer_stack.h
+         src/platform/windows/windows_window.cpp
+         src/Honey/imgui/imgui_layer.cpp
+         src/Honey/imgui/imgui_layer.h
+         #src/platform/opengl/imgui_impl_glfw.cpp
+         #src/platform/opengl/imgui_impl_opengl3.cpp
  )
 
 target_precompile_headers(engine
         PRIVATE
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/hnpch.h>
 )
+
+#target_compile_options(engine PRIVATE
+#        -Wall -Wextra -Winit-self -Wuninitialized
+#)
 
  # Make the engine header accessible to other targets
  target_include_directories(engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -40,6 +49,7 @@ if (WIN32)
  target_compile_definitions(engine PUBLIC
          HN_PLATFORM_WINDOWS
          HN_BUILD_DLL
+         GLFW_INCLUDE_NONE
  )
 elseif (APPLE)
  message(STATUS "Configuring for macOS")
@@ -47,12 +57,16 @@ elseif (APPLE)
          GL_SILENCE_DEPRECATION
          HN_PLATFORM_MACOS
          HN_BUILD_DYLIB    # or HN_BUILD_SHARED if you prefer
+         GLFW_INCLUDE_NONE
+
  )
 elseif (UNIX)
  message(STATUS "Configuring for Linux/Unix")
  target_compile_definitions(engine PUBLIC
          HN_PLATFORM_LINUX
          HN_BUILD_SHARED
+         GLFW_INCLUDE_NONE
+
  )
 else()
  message(FATAL_ERROR "Unsupported platform: ${CMAKE_SYSTEM_NAME}")
@@ -62,7 +76,14 @@ if(ENABLE_ASSERTS)
  target_compile_definitions(engine PUBLIC HN_ENABLE_ASSERTS)
 endif()
 
-target_link_libraries(engine PRIVATE spdlog_header_only glfw)
+add_subdirectory(vendor/glad)
+add_subdirectory(vendor/imgui)
+
+target_link_libraries(engine PRIVATE
+        spdlog_header_only
+        glfw
+        glad
+        imgui)
 
 if (APPLE)
  #   find OpenGL.framework and link it

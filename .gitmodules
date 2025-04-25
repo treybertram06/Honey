@@ -7,3 +7,9 @@
 [submodule "engine/vendor/glfw"]
 	path = engine/vendor/glfw
 	url = https://github.com/glfw/glfw.git
+[submodule "engine/vendor/engine/vendor/imgui"]
+	path = engine/vendor/engine/vendor/imgui
+	url = https://github.com/ocornut/imgui.git
+[submodule "engine/vendor/imgui"]
+	path = engine/vendor/imgui
+	url = https://github.com/ocornut/imgui.git

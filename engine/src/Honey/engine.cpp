@@ -1,24 +1,33 @@
 #include <Honey.h>
-#include <GLFW/glfw3.h>
 #include "engine.h"
+
+#include <glad/glad.h>
 
 namespace Honey {
 
 #define BIND_EVENT_FN(x) std::bind(&x, this, std::placeholders::_1)
 
+    Application* Application::s_instance = nullptr;
+
     Application::Application() {
+        HN_CORE_ASSERT(!s_instance, "Application already exists!");
+        s_instance = this;
+
         m_window = std::unique_ptr<Window>(Window::create());
-        m_window->set_event_callback(BIND_EVENT_FN(Application::on_event));
+        m_window->set_event_callback([this](auto && PH1) { on_event(std::forward<decltype(PH1)>(PH1)); });
+
     }
 
     Application::~Application() {}
 
     void Application::push_layer(Layer *layer) {
         m_layer_stack.push_layer(layer);
+        layer->on_attach();
     }
 
     void Application::push_overlay(Layer *layer) {
         m_layer_stack.push_overlay(layer);
+        layer->on_attach();
     }
 
 
@@ -29,8 +38,6 @@ namespace Honey {
         dispatcher.dispatch<WindowCloseEvent>([this](WindowCloseEvent& e) -> bool {
             return on_window_close(e);
         });
-
-        HN_CORE_TRACE(e);
 
         for (auto it = m_layer_stack.end(); it != m_layer_stack.begin(); ) {
             (*--it)->on_event(e);

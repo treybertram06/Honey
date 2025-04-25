@@ -21,12 +21,17 @@ namespace Honey {
 
         void push_layer(Layer* layer);
         void push_overlay(Layer* layer);
+
+        inline static Application& get() { return *s_instance; }
+        inline Window& get_window() { return *m_window; }
     private:
         bool on_window_close(WindowCloseEvent& e);
 
         std::unique_ptr<Window> m_window;
         bool m_running = true;
         LayerStack m_layer_stack;
+
+        static Application* s_instance;
 
 
     };
