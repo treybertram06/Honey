@@ -1,6 +1,6 @@
 #include <Honey.h>
 #include "engine.h"
-
+#include "input.h"
 #include <glad/glad.h>
 
 namespace Honey {
@@ -62,6 +62,11 @@ namespace Honey {
             for (Layer* layer : m_layer_stack) {
                 layer->on_update();
             }
+
+            auto[x, y] = Input::get_mouse_position();
+            HN_CORE_TRACE("{0}, {1}", x, y);
+
+
 
             m_window->on_update();
         }

@@ -26,6 +26,9 @@ option(ENABLE_ASSERTS "Enable HN_ASSERT / HN_CORE_ASSERT checks" ON)
          src/platform/windows/windows_window.cpp
          src/Honey/imgui/imgui_layer.cpp
          src/Honey/imgui/imgui_layer.h
+         src/Honey/input.h
+         src/platform/windows/windows_input.h
+         src/platform/windows/windows_input.cpp
          #src/platform/opengl/imgui_impl_glfw.cpp
          #src/platform/opengl/imgui_impl_opengl3.cpp
  )
