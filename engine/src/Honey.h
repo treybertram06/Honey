@@ -3,6 +3,9 @@
 //For use my Honey applications
 #include "Honey/engine.h"
 #include "Honey/layer.h"
+#include "Honey/input.h"
+#include "Honey/keycodes.h"
+#include "Honey/mouse_button_codes.h"
 
 //#include "Honey/entry_point.h"
 #include "Honey/events/event.h"

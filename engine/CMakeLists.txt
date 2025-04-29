@@ -29,6 +29,8 @@ option(ENABLE_ASSERTS "Enable HN_ASSERT / HN_CORE_ASSERT checks" ON)
          src/Honey/input.h
          src/platform/windows/windows_input.h
          src/platform/windows/windows_input.cpp
+         src/Honey/keycodes.h
+         src/Honey/mouse_button_codes.h
          #src/platform/opengl/imgui_impl_glfw.cpp
          #src/platform/opengl/imgui_impl_opengl3.cpp
  )
@@ -81,12 +83,15 @@ endif()
 
 add_subdirectory(vendor/glad)
 add_subdirectory(vendor/imgui)
+#add_subdirectory(vendor/glm)
 
 target_link_libraries(engine PRIVATE
         spdlog_header_only
         glfw
         glad
-        imgui)
+        imgui
+        #glm
+)
 
 if (APPLE)
  #   find OpenGL.framework and link it

@@ -9,10 +9,21 @@ public:
 
     void on_update() override {
         //HN_INFO("Example layer update");
+        if (Honey::Input::is_key_pressed(HN_KEY_TAB))
+            HN_INFO("Tab is pressed (event)");
+
+
     }
 
     void on_event(Honey::Event &event) override {
         //HN_TRACE(event);
+
+        if (event.get_event_type() == Honey::EventType::key_pressed) {
+            auto& e = (Honey::KeyPressedEvent&)event;
+            if (e.get_key_code() == HN_KEY_TAB)
+                HN_INFO("Tab is pressed (event)");
+            //HN_TRACE("{0}", (char)e.get_key_code());
+        }
 
 
     }
@@ -26,6 +37,8 @@ public:
     }
 
     ~Sandbox() {}
+
+
 
 };
 

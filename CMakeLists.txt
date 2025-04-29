@@ -18,13 +18,14 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/engine/vendor/GLFW)
 add_subdirectory(engine)
 
 add_subdirectory(${CMAKE_SOURCE_DIR}/engine/vendor/spdlog)
+add_subdirectory(${CMAKE_SOURCE_DIR}/engine/vendor/glm)
 
 add_subdirectory(application)
 
 target_include_directories(application PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
 target_include_directories(application PRIVATE ${CMAKE_SOURCE_DIR}/vendor)
 
-target_link_libraries(application PRIVATE spdlog_header_only glfw)
+target_link_libraries(application PRIVATE spdlog_header_only glfw glm)
 
 if(APPLE)
     # Option A: direct framework link

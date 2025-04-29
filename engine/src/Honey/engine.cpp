@@ -63,10 +63,10 @@ namespace Honey {
                 layer->on_update();
             }
 
+            /* Log
             auto[x, y] = Input::get_mouse_position();
             HN_CORE_TRACE("{0}, {1}", x, y);
-
-
+            */
 
             m_window->on_update();
         }
