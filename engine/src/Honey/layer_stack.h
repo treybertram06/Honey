@@ -22,7 +22,7 @@ namespace Honey {
 
     private:
         std::vector<Layer*> m_layers;
-        std::vector<Layer*>::iterator m_layer_insert;
+        unsigned int m_layer_insert_index = 0;
 
 
     };

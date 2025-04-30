@@ -1,5 +1,6 @@
 #include <Honey.h>
 #include "Honey/entry_point.h"
+#include "vendor/imgui/imgui.h"
 
 
 class ExampleLayer : public Honey::Layer {
@@ -13,6 +14,13 @@ public:
             HN_INFO("Tab is pressed (event)");
 
 
+    }
+
+    //doesnt work
+    virtual void on_imgui_render() override {
+        //ImGui::Begin("Test");
+        //ImGui::Text("Hello dingus");
+        //ImGui::End();
     }
 
     void on_event(Honey::Event &event) override {
@@ -33,7 +41,6 @@ class Sandbox : public Honey::Application {
 public:
     Sandbox() {
         push_layer(new ExampleLayer());
-        push_overlay(new Honey::ImGuiLayer());
     }
 
     ~Sandbox() {}

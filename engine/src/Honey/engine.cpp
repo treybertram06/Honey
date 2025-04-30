@@ -16,6 +16,9 @@ namespace Honey {
         m_window = std::unique_ptr<Window>(Window::create());
         m_window->set_event_callback([this](auto && PH1) { on_event(std::forward<decltype(PH1)>(PH1)); });
 
+        m_imgui_layer = new ImGuiLayer();
+        push_overlay(m_imgui_layer);
+
     }
 
     Application::~Application() {}
@@ -63,10 +66,10 @@ namespace Honey {
                 layer->on_update();
             }
 
-            /* Log
-            auto[x, y] = Input::get_mouse_position();
-            HN_CORE_TRACE("{0}, {1}", x, y);
-            */
+            m_imgui_layer->begin();
+            for (Layer* layer : m_layer_stack)
+                layer->on_imgui_render();
+            m_imgui_layer->end();
 
             m_window->on_update();
         }

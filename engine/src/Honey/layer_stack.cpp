@@ -2,9 +2,7 @@
 #include "layer_stack.h"
 
 namespace Honey {
-    LayerStack::LayerStack() {
-        m_layer_insert = m_layers.begin();
-    }
+    LayerStack::LayerStack() {}
 
     LayerStack::~LayerStack() {
         for (Layer* layer : m_layers) {
@@ -13,7 +11,8 @@ namespace Honey {
     }
 
     void LayerStack::push_layer(Layer *layer) {
-        m_layer_insert = m_layers.emplace(m_layer_insert, layer);
+        m_layers.emplace(m_layers.begin() + m_layer_insert_index, layer);
+        m_layer_insert_index++;
     }
 
     void LayerStack::push_overlay(Layer *overlay) {
@@ -24,7 +23,7 @@ namespace Honey {
         auto it = std::find(m_layers.begin(), m_layers.end(), layer);
         if (it != m_layers.end()) {
             m_layers.erase(it);
-            m_layer_insert--;
+            m_layer_insert_index--;
         }
     }
 

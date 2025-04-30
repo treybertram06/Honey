@@ -1,11 +1,14 @@
 #pragma once
 
 #include "core.h"
+
+#include "window.h"
 #include "layer.h"
 #include "layer_stack.h"
 #include "events/event.h"
-#include "window.h"
 #include "events/application_event.h"
+
+#include "Honey/imgui/imgui_layer.h"
 
 namespace Honey {
 
@@ -28,6 +31,7 @@ namespace Honey {
         bool on_window_close(WindowCloseEvent& e);
 
         std::unique_ptr<Window> m_window;
+        ImGuiLayer* m_imgui_layer;
         bool m_running = true;
         LayerStack m_layer_stack;
 

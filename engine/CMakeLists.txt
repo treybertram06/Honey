@@ -31,6 +31,7 @@ option(ENABLE_ASSERTS "Enable HN_ASSERT / HN_CORE_ASSERT checks" ON)
          src/platform/windows/windows_input.cpp
          src/Honey/keycodes.h
          src/Honey/mouse_button_codes.h
+         src/Honey/imgui/imgui_build.cpp
          #src/platform/opengl/imgui_impl_glfw.cpp
          #src/platform/opengl/imgui_impl_opengl3.cpp
  )
@@ -89,8 +90,10 @@ target_link_libraries(engine PRIVATE
         spdlog_header_only
         glfw
         glad
-        imgui
         #glm
+        PUBLIC
+        imgui
+
 )
 
 if (APPLE)
