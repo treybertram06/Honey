@@ -21,6 +21,8 @@ namespace Honey {
         void set_vsync(bool enabled) override;
         bool is_vsync() const override;
 
+        inline virtual void* get_native_window() const override { return m_window; }
+
     private:
         virtual void init(const WindowProps& props);
         virtual void shutdown();

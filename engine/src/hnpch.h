@@ -11,6 +11,7 @@
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>
+#include <map>
 
 #if defined(HN_PLATFORM_WINDOWS)
   // slim down Windows.h

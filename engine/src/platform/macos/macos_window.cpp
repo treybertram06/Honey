@@ -2,7 +2,6 @@
 
 #ifdef HN_PLATFORM_MACOS
 
-
 #include "hnpch.h"
 #include "macos_window.h"
 
@@ -11,6 +10,8 @@
 #include "Honey/events/application_event.h"
 #include "Honey/events/key_event.h"
 #include "Honey/events/mouse_event.h"
+
+#include <glad/glad.h>
 
 namespace Honey {
 
@@ -58,6 +59,9 @@ namespace Honey {
         HN_CORE_ASSERT(m_window, "GLFW window creation failed!");
 
         glfwMakeContextCurrent(m_window);
+        int status = gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
+        HN_CORE_ASSERT(status, "Failed to init GLAD!");
+
         glfwSetWindowUserPointer(m_window, &m_data);
         set_vsync(true);
 
@@ -131,7 +135,16 @@ namespace Honey {
             data.event_callback(event);
         });
 
+        glfwSetCharCallback(m_window, [](GLFWwindow* window, unsigned int keycode) {
+            WindowData& data = *(WindowData*)glfwGetWindowUserPointer(window);
+
+            KeyTypedEvent event(keycode);
+            data.event_callback(event);
+        });
+
     }
+
+
 
     void MacOSWindow::shutdown() {
         glfwDestroyWindow(m_window);
@@ -157,6 +170,5 @@ namespace Honey {
     }
 
 }
-
 
 #endif

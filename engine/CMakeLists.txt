@@ -32,6 +32,8 @@ option(ENABLE_ASSERTS "Enable HN_ASSERT / HN_CORE_ASSERT checks" ON)
          src/Honey/keycodes.h
          src/Honey/mouse_button_codes.h
          src/Honey/imgui/imgui_build.cpp
+         src/platform/macos/macos_input.h
+         src/platform/macos/macos_input.cpp
          #src/platform/opengl/imgui_impl_glfw.cpp
          #src/platform/opengl/imgui_impl_opengl3.cpp
  )
@@ -93,7 +95,6 @@ target_link_libraries(engine PRIVATE
         #glm
         PUBLIC
         imgui
-
 )
 
 if (APPLE)
