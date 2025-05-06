@@ -1,3 +1,6 @@
+# Force STATIC by default for all libraries
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "Link libraries statically" FORCE)
+
 cmake_minimum_required(VERSION 3.30)
 project(game_engine)
 
@@ -10,11 +13,6 @@ set(GLFW_BUILD_DOCS     OFF CACHE BOOL "" FORCE)
 set(GLFW_INSTALL        OFF CACHE BOOL "" FORCE)
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/engine/vendor/GLFW)
-
-
-
-
-
 add_subdirectory(engine)
 
 add_subdirectory(${CMAKE_SOURCE_DIR}/engine/vendor/spdlog)

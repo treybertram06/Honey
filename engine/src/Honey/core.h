@@ -25,25 +25,15 @@
 #endif
 
 // ——————————————————————————————————————————————————————————————————
-// 2) Export / import macros
+// 2) Static/Dynamic building
 // ——————————————————————————————————————————————————————————————————
-#if defined(HN_PLATFORM_WINDOWS)
 
+#if HN_DYNAMIC_LINK
     #ifdef HN_BUILD_DLL
         #define HONEY_API __declspec(dllexport)
     #else
         #define HONEY_API __declspec(dllimport)
     #endif
-
-#elif defined(HN_PLATFORM_MACOS) || defined(HN_PLATFORM_LINUX)
-
-    #if defined(HN_BUILD_DYLIB) || defined(HN_BUILD_SHARED)
-        // default‐visibility on macOS & Linux
-        #define HONEY_API __attribute__((visibility("default")))
-    #else
-        #define HONEY_API
-    #endif
-
 #else
     #define HONEY_API
 #endif

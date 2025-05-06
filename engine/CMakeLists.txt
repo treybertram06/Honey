@@ -3,8 +3,8 @@
 
 option(ENABLE_ASSERTS "Enable HN_ASSERT / HN_CORE_ASSERT checks" ON)
 
- # Create a shared library named "engine"
- add_library(engine SHARED
+ # Create a static library named "engine"
+ add_library(engine STATIC
          src/Honey/engine.cpp
          src/Honey/engine.h
          src/Honey/core.h
@@ -56,7 +56,6 @@ if (WIN32)
  message(STATUS "Configuring for Windows")
  target_compile_definitions(engine PUBLIC
          HN_PLATFORM_WINDOWS
-         HN_BUILD_DLL
          GLFW_INCLUDE_NONE
  )
 elseif (APPLE)
@@ -64,7 +63,6 @@ elseif (APPLE)
  target_compile_definitions(engine PUBLIC
          GL_SILENCE_DEPRECATION
          HN_PLATFORM_MACOS
-         HN_BUILD_DYLIB    # or HN_BUILD_SHARED if you prefer
          GLFW_INCLUDE_NONE
 
  )
@@ -72,7 +70,6 @@ elseif (UNIX)
  message(STATUS "Configuring for Linux/Unix")
  target_compile_definitions(engine PUBLIC
          HN_PLATFORM_LINUX
-         HN_BUILD_SHARED
          GLFW_INCLUDE_NONE
 
  )
@@ -110,10 +107,3 @@ elseif (UNIX)        # Linux / BSD
  find_package(OpenGL REQUIRED)
  target_link_libraries(engine PRIVATE OpenGL::GL)
 endif()
-
-add_custom_command(TARGET engine POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        $<TARGET_FILE:engine>
-        $<TARGET_FILE_DIR:application>
-        COMMENT "Copying engine DLL to the application binary directory"
-)
