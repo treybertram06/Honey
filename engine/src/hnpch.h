@@ -13,6 +13,9 @@
 #include <unordered_set>
 #include <map>
 
+#include "Honey/log.h"
+#include "Honey/core.h"
+
 #if defined(HN_PLATFORM_WINDOWS)
   // slim down Windows.h
   #ifndef WIN32_LEAN_AND_MEAN

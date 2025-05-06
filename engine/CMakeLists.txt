@@ -34,6 +34,9 @@ option(ENABLE_ASSERTS "Enable HN_ASSERT / HN_CORE_ASSERT checks" ON)
          src/Honey/imgui/imgui_build.cpp
          src/platform/macos/macos_input.h
          src/platform/macos/macos_input.cpp
+         src/Honey/renderer/graphics_context.h
+         src/platform/opengl/opengl_context.h
+         src/platform/opengl/opengl_context.cpp
          #src/platform/opengl/imgui_impl_glfw.cpp
          #src/platform/opengl/imgui_impl_opengl3.cpp
  )

@@ -6,12 +6,13 @@
 #include "windows_window.h"
 
 #include "Honey.h"
+#include "glad/glad.h"
 
 #include "Honey/events/application_event.h"
 #include "Honey/events/key_event.h"
 #include "Honey/events/mouse_event.h"
 
-#include <glad/glad.h>
+#include "platform/opengl/opengl_context.h"
 
 namespace Honey {
 
@@ -58,9 +59,10 @@ namespace Honey {
         m_window = glfwCreateWindow((int)props.width, (int)props.height, m_data.title.c_str(), nullptr, nullptr);
         HN_CORE_ASSERT(m_window, "GLFW window creation failed!");
 
-        glfwMakeContextCurrent(m_window);
-        int status = gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
-        HN_CORE_ASSERT(status, "Failed to init GLAD!");
+        m_context = new OpenGLContext(m_window);
+        m_context->init();
+        // ^
+
 
         glfwSetWindowUserPointer(m_window, &m_data);
         set_vsync(true);
@@ -152,7 +154,7 @@ namespace Honey {
 
     void WindowsWindow::on_update() {
         glfwPollEvents();
-        glfwSwapBuffers(m_window);
+        m_context->swap_buffers();
     }
 
     void WindowsWindow::set_vsync(bool enabled) {

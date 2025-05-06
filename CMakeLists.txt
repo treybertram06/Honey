@@ -36,3 +36,7 @@ if(APPLE)
     endif()
     target_link_libraries(engine PUBLIC ${COCOA_FRAMEWORK})
 endif()
+
+if (MSVC)
+    add_compile_options(/d2cgsummary /Bt+)
+endif()

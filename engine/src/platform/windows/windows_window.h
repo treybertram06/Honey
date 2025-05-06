@@ -3,6 +3,8 @@
 #include "window.h"
 #include <glfw/glfw3.h>
 
+#include "Honey/renderer/graphics_context.h"
+
 namespace Honey {
 
     class WindowsWindow : public Window {
@@ -27,6 +29,7 @@ namespace Honey {
         virtual void shutdown();
 
         GLFWwindow* m_window;
+        GraphicsContext* m_context;
 
         struct WindowData {
             std::string title;
