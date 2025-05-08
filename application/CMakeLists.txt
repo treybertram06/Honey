@@ -10,5 +10,12 @@ target_precompile_headers(application
         $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/engine/src/hnpch.h>
 )
 
-# Link the game executable with the engine library.
-target_link_libraries(application PRIVATE engine)
+# Link the game executable with the engine library - just once
+target_link_libraries(application PUBLIC engine)
+
+# Add explicit include directory
+target_include_directories(application PRIVATE
+        ${CMAKE_SOURCE_DIR}/engine/src
+)
+
+

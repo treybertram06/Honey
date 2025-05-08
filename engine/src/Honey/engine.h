@@ -10,6 +10,8 @@
 
 #include "Honey/imgui/imgui_layer.h"
 
+#include "Honey/renderer/shader.h"
+
 namespace Honey {
 
     class HONEY_API Application
@@ -34,6 +36,9 @@ namespace Honey {
         ImGuiLayer* m_imgui_layer;
         bool m_running = true;
         LayerStack m_layer_stack;
+
+        unsigned int m_vertex_array, m_vertex_buffer, m_index_buffer;
+        std::unique_ptr<Shader> m_shader;
 
         static Application* s_instance;
 
