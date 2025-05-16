@@ -5,17 +5,46 @@
 
 #include <memory>
 
+#include "GLFW/glfw3.h"
+
 namespace Honey {
 
 #define BIND_EVENT_FN(x) std::bind(&x, this, std::placeholders::_1)
 
     Application* Application::s_instance = nullptr;
 
+    static GLenum shader_data_type_to_opengl_base_type(ShaderDataType type) {
+
+        switch (type) {
+            case ShaderDataType::Float:     return GL_FLOAT;
+            case ShaderDataType::Float2:    return GL_FLOAT;
+            case ShaderDataType::Float3:    return GL_FLOAT;
+            case ShaderDataType::Float4:    return GL_FLOAT;
+            case ShaderDataType::Mat3:      return GL_FLOAT;
+            case ShaderDataType::Mat4:      return GL_FLOAT;
+            case ShaderDataType::Int:       return GL_INT;
+            case ShaderDataType::Int2:      return GL_INT;
+            case ShaderDataType::Int3:      return GL_INT;
+            case ShaderDataType::Int4:      return GL_INT;
+            case ShaderDataType::Bool:      return GL_BOOL;
+            case ShaderDataType::None:      return GL_NONE;
+        }
+        HN_CORE_ASSERT(false, "Unknown ShaderDataType!");
+        return 0;
+
+    }
+
     Application::Application() {
         HN_CORE_ASSERT(!s_instance, "Application already exists!");
         s_instance = this;
 
         m_window = std::unique_ptr<Window>(Window::create());
+
+        if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
+            std::cerr << "Failed to load OpenGL functions\n";
+            std::exit(-1);
+        }
+
         m_window->set_event_callback([this](auto && PH1) { on_event(std::forward<decltype(PH1)>(PH1)); });
 
         m_imgui_layer = new ImGuiLayer();
@@ -24,36 +53,53 @@ namespace Honey {
         glGenVertexArrays(1, &m_vertex_array);
         glBindVertexArray(m_vertex_array);
 
-        glGenBuffers(1, &m_vertex_buffer);
-        glBindBuffer(GL_ARRAY_BUFFER, m_vertex_buffer);
 
-        float vertices[3 * 3] = {
-            -0.5f, -0.5f, 0.0f,
-             0.5f, -0.5f, 0.0f,
-             0.0f,  0.5f, 0.0f
+        float vertices[3*3 + 4*3] = {
+            -0.5f, -0.5f, 0.0f,     1.0f, 0.0f, 1.0f, 1.0f,
+             0.5f, -0.5f, 0.0f,     0.0f, 0.0f, 1.0f, 1.0f,
+             0.0f,  0.5f, 0.0f,     1.0f, 1.0f, 0.0f, 1.0f
         };
 
-        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+        m_vertex_buffer.reset(VertexBuffer::create(vertices, sizeof(vertices)));
 
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*sizeof(float), nullptr);
+        {
+            BufferLayout layout = {
+                { ShaderDataType::Float3, "a_pos" },
+                { ShaderDataType::Float4, "a_color" }
+            };
+            m_vertex_buffer->set_layout(layout);
+        }
 
-        glGenBuffers(1, &m_index_buffer);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_index_buffer);
+        uint32_t index = 0;
+        const auto& layout = m_vertex_buffer->get_layout();
+        for (const auto& element : layout) {
+            glEnableVertexAttribArray(index);
+            glVertexAttribPointer(index, element.get_component_count(),
+                shader_data_type_to_opengl_base_type(element.type),
+                element.normalized ? GL_TRUE : GL_FALSE,
+                layout.get_stride(),
+                (const void*)element.offset);
+            index++;
+        }
+
+
 
         unsigned int indices[3] = { 0, 1, 2 };
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
+        m_index_buffer.reset(IndexBuffer::create(indices, 3));
 
         std::string vertex_src = R"(
 
             #version 330 core
 
             layout(location = 0) in vec3 a_pos;
+            layout(location = 1) in vec4 a_color;
 
             out vec3 v_pos;
+            out vec4 v_color;
 
             void main() {
                 v_pos = a_pos;
+                v_color = a_color;
                 gl_Position = vec4(a_pos, 1.0);
             }
         )";
@@ -65,9 +111,11 @@ namespace Honey {
             layout(location = 0) out vec4 color;
 
             in vec3 v_pos;
+            in vec4 v_color;
 
             void main() {
                 color = vec4(v_pos * 0.5 + 0.5, 1.0);
+                color = v_color;
             }
         )";
 
@@ -117,7 +165,7 @@ namespace Honey {
 
             m_shader->bind();
             glBindVertexArray(m_vertex_array);
-            glDrawElements(GL_TRIANGLES, 3, GL_UNSIGNED_INT, nullptr);
+            glDrawElements(GL_TRIANGLES, m_index_buffer->get_count(), GL_UNSIGNED_INT, nullptr);
 
             for (Layer* layer : m_layer_stack) {
                 layer->on_update();

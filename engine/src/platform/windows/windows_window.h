@@ -1,7 +1,7 @@
 #pragma once
 
 #include "window.h"
-#include <glfw/glfw3.h>
+#include <GLFW/glfw3.h>
 
 #include "Honey/renderer/graphics_context.h"
 
@@ -22,7 +22,7 @@ namespace Honey {
         void set_vsync(bool enabled) override;
         bool is_vsync() const override;
 
-        inline virtual void* get_native_window() const { return m_window; }
+        inline virtual void* get_native_window() const override { return m_window; }
 
     private:
         virtual void init(const WindowProps& props);

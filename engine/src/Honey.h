@@ -10,7 +10,8 @@
 //#include "Honey/entry_point.h"
 #include "Honey/events/event.h"
 #include "Honey/log.h"
-#include "vendor/spdlog/include/spdlog/fmt/ostr.h"
+//#include "vendor/spdlog/include/spdlog/fmt/ostr.h"
+#include <spdlog/fmt/ostr.h>
 #include "Honey/imgui/imgui_layer.h"
 
 

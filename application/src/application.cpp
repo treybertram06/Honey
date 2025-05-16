@@ -1,6 +1,7 @@
 #include <Honey.h>
 #include "Honey/entry_point.h"
-#include "vendor/imgui/imgui.h"
+//#include "vendor/imgui/imgui.h"
+#include <imgui.h>
 
 
 class ExampleLayer : public Honey::Layer {

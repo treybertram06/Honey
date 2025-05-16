@@ -21,11 +21,6 @@ set(GLFW_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_DOCS     OFF CACHE BOOL "" FORCE)
 set(GLFW_INSTALL        OFF CACHE BOOL "" FORCE)
 
-# If using MSVC, force consistent runtime library settings for all dependencies
-if(MSVC)
-    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-endif()
-
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/engine/vendor/GLFW)
 add_subdirectory(engine)
@@ -52,13 +47,3 @@ if(APPLE)
     target_link_libraries(engine PUBLIC ${COCOA_FRAMEWORK})
 endif()
 
-if(MSVC)
-    # Disable warnings about secure CRT functions
-    add_definitions(-D_CRT_SECURE_NO_WARNINGS)
-
-    # Add multi-processor compilation
-    add_compile_options(/MP)
-
-    # Specify more modern C++ options for MSVC
-    add_compile_options(/Zc:__cplusplus)
-endif()

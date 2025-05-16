@@ -3,9 +3,12 @@
 #include "core.h"
 
 
-#include "vendor/spdlog/include/spdlog/spdlog.h"
-#include "vendor/spdlog/include/spdlog/logger.h"
-#include "vendor/spdlog/include/spdlog/sinks/stdout_color_sinks.h"
+//#include "vendor/spdlog/include/spdlog/spdlog.h"
+#include <spdlog/spdlog.h>
+//#include "vendor/spdlog/include/spdlog/logger.h"
+#include <spdlog/logger.h>
+//#include "vendor/spdlog/include/spdlog/sinks/stdout_color_sinks.h"
+#include <spdlog/sinks/stdout_color_sinks.h>
 
 namespace Honey {
 

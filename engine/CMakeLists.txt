@@ -1,16 +1,5 @@
 #engine/CMakeLists.txt
 
-if(MSVC)
- # Force consistent runtime library settings
- set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
- add_compile_options(
-         $<$<CONFIG:>:/MT>
-         $<$<CONFIG:Debug>:/MTd>
-         $<$<CONFIG:Release>:/MT>
- )
-endif()
-
-
 option(ENABLE_ASSERTS "Enable HN_ASSERT / HN_CORE_ASSERT checks" ON)
 
 add_library(engine STATIC
@@ -48,6 +37,12 @@ add_library(engine STATIC
         src/platform/opengl/opengl_context.cpp
         src/Honey/renderer/shader.h
         src/Honey/renderer/shader.cpp
+        src/Honey/renderer/buffer.h
+        src/Honey/renderer/buffer.cpp
+        src/platform/opengl/opengl_buffer.h
+        src/platform/opengl/opengl_buffer.cpp
+        src/Honey/renderer/renderer.h
+        src/Honey/renderer/renderer.cpp
 )
 
 # Make sure we define the Windows platform for Visual Studio
@@ -70,13 +65,12 @@ target_precompile_headers(engine
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/hnpch.h>
 )
 
-#target_compile_options(engine PRIVATE
-#        -Wall -Wextra -Winit-self -Wuninitialized
-#)
-
  # Make the engine header accessible to other targets
- target_include_directories(engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
- target_include_directories(engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+ target_include_directories(engine PUBLIC
+         ${CMAKE_CURRENT_SOURCE_DIR}
+         ${CMAKE_CURRENT_SOURCE_DIR}/src
+         ${CMAKE_CURRENT_BINARY_DIR}
+ )
 
 # Platform‑specific compile definitions
 if (WIN32)
@@ -120,6 +114,7 @@ target_link_libraries(engine PRIVATE
         PUBLIC
         imgui
 )
+
 
 if (APPLE)
  #   find OpenGL.framework and link it
