@@ -14,4 +14,7 @@
 #include <spdlog/fmt/ostr.h>
 #include "Honey/imgui/imgui_layer.h"
 
+#include "Honey/renderer/render_command.h"
+#include "Honey/renderer/renderer.h"
+
 

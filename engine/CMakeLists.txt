@@ -47,6 +47,12 @@ add_library(engine STATIC
         src/Honey/renderer/vertex_array.cpp
         src/platform/opengl/opengl_vertex_array.h
         src/platform/opengl/opengl_vertex_array.cpp
+        src/Honey/renderer/renderer_api.h
+        src/Honey/renderer/renderer_api.cpp
+        src/Honey/renderer/render_command.h
+        src/Honey/renderer/render_command.cpp
+        src/platform/opengl/opengl_renderer_api.h
+        src/platform/opengl/opengl_renderer_api.cpp
 )
 
 # Make sure we define the Windows platform for Visual Studio
@@ -114,7 +120,7 @@ target_link_libraries(engine PRIVATE
         spdlog_header_only
         glfw
         glad
-        #glm
+        glm
         PUBLIC
         imgui
 )

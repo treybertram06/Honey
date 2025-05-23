@@ -1,18 +1,18 @@
 #pragma once
 
+#include "render_command.h"
+
 namespace Honey {
-    enum class RendererAPI {
-        none = 0, opengl = 1
-    };
 
     class Renderer {
     public:
 
-        inline static RendererAPI get_api() { return s_renderer_api; }
+        static void begin_scene();
+        static void end_scene();
 
-    private:
+        static void submit(const std::shared_ptr<VertexArray>& vertex_array);
 
-        static RendererAPI s_renderer_api;
+        inline static RendererAPI::API get_api() { return RendererAPI::get_api(); }
 
     };
 

@@ -8,8 +8,8 @@ namespace Honey {
 
     VertexArray *VertexArray::create() {
         switch (Renderer::get_api()) {
-            case RendererAPI::none:     HN_CORE_ASSERT(false, "RendererAPI::none is not supported."); return nullptr;
-            case RendererAPI::opengl:   return new OpenGLVertexArray();
+            case RendererAPI::API::none:     HN_CORE_ASSERT(false, "RendererAPI::none is not supported."); return nullptr;
+            case RendererAPI::API::opengl:   return new OpenGLVertexArray();
         }
 
         HN_CORE_ASSERT(false, "Unknown RendererAPI.");

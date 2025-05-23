@@ -1,11 +1,9 @@
+#include "hnpch.h"
 #include <Honey.h>
 #include "engine.h"
 #include "input.h"
-#include <glad/glad.h>
+#include "Honey/renderer/renderer.h"
 
-#include <memory>
-
-#include "GLFW/glfw3.h"
 
 namespace Honey {
 
@@ -20,11 +18,6 @@ namespace Honey {
         s_instance = this;
 
         m_window = std::unique_ptr<Window>(Window::create());
-
-        if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
-            std::cerr << "Failed to load OpenGL functions\n";
-            std::exit(-1);
-        }
 
         m_window->set_event_callback([this](auto && PH1) { on_event(std::forward<decltype(PH1)>(PH1)); });
 
@@ -183,16 +176,29 @@ namespace Honey {
     void Application::run() {
         while (m_running)
         {
-            glClearColor(0.1f, 0.1f, 0.1f, 1);
-            glClear(GL_COLOR_BUFFER_BIT);
+
+
+            RenderCommand::set_clear_color({0.1f, 0.1f, 0.1f, 1.0f});
+            RenderCommand::clear();
+
+
+
+            Renderer::begin_scene();
 
             m_blue_shader->bind();
-            m_square_vertex_array->bind();
-            glDrawElements(GL_TRIANGLES, m_square_vertex_array->get_index_buffer()->get_count(), GL_UNSIGNED_INT, nullptr);
+            Renderer::submit(m_square_vertex_array);
 
             m_shader->bind();
-            m_vertex_array->bind();
-            glDrawElements(GL_TRIANGLES, m_vertex_array->get_index_buffer()->get_count(), GL_UNSIGNED_INT, nullptr);
+            Renderer::submit(m_vertex_array);
+
+            RenderCommand::draw_indexed(m_square_vertex_array);
+            RenderCommand::draw_indexed(m_vertex_array);
+
+            Renderer::end_scene();
+
+
+
+
 
             for (Layer* layer : m_layer_stack) {
                 layer->on_update();

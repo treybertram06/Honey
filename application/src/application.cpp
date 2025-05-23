@@ -17,7 +17,6 @@ public:
 
     }
 
-    //doesnt work on windows
     virtual void on_imgui_render() override {
         //ImGui::Begin("Test");
         //ImGui::Text("Hello dingus");
@@ -42,6 +41,8 @@ class Sandbox : public Honey::Application {
 public:
     Sandbox() {
         push_layer(new ExampleLayer());
+
+
     }
 
     ~Sandbox() {}
