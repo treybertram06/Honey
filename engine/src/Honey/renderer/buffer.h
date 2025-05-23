@@ -31,7 +31,7 @@ namespace Honey {
     struct BufferElement {
         std::string name;
         ShaderDataType type;
-        uint32_t offset;
+        std::size_t offset;
         uint32_t size;
         bool normalized;
 

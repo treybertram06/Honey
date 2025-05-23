@@ -13,26 +13,7 @@ namespace Honey {
 
     Application* Application::s_instance = nullptr;
 
-    static GLenum shader_data_type_to_opengl_base_type(ShaderDataType type) {
 
-        switch (type) {
-            case ShaderDataType::Float:     return GL_FLOAT;
-            case ShaderDataType::Float2:    return GL_FLOAT;
-            case ShaderDataType::Float3:    return GL_FLOAT;
-            case ShaderDataType::Float4:    return GL_FLOAT;
-            case ShaderDataType::Mat3:      return GL_FLOAT;
-            case ShaderDataType::Mat4:      return GL_FLOAT;
-            case ShaderDataType::Int:       return GL_INT;
-            case ShaderDataType::Int2:      return GL_INT;
-            case ShaderDataType::Int3:      return GL_INT;
-            case ShaderDataType::Int4:      return GL_INT;
-            case ShaderDataType::Bool:      return GL_BOOL;
-            case ShaderDataType::None:      return GL_NONE;
-        }
-        HN_CORE_ASSERT(false, "Unknown ShaderDataType!");
-        return 0;
-
-    }
 
     Application::Application() {
         HN_CORE_ASSERT(!s_instance, "Application already exists!");
@@ -50,9 +31,7 @@ namespace Honey {
         m_imgui_layer = new ImGuiLayer();
         push_overlay(m_imgui_layer);
 
-        glGenVertexArrays(1, &m_vertex_array);
-        glBindVertexArray(m_vertex_array);
-
+        m_vertex_array.reset(VertexArray::create());
 
         float vertices[3*3 + 4*3] = {
             -0.5f, -0.5f, 0.0f,     1.0f, 0.0f, 1.0f, 1.0f,
@@ -60,32 +39,44 @@ namespace Honey {
              0.0f,  0.5f, 0.0f,     1.0f, 1.0f, 0.0f, 1.0f
         };
 
-        m_vertex_buffer.reset(VertexBuffer::create(vertices, sizeof(vertices)));
+        std::shared_ptr<VertexBuffer> vertex_buffer;
+        vertex_buffer.reset(VertexBuffer::create(vertices, sizeof(vertices)));
 
-        {
-            BufferLayout layout = {
-                { ShaderDataType::Float3, "a_pos" },
-                { ShaderDataType::Float4, "a_color" }
-            };
-            m_vertex_buffer->set_layout(layout);
-        }
 
-        uint32_t index = 0;
-        const auto& layout = m_vertex_buffer->get_layout();
-        for (const auto& element : layout) {
-            glEnableVertexAttribArray(index);
-            glVertexAttribPointer(index, element.get_component_count(),
-                shader_data_type_to_opengl_base_type(element.type),
-                element.normalized ? GL_TRUE : GL_FALSE,
-                layout.get_stride(),
-                (const void*)element.offset);
-            index++;
-        }
-
+        BufferLayout layout = {
+            { ShaderDataType::Float3, "a_pos" },
+            { ShaderDataType::Float4, "a_color" }
+        };
+        vertex_buffer->set_layout(layout);
+        m_vertex_array->add_vertex_buffer(vertex_buffer);
 
 
         unsigned int indices[3] = { 0, 1, 2 };
-        m_index_buffer.reset(IndexBuffer::create(indices, 3));
+        std::shared_ptr<IndexBuffer> index_buffer;
+        index_buffer.reset(IndexBuffer::create(indices, 3));
+        m_vertex_array->set_index_buffer(index_buffer);
+
+        m_square_vertex_array.reset(VertexArray::create());
+
+        float vertices_sq[3*4] = {
+            -0.75f, -0.75f, 0.0f,
+             0.75f, -0.75f, 0.0f,
+             0.75f,  0.75f, 0.0f,
+            -0.75f,  0.75f, 0.0f,
+        };
+
+        std::shared_ptr<VertexBuffer> square_vertex_buffer;
+        square_vertex_buffer.reset(VertexBuffer::create(vertices_sq, sizeof(vertices_sq)));
+        BufferLayout square_layout = {
+            { ShaderDataType::Float3, "a_pos" },
+        };
+        square_vertex_buffer->set_layout(square_layout);
+        m_square_vertex_array->add_vertex_buffer(square_vertex_buffer);
+
+        unsigned int square_indices[6] = { 0, 1, 2, 2, 3, 0 };
+        std::shared_ptr<IndexBuffer> square_index_buffer;
+        square_index_buffer.reset(IndexBuffer::create(square_indices, sizeof(square_indices)));
+        m_square_vertex_array->set_index_buffer(square_index_buffer);
 
         std::string vertex_src = R"(
 
@@ -119,7 +110,39 @@ namespace Honey {
             }
         )";
 
-        m_shader = std::make_unique<Shader>(vertex_src, fragment_src);
+        m_shader.reset(new Shader(vertex_src, fragment_src));
+
+
+
+
+        std::string blue_shader_vertex_src = R"(
+
+            #version 330 core
+
+            layout(location = 0) in vec3 a_pos;
+
+            out vec3 v_pos;
+
+            void main() {
+                v_pos = a_pos;
+                gl_Position = vec4(a_pos, 1.0);
+            }
+        )";
+
+        std::string blue_shader_fragment_src = R"(
+
+            #version 330 core
+
+            layout(location = 0) out vec4 color;
+
+            in vec3 v_pos;
+
+            void main() {
+                color = vec4(0.3, 0.3, 0.8, 1.0);
+            }
+        )";
+
+        m_blue_shader.reset(new Shader(blue_shader_vertex_src, blue_shader_fragment_src));
     }
 
     Application::~Application() {}
@@ -163,9 +186,13 @@ namespace Honey {
             glClearColor(0.1f, 0.1f, 0.1f, 1);
             glClear(GL_COLOR_BUFFER_BIT);
 
+            m_blue_shader->bind();
+            m_square_vertex_array->bind();
+            glDrawElements(GL_TRIANGLES, m_square_vertex_array->get_index_buffer()->get_count(), GL_UNSIGNED_INT, nullptr);
+
             m_shader->bind();
-            glBindVertexArray(m_vertex_array);
-            glDrawElements(GL_TRIANGLES, m_index_buffer->get_count(), GL_UNSIGNED_INT, nullptr);
+            m_vertex_array->bind();
+            glDrawElements(GL_TRIANGLES, m_vertex_array->get_index_buffer()->get_count(), GL_UNSIGNED_INT, nullptr);
 
             for (Layer* layer : m_layer_stack) {
                 layer->on_update();

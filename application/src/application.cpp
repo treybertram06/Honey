@@ -19,9 +19,9 @@ public:
 
     //doesnt work on windows
     virtual void on_imgui_render() override {
-        ImGui::Begin("Test");
-        ImGui::Text("Hello dingus");
-        ImGui::End();
+        //ImGui::Begin("Test");
+        //ImGui::Text("Hello dingus");
+        //ImGui::End();
     }
 
     void on_event(Honey::Event &event) override {

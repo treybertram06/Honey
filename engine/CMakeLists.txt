@@ -43,6 +43,10 @@ add_library(engine STATIC
         src/platform/opengl/opengl_buffer.cpp
         src/Honey/renderer/renderer.h
         src/Honey/renderer/renderer.cpp
+        src/Honey/renderer/vertex_array.h
+        src/Honey/renderer/vertex_array.cpp
+        src/platform/opengl/opengl_vertex_array.h
+        src/platform/opengl/opengl_vertex_array.cpp
 )
 
 # Make sure we define the Windows platform for Visual Studio
