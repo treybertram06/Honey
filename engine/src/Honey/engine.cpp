@@ -4,6 +4,7 @@
 #include "input.h"
 #include "Honey/renderer/renderer.h"
 
+#include "Honey/renderer/camera.h"
 
 namespace Honey {
 
@@ -13,7 +14,8 @@ namespace Honey {
 
 
 
-    Application::Application() {
+    Application::Application()
+    : m_camera(2.0f, (16.0f / 9.0f), -1.0f, 1.0f) {
         HN_CORE_ASSERT(!s_instance, "Application already exists!");
         s_instance = this;
 
@@ -78,13 +80,15 @@ namespace Honey {
             layout(location = 0) in vec3 a_pos;
             layout(location = 1) in vec4 a_color;
 
+            uniform mat4 u_view_projection;
+
             out vec3 v_pos;
             out vec4 v_color;
 
             void main() {
                 v_pos = a_pos;
                 v_color = a_color;
-                gl_Position = vec4(a_pos, 1.0);
+                gl_Position = u_view_projection * vec4(a_pos, 1.0);
             }
         )";
 
@@ -114,11 +118,13 @@ namespace Honey {
 
             layout(location = 0) in vec3 a_pos;
 
+            uniform mat4 u_view_projection;
+
             out vec3 v_pos;
 
             void main() {
                 v_pos = a_pos;
-                gl_Position = vec4(a_pos, 1.0);
+                gl_Position = u_view_projection * vec4(a_pos, 1.0);
             }
         )";
 
@@ -181,15 +187,13 @@ namespace Honey {
             RenderCommand::set_clear_color({0.1f, 0.1f, 0.1f, 1.0f});
             RenderCommand::clear();
 
+            m_camera.set_rotation(45.0f);
+            m_camera.set_position({0.5f, 0.0f, 0.0f});
 
+            Renderer::begin_scene(m_camera);
 
-            Renderer::begin_scene();
-
-            m_blue_shader->bind();
-            Renderer::submit(m_square_vertex_array);
-
-            m_shader->bind();
-            Renderer::submit(m_vertex_array);
+            Renderer::submit(m_blue_shader, m_square_vertex_array);
+            Renderer::submit(m_shader, m_vertex_array);
 
             RenderCommand::draw_indexed(m_square_vertex_array);
             RenderCommand::draw_indexed(m_vertex_array);

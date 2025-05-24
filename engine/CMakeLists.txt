@@ -53,6 +53,8 @@ add_library(engine STATIC
         src/Honey/renderer/render_command.cpp
         src/platform/opengl/opengl_renderer_api.h
         src/platform/opengl/opengl_renderer_api.cpp
+        src/Honey/renderer/camera.h
+        src/Honey/renderer/camera.cpp
 )
 
 # Make sure we define the Windows platform for Visual Studio

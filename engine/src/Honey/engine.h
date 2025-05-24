@@ -13,6 +13,7 @@
 #include "Honey/renderer/shader.h"
 #include "Honey/renderer/buffer.h"
 #include "Honey/renderer/vertex_array.h"
+#include "renderer/camera.h"
 
 namespace Honey {
 
@@ -44,6 +45,8 @@ namespace Honey {
 
         std::shared_ptr<Shader> m_blue_shader;
         std::shared_ptr<VertexArray> m_square_vertex_array;
+
+        OrthographicCamera m_camera;
 
         static Application* s_instance;
 
