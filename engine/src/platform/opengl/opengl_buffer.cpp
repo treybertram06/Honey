@@ -9,7 +9,12 @@ namespace Honey {
 
 
     OpenGLVertexBuffer::OpenGLVertexBuffer(float* vertices, uint32_t size) {
+#ifdef HN_PLATFORM_WINDOWS
         glCreateBuffers(1, &m_renderer_id);
+#endif
+#ifdef HN_PLATFORM_MACOS
+        glGenBuffers(1, &m_renderer_id);
+#endif
         glBindBuffer(GL_ARRAY_BUFFER, m_renderer_id);
         glBufferData(GL_ARRAY_BUFFER, size, vertices, GL_STATIC_DRAW);
     }
@@ -30,7 +35,12 @@ namespace Honey {
 
     OpenGLIndexBuffer::OpenGLIndexBuffer(uint32_t *indices, uint32_t count)
         : m_count(count) {
+#ifdef HN_PLATFORM_WINDOWS
         glCreateBuffers(1, &m_renderer_id);
+#endif
+#ifdef HN_PLATFORM_MACOS
+        glGenBuffers(1, &m_renderer_id);
+#endif
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_renderer_id);
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, count*sizeof(uint32_t), indices, GL_STATIC_DRAW);
     }

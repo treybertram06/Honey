@@ -29,6 +29,7 @@ namespace Honey {
         );
 
         m_view_projection_matrix = m_projection_matrix * m_view_matrix;
+
     }
 
     void OrthographicCamera::recalc_view_matrix() {

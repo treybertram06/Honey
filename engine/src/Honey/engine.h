@@ -40,13 +40,7 @@ namespace Honey {
         bool m_running = true;
         LayerStack m_layer_stack;
 
-        std::shared_ptr<Shader> m_shader;
-        std::shared_ptr<VertexArray> m_vertex_array;
 
-        std::shared_ptr<Shader> m_blue_shader;
-        std::shared_ptr<VertexArray> m_square_vertex_array;
-
-        OrthographicCamera m_camera;
 
         static Application* s_instance;
 

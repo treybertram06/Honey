@@ -26,9 +26,18 @@ namespace Honey {
 
     }
 
+#ifdef HN_PLATFORM_WINDOWS
     OpenGLVertexArray::OpenGLVertexArray() {
         glCreateVertexArrays(1, &m_renderer_id);
     }
+#endif
+
+#ifdef HN_PLATFORM_MACOS
+    OpenGLVertexArray::OpenGLVertexArray() {
+        glGenVertexArrays(1, &m_renderer_id);
+        glBindVertexArray(m_renderer_id);
+    }
+#endif
 
     OpenGLVertexArray::~OpenGLVertexArray() {
         glDeleteVertexArrays(1, &m_renderer_id);
