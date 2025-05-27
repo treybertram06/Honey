@@ -11,10 +11,12 @@ namespace Honey {
 #define BIND_EVENT_FN(x) std::bind(&x, this, std::placeholders::_1)
 
     Application* Application::s_instance = nullptr;
+    bool Application::m_running = true;
 
 
 
     Application::Application() {
+
         HN_CORE_ASSERT(!s_instance, "Application already exists!");
         s_instance = this;
 

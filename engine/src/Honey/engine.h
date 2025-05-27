@@ -32,12 +32,14 @@ namespace Honey {
 
         inline static Application& get() { return *s_instance; }
         inline Window& get_window() { return *m_window; }
+
+        inline static void quit() { m_running = false; }
     private:
         bool on_window_close(WindowCloseEvent& e);
 
         std::unique_ptr<Window> m_window;
         ImGuiLayer* m_imgui_layer;
-        bool m_running = true;
+        static bool m_running;
         LayerStack m_layer_stack;
 
 

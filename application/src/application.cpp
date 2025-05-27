@@ -177,7 +177,7 @@ public:
     bool on_key_pressed_event(Honey::KeyPressedEvent& event) {
 
         if (event.get_key_code() == HN_KEY_ESCAPE)
-            //close window
+            Honey::Application::quit();
 
         return false;
     }
@@ -194,7 +194,7 @@ private:
     float m_camera_rotation;
 
     float m_camera_speed = 0.01f;
-    float m_camera_rotation_speed = 0.1f; //      degrees / frame
+    float m_camera_rotation_speed = 0.5f; //      degrees / frame
 };
 
 class Sandbox : public Honey::Application {
