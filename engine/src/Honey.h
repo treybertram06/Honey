@@ -5,6 +5,8 @@
 #include "Honey/renderer/renderer.h"
 #include "Honey/renderer/render_command.h"
 
+#include "Honey/core/timestep.h"
+
 // Renderer abstractions
 #include "Honey/renderer/buffer.h"
 #include "Honey/renderer/vertex_array.h"

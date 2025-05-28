@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core.h"
+#include "Honey/core/timestep.h"
 
 #include "window.h"
 #include "layer.h"
@@ -41,7 +42,7 @@ namespace Honey {
         ImGuiLayer* m_imgui_layer;
         static bool m_running;
         LayerStack m_layer_stack;
-
+        float m_last_frame_time = 0.0f;
 
 
         static Application* s_instance;

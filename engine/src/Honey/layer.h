@@ -2,6 +2,7 @@
 
 #include "Honey/core.h"
 #include "Honey/events/event.h"
+#include "Honey/core/timestep.h"
 
 namespace Honey {
 
@@ -12,7 +13,7 @@ namespace Honey {
 
         virtual void on_attach() {}
         virtual void on_detach() {}
-        virtual void on_update() {}
+        virtual void on_update(Timestep ts) {}
         virtual void on_imgui_render() {}
         virtual void on_event(Event& event) {}
 

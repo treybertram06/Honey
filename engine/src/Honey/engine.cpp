@@ -5,6 +5,7 @@
 #include "Honey/renderer/renderer.h"
 
 #include "Honey/renderer/camera.h"
+#include <glfw/glfw3.h>
 
 namespace Honey {
 
@@ -23,6 +24,7 @@ namespace Honey {
         m_window = std::unique_ptr<Window>(Window::create());
 
         m_window->set_event_callback([this](auto && PH1) { on_event(std::forward<decltype(PH1)>(PH1)); });
+        //m_window->set_vsync(false);
 
         m_imgui_layer = new ImGuiLayer();
         push_overlay(m_imgui_layer);
@@ -69,8 +71,12 @@ namespace Honey {
         while (m_running)
         {
 
+            float time = (float)glfwGetTime();
+            Timestep timestep = time - m_last_frame_time;
+            m_last_frame_time = time;
+
             for (Layer* layer : m_layer_stack) {
-                layer->on_update();
+                layer->on_update(timestep);
             }
 
             m_imgui_layer->begin();

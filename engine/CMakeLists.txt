@@ -55,6 +55,7 @@ add_library(engine STATIC
         src/platform/opengl/opengl_renderer_api.cpp
         src/Honey/renderer/camera.h
         src/Honey/renderer/camera.cpp
+        src/Honey/core/timestep.h
 )
 
 # Make sure we define the Windows platform for Visual Studio

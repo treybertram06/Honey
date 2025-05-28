@@ -1,17 +1,12 @@
 #include <Honey.h>
-#include "Honey/entry_point.h"
-#include <imgui.h>
-#include "examples.h"
 
-
-
-class ExampleLayer : public Honey::Layer {
+class PongLayer : public Honey::Layer {
 public:
-    ExampleLayer()
+    PongLayer()
         : Layer("Pong"),
         m_camera(2.0f, (16.0f / 9.0f), -1.0f, 1.0f),
         m_camera_position(0.0f, 0.0f, 0.0f),
-        m_square_position(0.0f, 0.0f, 0.0f) {
+        paddle_pos(-1.5f, 0.0f, 0.0f) {
 
         m_vertex_array.reset(Honey::VertexArray::create());
 
@@ -138,31 +133,69 @@ public:
 
         //HN_TRACE("Deltatime: {0}s ({1}ms)", ts.get_seconds(), ts.get_millis());
 
-        if (Honey::Input::is_key_pressed(HN_KEY_A))
-            m_camera_position.x -= m_camera_speed * ts;
-        if (Honey::Input::is_key_pressed(HN_KEY_D))
-            m_camera_position.x += m_camera_speed * ts;
         if (Honey::Input::is_key_pressed(HN_KEY_W))
-            m_camera_position.y += m_camera_speed * ts;
+            paddle_pos.y += m_camera_speed * ts;
         if (Honey::Input::is_key_pressed(HN_KEY_S))
-            m_camera_position.y -= m_camera_speed * ts;
+            paddle_pos.y -= m_camera_speed * ts;
 
-        if (Honey::Input::is_key_pressed(HN_KEY_Q))
-            m_camera_rotation -= m_camera_rotation_speed * ts;
-        if (Honey::Input::is_key_pressed(HN_KEY_E))
-            m_camera_rotation += m_camera_rotation_speed * ts;
-
-
-
-
-        if (Honey::Input::is_key_pressed(HN_KEY_J))
-            m_square_position.x -= m_camera_speed * ts;
-        if (Honey::Input::is_key_pressed(HN_KEY_L))
-            m_square_position.x += m_camera_speed * ts;
         if (Honey::Input::is_key_pressed(HN_KEY_I))
-            m_square_position.y += m_camera_speed * ts;
+            bad_paddle_pos.y += m_camera_speed * ts;
         if (Honey::Input::is_key_pressed(HN_KEY_K))
-            m_square_position.y -= m_camera_speed * ts;
+            bad_paddle_pos.y -= m_camera_speed * ts;
+
+
+
+
+
+        ball_pos.x += ball_vel.x * ts;
+        ball_pos.y += ball_vel.y * ts;
+
+        //HN_TRACE("Ball_pos.y: {0}", ball_pos.y);
+        const float epsilon = 0.001f;
+        if (ball_pos.y <= -1.0f) {
+            ball_pos.y = -1.0f;
+            ball_vel.y = -ball_vel.y;
+        }
+        else if (ball_pos.y >= 1.0f) {
+            ball_pos.y = 1.0f;
+            ball_vel.y = -ball_vel.y;
+        }
+
+        if (ball_pos.x >= 1.45f - epsilon &&
+            ball_pos.x <= 1.55f + epsilon &&
+            ball_pos.y <= bad_paddle_pos.y + 0.5f &&
+            ball_pos.y >= bad_paddle_pos.y - 0.5f) {
+
+            ball_vel.y += ball_pos.y - bad_paddle_pos.y;
+
+            ball_pos.x = 1.45;
+            ball_vel.x = -ball_vel.x * 1.01f;
+        }
+
+        if (ball_pos.x <= -1.45f + epsilon &&
+            ball_pos.x >= -1.55f - epsilon &&
+            ball_pos.y <= paddle_pos.y + 0.5f &&
+            ball_pos.y >= paddle_pos.y - 0.5f) {
+
+            ball_vel.y += ball_pos.y - paddle_pos.y;
+
+            ball_pos.x = -1.45f;
+            ball_vel.x = -ball_vel.x * 1.01f;
+        }
+
+        if (ball_pos.x <= -1.55f) {
+            right_score++;
+            ball_pos = {-1.0f, 0.0f, 0.0f};
+            ball_vel = {1.0f, 0.0f, 0.0f};
+        }
+        if (ball_pos.x >= 1.55f) {
+            left_score++;
+            ball_pos = {-1.0f, 0.0f, 0.0f};
+            ball_vel = {-1.0f, 0.0f, 0.0f};
+        }
+
+
+
 
 
         Honey::RenderCommand::set_clear_color({0.1f, 0.1f, 0.1f, 1.0f});
@@ -173,24 +206,19 @@ public:
 
         Honey::Renderer::begin_scene(m_camera);
 
-        static glm::mat4 scale = glm::scale(glm::mat4(1.0f), glm::vec3(0.1f));
+        glm::mat4 paddle_scale = glm::scale(glm::mat4(1.0f), glm::vec3(0.1f, 1.0f, 1.0f));
+        glm::mat4 ball_scale = glm::scale(glm::mat4(1.0f), glm::vec3(0.1f, 0.1f, 1.0f));
 
-        for (int i = 0; i < 20; i++) {
-            for (int j = 0; j < 20; j++) {
-
-                glm::vec3 pos(i * 0.11f, j * 0.11f, 0.0f);
-                if (i == 0 && j == 0)
-                    HN_TRACE("First square pos: {0}, {1}", m_square_position.x, m_square_position.y);
-
-                glm::mat4 transform = glm::translate(glm::mat4(1.0f), m_square_position + pos) * scale;
-                Honey::Renderer::submit(m_blue_shader, m_square_vertex_array, transform);
-
-            }
-        }
+        glm::mat4 paddle_transform = glm::translate(glm::mat4(1.0f), paddle_pos) * paddle_scale;
+        glm::mat4 bad_paddle_transform = glm::translate(glm::mat4(1.0f), bad_paddle_pos) * paddle_scale;
+        glm::mat4 ball_transform = glm::translate(glm::mat4(1.0f), ball_pos) * ball_scale;
 
 
 
 
+        Honey::Renderer::submit(m_blue_shader, m_square_vertex_array, paddle_transform);
+        Honey::Renderer::submit(m_blue_shader, m_square_vertex_array, bad_paddle_transform);
+        Honey::Renderer::submit(m_blue_shader, m_square_vertex_array, ball_transform);
 
 
         //Honey::Renderer::submit(m_shader, m_vertex_array);
@@ -203,13 +231,21 @@ public:
     }
 
     virtual void on_imgui_render() override {
+        ImGui::Begin("Left Score");
+        ImGui::Text("Left Score: %d", left_score);
+        ImGui::End();
+
+        ImGui::Begin("Right Score");
+        ImGui::Text("Right Score: %d", right_score);
+        ImGui::End();
+
 
     }
 
     void on_event(Honey::Event &event) override {
 
         Honey::EventDispatcher dispatcher(event);
-        dispatcher.dispatch<Honey::KeyPressedEvent>(HN_BIND_EVENT_FN(ExampleLayer::on_key_pressed_event));
+        dispatcher.dispatch<Honey::KeyPressedEvent>(HN_BIND_EVENT_FN(PongLayer::on_key_pressed_event));
 
     }
 
@@ -232,29 +268,13 @@ private:
     glm::vec3 m_camera_position;
     float m_camera_rotation;
 
-    glm::vec3 m_square_position;
+    glm::vec3 paddle_pos;
+    glm::vec3 ball_pos = {-1.0f, 0.0f, 0.0f};
+    glm::vec3 ball_vel = {1.0f, 0.0f, 0.0f};
+    glm::vec3 bad_paddle_pos = {1.5f, 0.0f, 0.0f};
+    int left_score = 0;
+    int right_score = 0;
 
     float m_camera_speed = 1.0f;
     float m_camera_rotation_speed = 60.0f; //      degrees / second
 };
-
-class Sandbox : public Honey::Application {
-public:
-    Sandbox() {
-        //push_layer(new PongLayer());
-        push_layer(new ExampleLayer());
-
-
-    }
-
-    ~Sandbox() {}
-
-
-
-};
-
-Honey::Application* Honey::create_application() {
-
-    return new Sandbox();
-
-}

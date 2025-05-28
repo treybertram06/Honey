@@ -63,8 +63,8 @@ namespace Honey {
          Application& app = Application::get();
          io.DisplaySize = ImVec2(app.get_window().get_width(), app.get_window().get_height());
 
-        ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplGlfw_NewFrame();
+         ImGui_ImplOpenGL3_NewFrame();
+         ImGui_ImplGlfw_NewFrame();
          ImGui::NewFrame();
     }
 
