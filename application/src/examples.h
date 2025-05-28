@@ -169,7 +169,7 @@ public:
             ball_vel.y += ball_pos.y - bad_paddle_pos.y;
 
             ball_pos.x = 1.45;
-            ball_vel.x = -ball_vel.x * 1.01f;
+            ball_vel.x = -ball_vel.x * 1.1f;
         }
 
         if (ball_pos.x <= -1.45f + epsilon &&
@@ -180,7 +180,7 @@ public:
             ball_vel.y += ball_pos.y - paddle_pos.y;
 
             ball_pos.x = -1.45f;
-            ball_vel.x = -ball_vel.x * 1.01f;
+            ball_vel.x = -ball_vel.x * 1.1f;
         }
 
         if (ball_pos.x <= -1.55f) {

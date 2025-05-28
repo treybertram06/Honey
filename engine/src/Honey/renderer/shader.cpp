@@ -126,6 +126,16 @@ namespace Honey {
 		if (location != -1)
     		glUniformMatrix4fv(location, 1, GL_FALSE, glm::value_ptr(matrix));
     	else
-    		HN_CORE_ASSERT(false, "Uniform not found!");
+    		HN_CORE_ASSERT(false, "Mat4 uniform not found!");
     }
+
+	void Shader::upload_uniform_float4(const std::string& name, const glm::vec4& vec) {
+		GLint location = glGetUniformLocation(m_renderer_id, name.c_str());
+    	if (location != -1)
+    		glUniform4f(location, vec.x, vec.y, vec.z, vec.w);
+    	else
+    		HN_CORE_ASSERT(false, "Float4 uniform not found!");
+	}
+
+
 }

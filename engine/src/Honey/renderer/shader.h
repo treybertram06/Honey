@@ -13,6 +13,7 @@ namespace Honey {
         void unbind() const;
 
         void upload_uniform_mat4(const std::string& name, const glm::mat4& matrix);
+        void upload_uniform_float4(const std::string& name, const glm::vec4& vec);
 
     private:
         uint32_t m_renderer_id;

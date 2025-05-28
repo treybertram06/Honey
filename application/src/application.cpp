@@ -2,13 +2,13 @@
 #include "Honey/entry_point.h"
 #include <imgui.h>
 #include "examples.h"
-
+#include "Honey/core/statistics.h"
 
 
 class ExampleLayer : public Honey::Layer {
 public:
     ExampleLayer()
-        : Layer("Pong"),
+        : Layer("ExampleLayer"),
         m_camera(2.0f, (16.0f / 9.0f), -1.0f, 1.0f),
         m_camera_position(0.0f, 0.0f, 0.0f),
         m_square_position(0.0f, 0.0f, 0.0f) {
@@ -112,13 +112,14 @@ public:
 
             out vec3 v_pos;
 
+
             void main() {
                 v_pos = a_pos;
                 gl_Position = u_view_projection * u_transform * vec4(a_pos, 1.0);
             }
         )";
 
-        std::string blue_shader_fragment_src = R"(
+        std::string flat_color_shader_fragment_src = R"(
 
             #version 330 core
 
@@ -126,15 +127,20 @@ public:
 
             in vec3 v_pos;
 
+            uniform vec4 u_color;
+
             void main() {
-                color = vec4(0.3, 0.3, 0.8, 1.0);
+                color = u_color;
             }
         )";
 
-        m_blue_shader.reset(new Honey::Shader(blue_shader_vertex_src, blue_shader_fragment_src));
+        m_flat_color_shader.reset(new Honey::Shader(blue_shader_vertex_src, flat_color_shader_fragment_src));
     }
 
     void on_update(Honey::Timestep ts) override {
+
+        framerate_counter.update(ts);
+        framerate = framerate_counter.get_smoothed_fps();
 
         //HN_TRACE("Deltatime: {0}s ({1}ms)", ts.get_seconds(), ts.get_millis());
 
@@ -148,13 +154,13 @@ public:
             m_camera_position.y -= m_camera_speed * ts;
 
         if (Honey::Input::is_key_pressed(HN_KEY_Q))
-            m_camera_rotation -= m_camera_rotation_speed * ts;
-        if (Honey::Input::is_key_pressed(HN_KEY_E))
             m_camera_rotation += m_camera_rotation_speed * ts;
+        if (Honey::Input::is_key_pressed(HN_KEY_E))
+            m_camera_rotation -= m_camera_rotation_speed * ts;
 
 
 
-
+        /*
         if (Honey::Input::is_key_pressed(HN_KEY_J))
             m_square_position.x -= m_camera_speed * ts;
         if (Honey::Input::is_key_pressed(HN_KEY_L))
@@ -163,6 +169,7 @@ public:
             m_square_position.y += m_camera_speed * ts;
         if (Honey::Input::is_key_pressed(HN_KEY_K))
             m_square_position.y -= m_camera_speed * ts;
+            */
 
 
         Honey::RenderCommand::set_clear_color({0.1f, 0.1f, 0.1f, 1.0f});
@@ -175,15 +182,23 @@ public:
 
         static glm::mat4 scale = glm::scale(glm::mat4(1.0f), glm::vec3(0.1f));
 
+        glm::vec4 red_color(0.8f, 0.3f, 0.3f, 1.0f);
+        glm::vec4 blue_color(0.3f, 0.3f, 0.8f, 1.0f);
+
+        //Honey::MaterialRef material = new Honey::Material(m_flat_color_shader);
+
+
         for (int i = 0; i < 20; i++) {
             for (int j = 0; j < 20; j++) {
 
                 glm::vec3 pos(i * 0.11f, j * 0.11f, 0.0f);
-                if (i == 0 && j == 0)
-                    HN_TRACE("First square pos: {0}, {1}", m_square_position.x, m_square_position.y);
-
                 glm::mat4 transform = glm::translate(glm::mat4(1.0f), m_square_position + pos) * scale;
-                Honey::Renderer::submit(m_blue_shader, m_square_vertex_array, transform);
+                if (i % 2 == 0 && j % 2 == 0)
+                    m_flat_color_shader->upload_uniform_float4("u_color", red_color);
+                else
+                    m_flat_color_shader->upload_uniform_float4("u_color", blue_color);
+
+                Honey::Renderer::submit(m_flat_color_shader, m_square_vertex_array, transform);
 
             }
         }
@@ -193,7 +208,7 @@ public:
 
 
 
-        //Honey::Renderer::submit(m_shader, m_vertex_array);
+        Honey::Renderer::submit(m_shader, m_vertex_array);
 
         Honey::RenderCommand::draw_indexed(m_square_vertex_array);
         Honey::RenderCommand::draw_indexed(m_vertex_array);
@@ -203,7 +218,9 @@ public:
     }
 
     virtual void on_imgui_render() override {
-
+        ImGui::Begin("Framerate");
+        ImGui::Text("Framerate: %d", framerate);
+        ImGui::End();
     }
 
     void on_event(Honey::Event &event) override {
@@ -225,7 +242,7 @@ private:
     std::shared_ptr<Honey::Shader> m_shader;
     std::shared_ptr<Honey::VertexArray> m_vertex_array;
 
-    std::shared_ptr<Honey::Shader> m_blue_shader;
+    std::shared_ptr<Honey::Shader> m_flat_color_shader;
     std::shared_ptr<Honey::VertexArray> m_square_vertex_array;
 
     Honey::OrthographicCamera m_camera;
@@ -236,6 +253,9 @@ private:
 
     float m_camera_speed = 1.0f;
     float m_camera_rotation_speed = 60.0f; //      degrees / second
+
+    Honey::FramerateCounter framerate_counter;
+    int framerate = 0;
 };
 
 class Sandbox : public Honey::Application {
