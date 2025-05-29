@@ -15,7 +15,7 @@ namespace Honey {
         virtual void set_clear_color(const glm::vec4& color) = 0;
         virtual void clear() = 0;
 
-        virtual void draw_indexed(const std::shared_ptr<VertexArray>& vertex_array) = 0;
+        virtual void draw_indexed(const Ref<VertexArray>& vertex_array) = 0;
 
         inline static API get_api() { return s_api; }
     private:

@@ -1,8 +1,10 @@
 #include <Honey.h>
-#include "Honey/entry_point.h"
 #include <imgui.h>
-#include "examples.h"
 #include "Honey/core/statistics.h"
+#include "Honey/entry_point.h"
+#include "examples.h"
+#include "glm/gtc/type_ptr.inl"
+#include "platform/opengl/opengl_shader.h"
 
 
 class ExampleLayer : public Honey::Layer {
@@ -21,7 +23,7 @@ public:
              0.0f,  0.5f, 0.0f,     1.0f, 1.0f, 0.0f, 1.0f
         };
 
-        std::shared_ptr<Honey::VertexBuffer> vertex_buffer;
+        Honey::Ref<Honey::VertexBuffer> vertex_buffer;
         vertex_buffer.reset(Honey::VertexBuffer::create(vertices, sizeof(vertices)));
 
 
@@ -34,7 +36,7 @@ public:
 
 
         unsigned int indices[3] = { 0, 1, 2 };
-        std::shared_ptr<Honey::IndexBuffer> index_buffer;
+        Honey::Ref<Honey::IndexBuffer> index_buffer;
         index_buffer.reset(Honey::IndexBuffer::create(indices, 3));
         m_vertex_array->set_index_buffer(index_buffer);
 
@@ -47,7 +49,7 @@ public:
             -0.5f,  0.5f, 0.0f,
         };
 
-        std::shared_ptr<Honey::VertexBuffer> square_vertex_buffer;
+        Honey::Ref<Honey::VertexBuffer> square_vertex_buffer;
         square_vertex_buffer.reset(Honey::VertexBuffer::create(vertices_sq, sizeof(vertices_sq)));
         Honey::BufferLayout square_layout = {
             { Honey::ShaderDataType::Float3, "a_pos" },
@@ -56,7 +58,7 @@ public:
         m_square_vertex_array->add_vertex_buffer(square_vertex_buffer);
 
         unsigned int square_indices[6] = { 0, 1, 2, 2, 3, 0 };
-        std::shared_ptr<Honey::IndexBuffer> square_index_buffer;
+        Honey::Ref<Honey::IndexBuffer> square_index_buffer;
         square_index_buffer.reset(Honey::IndexBuffer::create(square_indices, sizeof(square_indices)));
         m_square_vertex_array->set_index_buffer(square_index_buffer);
 
@@ -96,12 +98,12 @@ public:
             }
         )";
 
-        m_shader.reset(new Honey::Shader(vertex_src, fragment_src));
+        m_shader.reset(Honey::Shader::create(vertex_src, fragment_src));
 
 
 
 
-        std::string blue_shader_vertex_src = R"(
+        std::string flat_color_shader_vertex_src = R"(
 
             #version 330 core
 
@@ -127,14 +129,14 @@ public:
 
             in vec3 v_pos;
 
-            uniform vec4 u_color;
+            uniform vec3 u_color;
 
             void main() {
-                color = u_color;
+                color = vec4(u_color, 1.0);
             }
         )";
 
-        m_flat_color_shader.reset(new Honey::Shader(blue_shader_vertex_src, flat_color_shader_fragment_src));
+        m_flat_color_shader.reset(Honey::Shader::create(flat_color_shader_vertex_src, flat_color_shader_fragment_src));
     }
 
     void on_update(Honey::Timestep ts) override {
@@ -187,17 +189,15 @@ public:
 
         //Honey::MaterialRef material = new Honey::Material(m_flat_color_shader);
 
+        std::dynamic_pointer_cast<Honey::OpenGLShader>(m_flat_color_shader)->bind();
+        std::dynamic_pointer_cast<Honey::OpenGLShader>(m_flat_color_shader)->upload_uniform_float3("u_color", m_square_color);
+
 
         for (int i = 0; i < 20; i++) {
             for (int j = 0; j < 20; j++) {
 
                 glm::vec3 pos(i * 0.11f, j * 0.11f, 0.0f);
                 glm::mat4 transform = glm::translate(glm::mat4(1.0f), m_square_position + pos) * scale;
-                if (i % 2 == 0 && j % 2 == 0)
-                    m_flat_color_shader->upload_uniform_float4("u_color", red_color);
-                else
-                    m_flat_color_shader->upload_uniform_float4("u_color", blue_color);
-
                 Honey::Renderer::submit(m_flat_color_shader, m_square_vertex_array, transform);
 
             }
@@ -221,6 +221,10 @@ public:
         ImGui::Begin("Framerate");
         ImGui::Text("Framerate: %d", framerate);
         ImGui::End();
+
+        ImGui::Begin("Settings");
+        ImGui::ColorEdit3("Square color", glm::value_ptr(m_square_color));
+        ImGui::End();
     }
 
     void on_event(Honey::Event &event) override {
@@ -239,17 +243,18 @@ public:
     }
 
 private:
-    std::shared_ptr<Honey::Shader> m_shader;
-    std::shared_ptr<Honey::VertexArray> m_vertex_array;
+    Honey::Ref<Honey::Shader> m_shader;
+    Honey::Ref<Honey::VertexArray> m_vertex_array;
 
-    std::shared_ptr<Honey::Shader> m_flat_color_shader;
-    std::shared_ptr<Honey::VertexArray> m_square_vertex_array;
+    Honey::Ref<Honey::Shader> m_flat_color_shader;
+    Honey::Ref<Honey::VertexArray> m_square_vertex_array;
 
     Honey::OrthographicCamera m_camera;
     glm::vec3 m_camera_position;
     float m_camera_rotation;
 
     glm::vec3 m_square_position;
+    glm::vec3 m_square_color = {0.3f, 0.3f, 0.8f};
 
     float m_camera_speed = 1.0f;
     float m_camera_rotation_speed = 60.0f; //      degrees / second

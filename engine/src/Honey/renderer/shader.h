@@ -1,21 +1,15 @@
 #pragma once
 
-#include "hnpch.h"
-#include "glm/glm.hpp"
+#include <string>
 
 namespace Honey {
     class Shader {
     public:
-        Shader(const std::string& vertex_src, const std::string& fragment_src);
-        ~Shader();
+        virtual ~Shader() = default;
 
-        void bind() const;
-        void unbind() const;
+        virtual void bind() const = 0;
+        virtual void unbind() const = 0;
 
-        void upload_uniform_mat4(const std::string& name, const glm::mat4& matrix);
-        void upload_uniform_float4(const std::string& name, const glm::vec4& vec);
-
-    private:
-        uint32_t m_renderer_id;
+        static Shader* create(const std::string &vertex_src, const std::string &fragment_src);
     };
 }
