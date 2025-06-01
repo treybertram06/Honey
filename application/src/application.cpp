@@ -42,24 +42,25 @@ public:
 
         m_square_vertex_array.reset(Honey::VertexArray::create());
 
-        float vertices_sq[3*4] = {
-            -0.5f, -0.5f, 0.0f,
-             0.5f, -0.5f, 0.0f,
-             0.5f,  0.5f, 0.0f,
-            -0.5f,  0.5f, 0.0f,
+        float vertices_sq[3*4 + 2*4] = {
+            -0.5f, -0.5f, 0.0f,     0.0f, 0.0f,
+             0.5f, -0.5f, 0.0f,     1.0f, 0.0f,
+             0.5f,  0.5f, 0.0f,     1.0f, 1.0f,
+            -0.5f,  0.5f, 0.0f,     0.0f, 1.0f
         };
 
         Honey::Ref<Honey::VertexBuffer> square_vertex_buffer;
         square_vertex_buffer.reset(Honey::VertexBuffer::create(vertices_sq, sizeof(vertices_sq)));
         Honey::BufferLayout square_layout = {
             { Honey::ShaderDataType::Float3, "a_pos" },
+            { Honey::ShaderDataType::Float2, "a_tex_coord" }
         };
         square_vertex_buffer->set_layout(square_layout);
         m_square_vertex_array->add_vertex_buffer(square_vertex_buffer);
 
         unsigned int square_indices[6] = { 0, 1, 2, 2, 3, 0 };
         Honey::Ref<Honey::IndexBuffer> square_index_buffer;
-        square_index_buffer.reset(Honey::IndexBuffer::create(square_indices, sizeof(square_indices)));
+        square_index_buffer.reset(Honey::IndexBuffer::create(square_indices, sizeof(square_indices)/sizeof(square_indices[0])));
         m_square_vertex_array->set_index_buffer(square_index_buffer);
 
         std::string vertex_src = R"(
@@ -137,6 +138,46 @@ public:
         )";
 
         m_flat_color_shader.reset(Honey::Shader::create(flat_color_shader_vertex_src, flat_color_shader_fragment_src));
+
+        std::string texture_shader_vertex_src = R"(
+
+            #version 330 core
+
+            layout(location = 0) in vec3 a_pos;
+            layout(location = 1) in vec2 a_tex_coord;
+
+            uniform mat4 u_view_projection;
+            uniform mat4 u_transform;
+
+            out vec2 v_tex_coord;
+
+            void main() {
+                v_tex_coord = a_tex_coord;
+                gl_Position = u_view_projection * u_transform * vec4(a_pos, 1.0);
+            }
+        )";
+
+        std::string texture_shader_fragment_src = R"(
+
+            #version 330 core
+
+            layout(location = 0) out vec4 color;
+
+            in vec2 v_tex_coord;
+
+            uniform sampler2D u_texture;
+
+            void main() {
+                color = texture(u_texture, v_tex_coord);
+            }
+        )";
+
+        m_texture_shader.reset(Honey::Shader::create(texture_shader_vertex_src, texture_shader_fragment_src));
+
+        m_texture = Honey::Texture2D::create("/Users/treybertram/Desktop/Honey/application/assets/textures/bung.png");
+
+        std::dynamic_pointer_cast<Honey::OpenGLShader>(m_texture_shader)->bind();
+        std::dynamic_pointer_cast<Honey::OpenGLShader>(m_texture_shader)->upload_uniform_int("u_texture", 0);
     }
 
     void on_update(Honey::Timestep ts) override {
@@ -184,9 +225,6 @@ public:
 
         static glm::mat4 scale = glm::scale(glm::mat4(1.0f), glm::vec3(0.1f));
 
-        glm::vec4 red_color(0.8f, 0.3f, 0.3f, 1.0f);
-        glm::vec4 blue_color(0.3f, 0.3f, 0.8f, 1.0f);
-
         //Honey::MaterialRef material = new Honey::Material(m_flat_color_shader);
 
         std::dynamic_pointer_cast<Honey::OpenGLShader>(m_flat_color_shader)->bind();
@@ -203,12 +241,16 @@ public:
             }
         }
 
+        m_texture->bind();
+        Honey::Renderer::submit(m_texture_shader, m_square_vertex_array, glm::scale(glm::mat4(1.0f), glm::vec3(1.5f)));
 
 
 
 
 
-        Honey::Renderer::submit(m_shader, m_vertex_array);
+
+        //triangle
+        //Honey::Renderer::submit(m_shader, m_vertex_array);
 
         Honey::RenderCommand::draw_indexed(m_square_vertex_array);
         Honey::RenderCommand::draw_indexed(m_vertex_array);
@@ -246,8 +288,10 @@ private:
     Honey::Ref<Honey::Shader> m_shader;
     Honey::Ref<Honey::VertexArray> m_vertex_array;
 
-    Honey::Ref<Honey::Shader> m_flat_color_shader;
+    Honey::Ref<Honey::Shader> m_flat_color_shader, m_texture_shader;
     Honey::Ref<Honey::VertexArray> m_square_vertex_array;
+
+    Honey::Ref<Honey::Texture2D> m_texture;
 
     Honey::OrthographicCamera m_camera;
     glm::vec3 m_camera_position;

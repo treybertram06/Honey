@@ -59,6 +59,12 @@ add_library(engine STATIC
         src/Honey/core/statistics.h
         src/platform/opengl/opengl_shader.h
         src/platform/opengl/opengl_shader.cpp
+        src/Honey/renderer/texture.h
+        src/Honey/renderer/texture.cpp
+        src/platform/opengl/opengl_texture.h
+        src/platform/opengl/opengl_texture.cpp
+        vendor/stb_image/stb_image.h
+        vendor/stb_image/stb_image.cpp
 )
 
 # Make sure we define the Windows platform for Visual Studio
@@ -85,6 +91,7 @@ target_precompile_headers(engine
  target_include_directories(engine PUBLIC
          ${CMAKE_CURRENT_SOURCE_DIR}
          ${CMAKE_CURRENT_SOURCE_DIR}/src
+         ${CMAKE_CURRENT_SOURCE_DIR}/vendor/stb_image
          ${CMAKE_CURRENT_BINARY_DIR}
  )
 

@@ -12,6 +12,7 @@
 #include "Honey/renderer/vertex_array.h"
 #include "Honey/renderer/shader.h"
 #include "Honey/renderer/camera.h"
+#include "Honey/renderer/texture.h"
 
 // Layering & UI
 #include "Honey/layer.h"
