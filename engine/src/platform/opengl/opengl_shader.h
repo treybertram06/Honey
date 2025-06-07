@@ -1,12 +1,14 @@
 #pragma once
 
-#include "hnpch.h"
 #include "Honey/renderer/shader.h"
+#include "glad/glad.h"
 #include "glm/glm.hpp"
+#include "hnpch.h"
 
 namespace Honey {
     class OpenGLShader : public Shader {
     public:
+        OpenGLShader(const std::string& path);
         OpenGLShader(const std::string& vertex_src, const std::string& fragment_src);
         virtual ~OpenGLShader();
 
@@ -24,6 +26,10 @@ namespace Honey {
         void upload_uniform_int(const std::string& name, int value);
 
     private:
+        std::string read_file(const std::string& path);
+        std::unordered_map<GLenum, std::string> pre_process(const std::string& source);
+        void compile(const std::unordered_map<GLenum, std::string>& shader_srcs);
+
         uint32_t m_renderer_id;
     };
 }

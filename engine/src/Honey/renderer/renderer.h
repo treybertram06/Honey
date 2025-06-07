@@ -9,6 +9,8 @@ namespace Honey {
     class Renderer {
     public:
 
+        static void init();
+
         static void begin_scene(OrthographicCamera& camera);
         static void end_scene();
 

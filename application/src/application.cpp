@@ -63,118 +63,20 @@ public:
         square_index_buffer.reset(Honey::IndexBuffer::create(square_indices, sizeof(square_indices)/sizeof(square_indices[0])));
         m_square_vertex_array->set_index_buffer(square_index_buffer);
 
-        std::string vertex_src = R"(
-
-            #version 330 core
-
-            layout(location = 0) in vec3 a_pos;
-            layout(location = 1) in vec4 a_color;
-
-            uniform mat4 u_view_projection;
-            uniform mat4 u_transform;
 
 
-            out vec3 v_pos;
-            out vec4 v_color;
-
-            void main() {
-                v_pos = a_pos;
-                v_color = a_color;
-                gl_Position = u_view_projection * u_transform * vec4(a_pos, 1.0);
-            }
-        )";
-
-        std::string fragment_src = R"(
-
-            #version 330 core
-
-            layout(location = 0) out vec4 color;
-
-            in vec3 v_pos;
-            in vec4 v_color;
-
-            void main() {
-                color = vec4(v_pos * 0.5 + 0.5, 1.0);
-                color = v_color;
-            }
-        )";
-
-        m_shader.reset(Honey::Shader::create(vertex_src, fragment_src));
+        //m_shader.reset(Honey::Shader::create(vertex_src, fragment_src));
 
 
 
 
-        std::string flat_color_shader_vertex_src = R"(
-
-            #version 330 core
-
-            layout(location = 0) in vec3 a_pos;
-
-            uniform mat4 u_view_projection;
-            uniform mat4 u_transform;
-
-            out vec3 v_pos;
 
 
-            void main() {
-                v_pos = a_pos;
-                gl_Position = u_view_projection * u_transform * vec4(a_pos, 1.0);
-            }
-        )";
-
-        std::string flat_color_shader_fragment_src = R"(
-
-            #version 330 core
-
-            layout(location = 0) out vec4 color;
-
-            in vec3 v_pos;
-
-            uniform vec3 u_color;
-
-            void main() {
-                color = vec4(u_color, 1.0);
-            }
-        )";
-
-        m_flat_color_shader.reset(Honey::Shader::create(flat_color_shader_vertex_src, flat_color_shader_fragment_src));
-
-        std::string texture_shader_vertex_src = R"(
-
-            #version 330 core
-
-            layout(location = 0) in vec3 a_pos;
-            layout(location = 1) in vec2 a_tex_coord;
-
-            uniform mat4 u_view_projection;
-            uniform mat4 u_transform;
-
-            out vec2 v_tex_coord;
-
-            void main() {
-                v_tex_coord = a_tex_coord;
-                gl_Position = u_view_projection * u_transform * vec4(a_pos, 1.0);
-            }
-        )";
-
-        std::string texture_shader_fragment_src = R"(
-
-            #version 330 core
-
-            layout(location = 0) out vec4 color;
-
-            in vec2 v_tex_coord;
-
-            uniform sampler2D u_texture;
-
-            void main() {
-                color = texture(u_texture, v_tex_coord);
-            }
-        )";
-
-        m_texture_shader.reset(Honey::Shader::create(texture_shader_vertex_src, texture_shader_fragment_src));
+        m_flat_color_shader.reset(Honey::Shader::create("/Users/treybertram/Desktop/Honey/application/assets/shaders/flat_color.glsl"));
+        m_texture_shader.reset(Honey::Shader::create("/Users/treybertram/Desktop/Honey/application/assets/shaders/texture.glsl"));
 
         m_texture = Honey::Texture2D::create("/Users/treybertram/Desktop/Honey/application/assets/textures/bung.png");
+        m_transparent_texture = Honey::Texture2D::create("/Users/treybertram/Desktop/Honey/application/assets/textures/transparent.png");
 
         std::dynamic_pointer_cast<Honey::OpenGLShader>(m_texture_shader)->bind();
         std::dynamic_pointer_cast<Honey::OpenGLShader>(m_texture_shader)->upload_uniform_int("u_texture", 0);
@@ -243,6 +145,8 @@ public:
 
         m_texture->bind();
         Honey::Renderer::submit(m_texture_shader, m_square_vertex_array, glm::scale(glm::mat4(1.0f), glm::vec3(1.5f)));
+        m_transparent_texture->bind();
+        Honey::Renderer::submit(m_texture_shader, m_square_vertex_array, glm::scale(glm::mat4(1.0f), glm::vec3(1.5f)));
 
 
 
@@ -291,7 +195,7 @@ private:
     Honey::Ref<Honey::Shader> m_flat_color_shader, m_texture_shader;
     Honey::Ref<Honey::VertexArray> m_square_vertex_array;
 
-    Honey::Ref<Honey::Texture2D> m_texture;
+    Honey::Ref<Honey::Texture2D> m_texture, m_transparent_texture;
 
     Honey::OrthographicCamera m_camera;
     glm::vec3 m_camera_position;

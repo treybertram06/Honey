@@ -7,6 +7,10 @@ namespace Honey {
     class RenderCommand {
     public:
 
+        inline static void init() {
+            s_renderer_api->init();
+        }
+
         inline static void set_clear_color(const glm::vec4& color) {
             s_renderer_api->set_clear_color(color);
         }
