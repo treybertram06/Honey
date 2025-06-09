@@ -91,7 +91,7 @@ public:
             }
         )";
 
-        m_shader.reset(Honey::Shader::create(vertex_src, fragment_src));
+        m_shader = Honey::Shader::create("basic_shader", vertex_src, fragment_src);
 
 
 
@@ -126,7 +126,7 @@ public:
             }
         )";
 
-        m_blue_shader.reset(Honey::Shader::create(blue_shader_vertex_src, blue_shader_fragment_src));
+        m_blue_shader = Honey::Shader::create("ball_shader", blue_shader_vertex_src, blue_shader_fragment_src);
     }
 
     void on_update(Honey::Timestep ts) override {

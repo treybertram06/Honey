@@ -70,16 +70,24 @@ public:
 
 
 
-
-
-        m_flat_color_shader.reset(Honey::Shader::create("/Users/treybertram/Desktop/Honey/application/assets/shaders/flat_color.glsl"));
-        m_texture_shader.reset(Honey::Shader::create("/Users/treybertram/Desktop/Honey/application/assets/shaders/texture.glsl"));
+// this is only here because I want to use the same application file on both of my computers
+#ifdef HN_PLATFORM_MACOS
+        m_flat_color_shader = Honey::Shader::create("/Users/treybertram/Desktop/Honey/application/assets/shaders/flat_color.glsl");
+        m_texture_shader = Honey::Shader::create("/Users/treybertram/Desktop/Honey/application/assets/shaders/texture.glsl");
 
         m_texture = Honey::Texture2D::create("/Users/treybertram/Desktop/Honey/application/assets/textures/bung.png");
         m_transparent_texture = Honey::Texture2D::create("/Users/treybertram/Desktop/Honey/application/assets/textures/transparent.png");
+#endif
+#ifdef HN_PLATFORM_WINDOWS
+        auto flat_color_shader = m_shader_lib.load("C:/Users/treyb/CLionProjects/engine/application/assets/shaders/flat_color.glsl");
+        auto texture_shader = m_shader_lib.load("C:/Users/treyb/CLionProjects/engine/application/assets/shaders/texture.glsl");
 
-        std::dynamic_pointer_cast<Honey::OpenGLShader>(m_texture_shader)->bind();
-        std::dynamic_pointer_cast<Honey::OpenGLShader>(m_texture_shader)->upload_uniform_int("u_texture", 0);
+        m_texture = Honey::Texture2D::create("C:/Users/treyb/CLionProjects/engine/application/assets/textures/bung.png");
+        m_transparent_texture = Honey::Texture2D::create("C:/Users/treyb/CLionProjects/engine/application/assets/textures/transparent.png");
+#endif
+
+        std::dynamic_pointer_cast<Honey::OpenGLShader>(texture_shader)->bind();
+        std::dynamic_pointer_cast<Honey::OpenGLShader>(texture_shader)->upload_uniform_int("u_texture", 0);
     }
 
     void on_update(Honey::Timestep ts) override {
@@ -129,8 +137,11 @@ public:
 
         //Honey::MaterialRef material = new Honey::Material(m_flat_color_shader);
 
-        std::dynamic_pointer_cast<Honey::OpenGLShader>(m_flat_color_shader)->bind();
-        std::dynamic_pointer_cast<Honey::OpenGLShader>(m_flat_color_shader)->upload_uniform_float3("u_color", m_square_color);
+        auto flat_color_shader = m_shader_lib.get("flat_color");
+        auto texture_shader = m_shader_lib.get("texture");
+
+        std::dynamic_pointer_cast<Honey::OpenGLShader>(flat_color_shader)->bind();
+        std::dynamic_pointer_cast<Honey::OpenGLShader>(flat_color_shader)->upload_uniform_float3("u_color", m_square_color);
 
 
         for (int i = 0; i < 20; i++) {
@@ -138,15 +149,15 @@ public:
 
                 glm::vec3 pos(i * 0.11f, j * 0.11f, 0.0f);
                 glm::mat4 transform = glm::translate(glm::mat4(1.0f), m_square_position + pos) * scale;
-                Honey::Renderer::submit(m_flat_color_shader, m_square_vertex_array, transform);
+                Honey::Renderer::submit(flat_color_shader, m_square_vertex_array, transform);
 
             }
         }
 
         m_texture->bind();
-        Honey::Renderer::submit(m_texture_shader, m_square_vertex_array, glm::scale(glm::mat4(1.0f), glm::vec3(1.5f)));
+        Honey::Renderer::submit(texture_shader, m_square_vertex_array, glm::scale(glm::mat4(1.0f), glm::vec3(1.5f)));
         m_transparent_texture->bind();
-        Honey::Renderer::submit(m_texture_shader, m_square_vertex_array, glm::scale(glm::mat4(1.0f), glm::vec3(1.5f)));
+        Honey::Renderer::submit(texture_shader, m_square_vertex_array, glm::scale(glm::mat4(1.0f), glm::vec3(1.5f)));
 
 
 
@@ -189,10 +200,8 @@ public:
     }
 
 private:
-    Honey::Ref<Honey::Shader> m_shader;
+    Honey::ShaderLibrary m_shader_lib;
     Honey::Ref<Honey::VertexArray> m_vertex_array;
-
-    Honey::Ref<Honey::Shader> m_flat_color_shader, m_texture_shader;
     Honey::Ref<Honey::VertexArray> m_square_vertex_array;
 
     Honey::Ref<Honey::Texture2D> m_texture, m_transparent_texture;

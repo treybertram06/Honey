@@ -9,11 +9,13 @@ namespace Honey {
     class OpenGLShader : public Shader {
     public:
         OpenGLShader(const std::string& path);
-        OpenGLShader(const std::string& vertex_src, const std::string& fragment_src);
+        OpenGLShader(const std::string& name, const std::string& vertex_src, const std::string& fragment_src);
         virtual ~OpenGLShader();
 
         virtual void bind() const override;
         virtual void unbind() const override;
+
+        virtual const std::string& get_name() const override { return m_name; }
 
         void upload_uniform_mat4(const std::string& name, const glm::mat4& matrix);
         void upload_uniform_mat3(const std::string& name, const glm::mat3& matrix);
@@ -31,5 +33,6 @@ namespace Honey {
         void compile(const std::unordered_map<GLenum, std::string>& shader_srcs);
 
         uint32_t m_renderer_id;
+        std::string m_name;
     };
 }

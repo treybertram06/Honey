@@ -24,8 +24,15 @@ namespace Honey {
         std::string source = read_file(path);
         auto shader_srcs = pre_process(source);
         compile(shader_srcs);
+
+        auto last_slash = path.find_last_of("/\\");
+        last_slash = last_slash == std::string::npos ? 0 : last_slash + 1;
+        auto last_dot = path.rfind('.');
+        auto count = last_dot == std::string::npos ? path.size() - last_slash : last_dot - last_slash;
+        m_name = path.substr(last_slash, count);
     }
-    OpenGLShader::OpenGLShader(const std::string &vertex_src, const std::string &fragment_src) {
+    OpenGLShader::OpenGLShader(const std::string& name, const std::string &vertex_src, const std::string &fragment_src)
+        : m_name(name) {
         std::unordered_map<GLenum, std::string> sources;
         sources[GL_VERTEX_SHADER] = vertex_src;
         sources[GL_FRAGMENT_SHADER] = fragment_src;
@@ -39,7 +46,9 @@ namespace Honey {
     void OpenGLShader::compile(const std::unordered_map<GLenum, std::string> &shader_srcs) {
 
         GLuint program = glCreateProgram();
-        std::vector<GLenum> gl_shader_ids(shader_srcs.size());
+        HN_CORE_ASSERT(shader_srcs.size() <= 2, "Only supports 2 shaders for now");
+        std::array<GLenum, 2> gl_shader_ids;
+        int gl_shader_index = 0;
 
         for (auto&& [shader_type, source] : shader_srcs) {
 
@@ -67,7 +76,7 @@ namespace Honey {
                 break;
             }
             glAttachShader(program, shader);
-            gl_shader_ids.push_back(shader);
+            gl_shader_ids[gl_shader_index++] = shader;
 
 
         }
