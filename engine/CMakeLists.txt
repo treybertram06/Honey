@@ -65,6 +65,8 @@ add_library(engine STATIC
         src/platform/opengl/opengl_texture.cpp
         vendor/stb_image/stb_image.h
         vendor/stb_image/stb_image.cpp
+        src/Honey/camera_controller.h
+        src/Honey/camera_controller.cpp
 )
 
 # Make sure we define the Windows platform for Visual Studio

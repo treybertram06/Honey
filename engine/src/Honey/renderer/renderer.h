@@ -10,6 +10,7 @@ namespace Honey {
     public:
 
         static void init();
+        static void on_window_resize(uint32_t width, uint32_t height);
 
         static void begin_scene(OrthographicCamera& camera);
         static void end_scene();

@@ -13,6 +13,7 @@
 #include "Honey/renderer/shader.h"
 #include "Honey/renderer/camera.h"
 #include "Honey/renderer/texture.h"
+#include "Honey/camera_controller.h"
 
 // Layering & UI
 #include "Honey/layer.h"

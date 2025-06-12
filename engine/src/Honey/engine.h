@@ -37,10 +37,12 @@ namespace Honey {
         inline static void quit() { m_running = false; }
     private:
         bool on_window_close(WindowCloseEvent& e);
+        bool on_window_resize(WindowResizeEvent& e);
 
         std::unique_ptr<Window> m_window;
         ImGuiLayer* m_imgui_layer;
         static bool m_running;
+        bool m_minimized = false;
         LayerStack m_layer_stack;
         float m_last_frame_time = 0.0f;
 

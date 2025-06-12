@@ -11,8 +11,7 @@ class ExampleLayer : public Honey::Layer {
 public:
     ExampleLayer()
         : Layer("ExampleLayer"),
-        m_camera(2.0f, (16.0f / 9.0f), -1.0f, 1.0f),
-        m_camera_position(0.0f, 0.0f, 0.0f),
+        m_camera_controller((16.0f / 9.0f), true),
         m_square_position(0.0f, 0.0f, 0.0f) {
 
         m_vertex_array.reset(Honey::VertexArray::create());
@@ -91,47 +90,19 @@ public:
     }
 
     void on_update(Honey::Timestep ts) override {
+        // update
+        m_camera_controller.on_update(ts);
 
         framerate_counter.update(ts);
         framerate = framerate_counter.get_smoothed_fps();
 
         //HN_TRACE("Deltatime: {0}s ({1}ms)", ts.get_seconds(), ts.get_millis());
 
-        if (Honey::Input::is_key_pressed(HN_KEY_A))
-            m_camera_position.x -= m_camera_speed * ts;
-        if (Honey::Input::is_key_pressed(HN_KEY_D))
-            m_camera_position.x += m_camera_speed * ts;
-        if (Honey::Input::is_key_pressed(HN_KEY_W))
-            m_camera_position.y += m_camera_speed * ts;
-        if (Honey::Input::is_key_pressed(HN_KEY_S))
-            m_camera_position.y -= m_camera_speed * ts;
-
-        if (Honey::Input::is_key_pressed(HN_KEY_Q))
-            m_camera_rotation += m_camera_rotation_speed * ts;
-        if (Honey::Input::is_key_pressed(HN_KEY_E))
-            m_camera_rotation -= m_camera_rotation_speed * ts;
-
-
-
-        /*
-        if (Honey::Input::is_key_pressed(HN_KEY_J))
-            m_square_position.x -= m_camera_speed * ts;
-        if (Honey::Input::is_key_pressed(HN_KEY_L))
-            m_square_position.x += m_camera_speed * ts;
-        if (Honey::Input::is_key_pressed(HN_KEY_I))
-            m_square_position.y += m_camera_speed * ts;
-        if (Honey::Input::is_key_pressed(HN_KEY_K))
-            m_square_position.y -= m_camera_speed * ts;
-            */
-
-
+        // render
         Honey::RenderCommand::set_clear_color({0.1f, 0.1f, 0.1f, 1.0f});
         Honey::RenderCommand::clear();
 
-        m_camera.set_position(m_camera_position);
-        m_camera.set_rotation(m_camera_rotation);
-
-        Honey::Renderer::begin_scene(m_camera);
+        Honey::Renderer::begin_scene(m_camera_controller.get_camera());
 
         static glm::mat4 scale = glm::scale(glm::mat4(1.0f), glm::vec3(0.1f));
 
@@ -184,16 +155,15 @@ public:
         ImGui::End();
     }
 
-    void on_event(Honey::Event &event) override {
+    void on_event(Honey::Event &e) override {
 
-        Honey::EventDispatcher dispatcher(event);
-        dispatcher.dispatch<Honey::KeyPressedEvent>(HN_BIND_EVENT_FN(ExampleLayer::on_key_pressed_event));
+        m_camera_controller.on_event(e);
 
-    }
+        }
 
-    bool on_key_pressed_event(Honey::KeyPressedEvent& event) {
+    bool on_key_pressed_e(Honey::KeyPressedEvent& e) {
 
-        if (event.get_key_code() == HN_KEY_ESCAPE)
+        if (e.get_key_code() == HN_KEY_ESCAPE)
             Honey::Application::quit();
 
         return false;
@@ -206,15 +176,11 @@ private:
 
     Honey::Ref<Honey::Texture2D> m_texture, m_transparent_texture;
 
-    Honey::OrthographicCamera m_camera;
-    glm::vec3 m_camera_position;
-    float m_camera_rotation;
+    Honey::OrthographicCameraController m_camera_controller;
+
 
     glm::vec3 m_square_position;
     glm::vec3 m_square_color = {0.3f, 0.3f, 0.8f};
-
-    float m_camera_speed = 1.0f;
-    float m_camera_rotation_speed = 60.0f; //      degrees / second
 
     Honey::FramerateCounter framerate_counter;
     int framerate = 0;

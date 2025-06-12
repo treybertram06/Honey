@@ -5,7 +5,7 @@
 #include "Honey/renderer/renderer.h"
 
 #include "Honey/renderer/camera.h"
-#include <glfw/glfw3.h>
+#include <GLFW/glfw3.h>
 
 namespace Honey {
 
@@ -51,9 +51,8 @@ namespace Honey {
     void Application::on_event(Event& e) {
         EventDispatcher dispatcher(e);
 
-        dispatcher.dispatch<WindowCloseEvent>([this](WindowCloseEvent& e) -> bool {
-            return on_window_close(e);
-        });
+        dispatcher.dispatch<WindowCloseEvent>(BIND_EVENT_FN(Application::on_window_close));
+        dispatcher.dispatch<WindowResizeEvent>(BIND_EVENT_FN(Application::on_window_resize));
 
         for (auto it = m_layer_stack.end(); it != m_layer_stack.begin(); ) {
             (*--it)->on_event(e);
@@ -77,14 +76,16 @@ namespace Honey {
             Timestep timestep = time - m_last_frame_time;
             m_last_frame_time = time;
 
-            for (Layer* layer : m_layer_stack) {
-                layer->on_update(timestep);
+            if (!m_minimized) {
+                for (Layer* layer : m_layer_stack) {
+                    layer->on_update(timestep);
+                }
             }
 
-            m_imgui_layer->begin();
-            for (Layer* layer : m_layer_stack)
-                layer->on_imgui_render();
-            m_imgui_layer->end();
+                m_imgui_layer->begin();
+                for (Layer* layer : m_layer_stack)
+                    layer->on_imgui_render();
+                m_imgui_layer->end();
 
             m_window->on_update();
         }
@@ -94,5 +95,18 @@ namespace Honey {
         m_running = false;
         return true;
     }
+
+    bool Application::on_window_resize(WindowResizeEvent &e) {
+
+        if (e.get_width() == 0 || e.get_height() == 0) {
+            m_minimized = true;
+            return false;
+        }
+
+        m_minimized = false;
+        Renderer::on_window_resize(e.get_width(), e.get_height());
+        return false;
+    }
+
 
 }
