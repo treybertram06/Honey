@@ -1,8 +1,10 @@
 #include <Honey.h>
+#include <Honey/core/entry_point.h>
 #include <imgui.h>
+
+#include "application_2d.h"
 #include "Honey/core/statistics.h"
-#include "../../engine/src/Honey/core/entry_point.h"
-#include "examples.h"
+//#include "examples.h"
 #include "glm/gtc/type_ptr.inl"
 #include "platform/opengl/opengl_shader.h"
 
@@ -14,7 +16,7 @@ public:
         m_camera_controller((16.0f / 9.0f), true),
         m_square_position(0.0f, 0.0f, 0.0f) {
 
-        m_vertex_array.reset(Honey::VertexArray::create());
+        m_vertex_array = Honey::VertexArray::create();
 
         float vertices[3*3 + 4*3] = {
             -0.5f, -0.5f, 0.0f,     1.0f, 0.0f, 1.0f, 1.0f,
@@ -39,7 +41,7 @@ public:
         index_buffer.reset(Honey::IndexBuffer::create(indices, 3));
         m_vertex_array->set_index_buffer(index_buffer);
 
-        m_square_vertex_array.reset(Honey::VertexArray::create());
+        m_square_vertex_array = Honey::VertexArray::create();
 
         float vertices_sq[3*4 + 2*4] = {
             -0.5f, -0.5f, 0.0f,     0.0f, 0.0f,
@@ -61,10 +63,6 @@ public:
         Honey::Ref<Honey::IndexBuffer> square_index_buffer;
         square_index_buffer.reset(Honey::IndexBuffer::create(square_indices, sizeof(square_indices)/sizeof(square_indices[0])));
         m_square_vertex_array->set_index_buffer(square_index_buffer);
-
-
-
-        //m_shader.reset(Honey::Shader::create(vertex_src, fragment_src));
 
 
 
@@ -186,8 +184,8 @@ class Sandbox : public Honey::Application {
 public:
     Sandbox() {
         //push_layer(new PongLayer());
-        push_layer(new ExampleLayer());
-
+        //push_layer(new ExampleLayer());
+        push_layer(new Application2D());
 
     }
 

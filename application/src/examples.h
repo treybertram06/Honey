@@ -8,7 +8,7 @@ public:
         m_camera_position(0.0f, 0.0f, 0.0f),
         paddle_pos(-1.5f, 0.0f, 0.0f) {
 
-        m_vertex_array.reset(Honey::VertexArray::create());
+        m_vertex_array = Honey::VertexArray::create();
 
         float vertices[3*3 + 4*3] = {
             -0.5f, -0.5f, 0.0f,     1.0f, 0.0f, 1.0f, 1.0f,
@@ -33,7 +33,7 @@ public:
         index_buffer.reset(Honey::IndexBuffer::create(indices, 3));
         m_vertex_array->set_index_buffer(index_buffer);
 
-        m_square_vertex_array.reset(Honey::VertexArray::create());
+        m_square_vertex_array = Honey::VertexArray::create();
 
         float vertices_sq[3*4] = {
             -0.5f, -0.5f, 0.0f,

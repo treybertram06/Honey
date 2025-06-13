@@ -1,7 +1,10 @@
 # application/CMakeLists.txt
 
 add_executable(application
-        src/application.cpp)
+        src/application.cpp
+        src/application_2d.h
+        src/application_2d.cpp
+)
 
 # 1 ─ ensure engine headers are visible
 target_link_libraries(application PRIVATE

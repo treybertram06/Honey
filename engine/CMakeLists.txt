@@ -97,6 +97,37 @@ target_precompile_headers(engine
          ${CMAKE_CURRENT_BINARY_DIR}
  )
 
+target_compile_definitions(engine
+        PUBLIC
+        $<$<CONFIG:Debug,RelWithDebInfo>:BUILD_DEBUG>
+        $<$<CONFIG:Release>:BUILD_RELEASE NDEBUG>
+)
+
+if(MSVC)
+ target_compile_options(engine
+         PRIVATE
+         $<$<CONFIG:Release>:/O2 /Ot /Ob2>      # high optimisation
+         $<$<CONFIG:Debug>:/Od /RTC1>           # no optimisation + run-time checks
+ )
+ target_link_options(engine PRIVATE
+         $<$<CONFIG:Release>:/LTCG>                 # link-time optimisation (LTO)
+ )
+else() # GCC / Clang / AppleClang
+ target_compile_options(engine
+         PRIVATE
+         $<$<CONFIG:Release>:-O3 -march=native> # high optimisation
+         $<$<CONFIG:Debug>:-O0 -g>              # debug friendly
+ )
+ # Try to enable LTO for Release when the toolchain supports it
+ include(CheckIPOSupported)
+ check_ipo_supported(RESULT IPO_OK OUTPUT IPO_ERR)
+ if(IPO_OK)
+  set_property(TARGET engine PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+ endif()
+endif()
+
+
+
 # Platform‑specific compile definitions
 if (WIN32)
  message(STATUS "Configuring for Windows")
