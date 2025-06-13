@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Honey/input.h"
+#include "../../Honey/core/input.h"
 #include "hnpch.h"
 
 namespace Honey {

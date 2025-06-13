@@ -6,15 +6,15 @@
 #include "window.h"
 #include "layer.h"
 #include "layer_stack.h"
-#include "events/event.h"
-#include "events/application_event.h"
+#include "../events/event.h"
+#include "../events/application_event.h"
 
 #include "Honey/imgui/imgui_layer.h"
 
 #include "Honey/renderer/shader.h"
 #include "Honey/renderer/buffer.h"
 #include "Honey/renderer/vertex_array.h"
-#include "renderer/camera.h"
+#include "../renderer/camera.h"
 
 namespace Honey {
 

@@ -1,7 +1,7 @@
 #include <Honey.h>
 #include <imgui.h>
 #include "Honey/core/statistics.h"
-#include "Honey/entry_point.h"
+#include "../../engine/src/Honey/core/entry_point.h"
 #include "examples.h"
 #include "glm/gtc/type_ptr.inl"
 #include "platform/opengl/opengl_shader.h"
@@ -130,14 +130,6 @@ public:
         m_transparent_texture->bind();
         Honey::Renderer::submit(texture_shader, m_square_vertex_array, glm::scale(glm::mat4(1.0f), glm::vec3(1.5f)));
 
-
-
-
-
-
-        //triangle
-        //Honey::Renderer::submit(m_shader, m_vertex_array);
-
         Honey::RenderCommand::draw_indexed(m_square_vertex_array);
         Honey::RenderCommand::draw_indexed(m_vertex_array);
 
@@ -159,9 +151,13 @@ public:
 
         m_camera_controller.on_event(e);
 
+        Honey::EventDispatcher dispatcher(e);
+        dispatcher.dispatch<Honey::KeyPressedEvent>(HN_BIND_EVENT_FN(ExampleLayer::on_key_pressed_event));
+
+
         }
 
-    bool on_key_pressed_e(Honey::KeyPressedEvent& e) {
+    bool on_key_pressed_event(Honey::KeyPressedEvent& e) {
 
         if (e.get_key_code() == HN_KEY_ESCAPE)
             Honey::Application::quit();

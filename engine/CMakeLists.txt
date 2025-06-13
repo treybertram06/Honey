@@ -3,12 +3,12 @@
 option(ENABLE_ASSERTS "Enable HN_ASSERT / HN_CORE_ASSERT checks" ON)
 
 add_library(engine STATIC
-        src/Honey/engine.cpp
-        src/Honey/engine.h
-        src/Honey/core.h
-        src/Honey/entry_point.h
-        src/Honey/log.h
-        src/Honey/log.cpp
+        src/Honey/core/engine.cpp
+        src/Honey/core/engine.h
+        src/Honey/core/core.h
+        src/Honey/core/entry_point.h
+        src/Honey/core/log.h
+        src/Honey/core/log.cpp
         src/Honey/events/event.h
         src/Honey/events/key_event.h
         src/Honey/events/mouse_event.h
@@ -17,18 +17,18 @@ add_library(engine STATIC
         src/window.h
         src/platform/macos/macos_window.h
         src/platform/macos/macos_window.cpp
-        src/Honey/layer.cpp
-        src/Honey/layer.h
-        src/Honey/layer_stack.cpp
-        src/Honey/layer_stack.h
+        src/Honey/core/layer.cpp
+        src/Honey/core/layer.h
+        src/Honey/core/layer_stack.cpp
+        src/Honey/core/layer_stack.h
         src/platform/windows/windows_window.cpp
         src/Honey/imgui/imgui_layer.cpp
         src/Honey/imgui/imgui_layer.h
-        src/Honey/input.h
+        src/Honey/core/input.h
         src/platform/windows/windows_input.h
         src/platform/windows/windows_input.cpp
-        src/Honey/keycodes.h
-        src/Honey/mouse_button_codes.h
+        src/Honey/core/keycodes.h
+        src/Honey/core/mouse_button_codes.h
         src/Honey/imgui/imgui_build.cpp
         src/platform/macos/macos_input.h
         src/platform/macos/macos_input.cpp

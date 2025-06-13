@@ -1,7 +1,7 @@
 #pragma once
 
 // Core engine
-#include "Honey/engine.h"
+#include "Honey/core/engine.h"
 #include "Honey/renderer/renderer.h"
 #include "Honey/renderer/render_command.h"
 
@@ -16,17 +16,17 @@
 #include "Honey/camera_controller.h"
 
 // Layering & UI
-#include "Honey/layer.h"
+#include "Honey/core/layer.h"
 #include "Honey/imgui/imgui_layer.h"
 
 // Input & events
-#include "Honey/input.h"
-#include "Honey/keycodes.h"
-#include "Honey/mouse_button_codes.h"
+#include "Honey/core/input.h"
+#include "Honey/core/keycodes.h"
+#include "Honey/core/mouse_button_codes.h"
 #include "Honey/events/event.h"
 
 // Logging
-#include "Honey/log.h"
+#include "Honey/core/log.h"
 #include <spdlog/fmt/ostr.h>
 
 // Entry Point

@@ -14,8 +14,8 @@
 #include <unordered_set>
 #include <map>
 
-#include "Honey/log.h"
-#include "Honey/core.h"
+#include "Honey/core/log.h"
+#include "Honey/core/core.h"
 
 #if defined(HN_PLATFORM_WINDOWS)
   // slim down Windows.h
