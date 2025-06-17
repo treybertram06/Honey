@@ -67,6 +67,8 @@ add_library(engine STATIC
         vendor/stb_image/stb_image.cpp
         src/Honey/camera_controller.h
         src/Honey/camera_controller.cpp
+        src/Honey/renderer/renderer_2d.cpp
+        src/Honey/renderer/renderer_2d.h
 )
 
 # Make sure we define the Windows platform for Visual Studio

@@ -1,5 +1,6 @@
 #include "hnpch.h"
 #include "renderer.h"
+#include "renderer_2d.h"
 #include "platform/opengl/opengl_shader.h"
 
 namespace Honey {
@@ -8,6 +9,7 @@ namespace Honey {
 
     void Renderer::init() {
         RenderCommand::init();
+        Renderer2D::init();
     }
 
     void Renderer::on_window_resize(uint32_t width, uint32_t height) {

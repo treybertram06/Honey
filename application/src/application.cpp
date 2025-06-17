@@ -4,7 +4,7 @@
 
 #include "application_2d.h"
 #include "Honey/core/statistics.h"
-//#include "examples.h"
+#include "examples.h"
 #include "glm/gtc/type_ptr.inl"
 #include "platform/opengl/opengl_shader.h"
 
@@ -127,9 +127,6 @@ public:
         Honey::Renderer::submit(texture_shader, m_square_vertex_array, glm::scale(glm::mat4(1.0f), glm::vec3(1.5f)));
         m_transparent_texture->bind();
         Honey::Renderer::submit(texture_shader, m_square_vertex_array, glm::scale(glm::mat4(1.0f), glm::vec3(1.5f)));
-
-        Honey::RenderCommand::draw_indexed(m_square_vertex_array);
-        Honey::RenderCommand::draw_indexed(m_vertex_array);
 
         Honey::Renderer::end_scene();
 
