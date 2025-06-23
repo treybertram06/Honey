@@ -69,8 +69,8 @@ public:
 
 // this is only here because I want to use the same application file on both of my computers
 #ifdef HN_PLATFORM_MACOS
-        m_flat_color_shader = Honey::Shader::create("/Users/treybertram/Desktop/Honey/application/assets/shaders/flat_color.glsl");
-        m_texture_shader = Honey::Shader::create("/Users/treybertram/Desktop/Honey/application/assets/shaders/texture.glsl");
+        auto flat_color_shader = m_shader_lib.load("/Users/treybertram/Desktop/Honey/application/assets/shaders/flat_color.glsl");
+        auto texture_shader = m_shader_lib.load("/Users/treybertram/Desktop/Honey/application/assets/shaders/texture.glsl");
 
         m_texture = Honey::Texture2D::create("/Users/treybertram/Desktop/Honey/application/assets/textures/bung.png");
         m_transparent_texture = Honey::Texture2D::create("/Users/treybertram/Desktop/Honey/application/assets/textures/transparent.png");

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <glm/glm.hpp>
 
 namespace Honey {
     class Shader {
@@ -9,6 +10,10 @@ namespace Honey {
 
         virtual void bind() const = 0;
         virtual void unbind() const = 0;
+
+        virtual void set_float3(const std::string& name, const glm::vec3& value) = 0;
+        virtual void set_float4(const std::string& name, const glm::vec4& value) = 0;
+        virtual void set_mat4(const std::string& name, const glm::mat4& value) = 0;
 
         virtual const std::string& get_name() const = 0;
 

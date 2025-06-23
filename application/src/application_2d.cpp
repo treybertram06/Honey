@@ -2,7 +2,6 @@
 
 #include "imgui.h"
 #include "glm/gtc/type_ptr.hpp"
-#include "platform/opengl/opengl_shader.h"
 
 Application2D::Application2D()
     : Layer("Application2D"),
@@ -34,20 +33,18 @@ void Application2D::on_update(Honey::Timestep ts) {
 
         Honey::Renderer2D::begin_scene(m_camera_controller.get_camera());
 
-        Honey::Renderer2D::draw_quad({0.0f, 0.0f}, {1.0f, 1.0f}, {0.8f, 0.2f, 0.3f, 1.0f});
+        Honey::Renderer2D::draw_quad({0.0f, 0.0f}, {1.0f, 1.0f}, m_square_color);
+        Honey::Renderer2D::draw_quad({2.0f, 2.0f}, {1.0f, 1.0f}, {0.8f, 0.2f, 0.3f, 1.0f});
 
         Honey::Renderer2D::end_scene();
 
-        // TODO: Add Shader::set_mat4, Shader::set_float4
-        //std::dynamic_pointer_cast<Honey::OpenGLShader>(m_shader)->bind();
-        //std::dynamic_pointer_cast<Honey::OpenGLShader>(m_shader)->upload_uniform_float3("u_color", m_square_color);
 }
 
 
 void Application2D::on_imgui_render() {
 
     ImGui::Begin("Settings");
-    ImGui::ColorEdit3("Square color", glm::value_ptr(m_square_color));
+    ImGui::ColorEdit4("Square color", glm::value_ptr(m_square_color));
     ImGui::End();
 }
 

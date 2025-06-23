@@ -4,7 +4,6 @@
 #include "render_command.h"
 #include "vertex_array.h"
 #include "shader.h"
-#include "platform/opengl/opengl_shader.h"
 
 namespace Honey {
 
@@ -41,7 +40,8 @@ namespace Honey {
         s_data->vertex_array->set_index_buffer(square_index_buffer);
 
 
-        s_data->shader = Shader::create("C:/Users/treyb/CLionProjects/engine/application/assets/shaders/flat_color.glsl");
+        //s_data->shader = Shader::create("C:/Users/treyb/CLionProjects/engine/application/assets/shaders/flat_color.glsl");
+        s_data->shader = Shader::create("/Users/treybertram/Desktop/Honey/application/assets/shaders/flat_color.glsl");
 
     }
 
@@ -50,9 +50,8 @@ namespace Honey {
     }
 
     void Renderer2D::begin_scene(const OrthographicCamera &camera) {
-        std::dynamic_pointer_cast<OpenGLShader>(s_data->shader)->bind();
-        std::dynamic_pointer_cast<OpenGLShader>(s_data->shader)->upload_uniform_mat4("u_view_projection", camera.get_view_projection_matrix());
-        std::dynamic_pointer_cast<OpenGLShader>(s_data->shader)->upload_uniform_mat4("u_transform", glm::mat4(1.0f));
+        s_data->shader->bind();
+        s_data->shader->set_mat4("u_view_projection", camera.get_view_projection_matrix());
     }
 
     void Renderer2D::end_scene() {
@@ -63,12 +62,28 @@ namespace Honey {
     }
 
     void Renderer2D::draw_quad(const glm::vec3 &position, const glm::vec2 &size, const glm::vec4 &color) {
-        std::dynamic_pointer_cast<OpenGLShader>(s_data->shader)->bind();
-        std::dynamic_pointer_cast<OpenGLShader>(s_data->shader)->upload_uniform_float3("u_color", color);
+        s_data->shader->bind();
+        s_data->shader->set_float3("u_color", color);
+
+
+        glm::mat4 transform = glm::translate(glm::mat4(1.0f), position) *
+            glm::scale(glm::mat4(1.0f), { size.x, size.y, 1.0f });
+        s_data->shader->set_mat4("u_transform", transform);
+
 
         s_data->vertex_array->bind();
         RenderCommand::draw_indexed(s_data->vertex_array);
     }
+
+    void Renderer2D::draw_quad(const glm::vec2 &position, const glm::vec2 &size, const Ref<Texture2D> &texture) {
+        draw_quad({position.x, position.y, 0.0f}, size, texture);
+    }
+
+    void Renderer2D::draw_quad(const glm::vec3 &position, const glm::vec2 &size, const Ref<Texture2D> &texture) {
+
+    }
+
+
 
 }
 

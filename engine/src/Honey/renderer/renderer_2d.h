@@ -1,6 +1,7 @@
 #pragma once
 
 #include "camera.h"
+#include "texture.h"
 
 namespace Honey {
 
@@ -16,6 +17,8 @@ namespace Honey {
         // primitives
         static void draw_quad(const glm::vec2& position, const glm::vec2& size, const glm::vec4& color);
         static void draw_quad(const glm::vec3& position, const glm::vec2& size, const glm::vec4& color);
+        static void draw_quad(const glm::vec2& position, const glm::vec2& size, const Ref<Texture2D>& texture);
+        static void draw_quad(const glm::vec3& position, const glm::vec2& size, const Ref<Texture2D>& texture);
 
     };
 }

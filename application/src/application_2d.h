@@ -24,7 +24,7 @@ private:
     Honey::Ref<Honey::VertexArray> m_square_vertex_array;
     Honey::Ref<Honey::Shader> m_shader;
 
-    glm::vec3 m_square_color = { 0.2f, 0.3f, 0.8f };
+    glm::vec4 m_square_color = { 0.2f, 0.3f, 0.8f, 1.0f };
     glm::vec3 m_square_position;
 
     Honey::FramerateCounter framerate_counter;

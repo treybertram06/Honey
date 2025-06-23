@@ -15,6 +15,10 @@ namespace Honey {
         virtual void bind() const override;
         virtual void unbind() const override;
 
+        virtual void set_float3(const std::string& name, const glm::vec3& value) override;
+        virtual void set_float4(const std::string& name, const glm::vec4& value) override;
+        virtual void set_mat4(const std::string& name, const glm::mat4& value) override;
+
         virtual const std::string& get_name() const override { return m_name; }
 
         void upload_uniform_mat4(const std::string& name, const glm::mat4& matrix);
