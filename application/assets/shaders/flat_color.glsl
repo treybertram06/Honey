@@ -20,8 +20,8 @@ out vec3 v_pos;
 layout(location = 0) out vec4 color;
 
 in vec3 v_pos;
-uniform vec3 u_color;
+uniform vec4 u_color;
 
 void main() {
-    color = vec4(u_color, 1.0);
+    color = u_color;
 }

@@ -153,6 +153,14 @@ namespace Honey {
 		glUseProgram(0);
     }
 
+    void OpenGLShader::set_float(const std::string& name, float value) {
+        upload_uniform_float(name, value);
+    }
+
+    void OpenGLShader::set_float2(const std::string& name, const glm::vec2 &value) {
+        upload_uniform_float2(name, value);
+    }
+
     void OpenGLShader::set_float3(const std::string& name, const glm::vec3 &value) {
         upload_uniform_float3(name, value);
     }
@@ -164,6 +172,11 @@ namespace Honey {
     void OpenGLShader::set_mat4(const std::string& name, const glm::mat4 &value) {
         upload_uniform_mat4(name, value);
     }
+
+    void OpenGLShader::set_int(const std::string &name, int value) {
+        upload_uniform_int(name, value);
+    }
+
 
     void OpenGLShader::upload_uniform_mat4(const std::string& name, const glm::mat4& matrix) {
     	GLint location = glGetUniformLocation(m_renderer_id, name.c_str());
