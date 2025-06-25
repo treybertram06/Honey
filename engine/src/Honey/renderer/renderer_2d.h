@@ -15,12 +15,18 @@ namespace Honey {
         static void end_scene();
 
         // primitives
+        static void draw_quad(const glm::vec3& position, const glm::vec2& size,
+                             const Ref<Texture2D>& texture = nullptr,
+                             const glm::vec4& color = {1.0f, 1.0f, 1.0f, 1.0f},
+                             float tiling_multiplier = 1.0f);
+
+        static void draw_quad(const glm::vec2& position, const glm::vec2& size,
+                             const Ref<Texture2D>& texture = nullptr,
+                             const glm::vec4& color = {1.0f, 1.0f, 1.0f, 1.0f},
+                             float tiling_multiplier = 1.0f);
+
         static void draw_quad(const glm::vec2& position, const glm::vec2& size, const glm::vec4& color);
         static void draw_quad(const glm::vec3& position, const glm::vec2& size, const glm::vec4& color);
-        static void draw_quad(const glm::vec2& position, const glm::vec2& size, const Ref<Texture2D>& texture);
-        static void draw_quad(const glm::vec3& position, const glm::vec2& size, const Ref<Texture2D>& texture);
-        static void draw_quad(const glm::vec3& position, const glm::vec2& size, const Ref<Texture2D>& texture, const glm::vec4& color);
-        static void draw_quad(const glm::vec3& position, const glm::vec2& size, const Ref<Texture2D>& texture, const glm::vec4& color, float tiling_multiplier);
 
 
     };

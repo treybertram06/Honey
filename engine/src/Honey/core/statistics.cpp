@@ -3,7 +3,7 @@
 
 namespace Honey {
 
-    FramerateCounter::FramerateCounter(size_t history_size = 500) // 500 frames default
+    FramerateCounter::FramerateCounter(size_t history_size) // 500 frames default
         : m_history_size(history_size) {
         m_frame_times.reserve(history_size);
     }

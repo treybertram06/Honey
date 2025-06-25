@@ -9,7 +9,6 @@ namespace Honey {
 
     struct Renderer2DStorage {
         Ref<VertexArray> vertex_array;
-        Ref<Shader> flat_color_shader;
         Ref<Shader> texture_shader;
         Ref<Texture2D> blank_texture;
     };
@@ -64,29 +63,11 @@ namespace Honey {
     void Renderer2D::end_scene() {
     }
 
-    void Renderer2D::draw_quad(const glm::vec2 &position, const glm::vec2 &size, const glm::vec4 &color) {
-       draw_quad({position.x, position.y, 0.0f}, size, color);
-    }
-
-    void Renderer2D::draw_quad(const glm::vec3 &position, const glm::vec2 &size, const glm::vec4 &color) {
-        draw_quad(position, size, s_data->blank_texture, color, 1.0f);
-    }
-
-    void Renderer2D::draw_quad(const glm::vec2 &position, const glm::vec2 &size, const Ref<Texture2D> &texture) {
-        draw_quad({position.x, position.y, 0.0f}, size, texture);
-    }
-
-    void Renderer2D::draw_quad(const glm::vec3 &position, const glm::vec2 &size, const Ref<Texture2D> &texture) {
-        draw_quad(position, size, texture, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
-    }
-
-    void Renderer2D::draw_quad(const glm::vec3 &position, const glm::vec2 &size, const Ref<Texture2D> &texture, const glm::vec4 &color) {
-        draw_quad(position, size, texture, color, 1.0f);
-    }
-
-
-    void Renderer2D::draw_quad(const glm::vec3 &position, const glm::vec2 &size, const Ref<Texture2D> &texture, const glm::vec4 &color, float tiling_multiplier) {
-        s_data->texture_shader->bind();
+    void Renderer2D::draw_quad(const glm::vec3& position, const glm::vec2& size,
+                          const Ref<Texture2D>& texture, const glm::vec4& color,
+                          float tiling_multiplier) {
+        // Use blank texture if none provided
+        const Ref<Texture2D>& actual_texture = texture ? texture : s_data->blank_texture;
 
         glm::mat4 transform = glm::translate(glm::mat4(1.0f), position) *
             glm::scale(glm::mat4(1.0f), { size.x, size.y, 1.0f });
@@ -94,11 +75,28 @@ namespace Honey {
         s_data->texture_shader->set_float4("u_color", color);
         s_data->texture_shader->set_float("u_tiling_multiplier", tiling_multiplier);
 
-        texture->bind();
+        actual_texture->bind();
 
         s_data->vertex_array->bind();
         RenderCommand::draw_indexed(s_data->vertex_array);
     }
+
+    void Renderer2D::draw_quad(const glm::vec2& position, const glm::vec2& size,
+                              const Ref<Texture2D>& texture, const glm::vec4& color,
+                              float tiling_multiplier) {
+        draw_quad({position.x, position.y, 0.0f}, size, texture, color, tiling_multiplier);
+    }
+
+    void Renderer2D::draw_quad(const glm::vec2& position, const glm::vec2& size, const glm::vec4& color) {
+        draw_quad(position, size, nullptr, color, 1.0f);
+    }
+
+    void Renderer2D::draw_quad(const glm::vec3& position, const glm::vec2& size, const glm::vec4& color) {
+        draw_quad(position, size, nullptr, color, 1.0f);
+    }
+
+
+
 
 
 

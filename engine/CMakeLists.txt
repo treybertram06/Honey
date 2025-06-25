@@ -57,6 +57,7 @@ add_library(engine STATIC
         src/Honey/renderer/camera.cpp
         src/Honey/core/timestep.h
         src/Honey/core/statistics.h
+        src/Honey/core/statistics.cpp
         src/platform/opengl/opengl_shader.h
         src/platform/opengl/opengl_shader.cpp
         src/Honey/renderer/texture.h

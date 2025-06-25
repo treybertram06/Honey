@@ -39,6 +39,20 @@ void Application2D::on_update(Honey::Timestep ts) {
         Honey::Renderer2D::draw_quad({0.0f, 1.0f, 0.0f}, {0.5f, 0.5f}, m_chuck_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
         Honey::Renderer2D::draw_quad({0.0f, 0.0f, -0.1f}, {100.0f, 100.0f}, m_missing_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 1000.0f);
 
+    /*
+     * class Batch {
+     * void add(Sprite) { id is assigned }
+     * Sprite remove(id) { sprite with associated id is removed and Sprite is returned but does not require capture }
+     * helpers()...
+     * void draw_batch()
+     * }
+     */
+
+
+
+        //add Sprites to the Batch
+        //draw_batch();
+
         Honey::Renderer2D::end_scene();
 
 }
