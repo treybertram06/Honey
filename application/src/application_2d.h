@@ -23,7 +23,7 @@ private:
     // temp
     Honey::Ref<Honey::VertexArray> m_square_vertex_array;
     Honey::Ref<Honey::Shader> m_shader;
-    Honey::Ref<Honey::Texture2D> m_chuck_texture;
+    Honey::Ref<Honey::Texture2D> m_chuck_texture, m_transparent_texture;
     Honey::Ref<Honey::Texture2D> m_missing_texture;
 
     glm::vec4 m_square_color = { 0.2f, 0.3f, 0.8f, 1.0f };

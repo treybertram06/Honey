@@ -12,6 +12,7 @@ void Application2D::on_attach() {
 
     m_chuck_texture = Honey::Texture2D::create("../../application/assets/textures/bung.png");
     m_missing_texture = Honey::Texture2D::create("../../application/assets/textures/missing.png");
+    m_transparent_texture = Honey::Texture2D::create("../../application/assets/textures/transparent.png");
 
 }
 
@@ -38,6 +39,7 @@ void Application2D::on_update(Honey::Timestep ts) {
         Honey::Renderer2D::draw_quad({2.0f, 2.0f}, {1.0f, 1.0f}, {0.8f, 0.2f, 0.3f, 1.0f});
         Honey::Renderer2D::draw_quad({0.0f, 1.0f, 0.0f}, {0.5f, 0.5f}, m_chuck_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
         Honey::Renderer2D::draw_quad({0.0f, 0.0f, -0.1f}, {100.0f, 100.0f}, m_missing_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 1000.0f);
+        Honey::Renderer2D::draw_quad({-1.0f, -0.33f, 0.0f}, {2.0f, 2.0f}, m_transparent_texture);
 
     /*
      * class Batch {

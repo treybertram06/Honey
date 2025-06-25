@@ -7,6 +7,46 @@
 
 namespace Honey {
 
+    OpenGLTexture2D::OpenGLTexture2D(uint32_t width, uint32_t height)
+        : m_width(width), m_height(height) {
+
+        // Set format first
+        m_internal_format = GL_RGBA8;
+        m_format = GL_RGBA;
+
+#if defined(HN_PLATFORM_WINDOWS)
+        // New‐style (DSA) API, requires OpenGL ≥4.5
+        glCreateTextures(GL_TEXTURE_2D, 1, &m_renderer_id);
+        glTextureStorage2D(m_renderer_id, 1, m_internal_format, m_width, m_height);
+
+        // Set texture parameters (DSA calls)
+        glTextureParameteri(m_renderer_id, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTextureParameteri(m_renderer_id, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTextureParameteri(m_renderer_id, GL_TEXTURE_WRAP_S,     GL_REPEAT);
+        glTextureParameteri(m_renderer_id, GL_TEXTURE_WRAP_T,     GL_REPEAT);
+
+#elif defined(HN_PLATFORM_MACOS)
+        // Old‐style bind‐and‐upload API, since macOS max core is GL 4.1
+        glGenTextures(1, &m_renderer_id);
+        glBindTexture(GL_TEXTURE_2D, m_renderer_id);
+
+        // Set texture parameters (legacy calls)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,     GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,     GL_REPEAT);
+
+        // Allocate storage with null data
+        glTexImage2D(GL_TEXTURE_2D, 0, m_internal_format, m_width, m_height, 0, m_format, GL_UNSIGNED_BYTE, nullptr);
+
+        // Unbind to avoid accidental modification
+        glBindTexture(GL_TEXTURE_2D, 0);
+
+#else
+    #error "Unsupported platform for OpenGLTexture2D creation"
+#endif
+    }
+
     OpenGLTexture2D::OpenGLTexture2D(const std::string& path)
         : m_path(path)
     {
@@ -21,14 +61,14 @@ namespace Honey {
         m_width  = width;
         m_height = height;
 
+        // Choose internal format based on channel count
+        m_internal_format = (channels == 4 ? GL_RGBA8 : GL_RGB8);
+        m_format = (channels == 4 ? GL_RGBA : GL_RGB);
+
 #if defined(HN_PLATFORM_WINDOWS)
         // New‐style (DSA) API, requires OpenGL ≥4.5
         glCreateTextures(GL_TEXTURE_2D, 1, &m_renderer_id);
-        // Choose internal format based on channel count (only RGB and RGBA shown)
-        GLenum internalFormat = (channels == 4 ? GL_RGBA8 : GL_RGB8);
-        GLenum dataFormat     = (channels == 4 ? GL_RGBA  : GL_RGB);
-
-        glTextureStorage2D(m_renderer_id, 1, internalFormat, m_width, m_height);
+        glTextureStorage2D(m_renderer_id, 1, m_internal_format, m_width, m_height);
 
         // Set texture parameters (DSA calls)
         glTextureParameteri(m_renderer_id, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -36,25 +76,10 @@ namespace Honey {
         glTextureParameteri(m_renderer_id, GL_TEXTURE_WRAP_S,     GL_REPEAT);
         glTextureParameteri(m_renderer_id, GL_TEXTURE_WRAP_T,     GL_REPEAT);
 
-        // Upload the pixel data
-        glTextureSubImage2D(
-            m_renderer_id,
-            0,                  // mip level
-            0, 0,               // xoffset, yoffset
-            m_width, m_height,
-            dataFormat,
-            GL_UNSIGNED_BYTE,
-            data
-        );
-
 #elif defined(HN_PLATFORM_MACOS)
         // Old‐style bind‐and‐upload API, since macOS max core is GL 4.1
         glGenTextures(1, &m_renderer_id);
         glBindTexture(GL_TEXTURE_2D, m_renderer_id);
-
-        // Choose internal/format based on channels
-        GLenum internalFormat = (channels == 4 ? GL_RGBA8 : GL_RGB8);
-        GLenum dataFormat     = (channels == 4 ? GL_RGBA  : GL_RGB);
 
         // Set texture parameters (legacy calls)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -62,17 +87,8 @@ namespace Honey {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,     GL_REPEAT);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,     GL_REPEAT);
 
-        // Allocate and upload
-        glTexImage2D(
-            GL_TEXTURE_2D,
-            0,               // mip level
-            internalFormat,  // internal format
-            m_width, m_height,
-            0,               // border = 0
-            dataFormat,      // format
-            GL_UNSIGNED_BYTE,
-            data
-        );
+        // Allocate storage with null data first
+        glTexImage2D(GL_TEXTURE_2D, 0, m_internal_format, m_width, m_height, 0, m_format, GL_UNSIGNED_BYTE, nullptr);
 
         // Unbind to avoid accidental modification
         glBindTexture(GL_TEXTURE_2D, 0);
@@ -80,6 +96,10 @@ namespace Honey {
 #else
     #error "Unsupported platform for OpenGLTexture2D creation"
 #endif
+
+        // Now use set_data to upload the pixel data
+        uint32_t data_size = m_width * m_height * channels;
+        set_data(data, data_size);
 
         stbi_image_free(data);
     }
@@ -90,6 +110,24 @@ namespace Honey {
         glDeleteTextures(1, &m_renderer_id);
 #else
     #error "Unsupported platform for OpenGLTexture2D destruction"
+#endif
+    }
+
+    void OpenGLTexture2D::set_data(void *data, uint32_t size) {
+        uint32_t bpp = m_format == GL_RGBA ? 4 : 3;
+        HN_CORE_ASSERT(size == m_width * m_height * bpp, "Size parameter does not match data buffer size.");
+        
+#if defined(HN_PLATFORM_WINDOWS)
+        glTextureSubImage2D(m_renderer_id, 0, 0, 0, m_width, m_height, m_format, GL_UNSIGNED_BYTE, data);
+    
+#elif defined(HN_PLATFORM_MACOS)
+        // Legacy approach: bind texture, update data, then unbind
+        glBindTexture(GL_TEXTURE_2D, m_renderer_id);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, m_width, m_height, m_format, GL_UNSIGNED_BYTE, data);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    
+#else
+    #error "Unsupported platform for OpenGLTexture2D set_data()"
 #endif
     }
 

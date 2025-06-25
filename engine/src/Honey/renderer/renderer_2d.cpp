@@ -43,11 +43,13 @@ namespace Honey {
         square_index_buffer.reset(IndexBuffer::create(square_indices, sizeof(square_indices)/sizeof(square_indices[0])));
         s_data->vertex_array->set_index_buffer(square_index_buffer);
 
+        s_data->blank_texture = Texture2D::create(1, 1);
+        uint32_t white_texture_data = 0xffffffff;
+        s_data->blank_texture->set_data(&white_texture_data, sizeof(uint32_t));
+
         s_data->texture_shader = Shader::create("../../application/assets/shaders/texture.glsl");
         s_data->texture_shader->bind();
         s_data->texture_shader->set_int("u_texture", 0);
-
-        s_data->blank_texture = Texture2D::create("../../application/assets/textures/blank.png");
 
     }
 
