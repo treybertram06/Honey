@@ -16,7 +16,6 @@ public:
     virtual void on_imgui_render() override;
     void on_event(Honey::Event &event) override;
 
-
 private:
     Honey::OrthographicCameraController m_camera_controller;
 
@@ -31,5 +30,13 @@ private:
 
     Honey::FramerateCounter framerate_counter;
     int framerate = 0;
+
+
+
+    std::vector<Honey::ProfileResult> m_profile_results;
+    std::vector<Honey::ProfileResult> m_displayed_profile_results;
+    float m_profile_update_timer = 0.0f;
+    float m_profile_update_interval = 0.5f; // Update every 0.5 seconds
+
 
 };
