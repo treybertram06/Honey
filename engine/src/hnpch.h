@@ -16,6 +16,7 @@
 
 #include "Honey/core/log.h"
 #include "Honey/core/core.h"
+#include "Honey/debug/instrumentor.h"
 
 #if defined(HN_PLATFORM_WINDOWS)
   // slim down Windows.h

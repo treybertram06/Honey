@@ -3,7 +3,7 @@
 #include <imgui.h>
 
 #include "application_2d.h"
-#include "Honey/core/statistics.h"
+#include "../../engine/src/Honey/debug/instrumentor.h"
 #include "examples.h"
 #include "glm/gtc/type_ptr.inl"
 #include "platform/opengl/opengl_shader.h"

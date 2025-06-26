@@ -2,9 +2,8 @@
 
 #include "imgui.h"
 #include "glm/gtc/type_ptr.hpp"
-#include "Honey/core/statistics.h"
+#include "hnpch.h"
 
-#define HN_PROFILE_SCOPE(name) Honey::ScopedTimer timer##__LINE__(name, [&](Honey::ProfileResult profile_result) { m_profile_results.push_back(profile_result); })
 
 Application2D::Application2D()
     : Layer("Application2D"),
@@ -22,33 +21,18 @@ void Application2D::on_detach() {
 }
 
 void Application2D::on_update(Honey::Timestep ts) {
-    HN_PROFILE_SCOPE("Application2D::on_update");
+    HN_PROFILE_FUNCTION();
     // update
-    m_camera_controller.on_update(ts);
+    {
+        HN_PROFILE_SCOPE("Application2D::camera_update");
+        m_camera_controller.on_update(ts);
+    }
 
     //profiling
     {
-        HN_PROFILE_SCOPE("Application2D::profile");
+        HN_PROFILE_SCOPE("Application2D::framerate");
         framerate_counter.update(ts);
         framerate = framerate_counter.get_smoothed_fps();
-
-        m_profile_update_timer += ts.get_seconds();
-
-        if (m_profile_update_timer >= m_profile_update_interval) {
-            std::map<std::string, Honey::ProfileResult> latest_results;
-
-            for (const auto& result : m_profile_results) {
-                latest_results[result.name] = result;
-            }
-
-            m_displayed_profile_results.clear();
-            for (const auto& pair : latest_results) {
-                m_displayed_profile_results.push_back(pair.second);
-            }
-
-            m_profile_results.clear();
-            m_profile_update_timer = 0.0f;
-        }
     }
 
     {
@@ -90,14 +74,9 @@ void Application2D::on_update(Honey::Timestep ts) {
 }
 
 void Application2D::on_imgui_render() {
+    HN_PROFILE_FUNCTION();
     ImGui::Begin("Settings");
     ImGui::ColorEdit4("Square color", glm::value_ptr(m_square_color));
-
-    ImGui::SliderFloat("Profile Update Rate", &m_profile_update_interval, 0.1f, 2.0f, "%.1fs");
-
-    for (auto& result : m_displayed_profile_results) {
-        ImGui::Text("%s %.6fms", result.name, result.time);
-    }
 
     ImGui::End();
 }
