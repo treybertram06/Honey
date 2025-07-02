@@ -21,6 +21,8 @@ namespace Honey {
 
 
     OpenGLShader::OpenGLShader(const std::string& path) {
+        HN_PROFILE_FUNCTION();
+
         std::string source = read_file(path);
         auto shader_srcs = pre_process(source);
         compile(shader_srcs);
@@ -40,10 +42,13 @@ namespace Honey {
     }
 
     OpenGLShader::~OpenGLShader() {
+        HN_PROFILE_FUNCTION();
+
 	    glDeleteProgram(m_renderer_id);
     }
 
     void OpenGLShader::compile(const std::unordered_map<GLenum, std::string> &shader_srcs) {
+        HN_PROFILE_FUNCTION();
 
         GLuint program = glCreateProgram();
         HN_CORE_ASSERT(shader_srcs.size() <= 2, "Only supports 2 shaders for now");
@@ -108,6 +113,8 @@ namespace Honey {
 
 
     std::string OpenGLShader::read_file(const std::string& path) {
+        HN_PROFILE_FUNCTION();
+
         std::string result;
         std::ifstream in(path, std::ios::in | std::ios::binary);
         if (in) {
@@ -123,6 +130,8 @@ namespace Honey {
     }
 
     std::unordered_map<GLenum, std::string> OpenGLShader::pre_process(const std::string& source) {
+        HN_PROFILE_FUNCTION();
+
         std::unordered_map<GLenum, std::string> shader_srcs;
 
         const char* type_token = "#type";
@@ -146,34 +155,50 @@ namespace Honey {
 
 
     void OpenGLShader::bind() const {
+        HN_PROFILE_FUNCTION();
+
 		glUseProgram(m_renderer_id);
     }
 
     void OpenGLShader::unbind() const {
+        HN_PROFILE_FUNCTION();
+
 		glUseProgram(0);
     }
 
     void OpenGLShader::set_float(const std::string& name, float value) {
+        HN_PROFILE_FUNCTION();
+
         upload_uniform_float(name, value);
     }
 
     void OpenGLShader::set_float2(const std::string& name, const glm::vec2 &value) {
+        HN_PROFILE_FUNCTION();
+
         upload_uniform_float2(name, value);
     }
 
     void OpenGLShader::set_float3(const std::string& name, const glm::vec3 &value) {
+        HN_PROFILE_FUNCTION();
+
         upload_uniform_float3(name, value);
     }
 
     void OpenGLShader::set_float4(const std::string& name, const glm::vec4 &value) {
+        HN_PROFILE_FUNCTION();
+
         upload_uniform_float4(name, value);
     }
 
     void OpenGLShader::set_mat4(const std::string& name, const glm::mat4 &value) {
+        HN_PROFILE_FUNCTION();
+
         upload_uniform_mat4(name, value);
     }
 
     void OpenGLShader::set_int(const std::string &name, int value) {
+        HN_PROFILE_FUNCTION();
+
         upload_uniform_int(name, value);
     }
 

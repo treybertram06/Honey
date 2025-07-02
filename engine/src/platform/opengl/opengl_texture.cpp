@@ -9,6 +9,7 @@ namespace Honey {
 
     OpenGLTexture2D::OpenGLTexture2D(uint32_t width, uint32_t height)
         : m_width(width), m_height(height) {
+    	HN_PROFILE_FUNCTION();
 
         // Set format first
         m_internal_format = GL_RGBA8;
@@ -50,9 +51,15 @@ namespace Honey {
     OpenGLTexture2D::OpenGLTexture2D(const std::string& path)
         : m_path(path)
     {
+    	HN_PROFILE_FUNCTION();
+
         int width, height, channels;
         stbi_set_flip_vertically_on_load(true);
-        stbi_uc* data = stbi_load(path.c_str(), &width, &height, &channels, 0);
+    	stbi_uc* data = nullptr;
+	    {
+    		HN_PROFILE_SCOPE("OpenGLTexture2D::OpenGLTexture2D(const std::string& path) - stbi_load");
+		    data = stbi_load(path.c_str(), &width, &height, &channels, 0);
+	    }
         if (data == nullptr) {
             HN_CORE_ERROR("At path: {0}", path);
             HN_CORE_ASSERT(false, "Failed to load image.");
@@ -106,6 +113,8 @@ namespace Honey {
 
     OpenGLTexture2D::~OpenGLTexture2D()
     {
+    	HN_PROFILE_FUNCTION();
+
 #if defined(HN_PLATFORM_WINDOWS) || defined(HN_PLATFORM_MACOS)
         glDeleteTextures(1, &m_renderer_id);
 #else
@@ -114,6 +123,8 @@ namespace Honey {
     }
 
     void OpenGLTexture2D::set_data(void *data, uint32_t size) {
+    	HN_PROFILE_FUNCTION();
+
         uint32_t bpp = m_format == GL_RGBA ? 4 : 3;
         HN_CORE_ASSERT(size == m_width * m_height * bpp, "Size parameter does not match data buffer size.");
         
@@ -133,6 +144,8 @@ namespace Honey {
 
     void OpenGLTexture2D::bind(uint32_t slot) const
     {
+    	HN_PROFILE_FUNCTION();
+
 #if defined(HN_PLATFORM_WINDOWS)
         // New‐style bindless API (requires GL ≥4.5)
         glBindTextureUnit(slot, m_renderer_id);

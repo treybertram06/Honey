@@ -9,7 +9,7 @@ namespace Honey {
     Ref<VertexArray> VertexArray::create() {
         switch (Renderer::get_api()) {
             case RendererAPI::API::none:     HN_CORE_ASSERT(false, "RendererAPI::none is not supported."); return nullptr;
-            case RendererAPI::API::opengl:   return std::make_shared<OpenGLVertexArray>();
+            case RendererAPI::API::opengl:   return CreateRef<OpenGLVertexArray>();
         }
 
         HN_CORE_ASSERT(false, "Unknown RendererAPI.");

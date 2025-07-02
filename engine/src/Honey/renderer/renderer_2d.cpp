@@ -16,6 +16,8 @@ namespace Honey {
     static Renderer2DStorage* s_data;
 
     void Renderer2D::init() {
+        HN_PROFILE_FUNCTION();
+
         s_data = new Renderer2DStorage;
 
         s_data->vertex_array = VertexArray::create();
@@ -54,20 +56,28 @@ namespace Honey {
     }
 
     void Renderer2D::shutdown() {
+        HN_PROFILE_FUNCTION();
+
         delete s_data;
     }
 
     void Renderer2D::begin_scene(const OrthographicCamera &camera) {
+        HN_PROFILE_FUNCTION();
+
         s_data->texture_shader->bind();
         s_data->texture_shader->set_mat4("u_view_projection", camera.get_view_projection_matrix());
     }
 
     void Renderer2D::end_scene() {
+        HN_PROFILE_FUNCTION();
+
     }
 
     void Renderer2D::draw_quad(const glm::vec3& position, const glm::vec2& size,
                           const Ref<Texture2D>& texture, const glm::vec4& color,
                           float tiling_multiplier) {
+        HN_PROFILE_FUNCTION();
+
         // Use blank texture if none provided
         const Ref<Texture2D>& actual_texture = texture ? texture : s_data->blank_texture;
 

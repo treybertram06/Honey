@@ -28,31 +28,42 @@ namespace Honey {
 
 #ifdef HN_PLATFORM_WINDOWS
     OpenGLVertexArray::OpenGLVertexArray() {
+        HN_PROFILE_FUNCTION();
+
         glCreateVertexArrays(1, &m_renderer_id);
     }
 #endif
 
 #ifdef HN_PLATFORM_MACOS
     OpenGLVertexArray::OpenGLVertexArray() {
+        HN_PROFILE_FUNCTION();
+
         glGenVertexArrays(1, &m_renderer_id);
         glBindVertexArray(m_renderer_id);
     }
 #endif
 
     OpenGLVertexArray::~OpenGLVertexArray() {
+        HN_PROFILE_FUNCTION();
+
         glDeleteVertexArrays(1, &m_renderer_id);
     }
 
 
     void OpenGLVertexArray::bind() const {
+        HN_PROFILE_FUNCTION();
+
         glBindVertexArray(m_renderer_id);
     }
 
     void OpenGLVertexArray::unbind() const {
+        HN_PROFILE_FUNCTION();
+
         glBindVertexArray(0);
     }
 
     void OpenGLVertexArray::add_vertex_buffer(const Ref<VertexBuffer> &vertex_buffer) {
+        HN_PROFILE_FUNCTION();
 
         HN_CORE_ASSERT(vertex_buffer->get_layout().get_elements().size(), "VertexBuffer has no layout!");
 
@@ -75,6 +86,8 @@ namespace Honey {
     }
 
     void OpenGLVertexArray::set_index_buffer(const Ref<IndexBuffer> &index_buffer) {
+        HN_PROFILE_FUNCTION();
+
         glBindVertexArray(m_renderer_id);
         index_buffer->bind();
 

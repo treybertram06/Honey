@@ -19,6 +19,8 @@ namespace Honey {
     }
 
     void OrthographicCamera::recalc_projection_matrix() {
+        HN_PROFILE_FUNCTION();
+
         float half_height = m_size * 0.5f;
         float half_width = half_height * m_aspect_ratio;
 
@@ -33,6 +35,8 @@ namespace Honey {
     }
 
     void OrthographicCamera::recalc_view_matrix() {
+        HN_PROFILE_FUNCTION();
+
         glm::mat4 transform = glm::translate(glm::mat4(1.0f), m_position) * glm::rotate(glm::mat4(1.0f), glm::radians(m_rotation), glm::vec3(0, 0, 1));
         //glm::mat4 transform =  glm::rotate(glm::mat4(1.0f), glm::radians(m_rotation), glm::vec3(0, 0, 1)) * glm::translate(glm::mat4(1.0f), m_position);
 

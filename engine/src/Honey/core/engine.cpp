@@ -17,6 +17,7 @@ namespace Honey {
 
 
     Application::Application() {
+        HN_PROFILE_FUNCTION();
 
         HN_CORE_ASSERT(!s_instance, "Application already exists!");
         s_instance = this;
@@ -34,14 +35,21 @@ namespace Honey {
 
     }
 
-    Application::~Application() {}
+    Application::~Application() {
+        HN_PROFILE_FUNCTION();
+
+    }
 
     void Application::push_layer(Layer *layer) {
+        HN_PROFILE_FUNCTION();
+
         m_layer_stack.push_layer(layer);
         layer->on_attach();
     }
 
     void Application::push_overlay(Layer *layer) {
+        HN_PROFILE_FUNCTION();
+
         m_layer_stack.push_overlay(layer);
         layer->on_attach();
     }
@@ -49,6 +57,8 @@ namespace Honey {
 
 
     void Application::on_event(Event& e) {
+        HN_PROFILE_FUNCTION();
+
         EventDispatcher dispatcher(e);
 
         dispatcher.dispatch<WindowCloseEvent>(BIND_EVENT_FN(Application::on_window_close));
@@ -69,23 +79,33 @@ namespace Honey {
 
 
     void Application::run() {
+        HN_PROFILE_FUNCTION();
+
         while (m_running)
         {
+            HN_PROFILE_SCOPE("Application run loop");
 
             float time = (float)glfwGetTime();
             Timestep timestep = time - m_last_frame_time;
             m_last_frame_time = time;
 
             if (!m_minimized) {
-                for (Layer* layer : m_layer_stack) {
-                    layer->on_update(timestep);
+                {
+                    HN_PROFILE_SCOPE("LayerStack on_update");
+
+                    for (Layer* layer : m_layer_stack) {
+                        layer->on_update(timestep);
+                    }
                 }
-            }
 
                 m_imgui_layer->begin();
-                for (Layer* layer : m_layer_stack)
-                    layer->on_imgui_render();
+                {
+                    HN_PROFILE_SCOPE("LayerStack on_imgui_render");
+                    for (Layer* layer : m_layer_stack)
+                        layer->on_imgui_render();
+                }
                 m_imgui_layer->end();
+            }
 
             m_window->on_update();
         }
@@ -97,6 +117,7 @@ namespace Honey {
     }
 
     bool Application::on_window_resize(WindowResizeEvent &e) {
+        HN_PROFILE_FUNCTION();
 
         if (e.get_width() == 0 || e.get_height() == 0) {
             m_minimized = true;

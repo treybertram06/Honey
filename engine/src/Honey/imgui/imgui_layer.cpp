@@ -22,6 +22,8 @@ namespace Honey {
      }
 
     void ImGuiLayer::on_attach() {
+     	HN_PROFILE_FUNCTION();
+
          //setup imgui context
          IMGUI_CHECKVERSION();
          ImGui::CreateContext();
@@ -53,12 +55,16 @@ namespace Honey {
      }
 
     void ImGuiLayer::on_detach() {
+     	HN_PROFILE_FUNCTION();
+
          ImGui_ImplOpenGL3_Shutdown();
          ImGui_ImplGlfw_Shutdown();
          ImGui::DestroyContext();
      }
 
     void ImGuiLayer::begin() {
+     	HN_PROFILE_FUNCTION();
+
          ImGuiIO& io = ImGui::GetIO();
          Application& app = Application::get();
          io.DisplaySize = ImVec2(app.get_window().get_width(), app.get_window().get_height());
@@ -69,6 +75,8 @@ namespace Honey {
     }
 
     void ImGuiLayer::end() {
+     	HN_PROFILE_FUNCTION();
+
          ImGuiIO& io = ImGui::GetIO();
 
 
@@ -84,6 +92,8 @@ namespace Honey {
     }
 
     void ImGuiLayer::on_imgui_render() {
+     	HN_PROFILE_FUNCTION();
+
          static bool show = true;
          ImGui::ShowDemoWindow(&show);
     }

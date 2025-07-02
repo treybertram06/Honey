@@ -1,5 +1,5 @@
 
-
+//#define HN_PLATFORM_WINDOWS 1
 #ifdef HN_PLATFORM_WINDOWS
 
 #include "hnpch.h"
@@ -22,19 +22,25 @@ namespace Honey {
         HN_CORE_ERROR("GLFW Error ({0}): {1}", error, desc);
     }
 
-    Window *Window::create(const WindowProps &props) {
-        return new WindowsWindow(props);
+    Scope<Window> Window::create(const WindowProps &props) {
+        return CreateScope<WindowsWindow>(props);
     }
 
     WindowsWindow::WindowsWindow(const WindowProps& props) {
+        HN_PROFILE_FUNCTION();
+
         init(props);
     }
 
     WindowsWindow::~WindowsWindow() {
+        HN_PROFILE_FUNCTION();
+
         shutdown();
     }
 
     void WindowsWindow::init(const WindowProps& props) {
+        HN_PROFILE_FUNCTION();
+
         m_data.title = props.title;
         m_data.width = props.width;
         m_data.height = props.height;
@@ -150,15 +156,21 @@ namespace Honey {
 
 
     void WindowsWindow::shutdown() {
+        HN_PROFILE_FUNCTION();
+
         glfwDestroyWindow(m_window);
     }
 
     void WindowsWindow::on_update() {
+        HN_PROFILE_FUNCTION();
+
         glfwPollEvents();
         m_context->swap_buffers();
     }
 
     void WindowsWindow::set_vsync(bool enabled) {
+        HN_PROFILE_FUNCTION();
+
         if (enabled) {
             glfwSwapInterval(1);
         } else {

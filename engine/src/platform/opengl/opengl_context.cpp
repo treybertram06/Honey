@@ -13,6 +13,8 @@ namespace Honey {
 
 
     void OpenGLContext::init() {
+        HN_PROFILE_FUNCTION();
+
         glfwMakeContextCurrent(m_window_handle);
         int status = gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
         HN_CORE_ASSERT(status, "Failed to init GLAD!");
@@ -24,6 +26,8 @@ namespace Honey {
     }
 
     void OpenGLContext::swap_buffers() {
+        HN_PROFILE_FUNCTION();
+
         glfwSwapBuffers(m_window_handle);
     }
 

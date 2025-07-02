@@ -12,6 +12,8 @@ namespace Honey {
     }
 
     void OrthographicCameraController::on_update(Timestep ts) {
+        HN_PROFILE_FUNCTION();
+
         if (Input::is_key_pressed(HN_KEY_A))
             m_camera_position.x -= m_camera_translation_speed * ts;
         if (Input::is_key_pressed(HN_KEY_D))
@@ -35,12 +37,16 @@ namespace Honey {
     }
 
     void OrthographicCameraController::on_event(Event &e) {
+        HN_PROFILE_FUNCTION();
+
         EventDispatcher dispatcher(e);
         dispatcher.dispatch<MouseScrolledEvent>(HN_BIND_EVENT_FN(OrthographicCameraController::on_mouse_scrolled));
         dispatcher.dispatch<WindowResizeEvent>(HN_BIND_EVENT_FN(OrthographicCameraController::on_window_resize));
     }
 
     bool OrthographicCameraController::on_mouse_scrolled(MouseScrolledEvent &e) {
+        HN_PROFILE_FUNCTION();
+
         m_zoom_level -= e.get_yoffset() * 0.25f;
         m_zoom_level = std::max(m_zoom_level, 0.25f);
         m_camera.set_size(m_zoom_level);
@@ -48,6 +54,8 @@ namespace Honey {
     }
 
     bool OrthographicCameraController::on_window_resize(WindowResizeEvent &e) {
+        HN_PROFILE_FUNCTION();
+
         m_aspect_ratio = (float)e.get_width() / (float)e.get_height();
         m_camera.set_aspect_ratio(m_aspect_ratio);
         return false;

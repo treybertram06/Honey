@@ -13,6 +13,8 @@
 
 #include <glad/glad.h>
 
+#include "platform/opengl/opengl_context.h"
+
 namespace Honey {
 
     static bool s_glfw_initialized = false;
@@ -21,19 +23,24 @@ namespace Honey {
         HN_CORE_ERROR("GLFW Error ({0}): {1}", error, desc);
     }
 
-    Window *Window::create(const WindowProps &props) {
-        return new MacOSWindow(props);
+    Scope<Window> Window::create(const WindowProps &props) {
+        return CreateScope<MacOSWindow>(props);
     }
 
     MacOSWindow::MacOSWindow(const WindowProps& props) {
+        HN_PROFILE_FUNCTION();
         init(props);
     }
 
     MacOSWindow::~MacOSWindow() {
+        HN_PROFILE_FUNCTION();
+
         shutdown();
     }
 
     void MacOSWindow::init(const WindowProps& props) {
+        HN_PROFILE_FUNCTION();
+
         m_data.title = props.title;
         m_data.width = props.width;
         m_data.height = props.height;
@@ -59,8 +66,8 @@ namespace Honey {
         HN_CORE_ASSERT(m_window, "GLFW window creation failed!");
 
         glfwMakeContextCurrent(m_window);
-        int status = gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
-        HN_CORE_ASSERT(status, "Failed to init GLAD!");
+        m_context = new OpenGLContext(m_window);
+        m_context->init();
 
         glfwSetWindowUserPointer(m_window, &m_data);
         set_vsync(true);
@@ -147,15 +154,21 @@ namespace Honey {
 
 
     void MacOSWindow::shutdown() {
+        HN_PROFILE_FUNCTION();
+
         glfwDestroyWindow(m_window);
     }
 
     void MacOSWindow::on_update() {
+        HN_PROFILE_FUNCTION();
+
         glfwPollEvents();
-        glfwSwapBuffers(m_window);
+        m_context->swap_buffers();
     }
 
     void MacOSWindow::set_vsync(bool enabled) {
+        HN_PROFILE_FUNCTION();
+
         if (enabled) {
             glfwSwapInterval(1);
         } else {
