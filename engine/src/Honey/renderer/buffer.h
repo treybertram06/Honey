@@ -105,7 +105,7 @@ namespace Honey {
         virtual void set_layout(const BufferLayout& layout) = 0;
         virtual const BufferLayout& get_layout() const = 0;
 
-        static VertexBuffer* create(float* vertices, uint32_t size);
+        static Ref<VertexBuffer> create(float* vertices, uint32_t size);
 
     };
 
@@ -118,7 +118,7 @@ namespace Honey {
 
         virtual uint32_t get_count() const = 0;
 
-        static IndexBuffer* create(uint32_t* indices, uint32_t size);
+        static Ref<IndexBuffer> create(uint32_t* indices, uint32_t size);
 
     };
 }

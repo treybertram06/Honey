@@ -4,6 +4,7 @@
 #include "Honey/core/engine.h"
 #include "Honey/renderer/renderer.h"
 #include "Honey/renderer/renderer_2d.h"
+#include "Honey/renderer/renderer_3d.h"
 #include "Honey/renderer/render_command.h"
 
 #include "Honey/core/timestep.h"

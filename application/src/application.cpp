@@ -3,6 +3,7 @@
 #include <imgui.h>
 
 #include "application_2d.h"
+#include "application_3d.h"
 #include "../../engine/src/Honey/debug/instrumentor.h"
 #include "examples.h"
 #include "glm/gtc/type_ptr.inl"
@@ -24,9 +25,7 @@ public:
              0.0f,  0.5f, 0.0f,     1.0f, 1.0f, 0.0f, 1.0f
         };
 
-        Honey::Ref<Honey::VertexBuffer> vertex_buffer;
-        vertex_buffer.reset(Honey::VertexBuffer::create(vertices, sizeof(vertices)));
-
+        Honey::Ref<Honey::VertexBuffer> vertex_buffer = Honey::VertexBuffer::create(vertices, sizeof(vertices));
 
         Honey::BufferLayout layout = {
             { Honey::ShaderDataType::Float3, "a_pos" },
@@ -37,8 +36,7 @@ public:
 
 
         unsigned int indices[3] = { 0, 1, 2 };
-        Honey::Ref<Honey::IndexBuffer> index_buffer;
-        index_buffer.reset(Honey::IndexBuffer::create(indices, 3));
+        Honey::Ref<Honey::IndexBuffer> index_buffer = Honey::IndexBuffer::create(indices, 3);
         m_vertex_array->set_index_buffer(index_buffer);
 
         m_square_vertex_array = Honey::VertexArray::create();
@@ -50,8 +48,7 @@ public:
             -0.5f,  0.5f, 0.0f,     0.0f, 1.0f
         };
 
-        Honey::Ref<Honey::VertexBuffer> square_vertex_buffer;
-        square_vertex_buffer.reset(Honey::VertexBuffer::create(vertices_sq, sizeof(vertices_sq)));
+        Honey::Ref<Honey::VertexBuffer> square_vertex_buffer = Honey::VertexBuffer::create(vertices_sq, sizeof(vertices_sq));
         Honey::BufferLayout square_layout = {
             { Honey::ShaderDataType::Float3, "a_pos" },
             { Honey::ShaderDataType::Float2, "a_tex_coord" }
@@ -60,8 +57,7 @@ public:
         m_square_vertex_array->add_vertex_buffer(square_vertex_buffer);
 
         unsigned int square_indices[6] = { 0, 1, 2, 2, 3, 0 };
-        Honey::Ref<Honey::IndexBuffer> square_index_buffer;
-        square_index_buffer.reset(Honey::IndexBuffer::create(square_indices, sizeof(square_indices)/sizeof(square_indices[0])));
+        Honey::Ref<Honey::IndexBuffer> square_index_buffer = Honey::IndexBuffer::create(square_indices, sizeof(square_indices)/sizeof(square_indices[0]));
         m_square_vertex_array->set_index_buffer(square_index_buffer);
 
 
@@ -182,7 +178,8 @@ public:
     Sandbox() {
         //push_layer(new PongLayer());
         //push_layer(new ExampleLayer());
-        push_layer(new Application2D());
+        //push_layer(new Application2D());
+        push_layer(new Application3D());
 
     }
 

@@ -16,8 +16,7 @@ public:
              0.0f,  0.5f, 0.0f,     1.0f, 1.0f, 0.0f, 1.0f
         };
 
-        std::shared_ptr<Honey::VertexBuffer> vertex_buffer;
-        vertex_buffer.reset(Honey::VertexBuffer::create(vertices, sizeof(vertices)));
+        std::shared_ptr<Honey::VertexBuffer> vertex_buffer = Honey::VertexBuffer::create(vertices, sizeof(vertices));
 
 
         Honey::BufferLayout layout = {
@@ -29,8 +28,7 @@ public:
 
 
         unsigned int indices[3] = { 0, 1, 2 };
-        std::shared_ptr<Honey::IndexBuffer> index_buffer;
-        index_buffer.reset(Honey::IndexBuffer::create(indices, 3));
+        std::shared_ptr<Honey::IndexBuffer> index_buffer = Honey::IndexBuffer::create(indices, 3);
         m_vertex_array->set_index_buffer(index_buffer);
 
         m_square_vertex_array = Honey::VertexArray::create();
@@ -42,8 +40,7 @@ public:
             -0.5f,  0.5f, 0.0f,
         };
 
-        std::shared_ptr<Honey::VertexBuffer> square_vertex_buffer;
-        square_vertex_buffer.reset(Honey::VertexBuffer::create(vertices_sq, sizeof(vertices_sq)));
+        std::shared_ptr<Honey::VertexBuffer> square_vertex_buffer = Honey::VertexBuffer::create(vertices_sq, sizeof(vertices_sq));
         Honey::BufferLayout square_layout = {
             { Honey::ShaderDataType::Float3, "a_pos" },
         };
@@ -51,8 +48,7 @@ public:
         m_square_vertex_array->add_vertex_buffer(square_vertex_buffer);
 
         unsigned int square_indices[6] = { 0, 1, 2, 2, 3, 0 };
-        std::shared_ptr<Honey::IndexBuffer> square_index_buffer;
-        square_index_buffer.reset(Honey::IndexBuffer::create(square_indices, sizeof(square_indices)));
+        std::shared_ptr<Honey::IndexBuffer> square_index_buffer = Honey::IndexBuffer::create(square_indices, sizeof(square_indices));
         m_square_vertex_array->set_index_buffer(square_index_buffer);
 
         std::string vertex_src = R"(

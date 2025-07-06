@@ -29,8 +29,7 @@ namespace Honey {
             -0.5f,  0.5f, 0.0f,     0.0f, 1.0f
         };
 
-        Ref<VertexBuffer> square_vertex_buffer;
-        square_vertex_buffer.reset(VertexBuffer::create(vertices_sq, sizeof(vertices_sq)));
+        Ref<VertexBuffer> square_vertex_buffer = VertexBuffer::create(vertices_sq, sizeof(vertices_sq));
 
         BufferLayout square_layout = {
             { ShaderDataType::Float3, "a_pos" },
@@ -41,8 +40,7 @@ namespace Honey {
         s_data->vertex_array->add_vertex_buffer(square_vertex_buffer);
 
         unsigned int square_indices[6] = { 0, 1, 2, 2, 3, 0 };
-        Ref<IndexBuffer> square_index_buffer;
-        square_index_buffer.reset(IndexBuffer::create(square_indices, sizeof(square_indices)/sizeof(square_indices[0])));
+        Ref<IndexBuffer> square_index_buffer = IndexBuffer::create(square_indices, sizeof(square_indices)/sizeof(square_indices[0]));
         s_data->vertex_array->set_index_buffer(square_index_buffer);
 
         s_data->blank_texture = Texture2D::create(1, 1);
@@ -106,6 +104,33 @@ namespace Honey {
     void Renderer2D::draw_quad(const glm::vec3& position, const glm::vec2& size, const glm::vec4& color) {
         draw_quad(position, size, nullptr, color, 1.0f);
     }
+
+
+    void Renderer2D::draw_rotated_quad(const glm::vec3& position, const glm::vec2& size, float rotation,
+                          const Ref<Texture2D>& texture, const glm::vec4& color,
+                          float tiling_multiplier) {
+        HN_PROFILE_FUNCTION();
+
+        // Use blank texture if none provided
+        const Ref<Texture2D>& actual_texture = texture ? texture : s_data->blank_texture;
+
+        glm::mat4 transform = glm::translate(glm::mat4(1.0f), position) *
+            glm::rotate(glm::mat4(1.0f), rotation, { 0.0f, 0.0f, 1.0f }) *
+            glm::scale(glm::mat4(1.0f), { size.x, size.y, 1.0f });
+        s_data->texture_shader->set_mat4("u_transform", transform);
+        s_data->texture_shader->set_float4("u_color", color);
+        s_data->texture_shader->set_float("u_tiling_multiplier", tiling_multiplier);
+
+        actual_texture->bind();
+
+        s_data->vertex_array->bind();
+        RenderCommand::draw_indexed(s_data->vertex_array);
+    }
+
+    void Renderer2D::draw_rotated_quad(const glm::vec3& position, const glm::vec2& size, float rotation, const glm::vec4& color) {
+        draw_rotated_quad(position, size, rotation, nullptr, color, 1.0f);
+    }
+
 
 
 

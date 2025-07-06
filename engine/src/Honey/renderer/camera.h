@@ -61,6 +61,9 @@ namespace Honey {
         const glm::vec3& get_rotation() const { return m_rotation; }
         void set_rotation(const glm::vec3& rotation) { m_rotation = rotation; recalc_view_matrix(); }
 
+        const float get_fov() const { return m_fov; }
+        void set_fov(const float fov) { m_fov = fov; recalc_projection_matrix(); }
+
     private:
         float m_fov;
         glm::vec3 m_rotation;

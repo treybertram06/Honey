@@ -6,22 +6,22 @@
 
 namespace Honey {
 
-    VertexBuffer* VertexBuffer::create(float *vertices, uint32_t size) {
+    Ref<VertexBuffer> VertexBuffer::create(float *vertices, uint32_t size) {
 
         switch (Renderer::get_api()) {
             case RendererAPI::API::none:     HN_CORE_ASSERT(false, "RendererAPI::none is not supported."); return nullptr;
-            case RendererAPI::API::opengl:   return new OpenGLVertexBuffer(vertices, size);
+            case RendererAPI::API::opengl:   return CreateRef<OpenGLVertexBuffer>(vertices, size);
         }
 
         HN_CORE_ASSERT(false, "Unknown RendererAPI.");
         return nullptr;
     }
 
-    IndexBuffer* IndexBuffer::create(uint32_t *indices, uint32_t size) {
+    Ref<IndexBuffer> IndexBuffer::create(uint32_t *indices, uint32_t size) {
 
         switch (Renderer::get_api()) {
             case RendererAPI::API::none:     HN_CORE_ASSERT(false, "RendererAPI::none is not supported."); return nullptr;
-            case RendererAPI::API::opengl:   return new OpenGLIndexBuffer(indices, size);
+            case RendererAPI::API::opengl:   return CreateRef<OpenGLIndexBuffer>(indices, size);
         }
 
         HN_CORE_ASSERT(false, "Unknown RendererAPI.");

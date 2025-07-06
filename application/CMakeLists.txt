@@ -4,6 +4,8 @@ add_executable(application
         src/application.cpp
         src/application_2d.h
         src/application_2d.cpp
+        src/application_3d.h
+        src/application_3d.cpp
 )
 
 # 1 ─ ensure engine headers are visible
