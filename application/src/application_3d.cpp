@@ -7,7 +7,7 @@
 
 Application3D::Application3D()
     : Layer("Application3D"),
-      m_camera_controller((1.6f / 0.9f), true) {
+      m_camera_controller((60), (16.0f / 9.0f)) {
 }
 
 
@@ -47,8 +47,9 @@ void Application3D::on_update(Honey::Timestep ts) {
         Honey::Renderer3D::begin_scene(m_camera_controller.get_camera());
 
         //Honey::ScopedTimer timer("Renderer3D::draw_quad");
-        Honey::Renderer3D::draw_cube({0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 0.5f, 0.2f, 1.0f});
-        Honey::Renderer3D::draw_cube({2.0f, 0.0f, 0.0f}, {0.5f, 2.0f, 0.5f}, {0.2f, 0.8f, 0.3f, 1.0f});
+        Honey::Renderer3D::draw_cube({0.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 0.5f, 0.2f, 1.0f});
+        Honey::Renderer3D::draw_cube({2.0f, 1.0f, 0.0f}, {0.5f, 2.0f, 0.5f}, {0.2f, 0.8f, 0.3f, 1.0f});
+        Honey::Renderer3D::draw_cube({0.0f, 0.0f, 0.0f}, {100.0f, 0.1f, 100.0f}, {0.8f, 0.8f, 0.8f, 1.0f});
 
 
         //Honey::Renderer3D::draw_quad({-1.0f, -0.33f, 0.0f}, {2.0f, 2.0f}, m_transparent_texture);
@@ -73,12 +74,30 @@ void Application3D::on_update(Honey::Timestep ts) {
 
 void Application3D::on_imgui_render() {
     HN_PROFILE_FUNCTION();
-    /*
+
     ImGui::Begin("Settings");
-    ImGui::ColorEdit4("Square color", glm::value_ptr(m_square_color));
+    //ImGui::ColorEdit4("Square color", glm::value_ptr(m_square_color));
+
+    // Camera Information Section
+    ImGui::Separator();
+    ImGui::Text("Camera Information");
+
+    // Get camera position
+    glm::vec3 camera_position = m_camera_controller.get_camera().get_position();
+    ImGui::Text("Position: (%.2f, %.2f, %.2f)", camera_position.x, camera_position.y, camera_position.z);
+
+    // Get camera direction (front vector)
+    //glm::vec3 camera_direction = m_camera_controller.get_camera().get_front();
+    //ImGui::Text("Direction: (%.2f, %.2f, %.2f)", camera_direction.x, camera_direction.y, camera_direction.z);
+
+    // Optional: Show camera rotation angles if available
+    glm::vec2 camera_rotation = m_camera_controller.get_camera().get_rotation();
+    ImGui::Text("Rotation: (%.2f, %.2f)", camera_rotation.x, camera_rotation.y);
+
+
 
     ImGui::End();
-    */
+
 }
 
 void Application3D::on_event(Honey::Event &event) {

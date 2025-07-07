@@ -51,21 +51,42 @@ namespace Honey {
         float m_rotation;
     };
 
-    class PerspectiveCamera : public Camera {
+    class PerspectiveCamera {
     public:
-        PerspectiveCamera(float fov, float aspect_ratio, float near_clip, float far_clip);
+        PerspectiveCamera(float fov_deg,
+                          float aspect_ratio,
+                          float near_clip = 0.1f,
+                          float far_clip  = 1000.0f);
 
-        virtual void recalc_projection_matrix() override;
-        virtual void recalc_view_matrix() override;
+        // ── setters ─────────────────────────────────────────────────────
+        void set_position(const glm::vec3& pos)   { m_position = pos;   recalc_view_matrix(); }
+        void set_rotation(const glm::vec2& yaw_pitch) { m_rotation = yaw_pitch; recalc_view_matrix(); }
+        void set_fov(float fov_deg)               { m_fov = fov_deg;    recalc_projection_matrix(); }
+        void set_aspect_ratio(float ratio)        { m_aspect_ratio = ratio; recalc_projection_matrix(); }
 
-        const glm::vec3& get_rotation() const { return m_rotation; }
-        void set_rotation(const glm::vec3& rotation) { m_rotation = rotation; recalc_view_matrix(); }
+        // ── getters you’ll need elsewhere ───────────────────────────────
+        const glm::mat4& view_projection() const { return m_view_projection_matrix; }
+        float get_fov() const                    { return m_fov; }
 
-        const float get_fov() const { return m_fov; }
-        void set_fov(const float fov) { m_fov = fov; recalc_projection_matrix(); }
+        glm::mat4 get_view_projection_matrix() const { return m_view_projection_matrix; }
+        glm::vec3 get_position() const { return m_position; }
+        glm::vec2 get_rotation() const { return m_rotation; }
 
     private:
-        float m_fov;
-        glm::vec3 m_rotation;
+        // ── data ────────────────────────────────────────────────────────
+        glm::vec3 m_position{0.0f};
+        glm::vec2 m_rotation{0.0f};   // { yaw , pitch } in degrees
+        float     m_fov;
+        float     m_aspect_ratio;
+        float     m_near_clip;
+        float     m_far_clip;
+
+        glm::mat4 m_projection_matrix{1.0f};
+        glm::mat4 m_view_matrix{1.0f};
+        glm::mat4 m_view_projection_matrix{1.0f};
+
+        // ── helpers ─────────────────────────────────────────────────────
+        void recalc_projection_matrix();
+        void recalc_view_matrix();
     };
 }

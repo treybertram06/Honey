@@ -46,47 +46,39 @@ namespace Honey {
 
     //////perspective///////////////////////////////////////
 
-    PerspectiveCamera::PerspectiveCamera(float fov, float aspect_ratio, float near_clip, float far_clip) {
-        this->m_fov = fov;
-        this->m_aspect_ratio = aspect_ratio;
-        this->m_near_clip = near_clip;
-        this->m_far_clip = far_clip;
-        this->m_position = glm::vec3(0.0f, 0.0f, 0.0f);
-        this->m_rotation = glm::vec3(0.0f, 0.0f, 0.0f);
-
-        PerspectiveCamera::recalc_projection_matrix();
-        PerspectiveCamera::recalc_view_matrix();
-        m_view_projection_matrix = m_projection_matrix * m_view_matrix;
+    PerspectiveCamera::PerspectiveCamera(float fov_deg, float aspect_ratio, float near_clip, float far_clip)
+        : m_fov(fov_deg), m_aspect_ratio(aspect_ratio),
+          m_near_clip(near_clip), m_far_clip(far_clip) {
+        recalc_projection_matrix();
+        recalc_view_matrix();
     }
 
     void PerspectiveCamera::recalc_projection_matrix() {
         HN_PROFILE_FUNCTION();
 
-        m_projection_matrix = glm::perspective(
-            glm::radians(m_fov),
-            m_aspect_ratio,
-            m_near_clip,
-            m_far_clip
-        );
-
+        m_projection_matrix = glm::perspective(glm::radians(m_fov),
+                                               m_aspect_ratio,
+                                               m_near_clip,
+                                               m_far_clip);
         m_view_projection_matrix = m_projection_matrix * m_view_matrix;
     }
 
     void PerspectiveCamera::recalc_view_matrix() {
         HN_PROFILE_FUNCTION();
 
-        // Create rotation matrix from Euler angles (pitch, yaw, roll)
-        glm::mat4 rotation = glm::rotate(glm::mat4(1.0f), glm::radians(m_rotation.x), glm::vec3(1, 0, 0)) *
-                            glm::rotate(glm::mat4(1.0f), glm::radians(m_rotation.y), glm::vec3(0, 1, 0)) *
-                            glm::rotate(glm::mat4(1.0f), glm::radians(m_rotation.z), glm::vec3(0, 0, 1));
+        // build front vector from yaw/pitch
+        glm::vec3 front{
+            cos(glm::radians(m_rotation.x)) * cos(glm::radians(m_rotation.y)),
+            sin(glm::radians(m_rotation.y)),
+            sin(glm::radians(m_rotation.x)) * cos(glm::radians(m_rotation.y))
+        };
+        front = glm::normalize(front);
 
-        // Create translation matrix
-        glm::mat4 translation = glm::translate(glm::mat4(1.0f), m_position);
+        const glm::vec3 world_up{0.0f, 1.0f, 0.0f};
+        glm::vec3 right = glm::normalize(glm::cross(world_up, front));
+        glm::vec3 up    = glm::cross(front, right);
 
-        // Combine transformation (translate then rotate)
-        glm::mat4 transform = translation * rotation;
-
-        m_view_matrix = glm::inverse(transform);
+        m_view_matrix = glm::lookAt(m_position, m_position + front, up);
         m_view_projection_matrix = m_projection_matrix * m_view_matrix;
     }
 

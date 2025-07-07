@@ -39,52 +39,48 @@ namespace Honey {
 
     class PerspectiveCameraController {
     public:
-        PerspectiveCameraController(float fov, float aspect_ratio, float near_clip = 0.1f, float far_clip = 1000.0f);
+        PerspectiveCameraController(float fov, float aspect, float near_clip=0.1f, float far_clip=1000.0f);
 
+        // call once per frame -----------------------------------------------------
         void on_update(Timestep ts);
-        void on_event(Event& e);
 
-        PerspectiveCamera& get_camera() { return m_camera; }
-        const PerspectiveCamera& get_camera() const { return m_camera; }
-
-        float get_fov() const { return m_camera.get_fov(); }
-        void set_fov(float fov) { m_camera.set_fov(fov); }
-
-        // Camera controls
-        void set_movement_speed(float speed) { m_movement_speed = speed; }
-        void set_mouse_sensitivity(float sensitivity) { m_mouse_sensitivity = sensitivity; }
-        void set_zoom_sensitivity(float sensitivity) { m_zoom_sensitivity = sensitivity; }
-
-    private:
-        bool on_mouse_scrolled(MouseScrolledEvent& e);
-        bool on_window_resize(WindowResizeEvent& e);
+        // feed every mouse-move event --------------------------------------------
         bool on_mouse_moved(MouseMovedEvent& e);
 
-        void update_camera_vectors();
+        // feed scroll events ------------------------------------------------------
+        bool on_mouse_scrolled(MouseScrolledEvent& e);
 
-        float m_aspect_ratio;
+        // window resize -----------------------------------------------------------
+        bool on_window_resize(WindowResizeEvent& e);
+
+        void on_event(Event& e);
+
+        // expose the camera for rendering ----------------------------------------
+        PerspectiveCamera& get_camera() { return m_camera; }
+
+    private:
         PerspectiveCamera m_camera;
 
-        // Camera movement
-        glm::vec3 m_camera_position = { 0.0f, 0.0f, 3.0f };
-        glm::vec3 m_camera_front = { 0.0f, 0.0f, -1.0f };
-        glm::vec3 m_camera_up = { 0.0f, 1.0f, 0.0f };
-        glm::vec3 m_camera_right = { 1.0f, 0.0f, 0.0f };
-        glm::vec3 m_world_up = { 0.0f, 1.0f, 0.0f };
+        // input state -------------------------------------------------------------
+        float m_yaw   = -90.0f;   // start looking down –Z
+        float m_pitch =  0.0f;
+        glm::vec3 m_position{0.0f};
 
-        // Euler angles
-        float m_yaw = -90.0f;   // Yaw is initialized to -90.0 degrees since a yaw of 0.0 results in a direction vector pointing to the right
-        float m_pitch = 0.0f;
+        float m_move_speed       = 5.0f;   // units per second
+        float m_mouse_sensitivity= 0.1f;
+        float m_zoom_sensitivity = 1.0f;
 
-        // Camera options
-        float m_movement_speed = 5.0f;
-        float m_mouse_sensitivity = 0.1f;
-        float m_zoom_sensitivity = 2.0f;
-
-        // Mouse state
-        bool m_first_mouse = true;
+        float m_aspect_ratio;
         float m_last_mouse_x = 0.0f;
         float m_last_mouse_y = 0.0f;
+        bool  m_first_mouse  = true;
+
+        // cached basis vectors for movement --------------------------------------
+        glm::vec3 m_front{0.0f, 0.0f, -1.0f};
+        glm::vec3 m_right{1.0f, 0.0f, 0.0f};
+        const glm::vec3 m_world_up{0.0f, 1.0f, 0.0f};
+
+        void update_direction_vectors();
     };
 
 }

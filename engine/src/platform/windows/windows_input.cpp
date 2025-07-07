@@ -18,7 +18,7 @@ namespace Honey {
 
     bool WindowsInput::is_mouse_button_pressed_impl(int button) {
         auto window = static_cast<GLFWwindow*>(Application::get().get_window().get_native_window());
-        auto state = glfwGetKey(window, button);
+        auto state = glfwGetMouseButton(window, button);
         return state == GLFW_PRESS;
     }
 
