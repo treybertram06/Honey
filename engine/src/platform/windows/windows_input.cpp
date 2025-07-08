@@ -30,6 +30,20 @@ namespace Honey {
         return {(float)xpos, (float)ypos };
     }
 
+    void WindowsInput::set_cursor_locked_impl(bool locked) {
+        auto window = static_cast<GLFWwindow*>(Application::get().get_window().get_native_window());
+        if (locked) {
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        } else {
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        }
+    }
+
+    bool WindowsInput::is_cursor_locked_impl() {
+        auto window = static_cast<GLFWwindow*>(Application::get().get_window().get_native_window());
+        return glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED;
+    }
+
 
     float WindowsInput:: get_mouse_x_impl() {
         auto[x, y] = get_mouse_position_impl();

@@ -89,7 +89,16 @@ namespace Honey {
         dispatcher.dispatch<MouseScrolledEvent>(HN_BIND_EVENT_FN(PerspectiveCameraController::on_mouse_scrolled));
         dispatcher.dispatch<WindowResizeEvent>(HN_BIND_EVENT_FN(PerspectiveCameraController::on_window_resize));
         dispatcher.dispatch<MouseMovedEvent>(HN_BIND_EVENT_FN(PerspectiveCameraController::on_mouse_moved));
+        dispatcher.dispatch<KeyPressedEvent>(HN_BIND_EVENT_FN(PerspectiveCameraController::on_key_pressed_event));
     }
+
+    bool PerspectiveCameraController::on_key_pressed_event(KeyPressedEvent &e) {
+        if (e.get_key_code() == HN_KEY_L)
+            Input::set_cursor_locked(m_cursor_locked = !m_cursor_locked);
+
+        return false;
+    }
+
 
     bool PerspectiveCameraController::on_mouse_scrolled(MouseScrolledEvent& e) {
         HN_PROFILE_FUNCTION();
@@ -109,9 +118,9 @@ namespace Honey {
 
     bool PerspectiveCameraController::on_mouse_moved(MouseMovedEvent& e)
     {
-        if (!Input::is_mouse_button_pressed(HN_MOUSE_BUTTON_RIGHT)) return false;
+        //if (!Input::is_mouse_button_pressed(HN_MOUSE_BUTTON_RIGHT)) return false;
 
-        if (!Input::is_mouse_button_pressed(HN_MOUSE_BUTTON_RIGHT))
+        if (!Input::is_mouse_button_pressed(HN_MOUSE_BUTTON_RIGHT) && !m_cursor_locked)
         {
             // Keep baseline fresh so the next drag starts from 0-delta
             m_first_mouse  = true;

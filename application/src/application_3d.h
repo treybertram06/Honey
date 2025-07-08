@@ -15,6 +15,7 @@ public:
 	void on_update(Honey::Timestep ts) override;
 	virtual void on_imgui_render() override;
 	void on_event(Honey::Event &event) override;
+	bool on_key_pressed_event(Honey::KeyPressedEvent& e);
 
 private:
 	Honey::PerspectiveCameraController m_camera_controller;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "events/key_event.h"
 #include "Honey/renderer/camera.h"
 #include "Honey/core/timestep.h"
 
@@ -54,6 +55,7 @@ namespace Honey {
         bool on_window_resize(WindowResizeEvent& e);
 
         void on_event(Event& e);
+        bool on_key_pressed_event(KeyPressedEvent& e);
 
         // expose the camera for rendering ----------------------------------------
         PerspectiveCamera& get_camera() { return m_camera; }
@@ -64,7 +66,7 @@ namespace Honey {
         // input state -------------------------------------------------------------
         float m_yaw   = -90.0f;   // start looking down –Z
         float m_pitch =  0.0f;
-        glm::vec3 m_position{0.0f};
+        glm::vec3 m_position{0.0f, 1.0f, -3.0f};
 
         float m_move_speed       = 5.0f;   // units per second
         float m_mouse_sensitivity= 0.1f;
@@ -74,6 +76,8 @@ namespace Honey {
         float m_last_mouse_x = 0.0f;
         float m_last_mouse_y = 0.0f;
         bool  m_first_mouse  = true;
+
+        bool m_cursor_locked = false;
 
         // cached basis vectors for movement --------------------------------------
         glm::vec3 m_front{0.0f, 0.0f, -1.0f};

@@ -102,4 +102,14 @@ void Application3D::on_imgui_render() {
 
 void Application3D::on_event(Honey::Event &event) {
     m_camera_controller.on_event(event);
+
+    Honey::EventDispatcher dispatcher(event);
+    dispatcher.dispatch<Honey::KeyPressedEvent>(HN_BIND_EVENT_FN(Application3D::on_key_pressed_event));
+}
+
+bool Application3D::on_key_pressed_event(Honey::KeyPressedEvent& e) {
+    if (e.get_key_code() == HN_KEY_ESCAPE)
+        Honey::Application::quit();
+
+    return false;
 }
