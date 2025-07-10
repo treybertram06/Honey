@@ -202,6 +202,12 @@ namespace Honey {
         upload_uniform_int(name, value);
     }
 
+    void OpenGLShader::set_int_array(const std::string &name, int* values, uint32_t count) {
+        HN_PROFILE_FUNCTION();
+
+        upload_uniform_int_array(name, values, count);
+    }
+
 
     void OpenGLShader::upload_uniform_mat4(const std::string& name, const glm::mat4& matrix) {
     	GLint location = glGetUniformLocation(m_renderer_id, name.c_str());
@@ -267,6 +273,16 @@ namespace Honey {
         GLint location = glGetUniformLocation(m_renderer_id, name.c_str());
         if (location != -1)
             glUniform1i(location, value);
+        else {
+            HN_CORE_ERROR("At location: {0}", name);
+            HN_CORE_ASSERT(false, "Integer uniform not found!");
+        }
+    }
+
+    void OpenGLShader::upload_uniform_int_array(const std::string& name, int* values, uint32_t count) {
+        GLint location = glGetUniformLocation(m_renderer_id, name.c_str());
+        if (location != -1)
+            glUniform1iv(location, count, values);
         else {
             HN_CORE_ERROR("At location: {0}", name);
             HN_CORE_ASSERT(false, "Integer uniform not found!");

@@ -11,12 +11,15 @@ namespace Honey {
         glm::vec3 position;
         glm::vec4 color;
         glm::vec2 tex_coord;
+        float tex_index;
+        float tiling_factor;
     };
 
     struct Renderer2DData {
         const uint32_t max_quads = 10000;
         const uint32_t max_vertices = max_quads * 4;
         const uint32_t max_indices = max_quads * 6;
+        static const uint32_t max_texture_slots = 32; //TODO: max device texture slots
 
         Ref<VertexArray> quad_vertex_array;
         Ref<VertexBuffer> quad_vertex_buffer;
@@ -26,6 +29,9 @@ namespace Honey {
         uint32_t quad_index_count = 0;
         QuadVertex* quad_vertex_buffer_base = nullptr;
         QuadVertex* quad_vertex_buffer_ptr = nullptr;
+
+        std::array<Ref<Texture2D>, max_texture_slots> texture_slots;
+        uint32_t texture_slot_index = 1; //0 = white texture
     };
 
     static Renderer2DData s_data;
@@ -40,7 +46,9 @@ namespace Honey {
         BufferLayout quad_layout = {
             { ShaderDataType::Float3, "a_pos" },
             { ShaderDataType::Float4, "a_color" },
-            { ShaderDataType::Float2, "a_tex_coord" }
+            { ShaderDataType::Float2, "a_tex_coord" },
+            { ShaderDataType::Float, "a_tex_index" },
+            { ShaderDataType::Float, "a_tiling_factor" }
         };
 
         s_data.quad_vertex_buffer->set_layout(quad_layout);
@@ -71,9 +79,17 @@ namespace Honey {
         uint32_t white_texture_data = 0xffffffff;
         s_data.blank_texture->set_data(&white_texture_data, sizeof(uint32_t));
 
+        int32_t samplers[s_data.max_texture_slots];
+        for (uint32_t i = 0; i < s_data.max_texture_slots; i++)
+            samplers[i] = i;
+
+
         s_data.texture_shader = Shader::create("../../application/assets/shaders/texture.glsl");
         s_data.texture_shader->bind();
-        //s_data.texture_shader->set_int("u_texture", 0);
+        s_data.texture_shader->set_int_array("u_textures", samplers, s_data.max_texture_slots);
+
+
+        s_data.texture_slots[0] = s_data.blank_texture;
 
     }
 
@@ -90,6 +106,8 @@ namespace Honey {
 
         s_data.quad_index_count = 0;
         s_data.quad_vertex_buffer_ptr = s_data.quad_vertex_buffer_base;
+
+        s_data.texture_slot_index = 1;
     }
 
     void Renderer2D::end_scene() {
@@ -105,29 +123,65 @@ namespace Honey {
     void Renderer2D::flush() {
         HN_PROFILE_FUNCTION();
 
+        for (uint32_t i = 0; i < s_data.texture_slot_index; i++)
+            s_data.texture_slots[i]->bind(i);
+
         s_data.quad_vertex_array->bind();
         RenderCommand::draw_indexed(s_data.quad_vertex_array, s_data.quad_index_count);
     }
 
-/*
+
     void Renderer2D::draw_quad(const glm::vec3& position, const glm::vec2& size,
                           const Ref<Texture2D>& texture, const glm::vec4& color,
-                          float tiling_multiplier) {
+                          float tiling_factor) {
         HN_PROFILE_FUNCTION();
 
-        // Use blank texture if none provided
-        const Ref<Texture2D>& actual_texture = texture ? texture : s_data.blank_texture;
+        //constexpr glm::vec4 color { 1.0f, 1.0f, 1.0f, 1.0f };
 
-        glm::mat4 transform = glm::translate(glm::mat4(1.0f), position) *
-            glm::scale(glm::mat4(1.0f), { size.x, size.y, 1.0f });
-        s_data.texture_shader->set_mat4("u_transform", transform);
-        s_data.texture_shader->set_float4("u_color", color);
-        s_data.texture_shader->set_float("u_tiling_multiplier", tiling_multiplier);
+        float texture_index = 0.0f;
+        for (uint32_t i = 1; i < s_data.texture_slot_index; i++) {
+            if (*s_data.texture_slots[i].get() == *texture.get()) {
+                texture_index = (float)i;
+                break;
+            }
+        }
 
-        actual_texture->bind();
+        if (texture_index == 0.0f) {
+            texture_index = (float)s_data.texture_slot_index;
+            s_data.texture_slots[s_data.texture_slot_index] = texture;
+            s_data.texture_slot_index++;
+        }
 
-        s_data.quad_vertex_array->bind();
-        RenderCommand::draw_indexed(s_data.quad_vertex_array);
+        s_data.quad_vertex_buffer_ptr->position = position;
+        s_data.quad_vertex_buffer_ptr->color = color;
+        s_data.quad_vertex_buffer_ptr->tex_coord = {0.0f, 0.0f};
+        s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
+        s_data.quad_vertex_buffer_ptr->tiling_factor = tiling_factor;
+        s_data.quad_vertex_buffer_ptr++;
+
+        s_data.quad_vertex_buffer_ptr->position = { position.x + size.x, position.y, 0.0f };
+        s_data.quad_vertex_buffer_ptr->color = color;
+        s_data.quad_vertex_buffer_ptr->tex_coord = {1.0f, 0.0f};
+        s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
+        s_data.quad_vertex_buffer_ptr->tiling_factor = tiling_factor;
+        s_data.quad_vertex_buffer_ptr++;
+
+        s_data.quad_vertex_buffer_ptr->position = { position.x + size.x, position.y + size.y, 0.0f };
+        s_data.quad_vertex_buffer_ptr->color = color;
+        s_data.quad_vertex_buffer_ptr->tex_coord = {1.0f, 1.0f};
+        s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
+        s_data.quad_vertex_buffer_ptr->tiling_factor = tiling_factor;
+        s_data.quad_vertex_buffer_ptr++;
+
+        s_data.quad_vertex_buffer_ptr->position = { position.x, position.y + size.y, 0.0f };
+        s_data.quad_vertex_buffer_ptr->color = color;
+        s_data.quad_vertex_buffer_ptr->tex_coord = {0.0f, 1.0f};
+        s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
+        s_data.quad_vertex_buffer_ptr->tiling_factor = tiling_factor;
+        s_data.quad_vertex_buffer_ptr++;
+
+        s_data.quad_index_count += 6;
+
     }
 
     void Renderer2D::draw_quad(const glm::vec2& position, const glm::vec2& size,
@@ -135,32 +189,44 @@ namespace Honey {
                               float tiling_multiplier) {
         draw_quad({position.x, position.y, 0.0f}, size, texture, color, tiling_multiplier);
     }
-    */
+
 
     void Renderer2D::draw_quad(const glm::vec2& position, const glm::vec2& size, const glm::vec4& color) {
         draw_quad({position.x, position.y, 0.0f}, size, color);
     }
 
     void Renderer2D::draw_quad(const glm::vec3& position, const glm::vec2& size, const glm::vec4& color) {
+        HN_PROFILE_FUNCTION();
+
+        const float texture_index = 0.0f; // white texture
+        const float tiling_factor = 1.0f; // no tiliing needed
 
         s_data.quad_vertex_buffer_ptr->position = position;
         s_data.quad_vertex_buffer_ptr->color = color;
         s_data.quad_vertex_buffer_ptr->tex_coord = {0.0f, 0.0f};
+        s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
+        s_data.quad_vertex_buffer_ptr->tiling_factor = tiling_factor;
         s_data.quad_vertex_buffer_ptr++;
 
         s_data.quad_vertex_buffer_ptr->position = { position.x + size.x, position.y, 0.0f };
         s_data.quad_vertex_buffer_ptr->color = color;
         s_data.quad_vertex_buffer_ptr->tex_coord = {1.0f, 0.0f};
+        s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
+        s_data.quad_vertex_buffer_ptr->tiling_factor = tiling_factor;
         s_data.quad_vertex_buffer_ptr++;
 
         s_data.quad_vertex_buffer_ptr->position = { position.x + size.x, position.y + size.y, 0.0f };
         s_data.quad_vertex_buffer_ptr->color = color;
         s_data.quad_vertex_buffer_ptr->tex_coord = {1.0f, 1.0f};
+        s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
+        s_data.quad_vertex_buffer_ptr->tiling_factor = tiling_factor;
         s_data.quad_vertex_buffer_ptr++;
 
         s_data.quad_vertex_buffer_ptr->position = { position.x, position.y + size.y, 0.0f };
         s_data.quad_vertex_buffer_ptr->color = color;
         s_data.quad_vertex_buffer_ptr->tex_coord = {0.0f, 1.0f};
+        s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
+        s_data.quad_vertex_buffer_ptr->tiling_factor = tiling_factor;
         s_data.quad_vertex_buffer_ptr++;
 
         s_data.quad_index_count += 6;
