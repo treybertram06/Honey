@@ -23,8 +23,8 @@ namespace Honey {
             s_renderer_api->clear();
         }
 
-        inline static void draw_indexed(const Ref<VertexArray>& vertex_array) {
-            s_renderer_api->draw_indexed(vertex_array);
+        inline static void draw_indexed(const Ref<VertexArray>& vertex_array, uint32_t index_count = 0) {
+            s_renderer_api->draw_indexed(vertex_array, index_count);
         }
 
     private:

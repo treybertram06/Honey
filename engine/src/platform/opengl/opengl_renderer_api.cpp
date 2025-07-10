@@ -27,8 +27,11 @@ namespace Honey {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     }
 
-    void OpenGLRendererAPI::draw_indexed(const Ref<VertexArray> &vertex_array) {
-        glDrawElements(GL_TRIANGLES, vertex_array->get_index_buffer()->get_count(), GL_UNSIGNED_INT, nullptr);
+    void OpenGLRendererAPI::draw_indexed(const Ref<VertexArray> &vertex_array, uint32_t index_count) {
+        //uint32_t count = index_count ? vertex_array->get_index_buffer()->get_count() : index_count;
+        uint32_t count = index_count ? index_count : vertex_array->get_index_buffer()->get_count();
+        //HN_CORE_INFO("Index count: {0}", count);
+        glDrawElements(GL_TRIANGLES, count, GL_UNSIGNED_INT, nullptr);
     }
 
 }

@@ -3,10 +3,24 @@
 
 #include <glad/glad.h>
 
+#include "spdlog/fmt/bundled/chrono.h"
+
 namespace Honey {
 
     // Vertex Buffer //////////////////////////////////////////////////////
 
+    OpenGLVertexBuffer::OpenGLVertexBuffer(uint32_t size) {
+        HN_PROFILE_FUNCTION();
+
+#ifdef HN_PLATFORM_WINDOWS
+        glCreateBuffers(1, &m_renderer_id);
+#endif
+#ifdef HN_PLATFORM_MACOS
+        glGenBuffers(1, &m_renderer_id);
+#endif
+        glBindBuffer(GL_ARRAY_BUFFER, m_renderer_id);
+        glBufferData(GL_ARRAY_BUFFER, size, nullptr, GL_DYNAMIC_DRAW);
+    }
 
     OpenGLVertexBuffer::OpenGLVertexBuffer(float* vertices, uint32_t size) {
         HN_PROFILE_FUNCTION();
@@ -39,6 +53,12 @@ namespace Honey {
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
 
+	void OpenGLVertexBuffer::set_data(const void *data, uint32_t size) {
+		glBindBuffer(GL_ARRAY_BUFFER, m_renderer_id);
+    	glBufferSubData(GL_ARRAY_BUFFER, 0, size, data);
+	}
+
+
     // Index Buffer //////////////////////////////////////////////////////
 
     OpenGLIndexBuffer::OpenGLIndexBuffer(uint32_t *indices, uint32_t count)
@@ -52,7 +72,7 @@ namespace Honey {
         glGenBuffers(1, &m_renderer_id);
 #endif
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_renderer_id);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, count*sizeof(uint32_t), indices, GL_STATIC_DRAW);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, count * sizeof(uint32_t), indices, GL_STATIC_DRAW);
     }
 
     OpenGLIndexBuffer::~OpenGLIndexBuffer() {
