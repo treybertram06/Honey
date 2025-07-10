@@ -148,21 +148,34 @@ namespace Honey {
                           float tiling_factor) {
         HN_PROFILE_FUNCTION();
 
-        //constexpr glm::vec4 color { 1.0f, 1.0f, 1.0f, 1.0f };
+        if (!texture) {
+            // Use blank texture if null texture is passed
+            draw_quad(position, size, color);
+            return;
+        }
 
         float texture_index = 0.0f;
         for (uint32_t i = 1; i < s_data.texture_slot_index; i++) {
-            if (*s_data.texture_slots[i].get() == *texture.get()) {
+            // Add null check for stored texture
+            if (s_data.texture_slots[i] &&
+                *s_data.texture_slots[i].get() == *texture.get()) {
                 texture_index = (float)i;
                 break;
-            }
+                }
         }
 
         if (texture_index == 0.0f) {
-            texture_index = (float)s_data.texture_slot_index;
-            s_data.texture_slots[s_data.texture_slot_index] = texture;
-            s_data.texture_slot_index++;
+            // Add bounds check
+            if (s_data.texture_slot_index >= s_data.max_texture_slots) {
+                HN_CORE_WARN("Texture slot limit exceeded! Using blank texture.");
+                texture_index = 0.0f;
+            } else {
+                texture_index = (float)s_data.texture_slot_index;
+                s_data.texture_slots[s_data.texture_slot_index] = texture;
+                s_data.texture_slot_index++;
+            }
         }
+
 
         s_data.quad_vertex_buffer_ptr->position = position;
         s_data.quad_vertex_buffer_ptr->color = color;
@@ -250,19 +263,34 @@ namespace Honey {
                           float tiling_factor) {
         HN_PROFILE_FUNCTION();
 
+        if (!texture) {
+            // Use blank texture if null texture is passed
+            draw_quad(position, size, color);
+            return;
+        }
+
         float texture_index = 0.0f;
         for (uint32_t i = 1; i < s_data.texture_slot_index; i++) {
-            if (*s_data.texture_slots[i].get() == *texture.get()) {
+            // Add null check for stored texture
+            if (s_data.texture_slots[i] &&
+                *s_data.texture_slots[i].get() == *texture.get()) {
                 texture_index = (float)i;
                 break;
-            }
+                }
         }
 
         if (texture_index == 0.0f) {
-            texture_index = (float)s_data.texture_slot_index;
-            s_data.texture_slots[s_data.texture_slot_index] = texture;
-            s_data.texture_slot_index++;
+            // Add bounds check
+            if (s_data.texture_slot_index >= s_data.max_texture_slots) {
+                HN_CORE_WARN("Texture slot limit exceeded! Using blank texture.");
+                texture_index = 0.0f;
+            } else {
+                texture_index = (float)s_data.texture_slot_index;
+                s_data.texture_slots[s_data.texture_slot_index] = texture;
+                s_data.texture_slot_index++;
+            }
         }
+
 
         glm::mat4 transform = glm::translate(glm::mat4(1.0f), position)
             * glm::rotate(glm::mat4(1.0f), glm::radians(rotation), {0.0f, 0.0f, 1.0f})
