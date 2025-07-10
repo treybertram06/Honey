@@ -178,8 +178,8 @@ public:
     Sandbox() {
         //push_layer(new PongLayer());
         //push_layer(new ExampleLayer());
-        push_layer(new Application2D());
-        //push_layer(new Application3D());
+        //push_layer(new Application2D());
+        push_layer(new Application3D());
 
     }
 
