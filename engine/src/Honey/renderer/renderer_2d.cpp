@@ -32,6 +32,8 @@ namespace Honey {
 
         std::array<Ref<Texture2D>, max_texture_slots> texture_slots;
         uint32_t texture_slot_index = 1; //0 = white texture
+
+        glm::vec4 quad_vertex_positions[4];
     };
 
     static Renderer2DData s_data;
@@ -91,6 +93,11 @@ namespace Honey {
 
         s_data.texture_slots[0] = s_data.blank_texture;
 
+        s_data.quad_vertex_positions[0] = { -0.5f, -0.5f, 0.0f, 1.0f };
+        s_data.quad_vertex_positions[1] = { 0.5f, -0.5f, 0.0f, 1.0f };
+        s_data.quad_vertex_positions[2] = { 0.5f, 0.5f, 0.0f, 1.0f };
+        s_data.quad_vertex_positions[3] = { -0.5f, 0.5f, 0.0f, 1.0f };
+
     }
 
     void Renderer2D::shutdown() {
@@ -108,6 +115,11 @@ namespace Honey {
         s_data.quad_vertex_buffer_ptr = s_data.quad_vertex_buffer_base;
 
         s_data.texture_slot_index = 1;
+
+        for (uint32_t i = 1; i < s_data.max_texture_slots; i++) {
+            s_data.texture_slots[i].reset();
+        }
+
     }
 
     void Renderer2D::end_scene() {
@@ -235,23 +247,56 @@ namespace Honey {
 
     void Renderer2D::draw_rotated_quad(const glm::vec3& position, const glm::vec2& size, float rotation,
                           const Ref<Texture2D>& texture, const glm::vec4& color,
-                          float tiling_multiplier) {
+                          float tiling_factor) {
         HN_PROFILE_FUNCTION();
 
-        // Use blank texture if none provided
-        const Ref<Texture2D>& actual_texture = texture ? texture : s_data.blank_texture;
+        float texture_index = 0.0f;
+        for (uint32_t i = 1; i < s_data.texture_slot_index; i++) {
+            if (*s_data.texture_slots[i].get() == *texture.get()) {
+                texture_index = (float)i;
+                break;
+            }
+        }
 
-        glm::mat4 transform = glm::translate(glm::mat4(1.0f), position) *
-            glm::rotate(glm::mat4(1.0f), rotation, { 0.0f, 0.0f, 1.0f }) *
-            glm::scale(glm::mat4(1.0f), { size.x, size.y, 1.0f });
-        s_data.texture_shader->set_mat4("u_transform", transform);
-        s_data.texture_shader->set_float4("u_color", color);
-        s_data.texture_shader->set_float("u_tiling_multiplier", tiling_multiplier);
+        if (texture_index == 0.0f) {
+            texture_index = (float)s_data.texture_slot_index;
+            s_data.texture_slots[s_data.texture_slot_index] = texture;
+            s_data.texture_slot_index++;
+        }
 
-        actual_texture->bind();
+        glm::mat4 transform = glm::translate(glm::mat4(1.0f), position)
+            * glm::rotate(glm::mat4(1.0f), glm::radians(rotation), {0.0f, 0.0f, 1.0f})
+            * glm::scale(glm::mat4(1.0f), {size.x, size.y, 1.0f});
 
-        s_data.quad_vertex_array->bind();
-        RenderCommand::draw_indexed(s_data.quad_vertex_array);
+        s_data.quad_vertex_buffer_ptr->position = transform * s_data.quad_vertex_positions[0];
+        s_data.quad_vertex_buffer_ptr->color = color;
+        s_data.quad_vertex_buffer_ptr->tex_coord = {0.0f, 0.0f};
+        s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
+        s_data.quad_vertex_buffer_ptr->tiling_factor = tiling_factor;
+        s_data.quad_vertex_buffer_ptr++;
+
+        s_data.quad_vertex_buffer_ptr->position = transform * s_data.quad_vertex_positions[1];
+        s_data.quad_vertex_buffer_ptr->color = color;
+        s_data.quad_vertex_buffer_ptr->tex_coord = {1.0f, 0.0f};
+        s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
+        s_data.quad_vertex_buffer_ptr->tiling_factor = tiling_factor;
+        s_data.quad_vertex_buffer_ptr++;
+
+        s_data.quad_vertex_buffer_ptr->position = transform * s_data.quad_vertex_positions[2];
+        s_data.quad_vertex_buffer_ptr->color = color;
+        s_data.quad_vertex_buffer_ptr->tex_coord = {1.0f, 1.0f};
+        s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
+        s_data.quad_vertex_buffer_ptr->tiling_factor = tiling_factor;
+        s_data.quad_vertex_buffer_ptr++;
+
+        s_data.quad_vertex_buffer_ptr->position = transform * s_data.quad_vertex_positions[3];
+        s_data.quad_vertex_buffer_ptr->color = color;
+        s_data.quad_vertex_buffer_ptr->tex_coord = {0.0f, 1.0f};
+        s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
+        s_data.quad_vertex_buffer_ptr->tiling_factor = tiling_factor;
+        s_data.quad_vertex_buffer_ptr++;
+
+        s_data.quad_index_count += 6;
     }
 
     void Renderer2D::draw_rotated_quad(const glm::vec3& position, const glm::vec2& size, float rotation, const glm::vec4& color) {

@@ -33,7 +33,7 @@ namespace Honey {
     	static void draw_rotated_quad(const glm::vec3& position, const glm::vec2& size, float rotation,
 							 const Ref<Texture2D>& texture = nullptr,
 							 const glm::vec4& color = {1.0f, 1.0f, 1.0f, 1.0f},
-							 float tiling_multiplier = 1.0f);
+							 float tiling_factor = 1.0f);
 
     	static void draw_rotated_quad(const glm::vec3& position, const glm::vec2& size, float rotation, const glm::vec4& color);
     };

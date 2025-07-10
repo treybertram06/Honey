@@ -18,7 +18,14 @@ namespace Honey {
 
         virtual void bind(uint32_t slot = 0) const override;
 
-        virtual bool operator==(const Texture& other) const override { return m_renderer_id == ((OpenGLTexture2D&)other).m_renderer_id; }
+        virtual bool operator==(const Texture& other) const override {
+            const OpenGLTexture2D* other_gl = dynamic_cast<const OpenGLTexture2D*>(&other);
+            if (!other_gl) {
+                return false;  // Different types, not equal
+            }
+            return m_renderer_id == other_gl->m_renderer_id;
+        }
+
     private:
         std::string m_path;
         uint32_t m_width, m_height;

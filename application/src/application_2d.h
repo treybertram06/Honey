@@ -30,6 +30,7 @@ private:
 
     Honey::FramerateCounter framerate_counter;
     int framerate = 0;
+    float frame_time = 0.0f;
 
 
 };

@@ -22,6 +22,9 @@ void Application2D::on_detach() {
 
 void Application2D::on_update(Honey::Timestep ts) {
     HN_PROFILE_FUNCTION();
+
+    frame_time = ts.get_millis();
+
     // update
     {
         HN_PROFILE_SCOPE("Application2D::camera_update");
@@ -48,14 +51,14 @@ void Application2D::on_update(Honey::Timestep ts) {
 
         //Honey::ScopedTimer timer("Renderer2D::draw_quad");
         Honey::Renderer2D::draw_quad({0.0f, 0.0f}, {1.0f, 1.0f}, m_square_color);
-
         Honey::Renderer2D::draw_quad({2.0f, 2.0f}, {1.0f, 1.0f}, {0.8f, 0.2f, 0.3f, 1.0f});
-        Honey::Renderer2D::draw_quad({0.0f, 1.0f, 0.0f}, {0.5f, 0.5f}, m_chuck_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
+        Honey::Renderer2D::draw_quad({0.0f, 1.0f, 0.0f}, {0.5f, 0.5f}, m_chuck_texture, {1.0f, 0.5f, 0.5f, 1.0f}, 1.0f);
         Honey::Renderer2D::draw_quad({0.0f, -1.0f, 0.0f}, {1.5f, 1.5f}, m_chuck_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 2.0f);
-        Honey::Renderer2D::draw_quad({-50.0f, -50.0f, -0.1f}, {100.0f, 100.0f}, m_missing_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 1000.0f);
-//
-        //Honey::Renderer2D::draw_rotated_quad({2.0f, 0.0f, 0.0f}, {0.25f, 0.25f}, glm::radians(45.0f), {0.8f, 0.2f, 0.3f, 1.0f});
 
+        Honey::Renderer2D::draw_rotated_quad({0.5f, 1.5f, 0.0f}, {0.1f, 0.1f}, 45.0f, m_chuck_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 2.0f);
+        Honey::Renderer2D::draw_quad({-50.0f, -50.0f, -0.1f}, {100.0f, 100.0f}, m_missing_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 1000.0f);
+
+        Honey::Renderer2D::draw_rotated_quad({2.0f, 0.0f, 0.0f}, {0.25f, 0.25f}, glm::radians(45.0f), {0.8f, 0.2f, 0.3f, 1.0f});
         //Honey::Renderer2D::draw_quad({-1.0f, -0.33f, 0.0f}, {2.0f, 2.0f}, m_transparent_texture);
 
         Honey::Renderer2D::end_scene();
@@ -65,6 +68,15 @@ void Application2D::on_update(Honey::Timestep ts) {
 
 void Application2D::on_imgui_render() {
     HN_PROFILE_FUNCTION();
+
+    ImGui::Begin("Performance");
+    ImGui::Text("Frame Rate: %d FPS", framerate);
+    ImGui::Text("Frame Time: %.3f ms", frame_time);
+
+    ImGui::Separator();
+    ImGui::Text("Smoothed FPS: %d", framerate_counter.get_smoothed_fps());
+    ImGui::End();
+
     ImGui::Begin("Settings");
     ImGui::ColorEdit4("Square color", glm::value_ptr(m_square_color));
 
