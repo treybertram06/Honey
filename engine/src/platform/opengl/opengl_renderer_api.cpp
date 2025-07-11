@@ -27,6 +27,14 @@ namespace Honey {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     }
 
+    uint32_t OpenGLRendererAPI::get_max_texture_slots() {
+        int max_texture_units;
+        glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &max_texture_units);
+        return (uint32_t)max_texture_units;
+
+    }
+
+
     void OpenGLRendererAPI::draw_indexed(const Ref<VertexArray> &vertex_array, uint32_t index_count) {
         //uint32_t count = index_count ? vertex_array->get_index_buffer()->get_count() : index_count;
         uint32_t count = index_count ? index_count : vertex_array->get_index_buffer()->get_count();

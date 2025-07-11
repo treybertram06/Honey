@@ -16,10 +16,10 @@ namespace Honey {
     };
 
     struct Renderer2DData {
-        const uint32_t max_quads = 10000;
-        const uint32_t max_vertices = max_quads * 4;
-        const uint32_t max_indices = max_quads * 6;
-        static const uint32_t max_texture_slots = 32; //TODO: max device texture slots
+        static const uint32_t max_quads = 10000;
+        static const uint32_t max_vertices = max_quads * 4;
+        static const uint32_t max_indices = max_quads * 6;
+        uint32_t max_texture_slots;
 
         Ref<VertexArray> quad_vertex_array;
         Ref<VertexBuffer> quad_vertex_buffer;
@@ -30,16 +30,22 @@ namespace Honey {
         QuadVertex* quad_vertex_buffer_base = nullptr;
         QuadVertex* quad_vertex_buffer_ptr = nullptr;
 
-        std::array<Ref<Texture2D>, max_texture_slots> texture_slots;
+        std::vector<Ref<Texture2D>> texture_slots;
         uint32_t texture_slot_index = 1; //0 = white texture
 
         glm::vec4 quad_vertex_positions[4];
+
+        Renderer2D::Statistics statistics;
+
     };
 
     static Renderer2DData s_data;
 
     void Renderer2D::init() {
         HN_PROFILE_FUNCTION();
+
+        s_data.max_texture_slots = RenderCommand::get_max_texture_slots();
+        s_data.texture_slots.resize(s_data.max_texture_slots);
 
         s_data.quad_vertex_array = VertexArray::create();
 
@@ -86,7 +92,7 @@ namespace Honey {
             samplers[i] = i;
 
 
-        s_data.texture_shader = Shader::create("../../application/assets/shaders/texture.glsl");
+        s_data.texture_shader = Shader::create("../../application/assets/shaders/texture.glsl", s_data.max_texture_slots);
         s_data.texture_shader->bind();
         s_data.texture_shader->set_int_array("u_textures", samplers, s_data.max_texture_slots);
 
@@ -107,6 +113,8 @@ namespace Honey {
 
     void Renderer2D::begin_scene(const OrthographicCamera &camera) {
         HN_PROFILE_FUNCTION();
+
+        reset_stats();
 
         s_data.texture_shader->bind();
         s_data.texture_shader->set_mat4("u_view_projection", camera.get_view_projection_matrix());
@@ -140,6 +148,17 @@ namespace Honey {
 
         s_data.quad_vertex_array->bind();
         RenderCommand::draw_indexed(s_data.quad_vertex_array, s_data.quad_index_count);
+
+        s_data.statistics.draw_calls++;
+    }
+
+    void Renderer2D::flush_and_reset() {
+        end_scene();
+
+        s_data.quad_index_count = 0;
+        s_data.quad_vertex_buffer_ptr = s_data.quad_vertex_buffer_base;
+
+        s_data.texture_slot_index = 1;
     }
 
 
@@ -148,15 +167,17 @@ namespace Honey {
                           float tiling_factor) {
         HN_PROFILE_FUNCTION();
 
+        if (s_data.quad_index_count >= Renderer2DData::max_indices)
+            flush_and_reset();
+
+
         if (!texture) {
-            // Use blank texture if null texture is passed
             draw_quad(position, size, color);
             return;
         }
 
         float texture_index = 0.0f;
         for (uint32_t i = 1; i < s_data.texture_slot_index; i++) {
-            // Add null check for stored texture
             if (s_data.texture_slots[i] &&
                 *s_data.texture_slots[i].get() == *texture.get()) {
                 texture_index = (float)i;
@@ -165,7 +186,6 @@ namespace Honey {
         }
 
         if (texture_index == 0.0f) {
-            // Add bounds check
             if (s_data.texture_slot_index >= s_data.max_texture_slots) {
                 HN_CORE_WARN("Texture slot limit exceeded! Using blank texture.");
                 texture_index = 0.0f;
@@ -176,29 +196,31 @@ namespace Honey {
             }
         }
 
+        glm::mat4 transform = glm::translate(glm::mat4(1.0f), position)
+           * glm::scale(glm::mat4(1.0f), {size.x, size.y, 1.0f});
 
-        s_data.quad_vertex_buffer_ptr->position = position;
+        s_data.quad_vertex_buffer_ptr->position = transform * s_data.quad_vertex_positions[0];
         s_data.quad_vertex_buffer_ptr->color = color;
         s_data.quad_vertex_buffer_ptr->tex_coord = {0.0f, 0.0f};
         s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
         s_data.quad_vertex_buffer_ptr->tiling_factor = tiling_factor;
         s_data.quad_vertex_buffer_ptr++;
 
-        s_data.quad_vertex_buffer_ptr->position = { position.x + size.x, position.y, 0.0f };
+        s_data.quad_vertex_buffer_ptr->position = transform * s_data.quad_vertex_positions[1];
         s_data.quad_vertex_buffer_ptr->color = color;
         s_data.quad_vertex_buffer_ptr->tex_coord = {1.0f, 0.0f};
         s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
         s_data.quad_vertex_buffer_ptr->tiling_factor = tiling_factor;
         s_data.quad_vertex_buffer_ptr++;
 
-        s_data.quad_vertex_buffer_ptr->position = { position.x + size.x, position.y + size.y, 0.0f };
+        s_data.quad_vertex_buffer_ptr->position = transform * s_data.quad_vertex_positions[2];
         s_data.quad_vertex_buffer_ptr->color = color;
         s_data.quad_vertex_buffer_ptr->tex_coord = {1.0f, 1.0f};
         s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
         s_data.quad_vertex_buffer_ptr->tiling_factor = tiling_factor;
         s_data.quad_vertex_buffer_ptr++;
 
-        s_data.quad_vertex_buffer_ptr->position = { position.x, position.y + size.y, 0.0f };
+        s_data.quad_vertex_buffer_ptr->position = transform * s_data.quad_vertex_positions[3];
         s_data.quad_vertex_buffer_ptr->color = color;
         s_data.quad_vertex_buffer_ptr->tex_coord = {0.0f, 1.0f};
         s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
@@ -206,6 +228,8 @@ namespace Honey {
         s_data.quad_vertex_buffer_ptr++;
 
         s_data.quad_index_count += 6;
+
+        s_data.statistics.quad_count++;
 
     }
 
@@ -223,31 +247,37 @@ namespace Honey {
     void Renderer2D::draw_quad(const glm::vec3& position, const glm::vec2& size, const glm::vec4& color) {
         HN_PROFILE_FUNCTION();
 
+        if (s_data.quad_index_count >= Renderer2DData::max_indices)
+            flush_and_reset();
+
         const float texture_index = 0.0f; // white texture
         const float tiling_factor = 1.0f; // no tiliing needed
 
-        s_data.quad_vertex_buffer_ptr->position = position;
+        glm::mat4 transform = glm::translate(glm::mat4(1.0f), position)
+            * glm::scale(glm::mat4(1.0f), {size.x, size.y, 1.0f});
+
+        s_data.quad_vertex_buffer_ptr->position = transform * s_data.quad_vertex_positions[0];
         s_data.quad_vertex_buffer_ptr->color = color;
         s_data.quad_vertex_buffer_ptr->tex_coord = {0.0f, 0.0f};
         s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
         s_data.quad_vertex_buffer_ptr->tiling_factor = tiling_factor;
         s_data.quad_vertex_buffer_ptr++;
 
-        s_data.quad_vertex_buffer_ptr->position = { position.x + size.x, position.y, 0.0f };
+        s_data.quad_vertex_buffer_ptr->position = transform * s_data.quad_vertex_positions[1];
         s_data.quad_vertex_buffer_ptr->color = color;
         s_data.quad_vertex_buffer_ptr->tex_coord = {1.0f, 0.0f};
         s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
         s_data.quad_vertex_buffer_ptr->tiling_factor = tiling_factor;
         s_data.quad_vertex_buffer_ptr++;
 
-        s_data.quad_vertex_buffer_ptr->position = { position.x + size.x, position.y + size.y, 0.0f };
+        s_data.quad_vertex_buffer_ptr->position = transform * s_data.quad_vertex_positions[2];
         s_data.quad_vertex_buffer_ptr->color = color;
         s_data.quad_vertex_buffer_ptr->tex_coord = {1.0f, 1.0f};
         s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
         s_data.quad_vertex_buffer_ptr->tiling_factor = tiling_factor;
         s_data.quad_vertex_buffer_ptr++;
 
-        s_data.quad_vertex_buffer_ptr->position = { position.x, position.y + size.y, 0.0f };
+        s_data.quad_vertex_buffer_ptr->position = transform * s_data.quad_vertex_positions[3];
         s_data.quad_vertex_buffer_ptr->color = color;
         s_data.quad_vertex_buffer_ptr->tex_coord = {0.0f, 1.0f};
         s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
@@ -255,6 +285,9 @@ namespace Honey {
         s_data.quad_vertex_buffer_ptr++;
 
         s_data.quad_index_count += 6;
+
+        s_data.statistics.quad_count++;
+
     }
 
 
@@ -263,15 +296,16 @@ namespace Honey {
                           float tiling_factor) {
         HN_PROFILE_FUNCTION();
 
+        if (s_data.quad_index_count >= Renderer2DData::max_indices)
+            flush_and_reset();
+
         if (!texture) {
-            // Use blank texture if null texture is passed
             draw_quad(position, size, color);
             return;
         }
 
         float texture_index = 0.0f;
         for (uint32_t i = 1; i < s_data.texture_slot_index; i++) {
-            // Add null check for stored texture
             if (s_data.texture_slots[i] &&
                 *s_data.texture_slots[i].get() == *texture.get()) {
                 texture_index = (float)i;
@@ -280,7 +314,6 @@ namespace Honey {
         }
 
         if (texture_index == 0.0f) {
-            // Add bounds check
             if (s_data.texture_slot_index >= s_data.max_texture_slots) {
                 HN_CORE_WARN("Texture slot limit exceeded! Using blank texture.");
                 texture_index = 0.0f;
@@ -325,12 +358,23 @@ namespace Honey {
         s_data.quad_vertex_buffer_ptr++;
 
         s_data.quad_index_count += 6;
+
+        s_data.statistics.quad_count++;
+
     }
 
     void Renderer2D::draw_rotated_quad(const glm::vec3& position, const glm::vec2& size, float rotation, const glm::vec4& color) {
         draw_rotated_quad(position, size, rotation, nullptr, color, 1.0f);
     }
 
+
+    Renderer2D::Statistics Renderer2D::get_stats() {
+        return s_data.statistics;
+    }
+
+    void Renderer2D::reset_stats() {
+        memset(&s_data.statistics, 0, sizeof(Statistics));
+    }
 
 
 

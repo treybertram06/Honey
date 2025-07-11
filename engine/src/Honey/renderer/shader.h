@@ -22,7 +22,7 @@ namespace Honey {
 
         virtual const std::string& get_name() const = 0;
 
-        static Ref<Shader> create(const std::string& path);
+        static Ref<Shader> create(const std::string& path, uint32_t max_texture_slots = 0);
         static Ref<Shader> create(const std::string& name, const std::string& vertex_src, const std::string& fragment_src);
     };
 

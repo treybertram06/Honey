@@ -21,7 +21,7 @@ namespace Honey {
         const OrthographicCamera& get_camera() const { return m_camera; }
 
         float get_zoom_level() { return m_zoom_level; }
-        void set_zoom_level(float level) { m_zoom_level = level; }
+        void set_zoom_level(float level) { m_zoom_level = level; m_camera.set_size(m_zoom_level); }
 
     private:
         bool on_mouse_scrolled(MouseScrolledEvent& e);

@@ -29,8 +29,9 @@ private:
 	glm::vec4 m_square_color = { 0.2f, 0.3f, 0.8f, 1.0f };
 	glm::vec3 m_square_position;
 
-	Honey::FramerateCounter framerate_counter;
-	int framerate = 0;
+	Honey::FramerateCounter m_framerate_counter;
+	int m_framerate = 0;
+	float m_frame_time = 0.0f;
 
 
 };

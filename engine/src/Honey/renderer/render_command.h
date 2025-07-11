@@ -23,6 +23,11 @@ namespace Honey {
             s_renderer_api->clear();
         }
 
+        static uint32_t get_max_texture_slots() {
+            return s_renderer_api->get_max_texture_slots();
+        }
+
+
         inline static void draw_indexed(const Ref<VertexArray>& vertex_array, uint32_t index_count = 0) {
             s_renderer_api->draw_indexed(vertex_array, index_count);
         }

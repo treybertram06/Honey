@@ -8,7 +8,7 @@
 namespace Honey {
     class OpenGLShader : public Shader {
     public:
-        OpenGLShader(const std::string& path);
+        OpenGLShader(const std::string& path, uint32_t max_texture_slots);
         OpenGLShader(const std::string& name, const std::string& vertex_src, const std::string& fragment_src);
         virtual ~OpenGLShader();
 
@@ -38,7 +38,8 @@ namespace Honey {
 
     private:
         std::string read_file(const std::string& path);
-        std::unordered_map<GLenum, std::string> pre_process(const std::string& source);
+        std::unordered_map<GLenum, std::string> pre_process(const std::string& source, uint32_t max_texture_slots);
+        std::string process_texture_array_size(const std::string& source, uint32_t max_texture_slots);
         void compile(const std::unordered_map<GLenum, std::string>& shader_srcs);
 
         uint32_t m_renderer_id;

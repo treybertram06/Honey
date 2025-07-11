@@ -94,8 +94,8 @@ namespace Honey {
     void ImGuiLayer::on_imgui_render() {
      	HN_PROFILE_FUNCTION();
 
-         static bool show = true;
-         ImGui::ShowDemoWindow(&show);
+         static bool show = false;
+         //ImGui::ShowDemoWindow(&show);
     }
 
 

@@ -25,12 +25,12 @@ private:
     Honey::Ref<Honey::Texture2D> m_chuck_texture, m_transparent_texture;
     Honey::Ref<Honey::Texture2D> m_missing_texture;
 
-    glm::vec4 m_square_color = { 0.2f, 0.3f, 0.8f, 1.0f };
+    glm::vec4 m_clear_color = { 0.1f, 0.1f, 0.1f, 1.0f };
     glm::vec3 m_square_position;
 
-    Honey::FramerateCounter framerate_counter;
-    int framerate = 0;
-    float frame_time = 0.0f;
+    Honey::FramerateCounter m_framerate_counter;
+    int m_framerate = 0;
+    float m_frame_time = 0.0f;
 
 
 };

@@ -20,11 +20,11 @@ namespace Honey {
     }
 
 
-    OpenGLShader::OpenGLShader(const std::string& path) {
+    OpenGLShader::OpenGLShader(const std::string& path, uint32_t max_texture_slots) {
         HN_PROFILE_FUNCTION();
 
         std::string source = read_file(path);
-        auto shader_srcs = pre_process(source);
+        auto shader_srcs = pre_process(source, max_texture_slots);
         compile(shader_srcs);
 
         auto last_slash = path.find_last_of("/\\");
@@ -33,6 +33,7 @@ namespace Honey {
         auto count = last_dot == std::string::npos ? path.size() - last_slash : last_dot - last_slash;
         m_name = path.substr(last_slash, count);
     }
+
     OpenGLShader::OpenGLShader(const std::string& name, const std::string &vertex_src, const std::string &fragment_src)
         : m_name(name) {
         std::unordered_map<GLenum, std::string> sources;
@@ -129,7 +130,7 @@ namespace Honey {
         return result;
     }
 
-    std::unordered_map<GLenum, std::string> OpenGLShader::pre_process(const std::string& source) {
+    std::unordered_map<GLenum, std::string> OpenGLShader::pre_process(const std::string& source, uint32_t max_texture_slots) {
         HN_PROFILE_FUNCTION();
 
         std::unordered_map<GLenum, std::string> shader_srcs;
@@ -146,12 +147,47 @@ namespace Honey {
 
             size_t next_line_pos = source.find_first_not_of("\r\n", eol);
             pos = source.find(type_token, next_line_pos);
-            shader_srcs[shader_type_from_str(type)] =
-                source.substr(next_line_pos,
-                    pos - (next_line_pos == std::string::npos ? source.size() - 1 : next_line_pos));
+
+            std::string shader_source = source.substr(next_line_pos,
+                pos - (next_line_pos == std::string::npos ? source.size() - 1 : next_line_pos));
+
+            // Process texture array size for fragment shaders
+            if (shader_type_from_str(type) == GL_FRAGMENT_SHADER) {
+                shader_source = process_texture_array_size(shader_source, max_texture_slots);
+            }
+
+            shader_srcs[shader_type_from_str(type)] = shader_source;
         }
         return shader_srcs;
     }
+
+
+    std::string OpenGLShader::process_texture_array_size(const std::string& source, uint32_t max_texture_slots) {
+        std::string result = source;
+
+        // Look for the pattern: uniform sampler2D u_textures[NUMBER];
+        const std::string pattern = "uniform sampler2D u_textures[";
+        size_t pos = result.find(pattern);
+
+        if (pos != std::string::npos) {
+            // Find the opening bracket
+            size_t bracket_start = pos + pattern.length();
+
+            // Find the closing bracket
+            size_t bracket_end = result.find(']', bracket_start);
+
+            if (bracket_end != std::string::npos) {
+                // Replace whatever is between the brackets with our max_texture_slots
+                std::string replacement = std::to_string(max_texture_slots);
+                result.replace(bracket_start, bracket_end - bracket_start, replacement);
+
+                HN_CORE_INFO("Shader: Replaced texture array size with {0}", max_texture_slots);
+            }
+        }
+
+        return result;
+    }
+
 
 
     void OpenGLShader::bind() const {
