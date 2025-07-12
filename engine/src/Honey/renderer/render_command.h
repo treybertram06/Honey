@@ -32,6 +32,10 @@ namespace Honey {
             s_renderer_api->draw_indexed(vertex_array, index_count);
         }
 
+        inline static void draw_indexed_instanced(const Ref<VertexArray>& vertex_array, uint32_t index_count, uint32_t instance_count) {
+            s_renderer_api->draw_indexed_instanced(vertex_array, index_count, instance_count);
+        }
+
     private:
         static RendererAPI* s_renderer_api;
     };

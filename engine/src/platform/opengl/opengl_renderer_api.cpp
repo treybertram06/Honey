@@ -4,7 +4,6 @@
 #include <glad/glad.h>
 
 namespace Honey {
-
     void OpenGLRendererAPI::init() {
         HN_PROFILE_FUNCTION();
 
@@ -42,4 +41,20 @@ namespace Honey {
         glDrawElements(GL_TRIANGLES, count, GL_UNSIGNED_INT, nullptr);
     }
 
+    void OpenGLRendererAPI::draw_indexed_instanced(const Ref<VertexArray> &vertex_array, uint32_t index_count, uint32_t instance_count) {
+        HN_PROFILE_FUNCTION();
+
+        vertex_array->bind();
+
+        // If the caller passed 0 let the VAO tell us how many indices it holds
+        glDrawElementsInstanced(
+            GL_TRIANGLES,                // mode
+            static_cast<GLsizei>(index_count), // indices per *base* mesh (6 for a quad)
+            GL_UNSIGNED_INT,             // type of your IBO
+            nullptr,                     // offset into IBO
+            static_cast<GLsizei>(instance_count));  // how many quads to draw
+    }
 }
+
+
+

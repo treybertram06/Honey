@@ -62,27 +62,29 @@ namespace Honey {
         glBindVertexArray(0);
     }
 
-    void OpenGLVertexArray::add_vertex_buffer(const Ref<VertexBuffer> &vertex_buffer) {
+    void OpenGLVertexArray::add_vertex_buffer(const Ref<VertexBuffer>& vb)
+    {
         HN_PROFILE_FUNCTION();
-
-        HN_CORE_ASSERT(vertex_buffer->get_layout().get_elements().size(), "VertexBuffer has no layout!");
+        HN_CORE_ASSERT(vb->get_layout().get_elements().size(), "VertexBuffer has no layout!");
 
         glBindVertexArray(m_renderer_id);
-        vertex_buffer->bind();
+        vb->bind();
 
-        uint32_t index = 0;
-        const auto& layout = vertex_buffer->get_layout();
-        for (const auto& element : layout) {
-            glEnableVertexAttribArray(index);
-            glVertexAttribPointer(index, element.get_component_count(),
-                shader_data_type_to_opengl_base_type(element.type),
-                element.normalized ? GL_TRUE : GL_FALSE,
-                layout.get_stride(),
-                (const void*)element.offset);
-            index++;
+        const auto& layout = vb->get_layout();
+        for (const auto& elem : layout)
+        {
+            glEnableVertexAttribArray(m_attr_index);
+            glVertexAttribPointer(m_attr_index,
+                                  elem.get_component_count(),
+                                  shader_data_type_to_opengl_base_type(elem.type),
+                                  elem.normalized ? GL_TRUE : GL_FALSE,
+                                  layout.get_stride(),
+                                  (const void*)(uintptr_t)elem.offset);
+
+            glVertexAttribDivisor(m_attr_index, elem.instanced ? 1 : 0);
+            ++m_attr_index;                                 // advance **once**, persist
         }
-
-        m_vertex_buffers.push_back(vertex_buffer);
+        m_vertex_buffers.push_back(vb);
     }
 
     void OpenGLVertexArray::set_index_buffer(const Ref<IndexBuffer> &index_buffer) {

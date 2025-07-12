@@ -34,11 +34,16 @@ namespace Honey {
         std::size_t offset;
         uint32_t size;
         bool normalized;
+        bool instanced;
 
         BufferElement() {}
 
-        BufferElement(ShaderDataType _type, const std::string& _name, bool _normalized = false)
-            : name(_name), type(_type), size(shader_data_type_size(type)), offset(0), normalized(_normalized) {}
+        BufferElement(ShaderDataType t,
+                  const std::string& n,
+                  bool norm     = false,
+                  bool inst     = false)        // ← NEW
+        : name(n), type(t), size(shader_data_type_size(t)),
+          offset(0), normalized(norm), instanced(inst) {}
 
         uint32_t get_component_count() const {
 

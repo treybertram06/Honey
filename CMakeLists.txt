@@ -5,6 +5,8 @@ if(CCACHE_PROGRAM)
     set(CMAKE_C_COMPILER_LAUNCHER   ${CCACHE_PROGRAM})
     set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_PROGRAM})
 endif()
+
+#set(CMAKE_UNITY_BUILD ON)
 #################
 
 # Force STATIC by default for all libraries
@@ -30,6 +32,18 @@ add_subdirectory(${CMAKE_SOURCE_DIR}/engine/vendor/spdlog)
 set(GLM_TEST_ENABLE OFF CACHE BOOL "" FORCE)
 add_subdirectory(${CMAKE_SOURCE_DIR}/engine/vendor/glm)
 
+target_compile_definitions(glm INTERFACE
+        GLM_FORCE_INLINE
+        GLM_FORCE_INTRINSICS
+        # Enable AVX2 only for Release builds (guarded so Debug doesn’t become painful)
+        $<$<CONFIG:Release>:GLM_FORCE_SIMD_AVX2>
+)
+
+# Optional but often helpful: keep vectors naturally aligned (16 B) for faster loads/stores
+#target_compile_definitions(glm INTERFACE GLM_FORCE_DEFAULT_ALIGNED_GENTYPES)
+
+
+
 add_subdirectory(application)
 
 target_include_directories(application PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
@@ -48,4 +62,21 @@ if(APPLE)
     endif()
     target_link_libraries(engine PUBLIC ${COCOA_FRAMEWORK})
 endif()
+
+function(set_fast_math_flags tgt)
+    if(MSVC)
+        target_compile_options(${tgt} PRIVATE
+                $<$<CONFIG:Release>:/arch:AVX2 /fp:fast>
+        )
+    else()
+        target_compile_options(${tgt} PRIVATE
+                $<$<CONFIG:Release>:-mavx2 -mfma -ffp-contract=fast
+                -fno-math-errno -funsafe-math-optimizations
+                -fno-trapping-math>
+        )
+    endif()
+endfunction()
+
+set_fast_math_flags(engine)
+set_fast_math_flags(application)
 

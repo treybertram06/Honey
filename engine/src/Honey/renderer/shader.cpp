@@ -6,10 +6,10 @@
 
 namespace Honey {
 
-    Ref<Shader> Shader::create(const std::string& path, uint32_t max_texture_slots) {
+    Ref<Shader> Shader::create(const std::string& path) {
         switch (Renderer::get_api()) {
             case RendererAPI::API::none:     HN_CORE_ASSERT(false, "RendererAPI::none is not supported."); return nullptr;
-            case RendererAPI::API::opengl:   return std::make_shared<OpenGLShader>(path, max_texture_slots);
+            case RendererAPI::API::opengl:   return std::make_shared<OpenGLShader>(path);
         }
 
         HN_CORE_ASSERT(false, "Unknown RendererAPI.");

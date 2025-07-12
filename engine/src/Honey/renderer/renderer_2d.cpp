@@ -4,383 +4,277 @@
 #include "render_command.h"
 #include "vertex_array.h"
 #include "shader.h"
+#include "texture.h"
 
 namespace Honey {
 
-    struct QuadVertex {
-        glm::vec3 position;
-        glm::vec4 color;
-        glm::vec2 tex_coord;
-        float tex_index;
-        float tiling_factor;
-    };
+// ──────────────────────────────────────────────────────────────────────────────
+// 1.  Per‑instance payload sent to the GPU
+// ──────────────────────────────────────────────────────────────────────────────
+struct QuadInstance {
+    glm::vec2  center;        // world‑space centre of the quad
+    glm::vec2  halfSize;      // size * 0.5f
+    float      rotation;      // radians – 0 for axis‑aligned
+    glm::vec4  color;
+    float      texIndex;      // which of the bound textures to sample
+    float      tilingFactor;
+};
 
-    struct Renderer2DData {
-        static const uint32_t max_quads = 10000;
-        static const uint32_t max_vertices = max_quads * 4;
-        static const uint32_t max_indices = max_quads * 6;
-        uint32_t max_texture_slots;
+// ──────────────────────────────────────────────────────────────────────────────
+// 2.  Static quad mesh (shared by every sprite)
+// ──────────────────────────────────────────────────────────────────────────────
+struct QuadVertexStatic {
+    glm::vec2 localPos;   // corners at (±0.5, ±0.5)
+    glm::vec2 localTex;   // UVs 0‑1
+};
 
-        Ref<VertexArray> quad_vertex_array;
-        Ref<VertexBuffer> quad_vertex_buffer;
-        Ref<Shader> texture_shader;
-        Ref<Texture2D> blank_texture;
+static const QuadVertexStatic s_staticQuad[4] = {
+    {{-0.5f,-0.5f}, {0.0f,0.0f}},
+    {{ 0.5f,-0.5f}, {1.0f,0.0f}},
+    {{ 0.5f, 0.5f}, {1.0f,1.0f}},
+    {{-0.5f, 0.5f}, {0.0f,1.0f}}
+};
 
-        uint32_t quad_index_count = 0;
-        QuadVertex* quad_vertex_buffer_base = nullptr;
-        QuadVertex* quad_vertex_buffer_ptr = nullptr;
+// ──────────────────────────────────────────────────────────────────────────────
+struct Renderer2DData {
+    static constexpr uint32_t maxQuads     = 10'000;
+    static constexpr uint32_t maxTextures  = 32;   // keep in sync with shader
 
-        std::vector<Ref<Texture2D>> texture_slots;
-        uint32_t texture_slot_index = 1; //0 = white texture
+    // GL objects
+    Ref<VertexArray>  vao;
+    Ref<VertexBuffer> staticVBO;   // 4 vertices
+    Ref<VertexBuffer> instanceVBO; // maxQuads * QuadInstance
+    Ref<IndexBuffer>  ibo;         // 6 indices
+    Ref<Shader>       shader;
 
-        glm::vec4 quad_vertex_positions[4];
+    // CPU‑side ring buffer for instances
+    QuadInstance*     instanceBase = nullptr;
+    QuadInstance*     instancePtr  = nullptr;
+    uint32_t          instanceCount = 0;
 
-        Renderer2D::Statistics statistics;
+    // Texture slots
+    uint32_t                       maxTextureSlots = 0;
+    std::vector<Ref<Texture2D>>    textureSlots;
+    uint32_t                       textureSlotIndex = 1; // 0 is white tex
+    Ref<Texture2D>                 whiteTexture;
 
-    };
+    // Stats
+    Renderer2D::Statistics stats;
+};
 
-    static Renderer2DData s_data;
+static Renderer2DData s_data;
 
-    void Renderer2D::init() {
-        HN_PROFILE_FUNCTION();
+// ──────────────────────────────────────────────────────────────────────────────
+// Helper — find / allocate a texture slot (returns index)
+// ──────────────────────────────────────────────────────────────────────────────
+static float resolve_texture_slot(const Ref<Texture2D>& tex)
+{
+    if (!tex)
+        return 0.0f; // white
 
-        s_data.max_texture_slots = RenderCommand::get_max_texture_slots();
-        s_data.texture_slots.resize(s_data.max_texture_slots);
+    // Already bound this frame?
+    for (uint32_t i = 1; i < s_data.textureSlotIndex; ++i)
+        if (s_data.textureSlots[i] && *s_data.textureSlots[i] == *tex)
+            return static_cast<float>(i);
 
-        s_data.quad_vertex_array = VertexArray::create();
-
-        s_data.quad_vertex_buffer = VertexBuffer::create(s_data.max_vertices * sizeof(QuadVertex));
-
-        BufferLayout quad_layout = {
-            { ShaderDataType::Float3, "a_pos" },
-            { ShaderDataType::Float4, "a_color" },
-            { ShaderDataType::Float2, "a_tex_coord" },
-            { ShaderDataType::Float, "a_tex_index" },
-            { ShaderDataType::Float, "a_tiling_factor" }
-        };
-
-        s_data.quad_vertex_buffer->set_layout(quad_layout);
-        s_data.quad_vertex_array->add_vertex_buffer(s_data.quad_vertex_buffer);
-
-        s_data.quad_vertex_buffer_base = new QuadVertex[s_data.max_vertices];
-
-        uint32_t* quad_indices = new uint32_t[s_data.max_indices];
-
-        uint32_t offset = 0;
-        for (uint32_t i = 0; i < s_data.max_indices; i += 6) {
-            quad_indices[i + 0] = offset + 0;
-            quad_indices[i + 1] = offset + 1;
-            quad_indices[i + 2] = offset + 2;
-
-            quad_indices[i + 3] = offset + 2;
-            quad_indices[i + 4] = offset + 3;
-            quad_indices[i + 5] = offset + 0;
-
-            offset += 4;
-        }
-
-        Ref<IndexBuffer> quad_index_buffer = IndexBuffer::create(quad_indices, s_data.max_indices);
-        s_data.quad_vertex_array->set_index_buffer(quad_index_buffer);
-        delete[] quad_indices;
-
-        s_data.blank_texture = Texture2D::create(1, 1);
-        uint32_t white_texture_data = 0xffffffff;
-        s_data.blank_texture->set_data(&white_texture_data, sizeof(uint32_t));
-
-        int32_t samplers[s_data.max_texture_slots];
-        for (uint32_t i = 0; i < s_data.max_texture_slots; i++)
-            samplers[i] = i;
-
-
-        s_data.texture_shader = Shader::create("../../application/assets/shaders/texture.glsl", s_data.max_texture_slots);
-        s_data.texture_shader->bind();
-        s_data.texture_shader->set_int_array("u_textures", samplers, s_data.max_texture_slots);
-
-
-        s_data.texture_slots[0] = s_data.blank_texture;
-
-        s_data.quad_vertex_positions[0] = { -0.5f, -0.5f, 0.0f, 1.0f };
-        s_data.quad_vertex_positions[1] = { 0.5f, -0.5f, 0.0f, 1.0f };
-        s_data.quad_vertex_positions[2] = { 0.5f, 0.5f, 0.0f, 1.0f };
-        s_data.quad_vertex_positions[3] = { -0.5f, 0.5f, 0.0f, 1.0f };
-
+    // Need a new slot
+    if (s_data.textureSlotIndex >= s_data.maxTextureSlots) {
+        HN_CORE_WARN("Texture slot limit exceeded – using white texture");
+        return 0.0f;
     }
-
-    void Renderer2D::shutdown() {
-        HN_PROFILE_FUNCTION();
-
-    }
-
-    void Renderer2D::begin_scene(const OrthographicCamera &camera) {
-        HN_PROFILE_FUNCTION();
-
-        reset_stats();
-
-        s_data.texture_shader->bind();
-        s_data.texture_shader->set_mat4("u_view_projection", camera.get_view_projection_matrix());
-
-        s_data.quad_index_count = 0;
-        s_data.quad_vertex_buffer_ptr = s_data.quad_vertex_buffer_base;
-
-        s_data.texture_slot_index = 1;
-
-        for (uint32_t i = 1; i < s_data.max_texture_slots; i++) {
-            s_data.texture_slots[i].reset();
-        }
-
-    }
-
-    void Renderer2D::end_scene() {
-        HN_PROFILE_FUNCTION();
-
-        uint32_t data_size = (uint8_t*)s_data.quad_vertex_buffer_ptr - (uint8_t*)s_data.quad_vertex_buffer_base;
-        s_data.quad_vertex_buffer->set_data(s_data.quad_vertex_buffer_base, data_size);
-
-        flush();
-
-    }
-
-    void Renderer2D::flush() {
-        HN_PROFILE_FUNCTION();
-
-        for (uint32_t i = 0; i < s_data.texture_slot_index; i++)
-            s_data.texture_slots[i]->bind(i);
-
-        s_data.quad_vertex_array->bind();
-        RenderCommand::draw_indexed(s_data.quad_vertex_array, s_data.quad_index_count);
-
-        s_data.statistics.draw_calls++;
-    }
-
-    void Renderer2D::flush_and_reset() {
-        end_scene();
-
-        s_data.quad_index_count = 0;
-        s_data.quad_vertex_buffer_ptr = s_data.quad_vertex_buffer_base;
-
-        s_data.texture_slot_index = 1;
-    }
-
-
-    void Renderer2D::draw_quad(const glm::vec3& position, const glm::vec2& size,
-                          const Ref<Texture2D>& texture, const glm::vec4& color,
-                          float tiling_factor) {
-        HN_PROFILE_FUNCTION();
-
-        if (s_data.quad_index_count >= Renderer2DData::max_indices)
-            flush_and_reset();
-
-
-        if (!texture) {
-            draw_quad(position, size, color);
-            return;
-        }
-
-        float texture_index = 0.0f;
-        for (uint32_t i = 1; i < s_data.texture_slot_index; i++) {
-            if (s_data.texture_slots[i] &&
-                *s_data.texture_slots[i].get() == *texture.get()) {
-                texture_index = (float)i;
-                break;
-                }
-        }
-
-        if (texture_index == 0.0f) {
-            if (s_data.texture_slot_index >= s_data.max_texture_slots) {
-                HN_CORE_WARN("Texture slot limit exceeded! Using blank texture.");
-                texture_index = 0.0f;
-            } else {
-                texture_index = (float)s_data.texture_slot_index;
-                s_data.texture_slots[s_data.texture_slot_index] = texture;
-                s_data.texture_slot_index++;
-            }
-        }
-
-        glm::mat4 transform = glm::translate(glm::mat4(1.0f), position)
-           * glm::scale(glm::mat4(1.0f), {size.x, size.y, 1.0f});
-
-        s_data.quad_vertex_buffer_ptr->position = transform * s_data.quad_vertex_positions[0];
-        s_data.quad_vertex_buffer_ptr->color = color;
-        s_data.quad_vertex_buffer_ptr->tex_coord = {0.0f, 0.0f};
-        s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
-        s_data.quad_vertex_buffer_ptr->tiling_factor = tiling_factor;
-        s_data.quad_vertex_buffer_ptr++;
-
-        s_data.quad_vertex_buffer_ptr->position = transform * s_data.quad_vertex_positions[1];
-        s_data.quad_vertex_buffer_ptr->color = color;
-        s_data.quad_vertex_buffer_ptr->tex_coord = {1.0f, 0.0f};
-        s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
-        s_data.quad_vertex_buffer_ptr->tiling_factor = tiling_factor;
-        s_data.quad_vertex_buffer_ptr++;
-
-        s_data.quad_vertex_buffer_ptr->position = transform * s_data.quad_vertex_positions[2];
-        s_data.quad_vertex_buffer_ptr->color = color;
-        s_data.quad_vertex_buffer_ptr->tex_coord = {1.0f, 1.0f};
-        s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
-        s_data.quad_vertex_buffer_ptr->tiling_factor = tiling_factor;
-        s_data.quad_vertex_buffer_ptr++;
-
-        s_data.quad_vertex_buffer_ptr->position = transform * s_data.quad_vertex_positions[3];
-        s_data.quad_vertex_buffer_ptr->color = color;
-        s_data.quad_vertex_buffer_ptr->tex_coord = {0.0f, 1.0f};
-        s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
-        s_data.quad_vertex_buffer_ptr->tiling_factor = tiling_factor;
-        s_data.quad_vertex_buffer_ptr++;
-
-        s_data.quad_index_count += 6;
-
-        s_data.statistics.quad_count++;
-
-    }
-
-    void Renderer2D::draw_quad(const glm::vec2& position, const glm::vec2& size,
-                              const Ref<Texture2D>& texture, const glm::vec4& color,
-                              float tiling_multiplier) {
-        draw_quad({position.x, position.y, 0.0f}, size, texture, color, tiling_multiplier);
-    }
-
-
-    void Renderer2D::draw_quad(const glm::vec2& position, const glm::vec2& size, const glm::vec4& color) {
-        draw_quad({position.x, position.y, 0.0f}, size, color);
-    }
-
-    void Renderer2D::draw_quad(const glm::vec3& position, const glm::vec2& size, const glm::vec4& color) {
-        HN_PROFILE_FUNCTION();
-
-        if (s_data.quad_index_count >= Renderer2DData::max_indices)
-            flush_and_reset();
-
-        const float texture_index = 0.0f; // white texture
-        const float tiling_factor = 1.0f; // no tiliing needed
-
-        glm::mat4 transform = glm::translate(glm::mat4(1.0f), position)
-            * glm::scale(glm::mat4(1.0f), {size.x, size.y, 1.0f});
-
-        s_data.quad_vertex_buffer_ptr->position = transform * s_data.quad_vertex_positions[0];
-        s_data.quad_vertex_buffer_ptr->color = color;
-        s_data.quad_vertex_buffer_ptr->tex_coord = {0.0f, 0.0f};
-        s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
-        s_data.quad_vertex_buffer_ptr->tiling_factor = tiling_factor;
-        s_data.quad_vertex_buffer_ptr++;
-
-        s_data.quad_vertex_buffer_ptr->position = transform * s_data.quad_vertex_positions[1];
-        s_data.quad_vertex_buffer_ptr->color = color;
-        s_data.quad_vertex_buffer_ptr->tex_coord = {1.0f, 0.0f};
-        s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
-        s_data.quad_vertex_buffer_ptr->tiling_factor = tiling_factor;
-        s_data.quad_vertex_buffer_ptr++;
-
-        s_data.quad_vertex_buffer_ptr->position = transform * s_data.quad_vertex_positions[2];
-        s_data.quad_vertex_buffer_ptr->color = color;
-        s_data.quad_vertex_buffer_ptr->tex_coord = {1.0f, 1.0f};
-        s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
-        s_data.quad_vertex_buffer_ptr->tiling_factor = tiling_factor;
-        s_data.quad_vertex_buffer_ptr++;
-
-        s_data.quad_vertex_buffer_ptr->position = transform * s_data.quad_vertex_positions[3];
-        s_data.quad_vertex_buffer_ptr->color = color;
-        s_data.quad_vertex_buffer_ptr->tex_coord = {0.0f, 1.0f};
-        s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
-        s_data.quad_vertex_buffer_ptr->tiling_factor = tiling_factor;
-        s_data.quad_vertex_buffer_ptr++;
-
-        s_data.quad_index_count += 6;
-
-        s_data.statistics.quad_count++;
-
-    }
-
-
-    void Renderer2D::draw_rotated_quad(const glm::vec3& position, const glm::vec2& size, float rotation,
-                          const Ref<Texture2D>& texture, const glm::vec4& color,
-                          float tiling_factor) {
-        HN_PROFILE_FUNCTION();
-
-        if (s_data.quad_index_count >= Renderer2DData::max_indices)
-            flush_and_reset();
-
-        if (!texture) {
-            draw_quad(position, size, color);
-            return;
-        }
-
-        float texture_index = 0.0f;
-        for (uint32_t i = 1; i < s_data.texture_slot_index; i++) {
-            if (s_data.texture_slots[i] &&
-                *s_data.texture_slots[i].get() == *texture.get()) {
-                texture_index = (float)i;
-                break;
-                }
-        }
-
-        if (texture_index == 0.0f) {
-            if (s_data.texture_slot_index >= s_data.max_texture_slots) {
-                HN_CORE_WARN("Texture slot limit exceeded! Using blank texture.");
-                texture_index = 0.0f;
-            } else {
-                texture_index = (float)s_data.texture_slot_index;
-                s_data.texture_slots[s_data.texture_slot_index] = texture;
-                s_data.texture_slot_index++;
-            }
-        }
-
-
-        glm::mat4 transform = glm::translate(glm::mat4(1.0f), position)
-            * glm::rotate(glm::mat4(1.0f), glm::radians(rotation), {0.0f, 0.0f, 1.0f})
-            * glm::scale(glm::mat4(1.0f), {size.x, size.y, 1.0f});
-
-        s_data.quad_vertex_buffer_ptr->position = transform * s_data.quad_vertex_positions[0];
-        s_data.quad_vertex_buffer_ptr->color = color;
-        s_data.quad_vertex_buffer_ptr->tex_coord = {0.0f, 0.0f};
-        s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
-        s_data.quad_vertex_buffer_ptr->tiling_factor = tiling_factor;
-        s_data.quad_vertex_buffer_ptr++;
-
-        s_data.quad_vertex_buffer_ptr->position = transform * s_data.quad_vertex_positions[1];
-        s_data.quad_vertex_buffer_ptr->color = color;
-        s_data.quad_vertex_buffer_ptr->tex_coord = {1.0f, 0.0f};
-        s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
-        s_data.quad_vertex_buffer_ptr->tiling_factor = tiling_factor;
-        s_data.quad_vertex_buffer_ptr++;
-
-        s_data.quad_vertex_buffer_ptr->position = transform * s_data.quad_vertex_positions[2];
-        s_data.quad_vertex_buffer_ptr->color = color;
-        s_data.quad_vertex_buffer_ptr->tex_coord = {1.0f, 1.0f};
-        s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
-        s_data.quad_vertex_buffer_ptr->tiling_factor = tiling_factor;
-        s_data.quad_vertex_buffer_ptr++;
-
-        s_data.quad_vertex_buffer_ptr->position = transform * s_data.quad_vertex_positions[3];
-        s_data.quad_vertex_buffer_ptr->color = color;
-        s_data.quad_vertex_buffer_ptr->tex_coord = {0.0f, 1.0f};
-        s_data.quad_vertex_buffer_ptr->tex_index = texture_index;
-        s_data.quad_vertex_buffer_ptr->tiling_factor = tiling_factor;
-        s_data.quad_vertex_buffer_ptr++;
-
-        s_data.quad_index_count += 6;
-
-        s_data.statistics.quad_count++;
-
-    }
-
-    void Renderer2D::draw_rotated_quad(const glm::vec3& position, const glm::vec2& size, float rotation, const glm::vec4& color) {
-        draw_rotated_quad(position, size, rotation, nullptr, color, 1.0f);
-    }
-
-
-    Renderer2D::Statistics Renderer2D::get_stats() {
-        return s_data.statistics;
-    }
-
-    void Renderer2D::reset_stats() {
-        memset(&s_data.statistics, 0, sizeof(Statistics));
-    }
-
-
-
-
-
-
-
+    uint32_t idx = s_data.textureSlotIndex++;
+    s_data.textureSlots[idx] = tex;
+    return static_cast<float>(idx);
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+void Renderer2D::init()
+{
+    HN_PROFILE_FUNCTION();
+
+    // ── 2.1  Allocate VAO
+    s_data.vao = VertexArray::create();
+
+    // ── 2.2  Static quad VBO (divisor 0) -------------------------------------
+
+    s_data.staticVBO = VertexBuffer::create(sizeof(s_staticQuad));
+    s_data.staticVBO->set_data(s_staticQuad, sizeof(s_staticQuad));
+    {
+        BufferLayout layout = {
+            { ShaderDataType::Float2, "a_local_pos"  },  // loc 0
+            { ShaderDataType::Float2, "a_local_tex"  },  // loc 1
+        };
+        s_data.staticVBO->set_layout(layout);
+        s_data.vao->add_vertex_buffer(s_data.staticVBO); // divisor 0 (default)
+    }
+
+    // ── 2.3  Instance VBO (divisor 1) ----------------------------------------
+    s_data.instanceVBO = VertexBuffer::create(Renderer2DData::maxQuads * sizeof(QuadInstance));
+    {
+        BufferLayout layout = {
+            { ShaderDataType::Float2, "i_center", false, true }, // loc 2
+            { ShaderDataType::Float2, "i_half_size", false, true }, // loc 3
+            { ShaderDataType::Float , "i_rotation", false, true }, // loc 4
+            { ShaderDataType::Float4, "i_color", false, true }, // loc 5
+            { ShaderDataType::Float , "i_tex_index", false, true }, // loc 6
+            { ShaderDataType::Float , "i_tiling", false, true }, // loc 7
+        };
+        s_data.instanceVBO->set_layout(layout);
+        s_data.vao->add_vertex_buffer(s_data.instanceVBO);
+    }
+
+    // ── 2.4  Indices ----------------------------------------------------------
+    uint32_t indices[6] = {0,1,2, 2,3,0};
+    s_data.ibo = IndexBuffer::create(indices, 6);
+    s_data.vao->set_index_buffer(s_data.ibo);
+
+    // ── 2.5  CPU instance buffer ---------------------------------------------
+    s_data.instanceBase = new QuadInstance[Renderer2DData::maxQuads];
+
+    // ── 2.6  White texture + slots -------------------------------------------
+    s_data.maxTextureSlots = RenderCommand::get_max_texture_slots();
+    s_data.textureSlots.resize(s_data.maxTextureSlots);
+
+    s_data.whiteTexture = Texture2D::create(1,1);
+    uint32_t white = 0xffffffff;
+    s_data.whiteTexture->set_data(&white, sizeof(uint32_t));
+    s_data.textureSlots[0] = s_data.whiteTexture;
+
+    // ── 2.7  Shader -----------------------------------------------------------
+    s_data.shader = Shader::create("../../application/assets/shaders/texture.glsl");
+    s_data.shader->bind();
+    {
+        std::vector<int> samplers(s_data.maxTextureSlots);
+        std::iota(samplers.begin(), samplers.end(), 0);
+        s_data.shader->set_int_array("u_textures", samplers.data(), samplers.size());
+    }
+}
+
+void Renderer2D::shutdown()
+{
+    delete[] s_data.instanceBase;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Scene lifecycle
+// ──────────────────────────────────────────────────────────────────────────────
+void Renderer2D::begin_scene(const OrthographicCamera& cam)
+{
+    reset_stats();
+
+    s_data.shader->bind();
+    s_data.shader->set_mat4("u_view_projection", cam.get_view_projection_matrix());
+
+    s_data.instancePtr    = s_data.instanceBase;
+    s_data.instanceCount  = 0;
+    s_data.textureSlotIndex = 1; // keep white bound at 0
+}
+
+void Renderer2D::end_scene()
+{
+    // Upload instance data (sub‑data is fine; persistent‑map even better)
+    size_t bytes = s_data.instanceCount * sizeof(QuadInstance);
+    s_data.instanceVBO->set_data(s_data.instanceBase, bytes);
+
+    // Bind textures in the order we populated
+    for (uint32_t i = 0; i < s_data.textureSlotIndex; ++i)
+        s_data.textureSlots[i]->bind(i);
+
+    // Draw all quads in one go
+    s_data.vao->bind();
+    RenderCommand::draw_indexed_instanced(s_data.vao, 6, s_data.instanceCount);
+    s_data.stats.draw_calls++;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Flush helpers
+// ──────────────────────────────────────────────────────────────────────────────
+static void flush_and_reset()
+{
+    Renderer2D::end_scene();
+    s_data.instancePtr   = s_data.instanceBase;
+    s_data.instanceCount = 0;
+    s_data.textureSlotIndex = 1;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Public draw API (no rotation) ===============================================
+// ──────────────────────────────────────────────────────────────────────────────
+void Renderer2D::draw_quad(const glm::vec3& pos,
+                           const glm::vec2& size,
+                           const Ref<Texture2D>& tex,
+                           const glm::vec4& color,
+                           float tiling)
+{
+    if (s_data.instanceCount >= Renderer2DData::maxQuads)
+        flush_and_reset();
+
+    QuadInstance& inst = *s_data.instancePtr++;
+    inst.center       = {pos.x, pos.y};
+    inst.halfSize     = size * 0.5f;
+    inst.rotation     = 0.0f;
+    inst.color        = color;
+    inst.texIndex     = resolve_texture_slot(tex);
+    inst.tilingFactor = tiling;
+
+    ++s_data.instanceCount;
+    ++s_data.stats.quad_count;
+}
+
+void Renderer2D::draw_quad(const glm::vec2& pos, const glm::vec2& size,
+                           const Ref<Texture2D>& tex, const glm::vec4& col,
+                           float tiling)
+{
+    draw_quad({pos.x, pos.y, 0.0f}, size, tex, col, tiling);
+}
+
+void Renderer2D::draw_quad(const glm::vec3& pos, const glm::vec2& size,
+                           const glm::vec4& col)
+{
+    draw_quad(pos, size, nullptr, col, 1.0f);
+}
+
+void Renderer2D::draw_quad(const glm::vec2& pos, const glm::vec2& size,
+                           const glm::vec4& col)
+{
+    draw_quad({pos.x, pos.y, 0.0f}, size, nullptr, col, 1.0f);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Rotated version =============================================================
+// ──────────────────────────────────────────────────────────────────────────────
+void Renderer2D::draw_rotated_quad(const glm::vec3& pos, const glm::vec2& size,
+                                   float rot, const Ref<Texture2D>& tex,
+                                   const glm::vec4& col, float tiling)
+{
+    if (s_data.instanceCount >= Renderer2DData::maxQuads)
+        flush_and_reset();
+
+    QuadInstance& inst = *s_data.instancePtr++;
+    inst.center       = {pos.x, pos.y};
+    inst.halfSize     = size * 0.5f;
+    inst.rotation     = rot;
+    inst.color        = col;
+    inst.texIndex     = resolve_texture_slot(tex);
+    inst.tilingFactor = tiling;
+
+    ++s_data.instanceCount;
+    ++s_data.stats.quad_count;
+}
+
+void Renderer2D::draw_rotated_quad(const glm::vec3& pos, const glm::vec2& size,
+                                   float rot, const glm::vec4& col)
+{
+    draw_rotated_quad(pos, size, rot, nullptr, col, 1.0f);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Stats helpers
+// ──────────────────────────────────────────────────────────────────────────────
+Renderer2D::Statistics Renderer2D::get_stats() { return s_data.stats; }
+
+void Renderer2D::reset_stats() { memset(&s_data.stats, 0, sizeof(Statistics)); }
+
+
+
+} // namespace Honey
