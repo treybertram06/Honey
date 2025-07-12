@@ -162,6 +162,13 @@ if(ENABLE_ASSERTS)
  target_compile_definitions(engine PUBLIC HN_ENABLE_ASSERTS)
 endif()
 
+target_compile_definitions(engine PUBLIC
+        GLM_FORCE_INLINE
+        GLM_FORCE_INTRINSICS
+        $<$<CONFIG:Release>:GLM_FORCE_SIMD_AVX2>
+)
+
+
 add_subdirectory(vendor/glad)
 add_subdirectory(vendor/imgui)
 #add_subdirectory(vendor/glm)

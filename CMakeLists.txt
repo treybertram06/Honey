@@ -26,6 +26,8 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/engine/vendor/GLFW)
 add_subdirectory(engine)
 
 add_subdirectory(${CMAKE_SOURCE_DIR}/engine/vendor/spdlog)
+
+set(GLM_TEST_ENABLE OFF CACHE BOOL "" FORCE)
 add_subdirectory(${CMAKE_SOURCE_DIR}/engine/vendor/glm)
 
 add_subdirectory(application)

@@ -52,6 +52,7 @@ void Application2D::on_update(Honey::Timestep ts) {
         static float rotation = 0.0f;
         rotation += 15.0f * ts;
 
+        /*
         //Honey::ScopedTimer timer("Renderer2D::draw_quad");
         Honey::Renderer2D::draw_quad({0.0f, 0.0f}, {1.0f, 1.0f}, {0.2f, 0.2f, 0.8f, 1.0f});
         Honey::Renderer2D::draw_quad({2.0f, 2.0f}, {1.0f, 1.0f}, {0.8f, 0.2f, 0.3f, 1.0f});
@@ -63,6 +64,13 @@ void Application2D::on_update(Honey::Timestep ts) {
 
         Honey::Renderer2D::draw_rotated_quad({2.0f, 0.0f, 0.1f}, {0.25f, 0.50f}, rotation, {0.8f, 1.0f, 0.3f, 1.0f});
         //Honey::Renderer2D::draw_quad({-1.0f, -0.33f, 0.0f}, {2.0f, 2.0f}, m_transparent_texture);
+        */
+
+        for (int x = 0; x < 100; x++) {
+            for (int y = 0; y < 100; y++) {
+                Honey::Renderer2D::draw_quad({x*0.11f, y*0.11f, 0.0f}, {0.1f, 0.1f}, m_chuck_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 2.0f);
+            }
+        }
 
         Honey::Renderer2D::end_scene();
     }
