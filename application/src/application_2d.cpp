@@ -14,7 +14,13 @@ Application2D::Application2D()
 void Application2D::on_attach() {
     m_chuck_texture = Honey::Texture2D::create("../../application/assets/textures/bung.png");
     m_missing_texture = Honey::Texture2D::create("../../application/assets/textures/missing.png");
-    m_transparent_texture = Honey::Texture2D::create("../../application/assets/textures/transparent.png");
+    m_sprite_sheet = Honey::Texture2D::create("../../application/assets/test_game/textures/roguelikeSheet_transparent.png");
+    m_bush_sprite = Honey::SubTexture2D::create_from_coords(m_sprite_sheet, {0, 0},
+        {16, 16},
+        {1, 1},
+        {0, 0},
+        {0, 0});
+
 }
 
 void Application2D::on_detach() {
@@ -50,9 +56,9 @@ void Application2D::on_update(Honey::Timestep ts) {
         Honey::Renderer2D::begin_scene(m_camera_controller.get_camera());
 
         static float rotation = 0.0f;
-        rotation += 15.0f * ts;
+        rotation += glm::radians(15.0f) * ts;
 
-        /*
+/*
         //Honey::ScopedTimer timer("Renderer2D::draw_quad");
         Honey::Renderer2D::draw_quad({0.0f, 0.0f}, {1.0f, 1.0f}, {0.2f, 0.2f, 0.8f, 1.0f});
         Honey::Renderer2D::draw_quad({2.0f, 2.0f}, {1.0f, 1.0f}, {0.8f, 0.2f, 0.3f, 1.0f});
@@ -60,17 +66,27 @@ void Application2D::on_update(Honey::Timestep ts) {
         Honey::Renderer2D::draw_quad({0.0f, -1.0f, 0.0f}, {1.5f, 1.5f}, m_chuck_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 2.0f);
 
         Honey::Renderer2D::draw_rotated_quad({0.5f, 1.5f, 0.0f}, {3.0f, 3.0f}, rotation, m_chuck_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 2.0f);
+        Honey::Renderer2D::draw_rotated_quad({0.5f, -1.5f, 0.0f}, {3.0f, 3.0f}, rotation, m_chuck_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 2.0f);
         Honey::Renderer2D::draw_quad({0.0f, 0.0f, -0.1f}, {100.0f, 100.0f}, m_missing_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 1000.0f);
+*/
 
-        Honey::Renderer2D::draw_rotated_quad({2.0f, 0.0f, 0.1f}, {0.25f, 0.50f}, rotation, {0.8f, 1.0f, 0.3f, 1.0f});
-        //Honey::Renderer2D::draw_quad({-1.0f, -0.33f, 0.0f}, {2.0f, 2.0f}, m_transparent_texture);
-        */
 
-        for (int x = 0; x < 100; x++) {
-            for (int y = 0; y < 100; y++) {
+        Honey::Renderer2D::begin_scene(m_camera_controller.get_camera());
+
+        //Honey::Renderer2D::draw_quad({0.0f, 0.0f, 0.0f}, {96.8f, 52.6f}, m_sprite_sheet, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
+        Honey::Renderer2D::draw_quad({0.0f, 0.0f, 0.0f}, {1.0f, 1.0f}, m_bush_sprite, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
+
+        Honey::Renderer2D::end_scene();
+
+
+
+        /*
+        for (int x = 0; x < 1000; x++) {
+            for (int y = 0; y < 1000; y++) {
                 Honey::Renderer2D::draw_quad({x*0.11f, y*0.11f, 0.0f}, {0.1f, 0.1f}, m_chuck_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 2.0f);
             }
         }
+        */
 
         Honey::Renderer2D::end_scene();
     }
@@ -232,7 +248,7 @@ void Application2D::on_imgui_render() {
         ImGui::Text("Loaded Textures:");
         ImGui::BulletText("Chuck Texture: %s", m_chuck_texture ? "Loaded" : "Not Loaded");
         ImGui::BulletText("Missing Texture: %s", m_missing_texture ? "Loaded" : "Not Loaded");
-        ImGui::BulletText("Transparent Texture: %s", m_transparent_texture ? "Loaded" : "Not Loaded");
+        ImGui::BulletText("Transparent Texture: %s", m_sprite_sheet ? "Loaded" : "Not Loaded");
 
         if (ImGui::Button("Reload Textures")) {
             on_attach(); // Quick way to reload textures

@@ -21,8 +21,10 @@ namespace Honey {
         glTextureStorage2D(m_renderer_id, 1, m_internal_format, m_width, m_height);
 
         // Set texture parameters (DSA calls)
-        glTextureParameteri(m_renderer_id, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTextureParameteri(m_renderer_id, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        //glTextureParameteri(m_renderer_id, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        //glTextureParameteri(m_renderer_id, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTextureParameteri(m_renderer_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTextureParameteri(m_renderer_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         glTextureParameteri(m_renderer_id, GL_TEXTURE_WRAP_S,     GL_REPEAT);
         glTextureParameteri(m_renderer_id, GL_TEXTURE_WRAP_T,     GL_REPEAT);
 

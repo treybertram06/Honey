@@ -25,7 +25,7 @@ namespace Honey {
         m_window = std::unique_ptr<Window>(Window::create());
 
         m_window->set_event_callback([this](auto && PH1) { on_event(std::forward<decltype(PH1)>(PH1)); });
-        //m_window->set_vsync(false);
+        m_window->set_vsync(false);
 
         Renderer::init();
 

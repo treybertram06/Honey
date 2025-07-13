@@ -2,6 +2,7 @@
 
 #include "camera.h"
 #include "texture.h"
+#include "sub_texture_2d.h"
 
 namespace Honey {
 
@@ -36,6 +37,18 @@ namespace Honey {
 							 float tiling_factor = 1.0f);
 
     	static void draw_rotated_quad(const glm::vec3& position, const glm::vec2& size, float rotation, const glm::vec4& color);
+
+    	// Sprite sheets
+    	static void draw_quad(const glm::vec3& pos, const glm::vec2& size,
+					 const Ref<SubTexture2D>& sub_texture,
+					 const glm::vec4& color = glm::vec4(1.0f),
+					 float tiling = 1.0f);
+
+    	static void draw_rotated_quad(const glm::vec3& pos, const glm::vec2& size,
+									 float rotation, const Ref<SubTexture2D>& sub_texture,
+									 const glm::vec4& color = glm::vec4(1.0f),
+									 float tiling = 1.0f);
+
 
     	//statistics
     	struct Statistics {

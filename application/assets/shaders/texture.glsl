@@ -9,6 +9,8 @@ layout (location = 4) in float i_rotation;
 layout (location = 5) in vec4 i_color;
 layout (location = 6) in float i_tex_index;
 layout (location = 7) in float i_tiling;
+layout (location = 8) in vec2 i_tex_coord_min;
+layout (location = 9) in vec2 i_tex_coord_max;
 
 uniform mat4 u_view_projection;
 
@@ -29,7 +31,7 @@ void main()
     }
 
     gl_Position  = u_view_projection * vec4(p + i_center, 0.0, 1.0);
-    v_tex_coord  = a_local_tex;
+    v_tex_coord  = mix(i_tex_coord_min, i_tex_coord_max, a_local_tex);
     v_color      = i_color;
     v_tex_index  = i_tex_index;
     v_tiling     = i_tiling;
@@ -44,7 +46,7 @@ in vec2  v_tex_coord;
 in float v_tex_index;
 in float v_tiling;
 
-uniform sampler2D u_textures[32];
+uniform sampler2D u_textures[128];
 
 void main()
 {

@@ -71,6 +71,8 @@ add_library(engine STATIC
         src/Honey/renderer/renderer_2d.h
         src/Honey/renderer/renderer_3d.h
         src/Honey/renderer/renderer_3d.cpp
+        src/Honey/renderer/sub_texture_2d.h
+        src/Honey/renderer/sub_texture_2d.cpp
 )
 
 # Make sure we define the Windows platform for Visual Studio
