@@ -14,13 +14,11 @@ Application2D::Application2D()
 void Application2D::on_attach() {
     m_chuck_texture = Honey::Texture2D::create("../../application/assets/textures/bung.png");
     m_missing_texture = Honey::Texture2D::create("../../application/assets/textures/missing.png");
-    m_sprite_sheet = Honey::Texture2D::create("../../application/assets/test_game/textures/roguelikeSheet_transparent.png");
-    m_bush_sprite = Honey::SubTexture2D::create_from_coords(m_sprite_sheet, {0, 0},
-        {16, 16},
-        {1, 1},
-        {0, 0},
-        {0, 0});
-
+    m_sprite_sheet01 = Honey::Texture2D::create("../../application/assets/test_game/textures/roguelikeSheet_transparent.png");
+    m_sprite_sheet02 = Honey::Texture2D::create("../../application/assets/test_game/textures/colored-transparent.png");
+    m_bush_sprite = Honey::SubTexture2D::create_from_coords(m_sprite_sheet01, {14, 9},{16, 16},{1, 1},{1, 1},{0, 17});
+    m_grass_sprite = Honey::SubTexture2D::create_from_coords(m_sprite_sheet01, {5, 0},{16, 16},{1, 1},{1, 1},{0, 17});
+    m_player_sprite = Honey::SubTexture2D::create_from_coords(m_sprite_sheet02, {23, 7},{16, 16},{1, 1},{1, 1},{0, 17});
 }
 
 void Application2D::on_detach() {
@@ -74,9 +72,12 @@ void Application2D::on_update(Honey::Timestep ts) {
         Honey::Renderer2D::begin_scene(m_camera_controller.get_camera());
 
         //Honey::Renderer2D::draw_quad({0.0f, 0.0f, 0.0f}, {96.8f, 52.6f}, m_sprite_sheet, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
-        Honey::Renderer2D::draw_quad({0.0f, 0.0f, 0.0f}, {1.0f, 1.0f}, m_bush_sprite, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
+        for (int x = -50; x < 50; x++)
+            for (int y = -50; y < 50; y++)
+                Honey::Renderer2D::draw_quad({x*1.0f, y*1.0f, -0.1f}, {1.0f, 1.0f}, m_grass_sprite, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
 
-        Honey::Renderer2D::end_scene();
+        Honey::Renderer2D::draw_quad({-0.5f, -0.5f, 0.0f}, {1.0f, 1.0f}, m_bush_sprite, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
+        Honey::Renderer2D::draw_quad({1.5f, 1.5f, 0.0f}, {1.0f, 1.0f}, m_player_sprite, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
 
 
 
@@ -248,7 +249,7 @@ void Application2D::on_imgui_render() {
         ImGui::Text("Loaded Textures:");
         ImGui::BulletText("Chuck Texture: %s", m_chuck_texture ? "Loaded" : "Not Loaded");
         ImGui::BulletText("Missing Texture: %s", m_missing_texture ? "Loaded" : "Not Loaded");
-        ImGui::BulletText("Transparent Texture: %s", m_sprite_sheet ? "Loaded" : "Not Loaded");
+        ImGui::BulletText("Transparent Texture: %s", m_sprite_sheet01 ? "Loaded" : "Not Loaded");
 
         if (ImGui::Button("Reload Textures")) {
             on_attach(); // Quick way to reload textures

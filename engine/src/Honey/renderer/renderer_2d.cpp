@@ -10,7 +10,7 @@ namespace Honey {
 
 
 struct QuadInstance {
-    glm::vec2  center;        // world‑space centre of the quad
+    glm::vec3  center;        // world‑space centre of the quad
     glm::vec2  half_size;      // size * 0.5f
     float      rotation;      // radians – 0 for axis‑aligned
     glm::vec4  color;
@@ -104,7 +104,7 @@ void Renderer2D::init()
     s_data.instance_vbo = VertexBuffer::create(Renderer2DData::max_quads * sizeof(QuadInstance));
     {
         BufferLayout layout = {
-            { ShaderDataType::Float2, "i_center", false, true }, // loc 2
+            { ShaderDataType::Float3, "i_center", false, true }, // loc 2
             { ShaderDataType::Float2, "i_half_size", false, true }, // loc 3
             { ShaderDataType::Float , "i_rotation", false, true }, // loc 4
             { ShaderDataType::Float4, "i_color", false, true }, // loc 5
@@ -193,7 +193,7 @@ void Renderer2D::draw_quad(const glm::vec3& pos,
         flush_and_reset();
 
     QuadInstance& inst = *s_data.instance_ptr++;
-    inst.center       = {pos.x, pos.y};
+    inst.center       = {pos.x, pos.y, pos.z};
     inst.half_size     = size * 0.5f;
     inst.rotation     = 0.0f;
     inst.color        = color;
@@ -201,6 +201,7 @@ void Renderer2D::draw_quad(const glm::vec3& pos,
     inst.tiling_factor = tiling;
     inst.tex_coord_min = {0.0f, 0.0f};
     inst.tex_coord_max = {1.0f, 1.0f};
+
 
 
     ++s_data.instance_count;
@@ -234,7 +235,7 @@ void Renderer2D::draw_rotated_quad(const glm::vec3& pos, const glm::vec2& size,
         flush_and_reset();
 
     QuadInstance& inst = *s_data.instance_ptr++;
-    inst.center       = {pos.x, pos.y};
+    inst.center       = {pos.x, pos.y, pos.z};
     inst.half_size     = size * 0.5f;
     inst.rotation     = rot;
     inst.color        = col;
@@ -260,7 +261,7 @@ void Renderer2D::draw_rotated_quad(const glm::vec3& pos, const glm::vec2& size,
     const glm::vec2* tex_coords = sub_texture->get_tex_coords();
 
     QuadInstance& inst = *s_data.instance_ptr++;
-    inst.center = {pos.x, pos.y};
+    inst.center = {pos.x, pos.y, pos.z};
     inst.half_size = size * 0.5f;
     inst.rotation = 0.0f;
     inst.color = color;
@@ -282,7 +283,7 @@ void Renderer2D::draw_rotated_quad(const glm::vec3& pos, const glm::vec2& size,
     const glm::vec2* tex_coords = sub_texture->get_tex_coords();
 
     QuadInstance& inst = *s_data.instance_ptr++;
-    inst.center = {pos.x, pos.y};
+    inst.center = {pos.x, pos.y, pos.z};
     inst.half_size = size * 0.5f;
     inst.rotation = rotation;
     inst.color = color;

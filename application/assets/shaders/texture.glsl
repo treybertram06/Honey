@@ -3,7 +3,7 @@
 layout (location = 0) in vec2 a_local_pos;     // static
 layout (location = 1) in vec2 a_local_tex;     // static
 
-layout (location = 2) in vec2 i_center;        // per-instance
+layout (location = 2) in vec3 i_center;        // per-instance
 layout (location = 3) in vec2 i_half_size;
 layout (location = 4) in float i_rotation;
 layout (location = 5) in vec4 i_color;
@@ -30,7 +30,8 @@ void main()
         p = vec2(c*p.x - s*p.y, s*p.x + c*p.y);
     }
 
-    gl_Position  = u_view_projection * vec4(p + i_center, 0.0, 1.0);
+    vec3 world_pos = i_center + vec3(p, 0.0);
+    gl_Position = u_view_projection * vec4(world_pos, 1.0);
     v_tex_coord  = mix(i_tex_coord_min, i_tex_coord_max, a_local_tex);
     v_color      = i_color;
     v_tex_index  = i_tex_index;

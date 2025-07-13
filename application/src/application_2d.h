@@ -22,9 +22,9 @@ private:
     // temp
     Honey::Ref<Honey::VertexArray> m_square_vertex_array;
     Honey::Ref<Honey::Shader> m_shader;
-    Honey::Ref<Honey::Texture2D> m_chuck_texture, m_sprite_sheet;
     Honey::Ref<Honey::Texture2D> m_missing_texture;
-    Honey::Ref<Honey::SubTexture2D> m_bush_sprite;
+    Honey::Ref<Honey::Texture2D> m_chuck_texture, m_sprite_sheet01, m_sprite_sheet02;
+    Honey::Ref<Honey::SubTexture2D> m_bush_sprite, m_grass_sprite, m_player_sprite;
 
     glm::vec4 m_clear_color = { 0.1f, 0.1f, 0.1f, 1.0f };
     glm::vec3 m_square_position;
