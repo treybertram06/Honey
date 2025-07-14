@@ -131,7 +131,13 @@ void Renderer2D::init()
     s_data.white_texture->set_data(&white, sizeof(uint32_t));
     s_data.texture_slots[0] = s_data.white_texture;
 
+#ifdef HN_PLATFORM_WINDOWS
     s_data.shader = Shader::create("../../application/assets/shaders/texture.glsl");
+#endif
+#ifdef HN_PLATFORM_MACOS
+    s_data.shader = Shader::create("../../application/assets/shaders/texture_m1.glsl");
+#endif
+
     s_data.shader->bind();
     {
         std::vector<int> samplers(s_data.max_texture_slots);
