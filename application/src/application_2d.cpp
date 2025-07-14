@@ -4,6 +4,33 @@
 #include "glm/gtc/type_ptr.hpp"
 #include "hnpch.h"
 
+static const uint32_t s_map_width = 25;
+static const char* s_map_tiles =
+    "wwwwwwwwwwwwwwwwwwwwwwwww"
+    "wwwwwwwwddddddddwwwwwwwww"
+    "wwwwwwwwddddddddwwwwwwwww"
+    "wwwwwwwwddddddddwwwwwwwww"
+    "wwwdddddddwwwwwdddddddwww"
+    "wwwdddddddwwwwwdddddddwww"
+    "wwwdddddddwwwwwdddddddwww"
+    "wwwdddwwwwwwwwwwwwddddddw"
+    "wwwdddwwwwwwwwwwwwddddddw"
+    "wwwdddwwwwwwwwwwwwdddddww"
+    "wwwdddwwwwwwwwwwwwddddwww"
+    "wwwdddwwwwwwwwwwwwddddwww"
+    "wwwdddwwwwwwwwwwwwddddwww"
+    "wwwdddwwwwwwwwwwwwddddwww"
+    "wwwdddwwwwwwwwwwwwddddwww"
+    "wwwdddwwwwwwwwwwwwddddwww"
+    "wwwdddwwwwwwwwwwwwddddwww"
+    "wwwdddwwwwwwwwwwwwddddwww"
+    "wwwdddwwwwwwwwwwwwddddwww"
+    "wwddddddddwwwwwdddddwwwww"
+    "wwddddddddwwwwwdddddwwwww"
+    "wwddddddddwwwwwdddddwwwww"
+    "wwwwwwwwddddddddwwwwwwwww"
+    "wwwwwwwwddddddddwwwwwwwww"
+    "wwwwwwwwddddddddwwwwwwwww";
 
 Application2D::Application2D()
     : Layer("Application2D"),
@@ -17,9 +44,14 @@ void Application2D::on_attach() {
     m_sprite_sheet01 = Honey::Texture2D::create("../../application/assets/test_game/textures/roguelikeSheet_transparent.png");
     m_sprite_sheet02 = Honey::Texture2D::create("../../application/assets/test_game/textures/colored-transparent.png");
     m_bush_sprite = Honey::SubTexture2D::create_from_coords(m_sprite_sheet01, {14, 9},{16, 16},{1, 1},{1, 1},{0, 17});
-    m_grass_sprite = Honey::SubTexture2D::create_from_coords(m_sprite_sheet01, {5, 0},{16, 16},{1, 1},{1, 1},{0, 17});
+    s_texture_map['d'] = Honey::SubTexture2D::create_from_coords(m_sprite_sheet01, {5, 0},{16, 16},{1, 1},{1, 1},{0, 17});
+    s_texture_map['w'] = Honey::SubTexture2D::create_from_coords(m_sprite_sheet01, {3, 1},{16, 16},{1, 1},{1, 1},{0, 17});
     m_player_sprite = Honey::SubTexture2D::create_from_coords(m_sprite_sheet02, {23, 7},{16, 16},{1, 1},{1, 1},{0, 17});
 
+    m_map_width = s_map_width;
+    m_map_height = strlen(s_map_tiles) / m_map_width;
+
+    m_camera_controller.set_zoom_level(10.0f);
 }
 
 void Application2D::on_detach() {
@@ -73,12 +105,25 @@ void Application2D::on_update(Honey::Timestep ts) {
         Honey::Renderer2D::begin_scene(m_camera_controller.get_camera());
 
         //Honey::Renderer2D::draw_quad({0.0f, 0.0f, 0.0f}, {96.8f, 52.6f}, m_sprite_sheet, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
-        for (int x = -50; x < 50; x++)
-            for (int y = -50; y < 50; y++)
-                Honey::Renderer2D::draw_quad({x*1.0f, y*1.0f, -0.1f}, {1.0f, 1.0f}, m_grass_sprite, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
+        for (uint32_t y = 0; y < m_map_height; y++) {
+            for (uint32_t x = 0; x < m_map_width; x++) {
+                char tile_type = s_map_tiles[x + y * m_map_width];
+                if (s_texture_map.find(tile_type) != s_texture_map.end()) {
+                    auto texture = s_texture_map[tile_type];
+                    Honey::Renderer2D::draw_quad({(float)x - (m_map_width / 2), (float)y - (m_map_height / 2), 0.0f}, {1.0f, 1.0f}, texture, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
+                } else {
+                    auto texture = m_missing_texture;
+                    Honey::Renderer2D::draw_quad({(float)x - (m_map_width / 2), (float)y - (m_map_height / 2), 0.0f}, {1.0f, 1.0f}, texture, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
 
-        Honey::Renderer2D::draw_quad({-0.5f, -0.5f, 0.0f}, {1.0f, 1.0f}, m_bush_sprite, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
-        Honey::Renderer2D::draw_quad({1.5f, 1.5f, 0.0f}, {1.0f, 1.0f}, m_player_sprite, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
+                }
+
+
+
+            }
+        }
+
+        //Honey::Renderer2D::draw_quad({-0.5f, -0.5f, 0.0f}, {1.0f, 1.0f}, m_bush_sprite, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
+        //Honey::Renderer2D::draw_quad({1.5f, 1.5f, 0.0f}, {1.0f, 1.0f}, m_water_sprite, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
 
 
 
