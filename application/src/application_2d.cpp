@@ -19,6 +19,7 @@ void Application2D::on_attach() {
     m_bush_sprite = Honey::SubTexture2D::create_from_coords(m_sprite_sheet01, {14, 9},{16, 16},{1, 1},{1, 1},{0, 17});
     m_grass_sprite = Honey::SubTexture2D::create_from_coords(m_sprite_sheet01, {5, 0},{16, 16},{1, 1},{1, 1},{0, 17});
     m_player_sprite = Honey::SubTexture2D::create_from_coords(m_sprite_sheet02, {23, 7},{16, 16},{1, 1},{1, 1},{0, 17});
+
 }
 
 void Application2D::on_detach() {
@@ -121,7 +122,7 @@ void Application2D::on_imgui_render() {
     if (ImGui::CollapsingHeader("Renderer Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
         static glm::vec4 clear_color = {0.1f, 0.1f, 0.1f, 1.0f};
         if (ImGui::ColorEdit4("Clear Color", glm::value_ptr(clear_color))) {
-            Honey::RenderCommand::set_clear_color(clear_color);
+            m_clear_color = clear_color;
         }
 
         static bool wireframe_mode = false;
@@ -130,11 +131,11 @@ void Application2D::on_imgui_render() {
         static bool blending = true;
 
         if (ImGui::Checkbox("Wireframe Mode", &wireframe_mode)) {
-            // Honey::RenderCommand::set_wireframe_mode(wireframe_mode);
+            Honey::RenderCommand::set_wireframe(wireframe_mode);
         }
         ImGui::SameLine();
         if (ImGui::Checkbox("Depth Test", &depth_test)) {
-            // Honey::RenderCommand::set_depth_test(depth_test);
+            Honey::RenderCommand::set_depth_test(depth_test);
         }
 
         if (ImGui::Checkbox("Face Culling", &face_culling)) {
@@ -142,7 +143,7 @@ void Application2D::on_imgui_render() {
         }
         ImGui::SameLine();
         if (ImGui::Checkbox("Blending", &blending)) {
-            // Honey::RenderCommand::set_blending(blending);
+            Honey::RenderCommand::set_blend(blending);
         }
     }
 
@@ -230,7 +231,11 @@ void Application2D::on_imgui_render() {
         static bool show_bounding_boxes = false;
         static bool show_grid = false;
 
-        ImGui::Checkbox("Show Wireframe", &show_wireframe);
+        HN_CORE_INFO("on_imgui_render called");
+        if (ImGui::Checkbox("Show Wireframe", &show_wireframe)) {
+            Honey::RenderCommand::set_wireframe(show_wireframe);
+            HN_CORE_INFO("Wireframe change triggered");
+        }
         ImGui::SameLine();
         ImGui::Checkbox("Show Normals", &show_normals);
 

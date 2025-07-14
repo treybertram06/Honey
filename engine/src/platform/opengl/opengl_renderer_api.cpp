@@ -54,6 +54,30 @@ namespace Honey {
             nullptr,                     // offset into IBO
             static_cast<GLsizei>(instance_count));  // how many quads to draw
     }
+
+    void OpenGLRendererAPI::set_wireframe(bool mode) {
+        if (mode)
+            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+        else
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    }
+
+    void OpenGLRendererAPI::set_depth_test(bool mode) {
+        if (mode)
+            glEnable(GL_DEPTH_TEST);
+        else
+            glDisable(GL_DEPTH_TEST);
+    }
+
+    void OpenGLRendererAPI::set_blend(bool mode) {
+        if (mode)
+            glEnable(GL_BLEND);
+        else
+            glDisable(GL_BLEND);
+    }
+
+
+
 }
 
 

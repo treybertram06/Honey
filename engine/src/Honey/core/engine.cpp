@@ -101,8 +101,9 @@ namespace Honey {
                 m_imgui_layer->begin();
                 {
                     HN_PROFILE_SCOPE("LayerStack on_imgui_render");
-                    for (Layer* layer : m_layer_stack)
+                    for (Layer* layer : m_layer_stack) {
                         layer->on_imgui_render();
+                    }
                 }
                 m_imgui_layer->end();
             }

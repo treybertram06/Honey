@@ -36,6 +36,18 @@ namespace Honey {
             s_renderer_api->draw_indexed_instanced(vertex_array, index_count, instance_count);
         }
 
+        inline static void set_wireframe(bool mode) {
+            s_renderer_api->set_wireframe(mode);
+        }
+
+        inline static void set_depth_test(bool mode) {
+            s_renderer_api->set_depth_test(mode);
+        }
+
+        inline static void set_blend(bool mode) {
+            s_renderer_api->set_blend(mode);
+        }
+
     private:
         static RendererAPI* s_renderer_api;
     };
