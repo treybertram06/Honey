@@ -39,6 +39,12 @@ Application2D::Application2D()
 
 
 void Application2D::on_attach() {
+
+    Honey::FramebufferSpecification fb_spec;
+    fb_spec.width = 1280;
+    fb_spec.height = 720;
+    m_framebuffer = Honey::Framebuffer::create(fb_spec);
+
     m_chuck_texture = Honey::Texture2D::create("../../application/assets/textures/bung.png");
     m_missing_texture = Honey::Texture2D::create("../../application/assets/textures/missing.png");
     m_sprite_sheet01 = Honey::Texture2D::create("../../application/assets/test_game/textures/roguelikeSheet_transparent.png");
@@ -78,6 +84,7 @@ void Application2D::on_update(Honey::Timestep ts) {
     {
         HN_PROFILE_SCOPE("Application2D::renderer_clear");
         // render
+        m_framebuffer->bind();
         Honey::RenderCommand::set_clear_color(m_clear_color);
         Honey::RenderCommand::clear();
     }
@@ -89,7 +96,7 @@ void Application2D::on_update(Honey::Timestep ts) {
         static float rotation = 0.0f;
         rotation += glm::radians(15.0f) * ts;
 
-/*
+
         //Honey::ScopedTimer timer("Renderer2D::draw_quad");
         Honey::Renderer2D::draw_quad({0.0f, 0.0f}, {1.0f, 1.0f}, {0.2f, 0.2f, 0.8f, 1.0f});
         Honey::Renderer2D::draw_quad({2.0f, 2.0f}, {1.0f, 1.0f}, {0.8f, 0.2f, 0.3f, 1.0f});
@@ -99,9 +106,9 @@ void Application2D::on_update(Honey::Timestep ts) {
         Honey::Renderer2D::draw_rotated_quad({0.5f, 1.5f, 0.0f}, {3.0f, 3.0f}, rotation, m_chuck_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 2.0f);
         Honey::Renderer2D::draw_rotated_quad({0.5f, -1.5f, 0.0f}, {3.0f, 3.0f}, rotation, m_chuck_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 2.0f);
         Honey::Renderer2D::draw_quad({0.0f, 0.0f, -0.1f}, {100.0f, 100.0f}, m_missing_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 1000.0f);
-*/
 
 
+/*
         Honey::Renderer2D::begin_scene(m_camera_controller.get_camera());
 
         //Honey::Renderer2D::draw_quad({0.0f, 0.0f, 0.0f}, {96.8f, 52.6f}, m_sprite_sheet, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
@@ -114,13 +121,10 @@ void Application2D::on_update(Honey::Timestep ts) {
                 } else {
                     auto texture = m_missing_texture;
                     Honey::Renderer2D::draw_quad({(float)x - (m_map_width / 2), (float)y - (m_map_height / 2), 0.0f}, {1.0f, 1.0f}, texture, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
-
                 }
-
-
-
             }
         }
+        */
 
         //Honey::Renderer2D::draw_quad({-0.5f, -0.5f, 0.0f}, {1.0f, 1.0f}, m_bush_sprite, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
         //Honey::Renderer2D::draw_quad({1.5f, 1.5f, 0.0f}, {1.0f, 1.0f}, m_water_sprite, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
@@ -136,12 +140,64 @@ void Application2D::on_update(Honey::Timestep ts) {
         */
 
         Honey::Renderer2D::end_scene();
+        m_framebuffer->unbind();
     }
 
 }
 
 void Application2D::on_imgui_render() {
     HN_PROFILE_FUNCTION();
+
+    ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
+
+    if (ImGui::BeginMainMenuBar()) {
+        if (ImGui::BeginMenu("File")) {
+            if (ImGui::MenuItem("New")) {
+                // Action for New
+            }
+            if (ImGui::MenuItem("Open...", "Ctrl+O")) {
+                // Action for Open
+            }
+            if (ImGui::MenuItem("Save", "Ctrl+S")) {
+                // Action for Save
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Exit")) {
+                Honey::Application::quit();
+            }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Edit")) {
+            if (ImGui::MenuItem("Undo", "Ctrl+Z")) {
+                // Action for Undo
+            }
+            if (ImGui::MenuItem("Redo", "Ctrl+Y")) {
+                // Action for Redo
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Cut", "Ctrl+X")) {
+                // Action for Cut
+            }
+            if (ImGui::MenuItem("Copy", "Ctrl+C")) {
+                // Action for Copy
+            }
+            if (ImGui::MenuItem("Paste", "Ctrl+V")) {
+                // Action for Paste
+            }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("View")) {
+            if (ImGui::MenuItem("Toggle Debug Panel")) {
+                // Toggle visibility of Debug Panel
+            }
+            if (ImGui::MenuItem("Reset View")) {
+                // Reset camera or scene view
+            }
+            ImGui::EndMenu();
+        }
+        ImGui::EndMainMenuBar();
+    }
+
 
     ImGui::Begin("Renderer Debug Panel");
 
@@ -276,7 +332,6 @@ void Application2D::on_imgui_render() {
         static bool show_bounding_boxes = false;
         static bool show_grid = false;
 
-        HN_CORE_INFO("on_imgui_render called");
         if (ImGui::Checkbox("Show Wireframe", &show_wireframe)) {
             Honey::RenderCommand::set_wireframe(show_wireframe);
             HN_CORE_INFO("Wireframe change triggered");
@@ -305,6 +360,13 @@ void Application2D::on_imgui_render() {
             on_attach(); // Quick way to reload textures
         }
     }
+
+    ImGui::End();
+
+    ImGui::Begin("Viewport");
+
+    uint32_t texture_id = m_framebuffer->get_color_attachment_renderer_id();
+    ImGui::Image((void*)texture_id, ImVec2{ 1280.0f, 720.0f });
 
     ImGui::End();
 

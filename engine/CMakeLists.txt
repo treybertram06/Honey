@@ -73,6 +73,10 @@ add_library(engine STATIC
         src/Honey/renderer/renderer_3d.cpp
         src/Honey/renderer/sub_texture_2d.h
         src/Honey/renderer/sub_texture_2d.cpp
+        src/Honey/renderer/framebuffer.h
+        src/Honey/renderer/framebuffer.cpp
+        src/platform/opengl/opengl_framebuffer.h
+        src/platform/opengl/opengl_framebuffer.cpp
 )
 
 # Make sure we define the Windows platform for Visual Studio
