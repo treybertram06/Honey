@@ -12,7 +12,7 @@ namespace Honey {
     OpenGLVertexBuffer::OpenGLVertexBuffer(uint32_t size) {
         HN_PROFILE_FUNCTION();
 
-#ifdef HN_PLATFORM_WINDOWS
+#if defined(HN_PLATFORM_WINDOWS) || defined(HN_PLATFORM_LINUX)
         glCreateBuffers(1, &m_renderer_id);
 #endif
 #ifdef HN_PLATFORM_MACOS
@@ -25,7 +25,7 @@ namespace Honey {
     OpenGLVertexBuffer::OpenGLVertexBuffer(float* vertices, uint32_t size) {
         HN_PROFILE_FUNCTION();
 
-#ifdef HN_PLATFORM_WINDOWS
+#if defined(HN_PLATFORM_WINDOWS) || defined(HN_PLATFORM_LINUX)
         glCreateBuffers(1, &m_renderer_id);
 #endif
 #ifdef HN_PLATFORM_MACOS
@@ -65,7 +65,7 @@ namespace Honey {
         : m_count(count) {
         HN_PROFILE_FUNCTION();
 
-#ifdef HN_PLATFORM_WINDOWS
+#if defined(HN_PLATFORM_WINDOWS) || defined(HN_PLATFORM_LINUX)
         glCreateBuffers(1, &m_renderer_id);
 #endif
 #ifdef HN_PLATFORM_MACOS

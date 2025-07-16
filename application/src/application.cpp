@@ -71,7 +71,7 @@ public:
         m_texture = Honey::Texture2D::create("/Users/treybertram/Desktop/Honey/application/assets/textures/bung.png");
         m_transparent_texture = Honey::Texture2D::create("/Users/treybertram/Desktop/Honey/application/assets/textures/transparent.png");
 #endif
-#ifdef HN_PLATFORM_WINDOWS
+#if defined(HN_PLATFORM_WINDOWS) || defined(HN_PLATFORM_LINUX)
         auto flat_color_shader = m_shader_lib.load("C:/Users/treyb/CLionProjects/engine/application/assets/shaders/flat_color.glsl");
         auto texture_shader = m_shader_lib.load("C:/Users/treyb/CLionProjects/engine/application/assets/shaders/texture.glsl");
 

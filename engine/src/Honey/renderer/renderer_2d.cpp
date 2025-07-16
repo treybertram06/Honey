@@ -131,7 +131,7 @@ void Renderer2D::init()
     s_data.white_texture->set_data(&white, sizeof(uint32_t));
     s_data.texture_slots[0] = s_data.white_texture;
 
-#ifdef HN_PLATFORM_WINDOWS
+#if defined(HN_PLATFORM_WINDOWS) || defined(HN_PLATFORM_LINUX)
     s_data.shader = Shader::create("../../application/assets/shaders/texture.glsl");
 #endif
 #ifdef HN_PLATFORM_MACOS
@@ -207,8 +207,6 @@ void Renderer2D::draw_quad(const glm::vec3& pos,
     inst.tiling_factor = tiling;
     inst.tex_coord_min = {0.0f, 0.0f};
     inst.tex_coord_max = {1.0f, 1.0f};
-
-
 
     ++s_data.instance_count;
     ++s_data.stats.quad_count;

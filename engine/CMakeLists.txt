@@ -77,6 +77,10 @@ add_library(engine STATIC
         src/Honey/renderer/framebuffer.cpp
         src/platform/opengl/opengl_framebuffer.h
         src/platform/opengl/opengl_framebuffer.cpp
+        src/platform/linux/linux_window.cpp
+        src/platform/linux/linux_input.cpp
+        src/platform/linux/linux_input.h
+        src/platform/linux/linux_window.h
 )
 
 # Make sure we define the Windows platform for Visual Studio
@@ -97,6 +101,10 @@ target_compile_definitions(engine PRIVATE
 target_precompile_headers(engine
         PRIVATE
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/hnpch.h>
+)
+
+target_compile_definitions(engine PRIVATE
+        STBI_NO_SIMD
 )
 
  # Make the engine header accessible to other targets
@@ -175,7 +183,7 @@ target_compile_definitions(engine PUBLIC
 )
 
 
-add_subdirectory(vendor/glad)
+add_subdirectory(vendor/GLAD)
 add_subdirectory(vendor/imgui)
 #add_subdirectory(vendor/glm)
 

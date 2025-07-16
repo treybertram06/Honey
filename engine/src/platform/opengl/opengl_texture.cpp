@@ -15,7 +15,7 @@ namespace Honey {
         m_internal_format = GL_RGBA8;
         m_format = GL_RGBA;
 
-#if defined(HN_PLATFORM_WINDOWS)
+#if defined(HN_PLATFORM_WINDOWS) || defined(HN_PLATFORM_LINUX)
         // New‐style (DSA) API, requires OpenGL ≥4.5
         glCreateTextures(GL_TEXTURE_2D, 1, &m_renderer_id);
         glTextureStorage2D(m_renderer_id, 1, m_internal_format, m_width, m_height);
@@ -46,7 +46,6 @@ namespace Honey {
 
         // Unbind to avoid accidental modification
         glBindTexture(GL_TEXTURE_2D, 0);
-
 #else
     #error "Unsupported platform for OpenGLTexture2D creation"
 #endif
@@ -76,7 +75,7 @@ namespace Honey {
         m_internal_format = (channels == 4 ? GL_RGBA8 : GL_RGB8);
         m_format = (channels == 4 ? GL_RGBA : GL_RGB);
 
-#if defined(HN_PLATFORM_WINDOWS)
+#if defined(HN_PLATFORM_WINDOWS) || defined(HN_PLATFORM_LINUX)
         // New‐style (DSA) API, requires OpenGL ≥4.5
         glCreateTextures(GL_TEXTURE_2D, 1, &m_renderer_id);
         glTextureStorage2D(m_renderer_id, 1, m_internal_format, m_width, m_height);
@@ -107,7 +106,6 @@ namespace Honey {
 
         // Unbind to avoid accidental modification
         glBindTexture(GL_TEXTURE_2D, 0);
-
 #else
     #error "Unsupported platform for OpenGLTexture2D creation"
 #endif
@@ -123,7 +121,7 @@ namespace Honey {
     {
     	HN_PROFILE_FUNCTION();
 
-#if defined(HN_PLATFORM_WINDOWS) || defined(HN_PLATFORM_MACOS)
+#if defined(HN_PLATFORM_WINDOWS) || defined(HN_PLATFORM_MACOS) || defined(HN_PLATFORM_LINUX)
         glDeleteTextures(1, &m_renderer_id);
 #else
     #error "Unsupported platform for OpenGLTexture2D destruction"
@@ -136,7 +134,7 @@ namespace Honey {
         uint32_t bpp = m_format == GL_RGBA ? 4 : 3;
         HN_CORE_ASSERT(size == m_width * m_height * bpp, "Size parameter does not match data buffer size.");
         
-#if defined(HN_PLATFORM_WINDOWS)
+#if defined(HN_PLATFORM_WINDOWS) || defined(HN_PLATFORM_LINUX)
         glTextureSubImage2D(m_renderer_id, 0, 0, 0, m_width, m_height, m_format, GL_UNSIGNED_BYTE, data);
     
 #elif defined(HN_PLATFORM_MACOS)
@@ -154,7 +152,7 @@ namespace Honey {
     {
     	HN_PROFILE_FUNCTION();
 
-#if defined(HN_PLATFORM_WINDOWS)
+#if defined(HN_PLATFORM_WINDOWS) || defined(HN_PLATFORM_LINUX)
         // New‐style bindless API (requires GL ≥4.5)
         glBindTextureUnit(slot, m_renderer_id);
 

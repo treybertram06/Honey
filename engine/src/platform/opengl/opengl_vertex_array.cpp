@@ -26,7 +26,7 @@ namespace Honey {
 
     }
 
-#ifdef HN_PLATFORM_WINDOWS
+#if defined(HN_PLATFORM_WINDOWS) || defined(HN_PLATFORM_LINUX)
     OpenGLVertexArray::OpenGLVertexArray() {
         HN_PROFILE_FUNCTION();
 

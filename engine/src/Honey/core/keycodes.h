@@ -1,6 +1,6 @@
 #pragma once
 
-#ifdef HN_PLATFORM_WINDOWS
+#if defined(HN_PLATFORM_WINDOWS) || defined(HN_PLATFORM_LINUX)
     //From glfw3.h
     #define HN_KEY_SPACE              32
     #define HN_KEY_APOSTROPHE         39  /* ' */
