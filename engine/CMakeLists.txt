@@ -184,7 +184,7 @@ target_compile_definitions(engine PUBLIC
 
 
 add_subdirectory(vendor/GLAD)
-add_subdirectory(vendor/imgui)
+add_subdirectory(vendor/imgui-wrapper)
 #add_subdirectory(vendor/glm)
 
 target_link_libraries(engine PRIVATE
