@@ -42,10 +42,6 @@ Application2D::Application2D()
 
 void Application2D::on_attach() {
 
-    m_fb_spec.width = 1280;
-    m_fb_spec.height = 720;
-    m_framebuffer = Honey::Framebuffer::create(m_fb_spec);
-
     auto texture_path_prefix = asset_root / "textures";
     m_chuck_texture = Honey::Texture2D::create(texture_path_prefix / "bung.png");
     m_missing_texture = Honey::Texture2D::create(texture_path_prefix / "missing.png");
@@ -85,7 +81,6 @@ void Application2D::on_update(Honey::Timestep ts) {
     {
         HN_PROFILE_SCOPE("Application2D::renderer_clear");
         // render
-        m_framebuffer->bind();
         Honey::RenderCommand::set_clear_color(m_clear_color);
         Honey::RenderCommand::clear();
     }
@@ -140,64 +135,12 @@ void Application2D::on_update(Honey::Timestep ts) {
         */
 
         Honey::Renderer2D::end_scene();
-        m_framebuffer->unbind();
     }
 
 }
 
 void Application2D::on_imgui_render() {
     HN_PROFILE_FUNCTION();
-
-    ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
-
-    if (ImGui::BeginMainMenuBar()) {
-        if (ImGui::BeginMenu("File")) {
-            if (ImGui::MenuItem("New")) {
-                // Action for New
-            }
-            if (ImGui::MenuItem("Open...", "Ctrl+O")) {
-                // Action for Open
-            }
-            if (ImGui::MenuItem("Save", "Ctrl+S")) {
-                // Action for Save
-            }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Exit")) {
-                Honey::Application::quit();
-            }
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Edit")) {
-            if (ImGui::MenuItem("Undo", "Ctrl+Z")) {
-                // Action for Undo
-            }
-            if (ImGui::MenuItem("Redo", "Ctrl+Y")) {
-                // Action for Redo
-            }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Cut", "Ctrl+X")) {
-                // Action for Cut
-            }
-            if (ImGui::MenuItem("Copy", "Ctrl+C")) {
-                // Action for Copy
-            }
-            if (ImGui::MenuItem("Paste", "Ctrl+V")) {
-                // Action for Paste
-            }
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("View")) {
-            if (ImGui::MenuItem("Toggle Debug Panel")) {
-                // Toggle visibility of Debug Panel
-            }
-            if (ImGui::MenuItem("Reset View")) {
-                // Reset camera or scene view
-            }
-            ImGui::EndMenu();
-        }
-        ImGui::EndMainMenuBar();
-    }
-
 
     ImGui::Begin("Renderer Debug Panel");
 
@@ -360,14 +303,6 @@ void Application2D::on_imgui_render() {
             on_attach(); // Quick way to reload textures
         }
     }
-
-    ImGui::End();
-
-    ImGui::Begin("Viewport");
-
-    uint32_t texture_id = m_framebuffer->get_color_attachment_renderer_id();
-    ImVec2 size = ImVec2(m_fb_spec.width, m_fb_spec.height);
-    ImGui::Image(ImTextureID((void*)(intptr_t)texture_id), size, ImVec2(0,1), ImVec2(1,0));
 
     ImGui::End();
 

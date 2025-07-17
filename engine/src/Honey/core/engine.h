@@ -21,7 +21,7 @@ namespace Honey {
     class HONEY_API Application
     {
     public:
-        Application();
+        Application(const std::string& name = "Honey Application");
         virtual ~Application();
 
         void run();
@@ -39,7 +39,7 @@ namespace Honey {
         bool on_window_close(WindowCloseEvent& e);
         bool on_window_resize(WindowResizeEvent& e);
 
-        std::unique_ptr<Window> m_window;
+        Scope<Window> m_window;
         ImGuiLayer* m_imgui_layer;
         static bool m_running;
         bool m_minimized = false;

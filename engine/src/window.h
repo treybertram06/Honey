@@ -8,12 +8,12 @@
 namespace Honey {
     struct WindowProps {
         std::string title;
-        unsigned int width;
-        unsigned int height;
+        uint32_t width;
+        uint32_t height;
 
         WindowProps(const std::string& title = "Honey Engine",
-                    unsigned int width = 1280,
-                    unsigned int height = 720)
+                    uint32_t width = 1280,
+                    uint32_t height = 720)
                         : title(title), width(width), height(height) {}
     };
 
@@ -25,8 +25,8 @@ namespace Honey {
 
         virtual void on_update() = 0;
 
-        virtual unsigned int get_width() const = 0;
-        virtual unsigned int get_height() const = 0;
+        virtual uint32_t get_width() const = 0;
+        virtual uint32_t get_height() const = 0;
 
         //window attributes
         virtual void set_event_callback(const event_callback_fn& callback) = 0;
