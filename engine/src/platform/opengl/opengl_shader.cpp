@@ -1,6 +1,7 @@
 #include "hnpch.h"
 #include "opengl_shader.h"
 
+#include <filesystem>
 #include <glad/glad.h>
 #include <fstream>
 
@@ -46,9 +47,15 @@ namespace Honey {
 
 	    glDeleteProgram(m_renderer_id);
     }
-
+/*
     void OpenGLShader::compile(const std::unordered_map<GLenum, std::string> &shader_srcs) {
         HN_PROFILE_FUNCTION();
+
+        GLint max_texture_units = 0;
+        glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &max_texture_units);
+
+        std::string glsl_defines = "#define MAX_TEXTURE_SLOTS " + std::to_string(max_texture_units) + "\n";
+
 
         GLuint program = glCreateProgram();
         HN_CORE_ASSERT(shader_srcs.size() <= 2, "Only supports 2 shaders for now");
@@ -110,24 +117,121 @@ namespace Honey {
 
         m_renderer_id = program;
     }
-
-
-    std::string OpenGLShader::read_file(const std::string& path) {
+*/
+    void OpenGLShader::compile(const std::unordered_map<GLenum, std::string>& shader_srcs) {
         HN_PROFILE_FUNCTION();
 
-        std::string result;
-        std::ifstream in(path, std::ios::in | std::ios::binary);
-        if (in) {
-            in.seekg(0, std::ios::end);
-            result.resize(in.tellg());
-            in.seekg(0, std::ios::beg);
-            in.read(&result[0], result.size());
-            in.close();
-        } else {
-            HN_CORE_ERROR("Could not open shader at path: {0}", path);
+        // 1) Query how many texture image units the driver supports
+        GLint max_texture_slots = 0;
+        glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &max_texture_slots);
+
+        // 2) Build a GLSL‐side define string
+        std::string defines = "#define MAX_TEXTURE_SLOTS " + std::to_string(max_texture_slots) + "\n";
+
+        // 3) Create program and compile each stage
+        GLuint program = glCreateProgram();
+        std::vector<GLuint> shader_ids;
+        shader_ids.reserve(shader_srcs.size());
+
+        for (auto const& [stage, src] : shader_srcs)
+        {
+            GLuint shader = glCreateShader(stage);
+
+            // Find the end of the #version line to insert defines after it
+            std::string modified_source = src;
+            size_t version_pos = modified_source.find("#version");
+            if (version_pos != std::string::npos) {
+                size_t version_end = modified_source.find('\n', version_pos);
+                if (version_end != std::string::npos) {
+                    // Insert defines after the version line
+                    modified_source.insert(version_end + 1, defines);
+                }
+            } else {
+                // No version directive found, prepend defines
+                modified_source = defines + modified_source;
+            }
+
+            const char* source_cstr = modified_source.c_str();
+            glShaderSource(shader, 1, &source_cstr, nullptr);
+            glCompileShader(shader);
+
+            // Error check
+            GLint is_compiled = 0;
+            glGetShaderiv(shader, GL_COMPILE_STATUS, &is_compiled);
+            if (is_compiled == GL_FALSE)
+            {
+                GLint log_length = 0;
+                glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &log_length);
+                std::vector<GLchar> info_log(log_length);
+                glGetShaderInfoLog(shader, log_length, &log_length, &info_log[0]);
+
+                glDeleteShader(shader);
+
+                HN_CORE_ERROR("{0}", info_log.data());
+                HN_CORE_ASSERT(false, "Shader compilation error!");
+
+                // Clean up any previously compiled shaders
+                for (auto id : shader_ids)
+                    glDeleteShader(id);
+                glDeleteProgram(program);
+                return;
+            }
+
+            glAttachShader(program, shader);
+            shader_ids.push_back(shader);
         }
-        return result;
+
+        // 4) Link program
+        glLinkProgram(program);
+        GLint is_linked = 0;
+        glGetProgramiv(program, GL_LINK_STATUS, &is_linked);
+        if (is_linked == GL_FALSE)
+        {
+            GLint log_length = 0;
+            glGetProgramiv(program, GL_INFO_LOG_LENGTH, &log_length);
+            std::vector<GLchar> info_log(log_length);
+            glGetProgramInfoLog(program, log_length, &log_length, &info_log[0]);
+
+            glDeleteProgram(program);
+            for (auto id : shader_ids)
+                glDeleteShader(id);
+
+            HN_CORE_ERROR("{0}", info_log.data());
+            HN_CORE_ASSERT(false, "Shader link error!");
+            return;
+        }
+
+        // 5) Cleanup intermediate shaders and store program handle
+        for (auto id : shader_ids)
+            glDetachShader(program, id);
+
+        for (auto id : shader_ids)
+            glDeleteShader(id);
+
+        m_renderer_id = program;
     }
+
+
+
+    namespace fs = std::filesystem;
+    std::string OpenGLShader::read_file(const std::string& path)
+    {
+        // (1) compute full path
+        const auto fullPath = fs::absolute(path).string();
+
+        std::ifstream file(fullPath);
+        if (!file.is_open())
+        {
+            // (2) log using the absolute path
+            HN_CORE_ERROR("Could not open shader at path: {0}", fullPath);
+            return {};
+        }
+
+        std::stringstream ss;
+        ss << file.rdbuf();
+        return ss.str();
+    }
+
 
     std::unordered_map<GLenum, std::string> OpenGLShader::pre_process(const std::string& source) {
         HN_PROFILE_FUNCTION();

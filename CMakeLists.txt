@@ -23,14 +23,15 @@ set(GLFW_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_DOCS     OFF CACHE BOOL "" FORCE)
 set(GLFW_INSTALL        OFF CACHE BOOL "" FORCE)
 
-
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/engine/vendor/spdlog)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/engine/vendor/glfw)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/engine/vendor/glm)
 add_subdirectory(engine)
 
-add_subdirectory(${CMAKE_SOURCE_DIR}/engine/vendor/spdlog)
+target_link_libraries(engine PUBLIC spdlog_header_only glm)
 
 set(GLM_TEST_ENABLE OFF CACHE BOOL "" FORCE)
-add_subdirectory(${CMAKE_SOURCE_DIR}/engine/vendor/glm)
+
 
 target_compile_definitions(glm INTERFACE
         GLM_FORCE_INLINE
@@ -38,6 +39,11 @@ target_compile_definitions(glm INTERFACE
         # Enable AVX2 only for Release builds (guarded so Debug doesn’t become painful)
         $<$<CONFIG:Release>:GLM_FORCE_SIMD_AVX2>
 )
+
+target_compile_definitions(engine PUBLIC
+        ASSET_ROOT="${CMAKE_SOURCE_DIR}/assets"
+)
+
 
 # Optional but often helpful: keep vectors naturally aligned (16 B) for faster loads/stores
 #target_compile_definitions(glm INTERFACE GLM_FORCE_DEFAULT_ALIGNED_GENTYPES)

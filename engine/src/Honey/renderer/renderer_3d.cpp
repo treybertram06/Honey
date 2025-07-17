@@ -3,6 +3,8 @@
 #include "render_command.h"
 #include <glm/gtc/matrix_transform.hpp>
 
+static const std::filesystem::path asset_root = ASSET_ROOT;
+
 namespace Honey {
 
     struct Renderer3DStorage {
@@ -25,7 +27,8 @@ namespace Honey {
         s_data = new Renderer3DStorage;
 
         // Create basic 3D shader
-        s_data->basic_shader = Shader::create("../../application/assets/shaders/basic3d.glsl");
+        auto shader_path = asset_root / "shaders" / "basic3d.glsl";
+        s_data->basic_shader = Shader::create(shader_path);
 
         // Create white texture for colored rendering
         s_data->white_texture = Texture2D::create(1, 1);

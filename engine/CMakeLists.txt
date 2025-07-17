@@ -100,7 +100,7 @@ target_compile_definitions(engine PRIVATE
 
 target_precompile_headers(engine
         PRIVATE
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/hnpch.h>
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/hnpch.h"
 )
 
 target_compile_definitions(engine PRIVATE

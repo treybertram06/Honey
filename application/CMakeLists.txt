@@ -8,6 +8,10 @@ add_executable(application
         src/application_3d.cpp
 )
 
+set_target_properties(application PROPERTIES
+        SKIP_PRECOMPILE_HEADERS ON
+)
+
 # 1 ─ ensure engine headers are visible
 target_link_libraries(application PRIVATE
         engine
@@ -18,8 +22,11 @@ target_link_libraries(application PRIVATE
         #opengl32
 )
 
-target_precompile_headers(application PRIVATE
-        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/engine/src/hnpch.h>)
+#target_precompile_headers(engine
+ #       PRIVATE
+        #$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/hnpch.h>
+   #     "hnpch.h"
+#)
 
 
 # Add optimization flags to application target

@@ -6,6 +6,8 @@
 #include "shader.h"
 #include "texture.h"
 
+static const std::filesystem::path asset_root = ASSET_ROOT;
+
 namespace Honey {
 
 
@@ -131,12 +133,9 @@ void Renderer2D::init()
     s_data.white_texture->set_data(&white, sizeof(uint32_t));
     s_data.texture_slots[0] = s_data.white_texture;
 
-#if defined(HN_PLATFORM_WINDOWS) || defined(HN_PLATFORM_LINUX)
-    s_data.shader = Shader::create("../../application/assets/shaders/texture.glsl");
-#endif
-#ifdef HN_PLATFORM_MACOS
-    s_data.shader = Shader::create("../../application/assets/shaders/texture_m1.glsl");
-#endif
+    auto shader_path = asset_root / "shaders" / "texture.glsl";
+    s_data.shader = Shader::create(shader_path);
+
 
     s_data.shader->bind();
     {
