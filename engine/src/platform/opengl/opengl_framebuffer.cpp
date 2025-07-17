@@ -11,9 +11,18 @@ namespace Honey {
 
 	OpenGLFramebuffer::~OpenGLFramebuffer() {
 		glDeleteFramebuffers(1, &m_renderer_id);
+	    glDeleteTextures(1, &m_color_attachment);
+	    glDeleteTextures(1, &m_depth_attachment);
 	}
 
 	void OpenGLFramebuffer::invalidate() {
+
+	    if (m_renderer_id) {
+	        glDeleteFramebuffers(1, &m_renderer_id);
+	        glDeleteTextures(1, &m_color_attachment);
+	        glDeleteTextures(1, &m_depth_attachment);
+	    }
+
 		glCreateFramebuffers(1, &m_renderer_id);
 		glBindFramebuffer(GL_FRAMEBUFFER, m_renderer_id);
 
@@ -28,7 +37,6 @@ namespace Honey {
 		glCreateTextures(GL_TEXTURE_2D, 1, &m_depth_attachment);
 		glBindTexture(GL_TEXTURE_2D, m_depth_attachment);
 		glTexStorage2D(GL_TEXTURE_2D, 1, GL_DEPTH24_STENCIL8, m_specification.width, m_specification.height);
-		//glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH24_STENCIL8, m_specification.width, m_specification.height, 0, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, NULL);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, m_depth_attachment, 0);
 
 		HN_CORE_ASSERT(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE, "Framebuffer is incomplete!");
@@ -38,10 +46,17 @@ namespace Honey {
 
 	void OpenGLFramebuffer::bind() {
 		glBindFramebuffer(GL_FRAMEBUFFER, m_renderer_id);
+	    glViewport(0, 0, m_specification.width, m_specification.height);
 	}
 
 	void OpenGLFramebuffer::unbind() {
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	}
+
+    void OpenGLFramebuffer::resize(uint32_t width, uint32_t height) {
+	    m_specification.width = width;
+	    m_specification.height = height;
+	    invalidate();
+    }
 
 }
