@@ -32,6 +32,8 @@ static const char* s_map_tiles =
     "wwwwwwwwddddddddwwwwwwwww"
     "wwwwwwwwddddddddwwwwwwwww";
 
+static const std::filesystem::path asset_root = ASSET_ROOT;
+
 Application2D::Application2D()
     : Layer("Application2D"),
       m_camera_controller((1.6f / 0.9f), true) {
@@ -40,20 +42,19 @@ Application2D::Application2D()
 
 void Application2D::on_attach() {
 
-    Honey::FramebufferSpecification fb_spec;
-    fb_spec.width = 1280;
-    fb_spec.height = 720;
-    m_framebuffer = Honey::Framebuffer::create(fb_spec);
+    m_fb_spec.width = 1280;
+    m_fb_spec.height = 720;
+    m_framebuffer = Honey::Framebuffer::create(m_fb_spec);
 
-    m_chuck_texture = Honey::Texture2D::create("../../application/assets/textures/bung.png");
-    m_missing_texture = Honey::Texture2D::create("../../application/assets/textures/missing.png");
-    m_sprite_sheet01 = Honey::Texture2D::create("../../application/assets/test_game/textures/roguelikeSheet_transparent.png");
-    m_sprite_sheet02 = Honey::Texture2D::create("../../application/assets/test_game/textures/colored-transparent.png");
+    auto texture_path_prefix = asset_root / "textures";
+    m_chuck_texture = Honey::Texture2D::create(texture_path_prefix / "bung.png");
+    m_missing_texture = Honey::Texture2D::create(texture_path_prefix / "missing.png");
+    m_sprite_sheet01 = Honey::Texture2D::create(asset_root / "test_game" / "textures"/ "roguelikeSheet_transparent.png");
+    m_sprite_sheet02 = Honey::Texture2D::create(asset_root / "test_game" / "textures"/ "colored-transparent.png");
     m_bush_sprite = Honey::SubTexture2D::create_from_coords(m_sprite_sheet01, {14, 9},{16, 16},{1, 1},{1, 1},{0, 17});
     s_texture_map['d'] = Honey::SubTexture2D::create_from_coords(m_sprite_sheet01, {5, 0},{16, 16},{1, 1},{1, 1},{0, 17});
     s_texture_map['w'] = Honey::SubTexture2D::create_from_coords(m_sprite_sheet01, {3, 1},{16, 16},{1, 1},{1, 1},{0, 17});
     m_player_sprite = Honey::SubTexture2D::create_from_coords(m_sprite_sheet02, {23, 7},{16, 16},{1, 1},{1, 1},{0, 17});
-
     m_map_width = s_map_width;
     m_map_height = strlen(s_map_tiles) / m_map_width;
 
@@ -365,7 +366,8 @@ void Application2D::on_imgui_render() {
     ImGui::Begin("Viewport");
 
     uint32_t texture_id = m_framebuffer->get_color_attachment_renderer_id();
-    ImGui::Image(ImTextureID((void *) texture_id), ImVec2{ 1280.0f, 720.0f });
+    ImVec2 size = ImVec2(m_fb_spec.width, m_fb_spec.height);
+    ImGui::Image(ImTextureID((void*)(intptr_t)texture_id), size, ImVec2(0,1), ImVec2(1,0));
 
     ImGui::End();
 

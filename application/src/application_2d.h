@@ -27,6 +27,7 @@ private:
     Honey::Ref<Honey::SubTexture2D> m_bush_sprite, m_grass_sprite, m_player_sprite, m_water_sprite;
 
     Honey::Ref<Honey::Framebuffer> m_framebuffer;
+    Honey::FramebufferSpecification m_fb_spec;
 
     uint32_t m_map_width, m_map_height;
 
