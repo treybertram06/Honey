@@ -19,6 +19,8 @@ namespace Honey {
         void init() override;
         void swap_buffers() override;
 
+        id<MTLDevice> device() const { return m_device; }
+
     private:
         void resize_drawable();
 

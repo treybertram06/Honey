@@ -45,4 +45,8 @@ namespace Honey {
         glm::vec4                   m_clear    {0.f, 0.f, 0.f, 1.f};
     };
 
+    /** Convenience helper that instantiates a MetalRendererAPI using the
+     *  system default device.  Defined in metal_renderer_api.mm. */
+    RendererAPI* create_metal_renderer_api();
+
 } // namespace Honey

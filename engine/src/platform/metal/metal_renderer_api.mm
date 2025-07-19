@@ -136,3 +136,8 @@ void MetalRendererAPI::set_depth_test(bool)  { HN_CORE_ASSERT(false, "Swap pipel
 void MetalRendererAPI::set_blend(bool)       { HN_CORE_ASSERT(false, "Swap pipeline!"); }
 
 } // namespace Honey
+
+RendererAPI* Honey::create_metal_renderer_api() {
+    id<MTLDevice> dev = MTLCreateSystemDefaultDevice();
+    return new MetalRendererAPI(dev);
+}
