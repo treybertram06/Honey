@@ -7,7 +7,7 @@
 
 namespace Honey {
 
-    OpenGLTexture2D::OpenGLTexture2D(uint32_t width, uint32_t height)
+    OpenGLTexture2D::OpenGLTexture2D(std::uint32_t width, std::uint32_t height)
         : m_width(width), m_height(height) {
     	HN_PROFILE_FUNCTION();
 
@@ -111,7 +111,7 @@ namespace Honey {
 #endif
 
         // Now use set_data to upload the pixel data
-        uint32_t data_size = m_width * m_height * channels;
+        std::uint32_t data_size = m_width * m_height * channels;
         set_data(data, data_size);
 
         stbi_image_free(data);
@@ -128,10 +128,10 @@ namespace Honey {
 #endif
     }
 
-    void OpenGLTexture2D::set_data(void *data, uint32_t size) {
+    void OpenGLTexture2D::set_data(void *data, std::uint32_t size) {
     	HN_PROFILE_FUNCTION();
 
-        uint32_t bpp = m_format == GL_RGBA ? 4 : 3;
+        std::uint32_t bpp = m_format == GL_RGBA ? 4 : 3;
         HN_CORE_ASSERT(size == m_width * m_height * bpp, "Size parameter does not match data buffer size.");
         
 #if defined(HN_PLATFORM_WINDOWS) || defined(HN_PLATFORM_LINUX)
@@ -148,7 +148,7 @@ namespace Honey {
 #endif
     }
 
-    void OpenGLTexture2D::bind(uint32_t slot) const
+    void OpenGLTexture2D::bind(std::uint32_t slot) const
     {
     	HN_PROFILE_FUNCTION();
 

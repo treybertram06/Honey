@@ -54,7 +54,7 @@
  *    khronos_int16_t             signed   16 bit
  *    khronos_uint16_t            unsigned 16 bit
  *    khronos_int32_t             signed   32 bit
- *    khronos_uint32_t            unsigned 32 bit
+ *    khronos_std::uint32_t            unsigned 32 bit
  *    khronos_int64_t             signed   64 bit
  *    khronos_uint64_t            unsigned 64 bit
  *    khronos_intptr_t            signed   same number of bits as a pointer
@@ -175,7 +175,7 @@ typedef uint64_t                khronos_uint64_t;
  */
 #include <inttypes.h>
 typedef int32_t                 khronos_int32_t;
-typedef uint32_t                khronos_uint32_t;
+typedef std::uint32_t                khronos_std::uint32_t;
 typedef int64_t                 khronos_int64_t;
 typedef uint64_t                khronos_uint64_t;
 #define KHRONOS_SUPPORT_INT64   1
@@ -187,7 +187,7 @@ typedef uint64_t                khronos_uint64_t;
  * Win32
  */
 typedef __int32                 khronos_int32_t;
-typedef unsigned __int32        khronos_uint32_t;
+typedef unsigned __int32        khronos_std::uint32_t;
 typedef __int64                 khronos_int64_t;
 typedef unsigned __int64        khronos_uint64_t;
 #define KHRONOS_SUPPORT_INT64   1
@@ -199,7 +199,7 @@ typedef unsigned __int64        khronos_uint64_t;
  * Sun or Digital
  */
 typedef int                     khronos_int32_t;
-typedef unsigned int            khronos_uint32_t;
+typedef unsigned int            khronos_std::uint32_t;
 #if defined(__arch64__) || defined(_LP64)
 typedef long int                khronos_int64_t;
 typedef unsigned long int       khronos_uint64_t;
@@ -216,7 +216,7 @@ typedef unsigned long long int  khronos_uint64_t;
  * Hypothetical platform with no float or int64 support
  */
 typedef int                     khronos_int32_t;
-typedef unsigned int            khronos_uint32_t;
+typedef unsigned int            khronos_std::uint32_t;
 #define KHRONOS_SUPPORT_INT64   0
 #define KHRONOS_SUPPORT_FLOAT   0
 
@@ -227,7 +227,7 @@ typedef unsigned int            khronos_uint32_t;
  */
 #include <stdint.h>
 typedef int32_t                 khronos_int32_t;
-typedef uint32_t                khronos_uint32_t;
+typedef std::uint32_t                khronos_std::uint32_t;
 typedef int64_t                 khronos_int64_t;
 typedef uint64_t                khronos_uint64_t;
 #define KHRONOS_SUPPORT_INT64   1

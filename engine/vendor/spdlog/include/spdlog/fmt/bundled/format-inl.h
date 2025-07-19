@@ -174,11 +174,11 @@ inline auto operator==(basic_fp<F> x, basic_fp<F> y) -> bool {
 }
 
 // Compilers should be able to optimize this into the ror instruction.
-FMT_CONSTEXPR inline auto rotr(uint32_t n, uint32_t r) noexcept -> uint32_t {
+FMT_CONSTEXPR inline auto rotr(std::uint32_t n, std::uint32_t r) noexcept -> std::uint32_t {
   r &= 31;
   return (n >> r) | (n << (32 - r));
 }
-FMT_CONSTEXPR inline auto rotr(uint64_t n, uint32_t r) noexcept -> uint64_t {
+FMT_CONSTEXPR inline auto rotr(uint64_t n, std::uint32_t r) noexcept -> uint64_t {
   r &= 63;
   return (n >> r) | (n << (64 - r));
 }
@@ -187,7 +187,7 @@ FMT_CONSTEXPR inline auto rotr(uint64_t n, uint32_t r) noexcept -> uint64_t {
 namespace dragonbox {
 // Computes upper 64 bits of multiplication of a 32-bit unsigned integer and a
 // 64-bit unsigned integer.
-inline auto umul96_upper64(uint32_t x, uint64_t y) noexcept -> uint64_t {
+inline auto umul96_upper64(std::uint32_t x, uint64_t y) noexcept -> uint64_t {
   return umul128_upper64(static_cast<uint64_t>(x) << 32, y);
 }
 
@@ -202,7 +202,7 @@ inline auto umul192_lower128(uint64_t x, uint128_fallback y) noexcept
 
 // Computes lower 64 bits of multiplication of a 32-bit unsigned integer and a
 // 64-bit unsigned integer.
-inline auto umul96_lower64(uint32_t x, uint64_t y) noexcept -> uint64_t {
+inline auto umul96_lower64(std::uint32_t x, uint64_t y) noexcept -> uint64_t {
   return x * y;
 }
 
@@ -213,7 +213,7 @@ inline auto floor_log10_pow2_minus_log10_4_over_3(int e) noexcept -> int {
 }
 
 FMT_INLINE_VARIABLE constexpr struct {
-  uint32_t divisor;
+  std::uint32_t divisor;
   int shift_amount;
 } div_small_pow10_infos[] = {{10, 16}, {100, 16}};
 
@@ -221,7 +221,7 @@ FMT_INLINE_VARIABLE constexpr struct {
 // divisible by pow(10, N).
 // Precondition: n <= pow(10, N + 1).
 template <int N>
-auto check_divisibility_and_divide_by_pow10(uint32_t& n) noexcept -> bool {
+auto check_divisibility_and_divide_by_pow10(std::uint32_t& n) noexcept -> bool {
   // The numbers below are chosen such that:
   //   1. floor(n/d) = floor(nm / 2^k) where d=10 or d=100,
   //   2. nm mod 2^k < m if and only if n is divisible by d,
@@ -235,10 +235,10 @@ auto check_divisibility_and_divide_by_pow10(uint32_t& n) noexcept -> bool {
   // The idea for item 2 originates from Schubfach.
   constexpr auto info = div_small_pow10_infos[N - 1];
   FMT_ASSERT(n <= info.divisor * 10, "n is too large");
-  constexpr uint32_t magic_number =
+  constexpr std::uint32_t magic_number =
       (1u << info.shift_amount) / info.divisor + 1;
   n *= magic_number;
-  const uint32_t comparison_mask = (1u << info.shift_amount) - 1;
+  const std::uint32_t comparison_mask = (1u << info.shift_amount) - 1;
   bool result = (n & comparison_mask) < magic_number;
   n >>= info.shift_amount;
   return result;
@@ -246,18 +246,18 @@ auto check_divisibility_and_divide_by_pow10(uint32_t& n) noexcept -> bool {
 
 // Computes floor(n / pow(10, N)) for small n and N.
 // Precondition: n <= pow(10, N + 1).
-template <int N> auto small_division_by_pow10(uint32_t n) noexcept -> uint32_t {
+template <int N> auto small_division_by_pow10(std::uint32_t n) noexcept -> std::uint32_t {
   constexpr auto info = div_small_pow10_infos[N - 1];
   FMT_ASSERT(n <= info.divisor * 10, "n is too large");
-  constexpr uint32_t magic_number =
+  constexpr std::uint32_t magic_number =
       (1u << info.shift_amount) / info.divisor + 1;
   return (n * magic_number) >> info.shift_amount;
 }
 
 // Computes floor(n / 10^(kappa + 1)) (float)
-inline auto divide_by_10_to_kappa_plus_1(uint32_t n) noexcept -> uint32_t {
+inline auto divide_by_10_to_kappa_plus_1(std::uint32_t n) noexcept -> std::uint32_t {
   // 1374389535 = ceil(2^37/100)
-  return static_cast<uint32_t>((static_cast<uint64_t>(n) * 1374389535) >> 37);
+  return static_cast<std::uint32_t>((static_cast<uint64_t>(n) * 1374389535) >> 37);
 }
 // Computes floor(n / 10^(kappa + 1)) (double)
 inline auto divide_by_10_to_kappa_plus_1(uint64_t n) noexcept -> uint64_t {
@@ -323,8 +323,8 @@ template <> struct cache_accessor<float> {
   }
 
   static auto compute_delta(const cache_entry_type& cache, int beta) noexcept
-      -> uint32_t {
-    return static_cast<uint32_t>(cache >> (64 - 1 - beta));
+      -> std::uint32_t {
+    return static_cast<std::uint32_t>(cache >> (64 - 1 - beta));
   }
 
   static auto compute_mul_parity(carrier_uint two_f,
@@ -336,7 +336,7 @@ template <> struct cache_accessor<float> {
 
     auto r = umul96_lower64(two_f, cache);
     return {((r >> (64 - beta)) & 1) != 0,
-            static_cast<uint32_t>(r >> (32 - beta)) == 0};
+            static_cast<std::uint32_t>(r >> (32 - beta)) == 0};
   }
 
   static auto compute_left_endpoint_for_shorter_interval_case(
@@ -1098,8 +1098,8 @@ template <> struct cache_accessor<double> {
   }
 
   static auto compute_delta(cache_entry_type const& cache, int beta) noexcept
-      -> uint32_t {
-    return static_cast<uint32_t>(cache.high() >> (64 - 1 - beta));
+      -> std::uint32_t {
+    return static_cast<std::uint32_t>(cache.high() >> (64 - 1 - beta));
   }
 
   static auto compute_mul_parity(carrier_uint two_f,
@@ -1150,20 +1150,20 @@ auto is_left_endpoint_integer_shorter_interval(int exponent) noexcept -> bool {
 }
 
 // Remove trailing zeros from n and return the number of zeros removed (float)
-FMT_INLINE int remove_trailing_zeros(uint32_t& n, int s = 0) noexcept {
+FMT_INLINE int remove_trailing_zeros(std::uint32_t& n, int s = 0) noexcept {
   FMT_ASSERT(n != 0, "");
   // Modular inverse of 5 (mod 2^32): (mod_inv_5 * 5) mod 2^32 = 1.
-  constexpr uint32_t mod_inv_5 = 0xcccccccd;
-  constexpr uint32_t mod_inv_25 = 0xc28f5c29;  // = mod_inv_5 * mod_inv_5
+  constexpr std::uint32_t mod_inv_5 = 0xcccccccd;
+  constexpr std::uint32_t mod_inv_25 = 0xc28f5c29;  // = mod_inv_5 * mod_inv_5
 
   while (true) {
     auto q = rotr(n * mod_inv_25, 2);
-    if (q > max_value<uint32_t>() / 100) break;
+    if (q > max_value<std::uint32_t>() / 100) break;
     n = q;
     s += 2;
   }
   auto q = rotr(n * mod_inv_5, 1);
-  if (q <= max_value<uint32_t>() / 10) {
+  if (q <= max_value<std::uint32_t>() / 10) {
     n = q;
     s |= 1;
   }
@@ -1181,7 +1181,7 @@ FMT_INLINE int remove_trailing_zeros(uint64_t& n) noexcept {
   // Is n is divisible by 10^8?
   if ((nm.high() & ((1ull << (90 - 64)) - 1)) == 0 && nm.low() < magic_number) {
     // If yes, work with the quotient...
-    auto n32 = static_cast<uint32_t>(nm.high() >> (90 - 64));
+    auto n32 = static_cast<std::uint32_t>(nm.high() >> (90 - 64));
     // ... and use the 32 bit variant of the function
     int s = remove_trailing_zeros(n32, 8);
     n = n32;
@@ -1296,7 +1296,7 @@ template <typename T> auto to_decimal(T x) noexcept -> decimal_fp<T> {
 
   // Compute zi and deltai.
   // 10^kappa <= deltai < 10^(kappa + 1)
-  const uint32_t deltai = cache_accessor<T>::compute_delta(cache, beta);
+  const std::uint32_t deltai = cache_accessor<T>::compute_delta(cache, beta);
   const carrier_uint two_fc = significand << 1;
 
   // For the case of binary32, the result of integer check is not correct for
@@ -1318,7 +1318,7 @@ template <typename T> auto to_decimal(T x) noexcept -> decimal_fp<T> {
   // better than the compiler; we are computing zi / big_divisor here.
   decimal_fp<T> ret_value;
   ret_value.significand = divide_by_10_to_kappa_plus_1(z_mul.result);
-  uint32_t r = static_cast<uint32_t>(z_mul.result - float_info<T>::big_divisor *
+  std::uint32_t r = static_cast<std::uint32_t>(z_mul.result - float_info<T>::big_divisor *
                                                         ret_value.significand);
 
   if (r < deltai) {
@@ -1350,7 +1350,7 @@ small_divisor_case_label:
   ret_value.significand *= 10;
   ret_value.exponent = minus_k + float_info<T>::kappa;
 
-  uint32_t dist = r - (deltai / 2) + (float_info<T>::small_divisor / 2);
+  std::uint32_t dist = r - (deltai / 2) + (float_info<T>::small_divisor / 2);
   const bool approx_y_parity =
       ((dist ^ (float_info<T>::small_divisor / 2)) & 1) != 0;
 
@@ -1409,7 +1409,7 @@ template <> struct formatter<detail::bigint> {
 };
 
 FMT_FUNC detail::utf8_to_utf16::utf8_to_utf16(string_view s) {
-  for_each_codepoint(s, [this](uint32_t cp, string_view) {
+  for_each_codepoint(s, [this](std::uint32_t cp, string_view) {
     if (cp == invalid_code_point) FMT_THROW(std::runtime_error("invalid utf8"));
     if (cp <= 0xFFFF) {
       buffer_.push_back(static_cast<wchar_t>(cp));
@@ -1792,7 +1792,7 @@ inline auto is_printable(uint16_t x, const singleton* singletons,
 }
 
 // This code is generated by support/printable.py.
-FMT_FUNC auto is_printable(uint32_t cp) -> bool {
+FMT_FUNC auto is_printable(std::uint32_t cp) -> bool {
   static constexpr singleton singletons0[] = {
       {0x00, 1},  {0x03, 5},  {0x05, 6},  {0x06, 3},  {0x07, 6},  {0x08, 8},
       {0x09, 17}, {0x0a, 28}, {0x0b, 25}, {0x0c, 20}, {0x0d, 16}, {0x0e, 13},

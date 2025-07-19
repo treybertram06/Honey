@@ -13,7 +13,7 @@
 FMT_BEGIN_NAMESPACE
 FMT_BEGIN_EXPORT
 
-enum class color : uint32_t {
+enum class color : std::uint32_t {
   alice_blue = 0xF0F8FF,               // rgb(240,248,255)
   antique_white = 0xFAEBD7,            // rgb(250,235,215)
   aqua = 0x00FFFF,                     // rgb(0,255,255)
@@ -192,12 +192,12 @@ enum class emphasis : uint8_t {
 struct rgb {
   FMT_CONSTEXPR rgb() : r(0), g(0), b(0) {}
   FMT_CONSTEXPR rgb(uint8_t r_, uint8_t g_, uint8_t b_) : r(r_), g(g_), b(b_) {}
-  FMT_CONSTEXPR rgb(uint32_t hex)
+  FMT_CONSTEXPR rgb(std::uint32_t hex)
       : r((hex >> 16) & 0xFF), g((hex >> 8) & 0xFF), b(hex & 0xFF) {}
   FMT_CONSTEXPR rgb(color hex)
-      : r((uint32_t(hex) >> 16) & 0xFF),
-        g((uint32_t(hex) >> 8) & 0xFF),
-        b(uint32_t(hex) & 0xFF) {}
+      : r((std::uint32_t(hex) >> 16) & 0xFF),
+        g((std::uint32_t(hex) >> 8) & 0xFF),
+        b(std::uint32_t(hex) & 0xFF) {}
   uint8_t r;
   uint8_t g;
   uint8_t b;
@@ -209,11 +209,11 @@ namespace detail {
 struct color_type {
   FMT_CONSTEXPR color_type() noexcept : is_rgb(), value{} {}
   FMT_CONSTEXPR color_type(color rgb_color) noexcept : is_rgb(true), value{} {
-    value.rgb_color = static_cast<uint32_t>(rgb_color);
+    value.rgb_color = static_cast<std::uint32_t>(rgb_color);
   }
   FMT_CONSTEXPR color_type(rgb rgb_color) noexcept : is_rgb(true), value{} {
-    value.rgb_color = (static_cast<uint32_t>(rgb_color.r) << 16) |
-                      (static_cast<uint32_t>(rgb_color.g) << 8) | rgb_color.b;
+    value.rgb_color = (static_cast<std::uint32_t>(rgb_color.r) << 16) |
+                      (static_cast<std::uint32_t>(rgb_color.g) << 8) | rgb_color.b;
   }
   FMT_CONSTEXPR color_type(terminal_color term_color) noexcept
       : is_rgb(), value{} {
@@ -222,7 +222,7 @@ struct color_type {
   bool is_rgb;
   union color_union {
     uint8_t term_color;
-    uint32_t rgb_color;
+    std::uint32_t rgb_color;
   } value;
 };
 }  // namespace detail
@@ -336,7 +336,7 @@ template <typename Char> struct ansi_color_escape {
     // sequence.
     if (!text_color.is_rgb) {
       bool is_background = esc == string_view("\x1b[48;2;");
-      uint32_t value = text_color.value.term_color;
+      std::uint32_t value = text_color.value.term_color;
       // Background ASCII codes are the same as the foreground ones but with
       // 10 more.
       if (is_background) value += 10u;

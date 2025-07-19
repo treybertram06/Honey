@@ -26,7 +26,7 @@ private:
     Honey::Ref<Honey::Texture2D> m_chuck_texture, m_sprite_sheet01, m_sprite_sheet02;
     Honey::Ref<Honey::SubTexture2D> m_bush_sprite, m_grass_sprite, m_player_sprite, m_water_sprite;
 
-    uint32_t m_map_width, m_map_height;
+    std::uint32_t m_map_width, m_map_height;
 
     glm::vec4 m_clear_color = { 0.1f, 0.1f, 0.1f, 1.0f };
     glm::vec3 m_square_position;

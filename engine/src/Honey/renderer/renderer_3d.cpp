@@ -32,8 +32,8 @@ namespace Honey {
 
         // Create white texture for colored rendering
         s_data->white_texture = Texture2D::create(1, 1);
-        uint32_t white_data = 0xffffffff;
-        s_data->white_texture->set_data(&white_data, sizeof(uint32_t));
+        std::uint32_t white_data = 0xffffffff;
+        s_data->white_texture->set_data(&white_data, sizeof(std::uint32_t));
 
         create_cube_geometry();
         // create_sphere_geometry(); // Implement later
@@ -177,7 +177,7 @@ namespace Honey {
         s_data->cube_vertex_array->add_vertex_buffer(cube_vertex_buffer);
 
         // Cube indices
-        uint32_t cube_indices[] = {
+        std::uint32_t cube_indices[] = {
             0,  1,  2,   2,  3,  0,   // Front face
             4,  5,  6,   6,  7,  4,   // Back face
             8,  9,  10,  10, 11, 8,   // Left face

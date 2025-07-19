@@ -1,4 +1,5 @@
 #pragma once
+#include "Honey/core/log.h"
 
 namespace Honey {
 
@@ -6,7 +7,7 @@ namespace Honey {
         None = 0, Float, Float2, Float3, Float4, Mat3, Mat4, Int, Int2, Int3, Int4, Bool
     };
 
-    static uint32_t shader_data_type_size(ShaderDataType type) {
+    static std::uint32_t shader_data_type_size(ShaderDataType type) {
 
         switch (type) {
             case ShaderDataType::Float:     return 4;
@@ -32,7 +33,7 @@ namespace Honey {
         std::string name;
         ShaderDataType type;
         std::size_t offset;
-        uint32_t size;
+        std::uint32_t size;
         bool normalized;
         bool instanced;
 
@@ -45,7 +46,7 @@ namespace Honey {
         : name(n), type(t), size(shader_data_type_size(t)),
           offset(0), normalized(norm), instanced(inst) {}
 
-        uint32_t get_component_count() const {
+        std::uint32_t get_component_count() const {
 
             switch (type) {
 
@@ -76,7 +77,7 @@ namespace Honey {
             calculate_offsets_and_stride();
         }
 
-        inline uint32_t get_stride() const { return m_stride; }
+        inline std::uint32_t get_stride() const { return m_stride; }
         inline const std::vector<BufferElement>& get_elements() const { return m_elements; }
 
         std::vector<BufferElement>::iterator begin() { return m_elements.begin(); }
@@ -87,7 +88,7 @@ namespace Honey {
     private:
 
         void calculate_offsets_and_stride() {
-            uint32_t offset = 0;
+            std::uint32_t offset = 0;
             m_stride = 0;
             for (auto& element : m_elements) {
                 element.offset = offset;
@@ -97,7 +98,7 @@ namespace Honey {
         }
 
         std::vector<BufferElement> m_elements;
-        uint32_t m_stride = 0;
+        std::uint32_t m_stride = 0;
     };
 
     class VertexBuffer {
@@ -107,13 +108,13 @@ namespace Honey {
         virtual void bind() const = 0;
         virtual void unbind() const = 0;
 
-        virtual void set_data(const void* data, uint32_t size) = 0;
+        virtual void set_data(const void* data, std::uint32_t size) = 0;
 
         virtual void set_layout(const BufferLayout& layout) = 0;
         virtual const BufferLayout& get_layout() const = 0;
 
-        static Ref<VertexBuffer> create(uint32_t size);
-        static Ref<VertexBuffer> create(float* vertices, uint32_t size);
+        static Ref<VertexBuffer> create(std::uint32_t size);
+        static Ref<VertexBuffer> create(float* vertices, std::uint32_t size);
 
     };
 
@@ -124,9 +125,9 @@ namespace Honey {
         virtual void bind() const = 0;
         virtual void unbind() const = 0;
 
-        virtual uint32_t get_count() const = 0;
+        virtual std::uint32_t get_count() const = 0;
 
-        static Ref<IndexBuffer> create(uint32_t* indices, uint32_t count);
+        static Ref<IndexBuffer> create(std::uint32_t* indices, std::uint32_t count);
 
     };
 }

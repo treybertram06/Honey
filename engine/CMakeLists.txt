@@ -81,6 +81,13 @@ add_library(engine STATIC
         src/platform/linux/linux_input.cpp
         src/platform/linux/linux_input.h
         src/platform/linux/linux_window.h
+        src/platform/metal/metal_framebuffer.h
+        src/platform/metal/metal_context.h
+        src/platform/metal/metal_renderer_api.h
+        src/platform/metal/metal_buffer.h
+        src/platform/metal/metal_vertex_array.h
+        src/platform/metal/metal_texture.h
+        src/platform/metal/metal_shader.h
 )
 
 # Make sure we define the Windows platform for Visual Studio
@@ -155,11 +162,43 @@ if (WIN32)
  )
 elseif (APPLE)
  message(STATUS "Configuring for macOS")
+
+ # Add Metal source files
+ target_sources(engine PRIVATE
+         src/platform/metal/metal_context.mm
+         src/platform/metal/metal_renderer_api.mm
+         src/platform/metal/metal_buffer.mm
+         src/platform/metal/metal_vertex_array.mm
+         src/platform/metal/metal_texture.mm
+         src/platform/metal/metal_shader.mm
+         src/platform/metal/metal_framebuffer.mm
+ )
+
+ # Apply ObjC++ flags only to Metal files
+ set_source_files_properties(
+         src/platform/metal/metal_context.mm
+         src/platform/metal/metal_renderer_api.mm
+         #src/Honey/renderer/renderer_api.cpp
+         src/platform/metal/metal_buffer.mm
+         #src/Honey/renderer/buffer.cpp
+         src/platform/metal/metal_vertex_array.mm
+         #src/Honey/renderer/vertex_array.cpp
+         src/platform/metal/metal_texture.mm
+         #src/Honey/renderer/texture.cpp
+         src/platform/metal/metal_shader.mm
+         #src/Honey/renderer/shader.cpp
+         src/platform/metal/metal_framebuffer.mm
+         #src/Honey/renderer/framebuffer.cpp
+         PROPERTIES
+         COMPILE_FLAGS "-ObjC++ -fobjc-arc"
+         SKIP_PRECOMPILE_HEADERS ON
+ )
+
+ target_link_libraries(engine PRIVATE "-framework Metal" "-framework QuartzCore")
  target_compile_definitions(engine PUBLIC
          GL_SILENCE_DEPRECATION
          HN_PLATFORM_MACOS
          GLFW_INCLUDE_NONE
-
  )
 elseif (UNIX)
  message(STATUS "Configuring for Linux/Unix")

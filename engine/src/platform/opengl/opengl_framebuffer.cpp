@@ -78,7 +78,7 @@ namespace Honey {
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	}
 
-    void OpenGLFramebuffer::resize(uint32_t width, uint32_t height) {
+    void OpenGLFramebuffer::resize(std::uint32_t width, std::uint32_t height) {
 	    m_specification.width = width;
 	    m_specification.height = height;
 	    invalidate();

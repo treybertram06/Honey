@@ -36,8 +36,8 @@ static const QuadVertexStatic s_static_quad[4] = {
 };
 
 struct Renderer2DData {
-    static constexpr uint32_t max_quads     = 100'000;
-    static constexpr uint32_t max_textures  = 32;   // keep in sync with shader
+    static constexpr std::uint32_t max_quads     = 100'000;
+    static constexpr std::uint32_t max_textures  = 32;   // keep in sync with shader
 
     // GL objects
     Ref<VertexArray>  vao;
@@ -49,12 +49,12 @@ struct Renderer2DData {
     // CPU‑side ring buffer for instances
     QuadInstance*     instance_base = nullptr;
     QuadInstance*     instance_ptr  = nullptr;
-    uint32_t          instance_count = 0;
+    std::uint32_t          instance_count = 0;
 
     // Texture slots
-    uint32_t                       max_texture_slots = 0;
+    std::uint32_t                       max_texture_slots = 0;
     std::vector<Ref<Texture2D>>    texture_slots;
-    uint32_t                       texture_slot_index = 1; // 0 is white tex
+    std::uint32_t                       texture_slot_index = 1; // 0 is white tex
     Ref<Texture2D>                 white_texture;
 
     // Stats
@@ -70,7 +70,7 @@ static float resolve_texture_slot(const Ref<Texture2D>& tex)
         return 0.0f; // white
 
     // Already bound this frame?
-    for (uint32_t i = 1; i < s_data.texture_slot_index; ++i)
+    for (std::uint32_t i = 1; i < s_data.texture_slot_index; ++i)
         if (s_data.texture_slots[i] && *s_data.texture_slots[i] == *tex)
             return static_cast<float>(i);
 
@@ -79,7 +79,7 @@ static float resolve_texture_slot(const Ref<Texture2D>& tex)
         HN_CORE_WARN("Texture slot limit exceeded – using white texture");
         return 0.0f;
     }
-    uint32_t idx = s_data.texture_slot_index++;
+    std::uint32_t idx = s_data.texture_slot_index++;
     s_data.texture_slots[idx] = tex;
     return static_cast<float>(idx);
 }
@@ -119,7 +119,7 @@ void Renderer2D::init()
         s_data.vao->add_vertex_buffer(s_data.instance_vbo);
     }
 
-    uint32_t indices[6] = {0,1,2, 2,3,0};
+    std::uint32_t indices[6] = {0,1,2, 2,3,0};
     s_data.ibo = IndexBuffer::create(indices, 6);
     s_data.vao->set_index_buffer(s_data.ibo);
 
@@ -129,8 +129,8 @@ void Renderer2D::init()
     s_data.texture_slots.resize(s_data.max_texture_slots);
 
     s_data.white_texture = Texture2D::create(1,1);
-    uint32_t white = 0xffffffff;
-    s_data.white_texture->set_data(&white, sizeof(uint32_t));
+    std::uint32_t white = 0xffffffff;
+    s_data.white_texture->set_data(&white, sizeof(std::uint32_t));
     s_data.texture_slots[0] = s_data.white_texture;
 
     auto shader_path = asset_root / "shaders" / "texture.glsl";
@@ -170,7 +170,7 @@ void Renderer2D::end_scene()
     s_data.instance_vbo->set_data(s_data.instance_base, bytes);
 
     // Bind textures in the order we populated
-    for (uint32_t i = 0; i < s_data.texture_slot_index; ++i)
+    for (std::uint32_t i = 0; i < s_data.texture_slot_index; ++i)
         s_data.texture_slots[i]->bind(i);
 
     // Draw all quads in one go

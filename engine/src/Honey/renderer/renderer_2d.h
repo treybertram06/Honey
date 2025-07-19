@@ -52,11 +52,11 @@ namespace Honey {
 
     	//statistics
     	struct Statistics {
-    		uint32_t draw_calls = 0;
-    		uint32_t quad_count = 0;
+    		std::uint32_t draw_calls = 0;
+    		std::uint32_t quad_count = 0;
 
-    		uint32_t get_total_vertex_count() { return quad_count * 4; }
-    		uint32_t get_total_index_count() { return quad_count * 6; }
+    		std::uint32_t get_total_vertex_count() { return quad_count * 4; }
+    		std::uint32_t get_total_index_count() { return quad_count * 6; }
     	};
     	static Statistics get_stats();
     	static void reset_stats();

@@ -11,7 +11,7 @@ void test_pad2(int n, const char *expected) {
     REQUIRE(to_string_view(buf) == expected);
 }
 
-void test_pad3(uint32_t n, const char *expected) {
+void test_pad3(std::uint32_t n, const char *expected) {
     memory_buf_t buf;
     spdlog::details::fmt_helper::pad3(n, buf);
 

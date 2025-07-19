@@ -9,7 +9,7 @@ namespace Honey {
 
     // Vertex Buffer //////////////////////////////////////////////////////
 
-    OpenGLVertexBuffer::OpenGLVertexBuffer(uint32_t size) {
+    OpenGLVertexBuffer::OpenGLVertexBuffer(std::uint32_t size) {
         HN_PROFILE_FUNCTION();
 
 #if defined(HN_PLATFORM_WINDOWS) || defined(HN_PLATFORM_LINUX)
@@ -22,7 +22,7 @@ namespace Honey {
         glBufferData(GL_ARRAY_BUFFER, size, nullptr, GL_DYNAMIC_DRAW);
     }
 
-    OpenGLVertexBuffer::OpenGLVertexBuffer(float* vertices, uint32_t size) {
+    OpenGLVertexBuffer::OpenGLVertexBuffer(float* vertices, std::uint32_t size) {
         HN_PROFILE_FUNCTION();
 
 #if defined(HN_PLATFORM_WINDOWS) || defined(HN_PLATFORM_LINUX)
@@ -53,7 +53,7 @@ namespace Honey {
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
 
-	void OpenGLVertexBuffer::set_data(const void *data, uint32_t size) {
+	void OpenGLVertexBuffer::set_data(const void *data, std::uint32_t size) {
 		glBindBuffer(GL_ARRAY_BUFFER, m_renderer_id);
     	glBufferSubData(GL_ARRAY_BUFFER, 0, size, data);
 	}
@@ -61,7 +61,7 @@ namespace Honey {
 
     // Index Buffer //////////////////////////////////////////////////////
 
-    OpenGLIndexBuffer::OpenGLIndexBuffer(uint32_t *indices, uint32_t count)
+    OpenGLIndexBuffer::OpenGLIndexBuffer(std::uint32_t *indices, std::uint32_t count)
         : m_count(count) {
         HN_PROFILE_FUNCTION();
 
@@ -72,7 +72,7 @@ namespace Honey {
         glGenBuffers(1, &m_renderer_id);
 #endif
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_renderer_id);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, count * sizeof(uint32_t), indices, GL_STATIC_DRAW);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, count * sizeof(std::uint32_t), indices, GL_STATIC_DRAW);
     }
 
     OpenGLIndexBuffer::~OpenGLIndexBuffer() {

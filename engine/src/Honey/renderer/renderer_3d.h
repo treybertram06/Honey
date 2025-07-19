@@ -30,9 +30,9 @@ namespace Honey {
 
 		// Statistics
 		struct Statistics {
-			uint32_t draw_calls = 0;
-			uint32_t vertex_count = 0;
-			uint32_t index_count = 0;
+			std::uint32_t draw_calls = 0;
+			std::uint32_t vertex_count = 0;
+			std::uint32_t index_count = 0;
 		};
 		static Statistics get_stats();
 		static void reset_stats();

@@ -16,7 +16,7 @@ namespace Honey {
         Renderer3D::init();
     }
 
-    void Renderer::on_window_resize(uint32_t width, uint32_t height) {
+    void Renderer::on_window_resize(std::uint32_t width, std::uint32_t height) {
         RenderCommand::set_viewport(0, 0, width, height);
     }
 

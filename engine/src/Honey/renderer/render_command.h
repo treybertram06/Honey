@@ -11,7 +11,7 @@ namespace Honey {
             s_renderer_api->init();
         }
 
-        inline static void set_viewport(uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+        inline static void set_viewport(std::uint32_t x, std::uint32_t y, std::uint32_t width, std::uint32_t height) {
             s_renderer_api->set_viewport(x, y, width, height);
         }
 
@@ -23,16 +23,16 @@ namespace Honey {
             s_renderer_api->clear();
         }
 
-        static uint32_t get_max_texture_slots() {
+        static std::uint32_t get_max_texture_slots() {
             return s_renderer_api->get_max_texture_slots();
         }
 
 
-        inline static void draw_indexed(const Ref<VertexArray>& vertex_array, uint32_t index_count = 0) {
+        inline static void draw_indexed(const Ref<VertexArray>& vertex_array, std::uint32_t index_count = 0) {
             s_renderer_api->draw_indexed(vertex_array, index_count);
         }
 
-        inline static void draw_indexed_instanced(const Ref<VertexArray>& vertex_array, uint32_t index_count, uint32_t instance_count) {
+        inline static void draw_indexed_instanced(const Ref<VertexArray>& vertex_array, std::uint32_t index_count, std::uint32_t instance_count) {
             s_renderer_api->draw_indexed_instanced(vertex_array, index_count, instance_count);
         }
 

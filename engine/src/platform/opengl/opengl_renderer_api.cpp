@@ -18,7 +18,7 @@ namespace Honey {
         glClearColor(color.r, color.g, color.b, color.a);
     }
 
-    void OpenGLRendererAPI::set_viewport(uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+    void OpenGLRendererAPI::set_viewport(std::uint32_t x, std::uint32_t y, std::uint32_t width, std::uint32_t height) {
         glViewport(x, y, width, height);
     }
 
@@ -26,22 +26,22 @@ namespace Honey {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     }
 
-    uint32_t OpenGLRendererAPI::get_max_texture_slots() {
+    std::uint32_t OpenGLRendererAPI::get_max_texture_slots() {
         int max_texture_units;
         glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &max_texture_units);
-        return (uint32_t)max_texture_units;
+        return (std::uint32_t)max_texture_units;
 
     }
 
 
-    void OpenGLRendererAPI::draw_indexed(const Ref<VertexArray> &vertex_array, uint32_t index_count) {
-        //uint32_t count = index_count ? vertex_array->get_index_buffer()->get_count() : index_count;
-        uint32_t count = index_count ? index_count : vertex_array->get_index_buffer()->get_count();
+    void OpenGLRendererAPI::draw_indexed(const Ref<VertexArray> &vertex_array, std::uint32_t index_count) {
+        //std::uint32_t count = index_count ? vertex_array->get_index_buffer()->get_count() : index_count;
+        std::uint32_t count = index_count ? index_count : vertex_array->get_index_buffer()->get_count();
         //HN_CORE_INFO("Index count: {0}", count);
         glDrawElements(GL_TRIANGLES, count, GL_UNSIGNED_INT, nullptr);
     }
 
-    void OpenGLRendererAPI::draw_indexed_instanced(const Ref<VertexArray> &vertex_array, uint32_t index_count, uint32_t instance_count) {
+    void OpenGLRendererAPI::draw_indexed_instanced(const Ref<VertexArray> &vertex_array, std::uint32_t index_count, std::uint32_t instance_count) {
         HN_PROFILE_FUNCTION();
 
         vertex_array->bind();

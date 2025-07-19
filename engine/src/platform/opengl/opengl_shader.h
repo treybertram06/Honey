@@ -21,7 +21,7 @@ namespace Honey {
         virtual void set_float4(const std::string& name, const glm::vec4& value) override;
         virtual void set_mat4(const std::string& name, const glm::mat4& value) override;
         virtual void set_int(const std::string& name, int value) override;
-        virtual void set_int_array(const std::string& name, int* values, uint32_t count) override;
+        virtual void set_int_array(const std::string& name, int* values, std::uint32_t count) override;
 
         virtual const std::string& get_name() const override { return m_name; }
 
@@ -34,14 +34,14 @@ namespace Honey {
         void upload_uniform_float(const std::string& name, float value);
 
         void upload_uniform_int(const std::string& name, int value);
-        void upload_uniform_int_array(const std::string& name, int* values, uint32_t count);
+        void upload_uniform_int_array(const std::string& name, int* values, std::uint32_t count);
 
     private:
         std::string read_file(const std::string& path);
         std::unordered_map<GLenum, std::string> pre_process(const std::string& source);
         void compile(const std::unordered_map<GLenum, std::string>& shader_srcs);
 
-        uint32_t m_renderer_id;
+        std::uint32_t m_renderer_id;
         std::string m_name;
     };
 }

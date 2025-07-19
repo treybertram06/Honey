@@ -2,6 +2,7 @@
 #include "shader.h"
 
 #include "renderer.h"
+#include "platform/metal/metal_shader.h"
 #include "platform/opengl/opengl_shader.h"
 
 namespace Honey {
@@ -10,6 +11,7 @@ namespace Honey {
         switch (Renderer::get_api()) {
             case RendererAPI::API::none:     HN_CORE_ASSERT(false, "RendererAPI::none is not supported."); return nullptr;
             case RendererAPI::API::opengl:   return std::make_shared<OpenGLShader>(path);
+            case RendererAPI::API::metal:   return std::make_shared<MetalShader>(path);
         }
 
         HN_CORE_ASSERT(false, "Unknown RendererAPI.");
@@ -19,7 +21,8 @@ namespace Honey {
     Ref<Shader> Shader::create(const std::string& name, const std::string &vertex_src, const std::string &fragment_src) {
         switch (Renderer::get_api()) {
             case RendererAPI::API::none:     HN_CORE_ASSERT(false, "RendererAPI::none is not supported."); return nullptr;
-            case RendererAPI::API::opengl:   return std::make_shared<OpenGLShader>(name, vertex_src, fragment_src);
+            case RendererAPI::API::opengl:   return CreateRef<OpenGLShader>(name, vertex_src, fragment_src);
+            case RendererAPI::API::metal:   return CreateRef<MetalShader>(name, vertex_src, fragment_src);
         }
 
         HN_CORE_ASSERT(false, "Unknown RendererAPI.");

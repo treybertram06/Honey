@@ -4,7 +4,7 @@
 #include "glm/gtc/type_ptr.hpp"
 #include "hnpch.h"
 
-static const uint32_t s_map_width = 25;
+static const std::uint32_t s_map_width = 25;
 static const char* s_map_tiles =
     "wwwwwwwwwwwwwwwwwwwwwwwww"
     "wwwwwwwwddddddddwwwwwwwww"
@@ -107,8 +107,8 @@ void Application2D::on_update(Honey::Timestep ts) {
         Honey::Renderer2D::begin_scene(m_camera_controller.get_camera());
 
         //Honey::Renderer2D::draw_quad({0.0f, 0.0f, 0.0f}, {96.8f, 52.6f}, m_sprite_sheet, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
-        for (uint32_t y = 0; y < m_map_height; y++) {
-            for (uint32_t x = 0; x < m_map_width; x++) {
+        for (std::uint32_t y = 0; y < m_map_height; y++) {
+            for (std::uint32_t x = 0; x < m_map_width; x++) {
                 char tile_type = s_map_tiles[x + y * m_map_width];
                 if (s_texture_map.find(tile_type) != s_texture_map.end()) {
                     auto texture = s_texture_map[tile_type];

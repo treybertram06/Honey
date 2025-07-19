@@ -22,7 +22,7 @@ namespace Honey {
         std::string Name;
         long long Start;
         long long End;
-        uint32_t ThreadID;
+        std::uint32_t ThreadID;
     };
 
     // Represents an active profiling session
@@ -109,7 +109,7 @@ namespace Honey {
             long long end = std::chrono::time_point_cast<std::chrono::microseconds>(end_timepoint)
                                 .time_since_epoch().count();
 
-            uint32_t thread_id = std::hash<std::thread::id>{}(std::this_thread::get_id());
+            std::uint32_t thread_id = std::hash<std::thread::id>{}(std::this_thread::get_id());
             Profiler::get().write_profile({ m_name, start, end, thread_id });
             m_stopped = true;
         }

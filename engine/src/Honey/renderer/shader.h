@@ -17,7 +17,7 @@ namespace Honey {
         virtual void set_float4(const std::string& name, const glm::vec4& value) = 0;
         virtual void set_mat4(const std::string& name, const glm::mat4& value) = 0;
         virtual void set_int(const std::string& name, int value) = 0;
-        virtual void set_int_array(const std::string& name, int* values, uint32_t count) = 0;
+        virtual void set_int_array(const std::string& name, int* values, std::uint32_t count) = 0;
 
 
         virtual const std::string& get_name() const = 0;

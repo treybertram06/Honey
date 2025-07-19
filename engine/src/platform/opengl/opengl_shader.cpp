@@ -306,7 +306,7 @@ namespace Honey {
         upload_uniform_int(name, value);
     }
 
-    void OpenGLShader::set_int_array(const std::string &name, int* values, uint32_t count) {
+    void OpenGLShader::set_int_array(const std::string &name, int* values, std::uint32_t count) {
         HN_PROFILE_FUNCTION();
 
         upload_uniform_int_array(name, values, count);
@@ -383,7 +383,7 @@ namespace Honey {
         }
     }
 
-    void OpenGLShader::upload_uniform_int_array(const std::string& name, int* values, uint32_t count) {
+    void OpenGLShader::upload_uniform_int_array(const std::string& name, int* values, std::uint32_t count) {
         GLint location = glGetUniformLocation(m_renderer_id, name.c_str());
         if (location != -1)
             glUniform1iv(location, count, values);
