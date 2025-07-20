@@ -64,12 +64,12 @@ namespace Honey {
         dispatcher.dispatch<WindowCloseEvent>(BIND_EVENT_FN(Application::on_window_close));
         dispatcher.dispatch<WindowResizeEvent>(BIND_EVENT_FN(Application::on_window_resize));
 
-        for (auto it = m_layer_stack.end(); it != m_layer_stack.begin(); ) {
-            (*--it)->on_event(e);
-            if (e.handled()) {
+        for (auto it = m_layer_stack.rbegin(); it != m_layer_stack.rend(); ++it) {
+            if (e.handled())
                 break;
-            }
+            (*it)->on_event(e);
         }
+
     }
 
 

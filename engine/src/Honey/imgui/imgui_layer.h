@@ -6,7 +6,7 @@
 
 namespace Honey {
 
-    class HONEY_API ImGuiLayer : public Layer {
+    class ImGuiLayer : public Layer {
 
     public:
         ImGuiLayer();
@@ -14,12 +14,15 @@ namespace Honey {
 
         virtual void on_attach() override;
         virtual void on_detach() override;
+        virtual void on_event(Event& e);
         virtual void on_imgui_render() override;
 
         void begin();
         void end();
 
+        void block_events(bool block) { m_block_events = block; }
     private:
+        bool m_block_events = true;
         float m_time = 0.0f;
 
 

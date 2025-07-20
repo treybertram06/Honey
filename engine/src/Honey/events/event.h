@@ -46,6 +46,7 @@ namespace Honey {
         }
 
         inline bool handled() { return m_handled; }
+        inline void set_handled(bool handled) { m_handled = handled; }
 
     protected:
         bool m_handled = false;
