@@ -1,25 +1,26 @@
 #pragma once
 
 #include "event.h"
+#include "Honey/core/keycodes.h"
 
 
 namespace Honey {
 
-    class HONEY_API KeyEvent : public Event {
+    class KeyEvent : public Event {
     public:
-        inline int get_key_code() const { return m_key_code; }
+        inline KeyCode get_key_code() const { return m_key_code; }
 
         EVENT_CLASS_CATEGORY(event_category_keyboard | event_category_input)
 
     protected:
-        KeyEvent(int keycode) : m_key_code(keycode) {}
+        explicit KeyEvent(KeyCode keycode) : m_key_code(keycode) {}
 
-        int m_key_code;
+        KeyCode m_key_code;
     };
 
-    class HONEY_API KeyPressedEvent : public KeyEvent {
+    class KeyPressedEvent : public KeyEvent {
     public:
-        KeyPressedEvent(int keycode, int repeat_count) : KeyEvent(keycode), m_repeat_count(repeat_count) {}
+        KeyPressedEvent(KeyCode keycode, int repeat_count) : KeyEvent(keycode), m_repeat_count(repeat_count) {}
 
         inline int get_repeat_count() const { return m_repeat_count; }
 
@@ -35,9 +36,9 @@ namespace Honey {
         int m_repeat_count;
     };
 
-    class HONEY_API KeyReleasedEvent : public KeyEvent {
+    class KeyReleasedEvent : public KeyEvent {
     public:
-        KeyReleasedEvent(int keycode) : KeyEvent(keycode) {}
+        KeyReleasedEvent(KeyCode keycode) : KeyEvent(keycode) {}
 
         std::string to_string() const override {
             std::stringstream ss;
@@ -48,9 +49,9 @@ namespace Honey {
         EVENT_CLASS_TYPE(key_released)
     };
 
-    class HONEY_API KeyTypedEvent : public KeyEvent {
+    class KeyTypedEvent : public KeyEvent {
     public:
-        KeyTypedEvent(int keycode) : KeyEvent(keycode) {}
+        KeyTypedEvent(KeyCode keycode) : KeyEvent(keycode) {}
 
         std::string to_string() const override {
             std::stringstream ss;

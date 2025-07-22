@@ -1,28 +1,26 @@
 #ifdef HN_PLATFORM_WINDOWS
 
 #include "hnpch.h"
-#include "windows_input.h"
-#include "../../Honey/core/engine.h"
+#include "Honey/core/input.h"
+#include "Honey/core/engine.h"
 
 #include <GLFW/glfw3.h>
 
 namespace Honey {
-
-    Input* Input::s_instance = new WindowsInput;
-
-    bool WindowsInput::is_key_pressed_impl(int keycode) {
+    
+    bool Input::is_key_pressed(int keycode) {
         auto window = static_cast<GLFWwindow*>(Application::get().get_window().get_native_window());
         auto state = glfwGetKey(window, keycode);
         return state == GLFW_PRESS || state == GLFW_REPEAT;
     }
 
-    bool WindowsInput::is_mouse_button_pressed_impl(int button) {
+    bool Input::is_mouse_button_pressed(int button) {
         auto window = static_cast<GLFWwindow*>(Application::get().get_window().get_native_window());
         auto state = glfwGetMouseButton(window, button);
         return state == GLFW_PRESS;
     }
 
-    std::pair<float, float> WindowsInput::get_mouse_position_impl() {
+    std::pair<float, float> Input::get_mouse_position() {
         auto window = static_cast<GLFWwindow*>(Application::get().get_window().get_native_window());
         double xpos, ypos;
         glfwGetCursorPos(window, &xpos, &ypos);
@@ -30,7 +28,7 @@ namespace Honey {
         return {(float)xpos, (float)ypos };
     }
 
-    void WindowsInput::set_cursor_locked_impl(bool locked) {
+    void Input::set_cursor_locked(bool locked) {
         auto window = static_cast<GLFWwindow*>(Application::get().get_window().get_native_window());
         if (locked) {
             glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
@@ -39,19 +37,19 @@ namespace Honey {
         }
     }
 
-    bool WindowsInput::is_cursor_locked_impl() {
+    bool Input::is_cursor_locked() {
         auto window = static_cast<GLFWwindow*>(Application::get().get_window().get_native_window());
         return glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED;
     }
 
 
-    float WindowsInput:: get_mouse_x_impl() {
-        auto[x, y] = get_mouse_position_impl();
+    float Input:: get_mouse_x() {
+        auto[x, y] = get_mouse_position();
         return x;
     }
 
-    float WindowsInput::get_mouse_y_impl() {
-        auto[x, y] = get_mouse_position_impl();
+    float Input::get_mouse_y() {
+        auto[x, y] = get_mouse_position();
         return y;
     }
 

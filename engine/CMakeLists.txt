@@ -5,7 +5,7 @@ option(ENABLE_ASSERTS "Enable HN_ASSERT / HN_CORE_ASSERT checks" ON)
 add_library(engine STATIC
         src/Honey/core/engine.cpp
         src/Honey/core/engine.h
-        src/Honey/core/core.h
+        src/Honey/core/base.h
         src/Honey/core/entry_point.h
         src/Honey/core/log.h
         src/Honey/core/log.cpp
@@ -25,12 +25,10 @@ add_library(engine STATIC
         src/Honey/imgui/imgui_layer.cpp
         src/Honey/imgui/imgui_layer.h
         src/Honey/core/input.h
-        src/platform/windows/windows_input.h
         src/platform/windows/windows_input.cpp
         src/Honey/core/keycodes.h
         src/Honey/core/mouse_button_codes.h
         src/Honey/imgui/imgui_build.cpp
-        src/platform/macos/macos_input.h
         src/platform/macos/macos_input.cpp
         src/Honey/renderer/graphics_context.h
         src/platform/opengl/opengl_context.h
@@ -79,7 +77,6 @@ add_library(engine STATIC
         src/platform/opengl/opengl_framebuffer.cpp
         src/platform/linux/linux_window.cpp
         src/platform/linux/linux_input.cpp
-        src/platform/linux/linux_input.h
         src/platform/linux/linux_window.h
 )
 

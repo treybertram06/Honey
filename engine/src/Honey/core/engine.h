@@ -1,6 +1,6 @@
 #pragma once
 
-#include "core.h"
+#include "base.h"
 #include "Honey/core/timestep.h"
 
 #include "window.h"
@@ -35,6 +35,8 @@ namespace Honey {
         inline Window& get_window() { return *m_window; }
 
         inline static void quit() { m_running = false; }
+
+        ImGuiLayer* get_imgui_layer() { return m_imgui_layer; }
     private:
         bool on_window_close(WindowCloseEvent& e);
         bool on_window_resize(WindowResizeEvent& e);

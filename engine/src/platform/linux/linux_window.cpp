@@ -95,17 +95,17 @@ namespace Honey {
 
             switch (action) {
                 case GLFW_PRESS: {
-                    KeyPressedEvent event(key, 0);
+                    KeyPressedEvent event((KeyCode)key, 0);
                     data.event_callback(event);
                     break;
                 }
                 case GLFW_RELEASE: {
-                    KeyReleasedEvent event(key);
+                    KeyReleasedEvent event((KeyCode)key);
                     data.event_callback(event);
                     break;
                 }
                 case GLFW_REPEAT: {
-                    KeyPressedEvent event(key, 1);
+                    KeyPressedEvent event((KeyCode)key, 1);
                     data.event_callback(event);
                     break;
                 }
@@ -146,7 +146,7 @@ namespace Honey {
         glfwSetCharCallback(m_window, [](GLFWwindow* window, unsigned int keycode) {
             WindowData& data = *(WindowData*)glfwGetWindowUserPointer(window);
 
-            KeyTypedEvent event(keycode);
+            KeyTypedEvent event((KeyCode)keycode);
             data.event_callback(event);
         });
 

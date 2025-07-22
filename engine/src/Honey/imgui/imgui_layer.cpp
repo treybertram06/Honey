@@ -62,6 +62,27 @@ namespace Honey {
          ImGui::DestroyContext();
      }
 
+    void ImGuiLayer::on_event(Event& e) {
+         HN_PROFILE_FUNCTION();
+
+         if (!m_block_events)
+             return;
+
+         ImGuiIO& io = ImGui::GetIO();
+
+         if (e.is_in_category(event_category_mouse) ||
+             e.is_in_category(event_category_mouse_button)) {
+             if (io.WantCaptureMouse)
+                 e.set_handled(true);
+         }
+
+         if (e.is_in_category(event_category_keyboard)) {
+             if (io.WantCaptureKeyboard)
+                 e.set_handled(true);
+         }
+
+    }
+
     void ImGuiLayer::begin() {
      	HN_PROFILE_FUNCTION();
 
