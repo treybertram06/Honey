@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../core/core.h"
+#include "../core/base.h"
 #include <string>
 
 namespace Honey {

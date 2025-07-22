@@ -5,7 +5,7 @@ option(ENABLE_ASSERTS "Enable HN_ASSERT / HN_CORE_ASSERT checks" ON)
 add_library(engine STATIC
         src/Honey/core/engine.cpp
         src/Honey/core/engine.h
-        src/Honey/core/core.h
+        src/Honey/core/base.h
         src/Honey/core/entry_point.h
         src/Honey/core/log.h
         src/Honey/core/log.cpp

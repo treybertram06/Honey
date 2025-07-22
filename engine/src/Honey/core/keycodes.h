@@ -1,253 +1,288 @@
 #pragma once
 
-#if defined(HN_PLATFORM_WINDOWS) || defined(HN_PLATFORM_LINUX)
-    //From glfw3.h
-    #define HN_KEY_SPACE              32
-    #define HN_KEY_APOSTROPHE         39  /* ' */
-    #define HN_KEY_COMMA              44  /* , */
-    #define HN_KEY_MINUS              45  /* - */
-    #define HN_KEY_PERIOD             46  /* . */
-    #define HN_KEY_SLASH              47  /* / */
-    #define HN_KEY_0                  48
-    #define HN_KEY_1                  49
-    #define HN_KEY_2                  50
-    #define HN_KEY_3                  51
-    #define HN_KEY_4                  52
-    #define HN_KEY_5                  53
-    #define HN_KEY_6                  54
-    #define HN_KEY_7                  55
-    #define HN_KEY_8                  56
-    #define HN_KEY_9                  57
-    #define HN_KEY_SEMICOLON          59  /* ; */
-    #define HN_KEY_EQUAL              61  /* = */
-    #define HN_KEY_A                  65
-    #define HN_KEY_B                  66
-    #define HN_KEY_C                  67
-    #define HN_KEY_D                  68
-    #define HN_KEY_E                  69
-    #define HN_KEY_F                  70
-    #define HN_KEY_G                  71
-    #define HN_KEY_H                  72
-    #define HN_KEY_I                  73
-    #define HN_KEY_J                  74
-    #define HN_KEY_K                  75
-    #define HN_KEY_L                  76
-    #define HN_KEY_M                  77
-    #define HN_KEY_N                  78
-    #define HN_KEY_O                  79
-    #define HN_KEY_P                  80
-    #define HN_KEY_Q                  81
-    #define HN_KEY_R                  82
-    #define HN_KEY_S                  83
-    #define HN_KEY_T                  84
-    #define HN_KEY_U                  85
-    #define HN_KEY_V                  86
-    #define HN_KEY_W                  87
-    #define HN_KEY_X                  88
-    #define HN_KEY_Y                  89
-    #define HN_KEY_Z                  90
-    #define HN_KEY_LEFT_BRACKET       91  /* [ */
-    #define HN_KEY_BACKSLASH          92  /* \ */
-    #define HN_KEY_RIGHT_BRACKET      93  /* ] */
-    #define HN_KEY_GRAVE_ACCENT       96  /* ` */
-    #define HN_KEY_WORLD_1            161 /* non-US #1 */
-    #define HN_KEY_WORLD_2            162 /* non-US #2 */
+namespace Honey {
 
-    /* Function keys */
-    #define HN_KEY_ESCAPE             256
-    #define HN_KEY_ENTER              257
-    #define HN_KEY_TAB                258
-    #define HN_KEY_BACKSPACE          259
-    #define HN_KEY_INSERT             260
-    #define HN_KEY_DELETE             261
-    #define HN_KEY_RIGHT              262
-    #define HN_KEY_LEFT               263
-    #define HN_KEY_DOWN               264
-    #define HN_KEY_UP                 265
-    #define HN_KEY_PAGE_UP            266
-    #define HN_KEY_PAGE_DOWN          267
-    #define HN_KEY_HOME               268
-    #define HN_KEY_END                269
-    #define HN_KEY_CAPS_LOCK          280
-    #define HN_KEY_SCROLL_LOCK        281
-    #define HN_KEY_NUM_LOCK           282
-    #define HN_KEY_PRINT_SCREEN       283
-    #define HN_KEY_PAUSE              284
-    #define HN_KEY_F1                 290
-    #define HN_KEY_F2                 291
-    #define HN_KEY_F3                 292
-    #define HN_KEY_F4                 293
-    #define HN_KEY_F5                 294
-    #define HN_KEY_F6                 295
-    #define HN_KEY_F7                 296
-    #define HN_KEY_F8                 297
-    #define HN_KEY_F9                 298
-    #define HN_KEY_F10                299
-    #define HN_KEY_F11                300
-    #define HN_KEY_F12                301
-    #define HN_KEY_F13                302
-    #define HN_KEY_F14                303
-    #define HN_KEY_F15                304
-    #define HN_KEY_F16                305
-    #define HN_KEY_F17                306
-    #define HN_KEY_F18                307
-    #define HN_KEY_F19                308
-    #define HN_KEY_F20                309
-    #define HN_KEY_F21                310
-    #define HN_KEY_F22                311
-    #define HN_KEY_F23                312
-    #define HN_KEY_F24                313
-    #define HN_KEY_F25                314
-    #define HN_KEY_KP_0               320
-    #define HN_KEY_KP_1               321
-    #define HN_KEY_KP_2               322
-    #define HN_KEY_KP_3               323
-    #define HN_KEY_KP_4               324
-    #define HN_KEY_KP_5               325
-    #define HN_KEY_KP_6               326
-    #define HN_KEY_KP_7               327
-    #define HN_KEY_KP_8               328
-    #define HN_KEY_KP_9               329
-    #define HN_KEY_KP_DECIMAL         330
-    #define HN_KEY_KP_DIVIDE          331
-    #define HN_KEY_KP_MULTIPLY        332
-    #define HN_KEY_KP_SUBTRACT        333
-    #define HN_KEY_KP_ADD             334
-    #define HN_KEY_KP_ENTER           335
-    #define HN_KEY_KP_EQUAL           336
-    #define HN_KEY_LEFT_SHIFT         340
-    #define HN_KEY_LEFT_CONTROL       341
-    #define HN_KEY_LEFT_ALT           342
-    #define HN_KEY_LEFT_SUPER         343
-    #define HN_KEY_RIGHT_SHIFT        344
-    #define HN_KEY_RIGHT_CONTROL      345
-    #define HN_KEY_RIGHT_ALT          346
-    #define HN_KEY_RIGHT_SUPER        347
-    #define HN_KEY_MENU               348
-#endif
+    // Scoped enumeration for keycodes
+    enum class KeyCode : uint16_t {
+        // Basic printable keys
+        Space = 32,
+        Apostrophe = 39, /* ' */
+        Comma = 44,      /* , */
+        Minus = 45,      /* - */
+        Period = 46,     /* . */
+        Slash = 47,      /* / */
 
-#ifdef HN_PLATFORM_MACOS
-    //From glfw3.h
-    #define HN_KEY_SPACE              32
-    #define HN_KEY_APOSTROPHE         39  /* ' */
-    #define HN_KEY_COMMA              44  /* , */
-    #define HN_KEY_MINUS              45  /* - */
-    #define HN_KEY_PERIOD             46  /* . */
-    #define HN_KEY_SLASH              47  /* / */
-    #define HN_KEY_0                  48
-    #define HN_KEY_1                  49
-    #define HN_KEY_2                  50
-    #define HN_KEY_3                  51
-    #define HN_KEY_4                  52
-    #define HN_KEY_5                  53
-    #define HN_KEY_6                  54
-    #define HN_KEY_7                  55
-    #define HN_KEY_8                  56
-    #define HN_KEY_9                  57
-    #define HN_KEY_SEMICOLON          59  /* ; */
-    #define HN_KEY_EQUAL              61  /* = */
-    #define HN_KEY_A                  65
-    #define HN_KEY_B                  66
-    #define HN_KEY_C                  67
-    #define HN_KEY_D                  68
-    #define HN_KEY_E                  69
-    #define HN_KEY_F                  70
-    #define HN_KEY_G                  71
-    #define HN_KEY_H                  72
-    #define HN_KEY_I                  73
-    #define HN_KEY_J                  74
-    #define HN_KEY_K                  75
-    #define HN_KEY_L                  76
-    #define HN_KEY_M                  77
-    #define HN_KEY_N                  78
-    #define HN_KEY_O                  79
-    #define HN_KEY_P                  80
-    #define HN_KEY_Q                  81
-    #define HN_KEY_R                  82
-    #define HN_KEY_S                  83
-    #define HN_KEY_T                  84
-    #define HN_KEY_U                  85
-    #define HN_KEY_V                  86
-    #define HN_KEY_W                  87
-    #define HN_KEY_X                  88
-    #define HN_KEY_Y                  89
-    #define HN_KEY_Z                  90
-    #define HN_KEY_LEFT_BRACKET       91  /* [ */
-    #define HN_KEY_BACKSLASH          92  /* \ */
-    #define HN_KEY_RIGHT_BRACKET      93  /* ] */
-    #define HN_KEY_GRAVE_ACCENT       96  /* ` */
-    #define HN_KEY_WORLD_1            161 /* non-US #1 */
-    #define HN_KEY_WORLD_2            162 /* non-US #2 */
+        D0 = 48,         // Number keys 0-9
+        D1 = 49,
+        D2 = 50,
+        D3 = 51,
+        D4 = 52,
+        D5 = 53,
+        D6 = 54,
+        D7 = 55,
+        D8 = 56,
+        D9 = 57,
 
-    /* Function keys */
-    #define HN_KEY_ESCAPE             256
-    #define HN_KEY_ENTER              257
-    #define HN_KEY_TAB                258
-    #define HN_KEY_BACKSPACE          259
-    #define HN_KEY_INSERT             260
-    #define HN_KEY_DELETE             261
-    #define HN_KEY_RIGHT              262
-    #define HN_KEY_LEFT               263
-    #define HN_KEY_DOWN               264
-    #define HN_KEY_UP                 265
-    #define HN_KEY_PAGE_UP            266
-    #define HN_KEY_PAGE_DOWN          267
-    #define HN_KEY_HOME               268
-    #define HN_KEY_END                269
-    #define HN_KEY_CAPS_LOCK          280
-    #define HN_KEY_SCROLL_LOCK        281
-    #define HN_KEY_NUM_LOCK           282
-    #define HN_KEY_PRINT_SCREEN       283
-    #define HN_KEY_PAUSE              284
-    #define HN_KEY_F1                 290
-    #define HN_KEY_F2                 291
-    #define HN_KEY_F3                 292
-    #define HN_KEY_F4                 293
-    #define HN_KEY_F5                 294
-    #define HN_KEY_F6                 295
-    #define HN_KEY_F7                 296
-    #define HN_KEY_F8                 297
-    #define HN_KEY_F9                 298
-    #define HN_KEY_F10                299
-    #define HN_KEY_F11                300
-    #define HN_KEY_F12                301
-    #define HN_KEY_F13                302
-    #define HN_KEY_F14                303
-    #define HN_KEY_F15                304
-    #define HN_KEY_F16                305
-    #define HN_KEY_F17                306
-    #define HN_KEY_F18                307
-    #define HN_KEY_F19                308
-    #define HN_KEY_F20                309
-    #define HN_KEY_F21                310
-    #define HN_KEY_F22                311
-    #define HN_KEY_F23                312
-    #define HN_KEY_F24                313
-    #define HN_KEY_F25                314
-    #define HN_KEY_KP_0               320
-    #define HN_KEY_KP_1               321
-    #define HN_KEY_KP_2               322
-    #define HN_KEY_KP_3               323
-    #define HN_KEY_KP_4               324
-    #define HN_KEY_KP_5               325
-    #define HN_KEY_KP_6               326
-    #define HN_KEY_KP_7               327
-    #define HN_KEY_KP_8               328
-    #define HN_KEY_KP_9               329
-    #define HN_KEY_KP_DECIMAL         330
-    #define HN_KEY_KP_DIVIDE          331
-    #define HN_KEY_KP_MULTIPLY        332
-    #define HN_KEY_KP_SUBTRACT        333
-    #define HN_KEY_KP_ADD             334
-    #define HN_KEY_KP_ENTER           335
-    #define HN_KEY_KP_EQUAL           336
-    #define HN_KEY_LEFT_SHIFT         340
-    #define HN_KEY_LEFT_CONTROL       341
-    #define HN_KEY_LEFT_ALT           342
-    #define HN_KEY_LEFT_SUPER         343
-    #define HN_KEY_RIGHT_SHIFT        344
-    #define HN_KEY_RIGHT_CONTROL      345
-    #define HN_KEY_RIGHT_ALT          346
-    #define HN_KEY_RIGHT_SUPER        347
-    #define HN_KEY_MENU               348
-#endif
+        Semicolon = 59,  /* ; */
+        Equal = 61,      /* = */
+
+        // Alphabet keys
+        A = 65,
+        B = 66,
+        C = 67,
+        D = 68,
+        E = 69,
+        F = 70,
+        G = 71,
+        H = 72,
+        I = 73,
+        J = 74,
+        K = 75,
+        L = 76,
+        M = 77,
+        N = 78,
+        O = 79,
+        P = 80,
+        Q = 81,
+        R = 82,
+        S = 83,
+        T = 84,
+        U = 85,
+        V = 86,
+        W = 87,
+        X = 88,
+        Y = 89,
+        Z = 90,
+
+        LeftBracket = 91,  /* [ */
+        Backslash = 92,    /* \ */
+        RightBracket = 93, /* ] */
+        GraveAccent = 96,  /* ` */
+
+        // Function keys
+        Escape = 256,
+        Enter = 257,
+        Tab = 258,
+        Backspace = 259,
+        Insert = 260,
+        Delete = 261,
+        Right = 262,
+        Left = 263,
+        Down = 264,
+        Up = 265,
+        PageUp = 266,
+        PageDown = 267,
+        Home = 268,
+        End = 269,
+        CapsLock = 280,
+        ScrollLock = 281,
+        NumLock = 282,
+        PrintScreen = 283,
+        Pause = 284,
+
+        // F1-F25
+        F1 = 290,
+        F2 = 291,
+        F3 = 292,
+        F4 = 293,
+        F5 = 294,
+        F6 = 295,
+        F7 = 296,
+        F8 = 297,
+        F9 = 298,
+        F10 = 299,
+        F11 = 300,
+        F12 = 301,
+        F13 = 302,
+        F14 = 303,
+        F15 = 304,
+        F16 = 305,
+        F17 = 306,
+        F18 = 307,
+        F19 = 308,
+        F20 = 309,
+        F21 = 310,
+        F22 = 311,
+        F23 = 312,
+        F24 = 313,
+        F25 = 314,
+
+        // Keypad
+        Keypad0 = 320,
+        Keypad1 = 321,
+        Keypad2 = 322,
+        Keypad3 = 323,
+        Keypad4 = 324,
+        Keypad5 = 325,
+        Keypad6 = 326,
+        Keypad7 = 327,
+        Keypad8 = 328,
+        Keypad9 = 329,
+        KeypadDecimal = 330,
+        KeypadDivide = 331,
+        KeypadMultiply = 332,
+        KeypadSubtract = 333,
+        KeypadAdd = 334,
+        KeypadEnter = 335,
+        KeypadEqual = 336,
+
+        // Modifier keys
+        LeftShift = 340,
+        LeftControl = 341,
+        LeftAlt = 342,
+        LeftSuper = 343,
+        RightShift = 344,
+        RightControl = 345,
+        RightAlt = 346,
+        RightSuper = 347,
+        Menu = 348,
+
+        Unknown = 0
+    };
+
+    inline std::string to_string(KeyCode keyCode) {
+        switch (keyCode) {
+            // Printable keys
+            case KeyCode::Space:              return "Space";
+            case KeyCode::Apostrophe:         return "Apostrophe";
+            case KeyCode::Comma:              return "Comma";
+            case KeyCode::Minus:              return "Minus";
+            case KeyCode::Period:             return "Period";
+            case KeyCode::Slash:              return "Slash";
+            case KeyCode::D0:                 return "0";
+            case KeyCode::D1:                 return "1";
+            case KeyCode::D2:                 return "2";
+            case KeyCode::D3:                 return "3";
+            case KeyCode::D4:                 return "4";
+            case KeyCode::D5:                 return "5";
+            case KeyCode::D6:                 return "6";
+            case KeyCode::D7:                 return "7";
+            case KeyCode::D8:                 return "8";
+            case KeyCode::D9:                 return "9";
+            case KeyCode::Semicolon:          return "Semicolon";
+            case KeyCode::Equal:              return "Equal";
+
+            // Alphabet keys
+            case KeyCode::A:                  return "A";
+            case KeyCode::B:                  return "B";
+            case KeyCode::C:                  return "C";
+            case KeyCode::D:                  return "D";
+            case KeyCode::E:                  return "E";
+            case KeyCode::F:                  return "F";
+            case KeyCode::G:                  return "G";
+            case KeyCode::H:                  return "H";
+            case KeyCode::I:                  return "I";
+            case KeyCode::J:                  return "J";
+            case KeyCode::K:                  return "K";
+            case KeyCode::L:                  return "L";
+            case KeyCode::M:                  return "M";
+            case KeyCode::N:                  return "N";
+            case KeyCode::O:                  return "O";
+            case KeyCode::P:                  return "P";
+            case KeyCode::Q:                  return "Q";
+            case KeyCode::R:                  return "R";
+            case KeyCode::S:                  return "S";
+            case KeyCode::T:                  return "T";
+            case KeyCode::U:                  return "U";
+            case KeyCode::V:                  return "V";
+            case KeyCode::W:                  return "W";
+            case KeyCode::X:                  return "X";
+            case KeyCode::Y:                  return "Y";
+            case KeyCode::Z:                  return "Z";
+
+            // Bracket and misc keys
+            case KeyCode::LeftBracket:        return "Left Bracket";
+            case KeyCode::Backslash:          return "Backslash";
+            case KeyCode::RightBracket:       return "Right Bracket";
+            case KeyCode::GraveAccent:        return "Grave Accent";
+
+            // Function keys
+            case KeyCode::Escape:             return "Escape";
+            case KeyCode::Enter:              return "Enter";
+            case KeyCode::Tab:                return "Tab";
+            case KeyCode::Backspace:          return "Backspace";
+            case KeyCode::Insert:             return "Insert";
+            case KeyCode::Delete:             return "Delete";
+            case KeyCode::Right:              return "Right Arrow";
+            case KeyCode::Left:               return "Left Arrow";
+            case KeyCode::Down:               return "Down Arrow";
+            case KeyCode::Up:                 return "Up Arrow";
+            case KeyCode::PageUp:             return "Page Up";
+            case KeyCode::PageDown:           return "Page Down";
+            case KeyCode::Home:               return "Home";
+            case KeyCode::End:                return "End";
+            case KeyCode::CapsLock:           return "Caps Lock";
+            case KeyCode::ScrollLock:         return "Scroll Lock";
+            case KeyCode::NumLock:            return "Num Lock";
+            case KeyCode::PrintScreen:        return "Print Screen";
+            case KeyCode::Pause:              return "Pause";
+
+            // F1 to F25 keys
+            case KeyCode::F1:                 return "F1";
+            case KeyCode::F2:                 return "F2";
+            case KeyCode::F3:                 return "F3";
+            case KeyCode::F4:                 return "F4";
+            case KeyCode::F5:                 return "F5";
+            case KeyCode::F6:                 return "F6";
+            case KeyCode::F7:                 return "F7";
+            case KeyCode::F8:                 return "F8";
+            case KeyCode::F9:                 return "F9";
+            case KeyCode::F10:                return "F10";
+            case KeyCode::F11:                return "F11";
+            case KeyCode::F12:                return "F12";
+            case KeyCode::F13:                return "F13";
+            case KeyCode::F14:                return "F14";
+            case KeyCode::F15:                return "F15";
+            case KeyCode::F16:                return "F16";
+            case KeyCode::F17:                return "F17";
+            case KeyCode::F18:                return "F18";
+            case KeyCode::F19:                return "F19";
+            case KeyCode::F20:                return "F20";
+            case KeyCode::F21:                return "F21";
+            case KeyCode::F22:                return "F22";
+            case KeyCode::F23:                return "F23";
+            case KeyCode::F24:                return "F24";
+            case KeyCode::F25:                return "F25";
+
+            // Keypad keys
+            case KeyCode::Keypad0:            return "Keypad 0";
+            case KeyCode::Keypad1:            return "Keypad 1";
+            case KeyCode::Keypad2:            return "Keypad 2";
+            case KeyCode::Keypad3:            return "Keypad 3";
+            case KeyCode::Keypad4:            return "Keypad 4";
+            case KeyCode::Keypad5:            return "Keypad 5";
+            case KeyCode::Keypad6:            return "Keypad 6";
+            case KeyCode::Keypad7:            return "Keypad 7";
+            case KeyCode::Keypad8:            return "Keypad 8";
+            case KeyCode::Keypad9:            return "Keypad 9";
+            case KeyCode::KeypadDecimal:      return "Keypad Decimal";
+            case KeyCode::KeypadDivide:       return "Keypad Divide";
+            case KeyCode::KeypadMultiply:     return "Keypad Multiply";
+            case KeyCode::KeypadSubtract:     return "Keypad Subtract";
+            case KeyCode::KeypadAdd:          return "Keypad Add";
+            case KeyCode::KeypadEnter:        return "Keypad Enter";
+            case KeyCode::KeypadEqual:        return "Keypad Equal";
+
+            // Modifier keys
+            case KeyCode::LeftShift:          return "Left Shift";
+            case KeyCode::LeftControl:        return "Left Control";
+            case KeyCode::LeftAlt:            return "Left Alt";
+            case KeyCode::LeftSuper:          return "Left Super";
+            case KeyCode::RightShift:         return "Right Shift";
+            case KeyCode::RightControl:       return "Right Control";
+            case KeyCode::RightAlt:           return "Right Alt";
+            case KeyCode::RightSuper:         return "Right Super";
+            case KeyCode::Menu:               return "Menu";
+
+            default:                          return "Unknown";
+        }
+    }
+
+
+    // Overload operator<< for std::ostream
+    inline std::ostream& operator<<(std::ostream& os, KeyCode keyCode) {
+        return os << to_string(keyCode);
+    }
+
+
+} // namespace Honey

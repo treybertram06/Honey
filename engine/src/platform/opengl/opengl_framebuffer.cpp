@@ -4,6 +4,9 @@
 #include <glad/glad.h>
 
 namespace Honey {
+
+    static const uint32_t s_max_framebuffer_size = 8192;
+
 	OpenGLFramebuffer::OpenGLFramebuffer(const FramebufferSpecification &spec)
 		: m_specification(spec) {
 		invalidate();
@@ -54,6 +57,12 @@ namespace Honey {
 	}
 
     void OpenGLFramebuffer::resize(uint32_t width, uint32_t height) {
+
+	    if (width == 0 || height == 0  ||  width > s_max_framebuffer_size || height > s_max_framebuffer_size ) {
+	        HN_CORE_WARN("Attempted to resize framebuffer to {0}, {1}, which is outside of maximum.", width, height);
+	        return;
+	    }
+
 	    m_specification.width = width;
 	    m_specification.height = height;
 	    invalidate();

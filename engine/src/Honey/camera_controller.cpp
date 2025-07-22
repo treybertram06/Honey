@@ -14,18 +14,18 @@ namespace Honey {
     void OrthographicCameraController::on_update(Timestep ts) {
         HN_PROFILE_FUNCTION();
 
-        if (Input::is_key_pressed(HN_KEY_A))
+        if (Input::is_key_pressed(KeyCode::A))
             m_camera_position.x -= m_camera_translation_speed * ts;
-        if (Input::is_key_pressed(HN_KEY_D))
+        if (Input::is_key_pressed(KeyCode::D))
             m_camera_position.x += m_camera_translation_speed * ts;
-        if (Input::is_key_pressed(HN_KEY_W))
+        if (Input::is_key_pressed(KeyCode::W))
             m_camera_position.y += m_camera_translation_speed * ts;
-        if (Input::is_key_pressed(HN_KEY_S))
+        if (Input::is_key_pressed(KeyCode::S))
             m_camera_position.y -= m_camera_translation_speed * ts;
         if (m_rotation) {
-            if (Input::is_key_pressed(HN_KEY_Q))
+            if (Input::is_key_pressed(KeyCode::Q))
                 m_camera_rotation += m_camera_rotation_speed * ts;
-            if (Input::is_key_pressed(HN_KEY_E))
+            if (Input::is_key_pressed(KeyCode::E))
                 m_camera_rotation -= m_camera_rotation_speed * ts;
             m_camera.set_rotation(m_camera_rotation);
         }
@@ -71,12 +71,12 @@ namespace Honey {
 
         float velocity = m_move_speed * ts;
 
-        if (Input::is_key_pressed(HN_KEY_W)) m_position +=  m_front * velocity;
-        if (Input::is_key_pressed(HN_KEY_S)) m_position -=  m_front * velocity;
-        if (Input::is_key_pressed(HN_KEY_A)) m_position +=  m_right * velocity;
-        if (Input::is_key_pressed(HN_KEY_D)) m_position -=  m_right * velocity;
-        if (Input::is_key_pressed(HN_KEY_SPACE))       m_position +=  m_world_up * velocity;
-        if (Input::is_key_pressed(HN_KEY_LEFT_SHIFT))  m_position -=  m_world_up * velocity;
+        if (Input::is_key_pressed(KeyCode::W)) m_position +=  m_front * velocity;
+        if (Input::is_key_pressed(KeyCode::S)) m_position -=  m_front * velocity;
+        if (Input::is_key_pressed(KeyCode::A)) m_position +=  m_right * velocity;
+        if (Input::is_key_pressed(KeyCode::D)) m_position -=  m_right * velocity;
+        if (Input::is_key_pressed(KeyCode::Space))       m_position +=  m_world_up * velocity;
+        if (Input::is_key_pressed(KeyCode::LeftShift))  m_position -=  m_world_up * velocity;
 
         m_camera.set_position(m_position);
     }
@@ -93,7 +93,7 @@ namespace Honey {
     }
 
     bool PerspectiveCameraController::on_key_pressed_event(KeyPressedEvent &e) {
-        if (e.get_key_code() == HN_KEY_L)
+        if (e.get_key_code() == KeyCode::L)
             Input::set_cursor_locked(m_cursor_locked = !m_cursor_locked);
 
         return false;
@@ -120,7 +120,7 @@ namespace Honey {
     {
         //if (!Input::is_mouse_button_pressed(HN_MOUSE_BUTTON_RIGHT)) return false;
 
-        if (!Input::is_mouse_button_pressed(HN_MOUSE_BUTTON_RIGHT) && !m_cursor_locked)
+        if (!Input::is_mouse_button_pressed(MouseButton::Right) && !m_cursor_locked)
         {
             // Keep baseline fresh so the next drag starts from 0-delta
             m_first_mouse  = true;

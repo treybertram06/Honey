@@ -16,7 +16,7 @@
 #include <map>
 
 #include "Honey/core/log.h"
-#include "Honey/core/core.h"
+#include "Honey/core/base.h"
 #include "Honey/debug/instrumentor.h"
 
 
@@ -35,4 +35,8 @@
     #import <AppKit/AppKit.h>
     // or #import <Cocoa/Cocoa.h> if you need Foundation+AppKit all together
   #endif
+
+#elif defined(HN_PLATFORM_LINUX)
+  #include <unistd.h>
+  #include <dlfcn.h>
 #endif

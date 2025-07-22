@@ -150,7 +150,7 @@ public:
 
     bool on_key_pressed_event(Honey::KeyPressedEvent& e) {
 
-        if (e.get_key_code() == HN_KEY_ESCAPE)
+        if (e.get_key_code() == Honey::KeyCode::Escape)
             Honey::Application::quit();
 
         return false;
