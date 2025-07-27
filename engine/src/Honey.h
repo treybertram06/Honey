@@ -22,6 +22,9 @@
 #include "Honey/core/layer.h"
 #include "Honey/imgui/imgui_layer.h"
 
+#include "Honey/scene/scene.h"
+#include "Honey/scene/components.h"
+
 // Input & events
 #include "Honey/core/input.h"
 #include "Honey/core/keycodes.h"

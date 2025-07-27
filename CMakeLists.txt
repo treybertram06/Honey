@@ -17,11 +17,27 @@ project(game_engine)
 
 set(CMAKE_CXX_STANDARD 20)
 
+# Force use of system wayland-scanner instead of custom KDE one
+find_program(WAYLAND_SCANNER wayland-scanner PATHS /usr/bin NO_DEFAULT_PATH)
+if(WAYLAND_SCANNER)
+    set(WAYLAND_SCANNER_EXECUTABLE ${WAYLAND_SCANNER} CACHE FILEPATH "Path to wayland-scanner" FORCE)
+    message(STATUS "Using system wayland-scanner: ${WAYLAND_SCANNER}")
+else()
+    message(WARNING "System wayland-scanner not found, install with: sudo pacman -S wayland")
+endif()
+
+
 # GLFW ---------------------------------------------------
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_DOCS     OFF CACHE BOOL "" FORCE)
 set(GLFW_INSTALL        OFF CACHE BOOL "" FORCE)
+if (UNIX)
+    set(GLFW_BUILD_WAYLAND OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_X11 ON CACHE BOOL "" FORCE)
+    message(STATUS "Forcing X11 backend for ImGui docking support")
+endif ()
+
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/engine/vendor/spdlog)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/engine/vendor/glfw)
