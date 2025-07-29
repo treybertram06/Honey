@@ -129,14 +129,14 @@ public:
 
         //HN_TRACE("Deltatime: {0}s ({1}ms)", ts.get_seconds(), ts.get_millis());
 
-        if (Honey::Input::is_key_pressed(HN_KEY_W))
+        if (Honey::Input::is_key_pressed(Honey::KeyCode::W))
             paddle_pos.y += m_camera_speed * ts;
-        if (Honey::Input::is_key_pressed(HN_KEY_S))
+        if (Honey::Input::is_key_pressed(Honey::KeyCode::S))
             paddle_pos.y -= m_camera_speed * ts;
 
-        if (Honey::Input::is_key_pressed(HN_KEY_I))
+        if (Honey::Input::is_key_pressed(Honey::KeyCode::I))
             bad_paddle_pos.y += m_camera_speed * ts;
-        if (Honey::Input::is_key_pressed(HN_KEY_K))
+        if (Honey::Input::is_key_pressed(Honey::KeyCode::K))
             bad_paddle_pos.y -= m_camera_speed * ts;
 
 
@@ -247,7 +247,7 @@ public:
 
     bool on_key_pressed_event(Honey::KeyPressedEvent& event) {
 
-        if (event.get_key_code() == HN_KEY_ESCAPE)
+        if (event.get_key_code() == Honey::KeyCode::Escape)
             Honey::Application::quit();
 
         return false;

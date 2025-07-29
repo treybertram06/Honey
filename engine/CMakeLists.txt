@@ -78,6 +78,9 @@ add_library(engine STATIC
         src/platform/linux/linux_window.cpp
         src/platform/linux/linux_input.cpp
         src/platform/linux/linux_window.h
+        src/Honey/scene/scene.h
+        src/Honey/scene/scene.cpp
+        src/Honey/scene/components.h
 )
 
 # Make sure we define the Windows platform for Visual Studio
@@ -109,6 +112,7 @@ target_compile_definitions(engine PRIVATE
          ${CMAKE_CURRENT_SOURCE_DIR}
          ${CMAKE_CURRENT_SOURCE_DIR}/src
          ${CMAKE_CURRENT_SOURCE_DIR}/vendor/stb_image
+         ${CMAKE_CURRENT_SOURCE_DIR}/vendor/entt/src
          ${CMAKE_CURRENT_BINARY_DIR}
  )
 
@@ -206,4 +210,6 @@ elseif (WIN32)
 elseif (UNIX)        # Linux / BSD
  find_package(OpenGL REQUIRED)
  target_link_libraries(engine PRIVATE OpenGL::GL)
+ target_link_libraries(engine PRIVATE rt)
+
 endif()

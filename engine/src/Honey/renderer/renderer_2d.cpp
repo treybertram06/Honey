@@ -188,119 +188,121 @@ static void flush_and_reset()
     //s_data.texture_slot_index = 1;
 }
 
-void Renderer2D::draw_quad(const glm::vec3& pos,
-                           const glm::vec2& size,
-                           const Ref<Texture2D>& tex,
-                           const glm::vec4& color,
-                           float tiling)
-{
+void Renderer2D::submit_quad(const glm::vec3& position, const glm::vec2& size, float rotation,
+                            const Ref<Texture2D>& texture, const Ref<SubTexture2D>& sub_texture,
+                            const glm::vec4& color, float tiling_factor) {
     if (s_data.instance_count >= Renderer2DData::max_quads)
         flush_and_reset();
 
     QuadInstance& inst = *s_data.instance_ptr++;
-    inst.center       = {pos.x, pos.y, pos.z};
-    inst.half_size     = size * 0.5f;
-    inst.rotation     = 0.0f;
-    inst.color        = color;
-    inst.tex_index     = resolve_texture_slot(tex);
-    inst.tiling_factor = tiling;
-    inst.tex_coord_min = {0.0f, 0.0f};
-    inst.tex_coord_max = {1.0f, 1.0f};
-
-    ++s_data.instance_count;
-    ++s_data.stats.quad_count;
-}
-
-void Renderer2D::draw_quad(const glm::vec2& pos, const glm::vec2& size,
-                           const Ref<Texture2D>& tex, const glm::vec4& col,
-                           float tiling)
-{
-    draw_quad({pos.x, pos.y, 0.0f}, size, tex, col, tiling);
-}
-
-void Renderer2D::draw_quad(const glm::vec3& pos, const glm::vec2& size,
-                           const glm::vec4& col)
-{
-    draw_quad(pos, size, Ref<Texture2D>(nullptr), col, 1.0f);
-}
-
-void Renderer2D::draw_quad(const glm::vec2& pos, const glm::vec2& size,
-                           const glm::vec4& col)
-{
-    draw_quad({pos.x, pos.y, 0.0f}, size, Ref<Texture2D>(nullptr), col, 1.0f);
-}
-
-void Renderer2D::draw_rotated_quad(const glm::vec3& pos, const glm::vec2& size,
-                                   float rot, const Ref<Texture2D>& tex,
-                                   const glm::vec4& col, float tiling)
-{
-    if (s_data.instance_count >= Renderer2DData::max_quads)
-        flush_and_reset();
-
-    QuadInstance& inst = *s_data.instance_ptr++;
-    inst.center       = {pos.x, pos.y, pos.z};
-    inst.half_size     = size * 0.5f;
-    inst.rotation     = rot;
-    inst.color        = col;
-    inst.tex_index     = resolve_texture_slot(tex);
-    inst.tiling_factor = tiling;
-
-    ++s_data.instance_count;
-    ++s_data.stats.quad_count;
-}
-
-void Renderer2D::draw_rotated_quad(const glm::vec3& pos, const glm::vec2& size,
-                                   float rot, const glm::vec4& col)
-{
-    draw_rotated_quad(pos, size, rot, Ref<Texture2D>(nullptr), col, 1.0f);
-}
-
-    void Renderer2D::draw_quad(const glm::vec3& pos, const glm::vec2& size,
-                          const Ref<SubTexture2D>& sub_texture,
-                          const glm::vec4& color, float tiling) {
-    if (s_data.instance_count >= Renderer2DData::max_quads)
-        flush_and_reset();
-
-    const glm::vec2* tex_coords = sub_texture->get_tex_coords();
-
-    QuadInstance& inst = *s_data.instance_ptr++;
-    inst.center = {pos.x, pos.y, pos.z};
-    inst.half_size = size * 0.5f;
-    inst.rotation = 0.0f;
-    inst.color = color;
-    inst.tex_index = resolve_texture_slot(sub_texture->get_texture());
-    inst.tiling_factor = tiling;
-    inst.tex_coord_min = tex_coords[0];  // bottom-left
-    inst.tex_coord_max = tex_coords[2];  // top-right
-
-    ++s_data.instance_count;
-    ++s_data.stats.quad_count;
-}
-
-    void Renderer2D::draw_rotated_quad(const glm::vec3& pos, const glm::vec2& size,
-                                      float rotation, const Ref<SubTexture2D>& sub_texture,
-                                      const glm::vec4& color, float tiling) {
-    if (s_data.instance_count >= Renderer2DData::max_quads)
-        flush_and_reset();
-
-    const glm::vec2* tex_coords = sub_texture->get_tex_coords();
-
-    QuadInstance& inst = *s_data.instance_ptr++;
-    inst.center = {pos.x, pos.y, pos.z};
+    inst.center = position;
     inst.half_size = size * 0.5f;
     inst.rotation = rotation;
     inst.color = color;
-    inst.tex_index = resolve_texture_slot(sub_texture->get_texture());
-    inst.tiling_factor = tiling;
-    inst.tex_coord_min = tex_coords[0];
-    inst.tex_coord_max = tex_coords[2];
+    inst.tiling_factor = tiling_factor;
+
+    // Handle texture/subtexture
+    if (sub_texture) {
+        const glm::vec2* tex_coords = sub_texture->get_tex_coords();
+        inst.tex_index = resolve_texture_slot(sub_texture->get_texture());
+        inst.tex_coord_min = tex_coords[0];
+        inst.tex_coord_max = tex_coords[2];
+    } else {
+        inst.tex_index = resolve_texture_slot(texture);
+        inst.tex_coord_min = {0.0f, 0.0f};
+        inst.tex_coord_max = {1.0f, 1.0f};
+    }
 
     ++s_data.instance_count;
     ++s_data.stats.quad_count;
 }
 
+void Renderer2D::decompose_transform(const glm::mat4& transform, glm::vec3& position, 
+                                    glm::vec2& scale, float& rotation) {
+    // Extract position
+    position = glm::vec3(transform[3]);
+    
+    // Extract scale
+    glm::vec3 scale3d = glm::vec3(
+        glm::length(glm::vec3(transform[0])),
+        glm::length(glm::vec3(transform[1])),
+        glm::length(glm::vec3(transform[2]))
+    );
+    scale = glm::vec2(scale3d.x, scale3d.y);
+    
+    // Extract rotation
+    rotation = 0.0f;
+    if (scale.x > 0.0f && scale.y > 0.0f) {
+        glm::vec3 normalized_x = glm::vec3(transform[0]) / scale.x;
+        rotation = std::atan2(normalized_x.y, normalized_x.x);
+    }
+}
 
-Renderer2D::Statistics Renderer2D::get_stats() { return s_data.stats; }
+// Public API implementations - all delegate to submit_quad:
+
+void Renderer2D::draw_quad(const glm::vec2& position, const glm::vec2& size, const glm::vec4& color) {
+    submit_quad({position.x, position.y, 0.0f}, size, 0.0f, nullptr, nullptr, color, 1.0f);
+}
+
+void Renderer2D::draw_quad(const glm::vec3& position, const glm::vec2& size, const glm::vec4& color) {
+    submit_quad(position, size, 0.0f, nullptr, nullptr, color, 1.0f);
+}
+
+void Renderer2D::draw_quad(const glm::vec2& position, const glm::vec2& size,
+                          const Ref<Texture2D>& texture, const glm::vec4& color, float tiling_factor) {
+    submit_quad({position.x, position.y, 0.0f}, size, 0.0f, texture, nullptr, color, tiling_factor);
+}
+
+void Renderer2D::draw_quad(const glm::vec3& position, const glm::vec2& size,
+                          const Ref<Texture2D>& texture, const glm::vec4& color, float tiling_factor) {
+    submit_quad(position, size, 0.0f, texture, nullptr, color, tiling_factor);
+}
+
+void Renderer2D::draw_rotated_quad(const glm::vec2& position, const glm::vec2& size, 
+                                  float rotation, const glm::vec4& color) {
+    submit_quad({position.x, position.y, 0.0f}, size, rotation, nullptr, nullptr, color, 1.0f);
+}
+
+void Renderer2D::draw_rotated_quad(const glm::vec3& position, const glm::vec2& size, 
+                                  float rotation, const glm::vec4& color) {
+    submit_quad(position, size, rotation, nullptr, nullptr, color, 1.0f);
+}
+
+void Renderer2D::draw_rotated_quad(const glm::vec3& position, const glm::vec2& size, float rotation,
+                                  const Ref<Texture2D>& texture, const glm::vec4& color, float tiling_factor) {
+    submit_quad(position, size, rotation, texture, nullptr, color, tiling_factor);
+}
+
+void Renderer2D::draw_quad(const glm::vec3& position, const glm::vec2& size,
+                          const Ref<SubTexture2D>& sub_texture, const glm::vec4& color, float tiling_factor) {
+    submit_quad(position, size, 0.0f, nullptr, sub_texture, color, tiling_factor);
+}
+
+void Renderer2D::draw_rotated_quad(const glm::vec3& position, const glm::vec2& size, float rotation,
+                                  const Ref<SubTexture2D>& sub_texture, const glm::vec4& color, float tiling_factor) {
+    submit_quad(position, size, rotation, nullptr, sub_texture, color, tiling_factor);
+}
+
+void Renderer2D::draw_quad(const glm::mat4& transform, const glm::vec4& color) {
+    glm::vec3 position;
+    glm::vec2 scale;
+    float rotation;
+    decompose_transform(transform, position, scale, rotation);
+    submit_quad(position, scale, rotation, nullptr, nullptr, color, 1.0f);
+}
+
+void Renderer2D::draw_quad(const glm::mat4& transform, const Ref<Texture2D>& texture, 
+                          const glm::vec4& color, float tiling_factor) {
+    glm::vec3 position;
+    glm::vec2 scale;
+    float rotation;
+    decompose_transform(transform, position, scale, rotation);
+    submit_quad(position, scale, rotation, texture, nullptr, color, tiling_factor);
+}
+
+
+
+    Renderer2D::Statistics Renderer2D::get_stats() { return s_data.stats; }
 
 void Renderer2D::reset_stats() { memset(&s_data.stats, 0, sizeof(Statistics)); }
 
