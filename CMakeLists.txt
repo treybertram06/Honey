@@ -17,6 +17,7 @@ project(game_engine)
 
 set(CMAKE_CXX_STANDARD 20)
 
+if(UNIX AND NOT APPLE)
 # Force use of system wayland-scanner instead of custom KDE one
 find_program(WAYLAND_SCANNER wayland-scanner PATHS /usr/bin NO_DEFAULT_PATH)
 if(WAYLAND_SCANNER)
@@ -24,6 +25,7 @@ if(WAYLAND_SCANNER)
     message(STATUS "Using system wayland-scanner: ${WAYLAND_SCANNER}")
 else()
     message(WARNING "System wayland-scanner not found, install with: sudo pacman -S wayland")
+endif()
 endif()
 
 

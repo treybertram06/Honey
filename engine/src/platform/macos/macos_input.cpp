@@ -8,15 +8,15 @@
 
 namespace Honey {
     
-    bool Input::is_key_pressed(int keycode) {
+    bool Input::is_key_pressed(KeyCode keycode) {
         auto window = static_cast<GLFWwindow*>(Application::get().get_window().get_native_window());
-        auto state = glfwGetKey(window, keycode);
+        auto state = glfwGetKey(window, (int)keycode);
         return state == GLFW_PRESS || state == GLFW_REPEAT;
     }
 
-    bool Input::is_mouse_button_pressed(int button) {
+    bool Input::is_mouse_button_pressed(MouseButton button) {
         auto window = static_cast<GLFWwindow*>(Application::get().get_window().get_native_window());
-        auto state = glfwGetKey(window, button);
+        auto state = glfwGetKey(window, (int)button);
         return state == GLFW_PRESS;
     }
 
