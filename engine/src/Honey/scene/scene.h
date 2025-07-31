@@ -2,11 +2,11 @@
 
 #include <entt/entt.hpp>
 
-#include "entity.h"
 #include "Honey/core/timestep.h"
 
 namespace Honey {
 
+    class Entity;
     class Scene {
 
     public:
@@ -24,5 +24,7 @@ namespace Honey {
 
     private:
         entt::registry m_registry;
+
+        friend class Entity;
     };
 }

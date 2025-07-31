@@ -3,6 +3,7 @@
 #include "components.h"
 #include <glm/glm.hpp>
 
+#include "entity.h"
 #include "Honey/renderer/renderer_2d.h"
 
 namespace Honey {
@@ -16,7 +17,7 @@ namespace Honey {
     }
 
     Entity Scene::create_entity(const std::string &name) {
-        Entity entity = Entity(m_registry.create(), &m_registry);
+        Entity entity = Entity(m_registry.create(), this);
 
         entity.add_component<TransformComponent>();
         entity.add_component<TagComponent>(name.empty() ? "Entity" : name);
