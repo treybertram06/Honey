@@ -163,6 +163,20 @@ void Renderer2D::begin_scene(const OrthographicCamera& cam)
     s_data.texture_slot_index = 1; // keep white bound at 0
 }
 
+    void Renderer2D::begin_scene(const Camera &camera, const glm::mat4& transform) {
+    reset_stats();
+
+    glm::mat4 view_proj = camera.get_projection_matrix() * glm::inverse(transform);
+
+    s_data.shader->bind();
+    s_data.shader->set_mat4("u_view_projection", view_proj);
+
+    s_data.instance_ptr    = s_data.instance_base;
+    s_data.instance_count  = 0;
+    s_data.texture_slot_index = 1; // keep white bound at 0
+    }
+
+
 void Renderer2D::end_scene()
 {
     // Upload instance data (sub‑data is fine; persistent‑map even better)

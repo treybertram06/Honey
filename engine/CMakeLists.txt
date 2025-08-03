@@ -180,6 +180,7 @@ if(ENABLE_ASSERTS)
 endif()
 
 target_compile_definitions(engine PUBLIC
+        GLM_FORCE_SILENT_WARNINGS
         GLM_FORCE_INLINE
         GLM_FORCE_INTRINSICS
         $<$<CONFIG:Release>:GLM_FORCE_SIMD_AVX2>

@@ -1,4 +1,5 @@
 #pragma once
+#define GLM_FORCE_SILENT_WARNINGS
 
 #include <iostream>
 #include <memory>

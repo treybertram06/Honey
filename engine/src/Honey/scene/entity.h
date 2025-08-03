@@ -2,11 +2,13 @@
 
 #include <entt/entt.hpp>
 #include "scene.h"
+#include "components.h"
 
 namespace Honey {
 
     class Entity {
     public:
+        Entity() = default;
         Entity(const Entity& other) = default;
         Entity(entt::entity handle, Scene* scene);
 
@@ -42,6 +44,38 @@ namespace Honey {
             HN_CORE_ASSERT(has_component<T>(), "Entity does not have component!");
             m_scene->m_registry.remove<T>(m_entity_handle);
         }
+
+        void debug_print_components() const {
+            HN_CORE_INFO("Entity {} components:", (uint32_t)m_entity_handle);
+
+            // Check for common components
+            if (has_component<TransformComponent>()) {
+                auto& transform = get_component<TransformComponent>();
+                HN_CORE_INFO("  - TransformComponent");
+            }
+
+            if (has_component<SpriteRendererComponent>()) {
+                auto& sprite = get_component<SpriteRendererComponent>();
+                HN_CORE_INFO("  - SpriteRendererComponent: color({}, {}, {}, {})",
+                             sprite.color.r, sprite.color.g, sprite.color.b, sprite.color.a);
+            }
+
+            if (has_component<CameraComponent>()) {
+                auto& camera = get_component<CameraComponent>();
+                HN_CORE_INFO("  - CameraComponent: primary={}", camera.primary); // or is_primary
+            }
+
+            if (has_component<TagComponent>()) {
+                auto& tag = get_component<TagComponent>();
+                HN_CORE_INFO("  - TagComponent: tag='{}'", tag.tag);
+            }
+        }
+
+        template<typename T>
+        bool debug_has_component() const {
+            return has_component<T>();
+        }
+
 
         // Operators
         bool operator==(const Entity& other) const;

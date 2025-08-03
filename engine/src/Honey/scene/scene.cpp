@@ -37,10 +37,31 @@ namespace Honey {
     }
 
     void Scene::render() {
-        auto group = m_registry.group<TransformComponent>(entt::get<SpriteRendererComponent>);
-        for (auto entity : group) {
-            auto [transform, sprite] = group.get<TransformComponent, SpriteRendererComponent>(entity);
-            Renderer2D::draw_quad(transform, sprite.color);
+        Camera* primary_camera = nullptr;
+        glm::mat4* primary_transform = nullptr;
+        {
+            auto view = m_registry.view<TransformComponent, CameraComponent>();
+            for (auto entity : view) {
+                auto [transform, camera_component] = view.get<TransformComponent, CameraComponent>(entity);
+
+                if (camera_component.primary) {
+                    primary_camera = camera_component.get_camera();
+                    primary_transform = &transform.transform;
+                    break;
+                }
+            }
+        }
+
+        if (primary_camera) {
+            Renderer2D::begin_scene(*primary_camera, *primary_transform);
+
+            auto group = m_registry.group<TransformComponent>(entt::get<SpriteRendererComponent>);
+            for (auto entity : group) {
+                auto [transform, sprite] = group.get<TransformComponent, SpriteRendererComponent>(entity);
+                Renderer2D::draw_quad(transform, sprite.color);
+            }
+
+            Renderer2D::end_scene();
         }
     }
 

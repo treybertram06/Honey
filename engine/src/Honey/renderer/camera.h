@@ -8,6 +8,8 @@ namespace Honey {
     class Camera {
     public:
 
+        virtual ~Camera() = default;
+
         const glm::mat4& get_projection_matrix() const { return m_projection_matrix; }
         const glm::mat4& get_view_matrix() const { return m_view_matrix; }
         const glm::mat4& get_view_projection_matrix() const { return m_view_projection_matrix; }

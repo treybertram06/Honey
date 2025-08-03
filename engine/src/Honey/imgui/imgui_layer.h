@@ -14,7 +14,7 @@ namespace Honey {
 
         virtual void on_attach() override;
         virtual void on_detach() override;
-        virtual void on_event(Event& e);
+        virtual void on_event(Event& e) override;
         virtual void on_imgui_render() override;
 
         void begin();

@@ -52,6 +52,7 @@ set(GLM_TEST_ENABLE OFF CACHE BOOL "" FORCE)
 
 
 target_compile_definitions(glm INTERFACE
+        GLM_FORCE_SILENT_WARNINGS
         GLM_FORCE_INLINE
         GLM_FORCE_INTRINSICS
         # Enable AVX2 only for Release builds (guarded so Debug doesn’t become painful)
