@@ -3,6 +3,7 @@
 #include <entt/entt.hpp>
 #include "scene.h"
 #include "components.h"
+#include "Honey/core/log.h"
 
 namespace Honey {
 
@@ -60,11 +61,6 @@ namespace Honey {
                              sprite.color.r, sprite.color.g, sprite.color.b, sprite.color.a);
             }
 
-            if (has_component<CameraComponent>()) {
-                auto& camera = get_component<CameraComponent>();
-                HN_CORE_INFO("  - CameraComponent: primary={}", camera.primary); // or is_primary
-            }
-
             if (has_component<TagComponent>()) {
                 auto& tag = get_component<TagComponent>();
                 HN_CORE_INFO("  - TagComponent: tag='{}'", tag.tag);
@@ -82,6 +78,9 @@ namespace Honey {
         bool operator!=(const Entity& other) const;
         operator bool() const { return is_valid(); }
         operator entt::entity() const { return m_entity_handle; }
+        operator uint32_t() const { return (uint32_t)m_entity_handle; }
+        operator void*() const { return (void*)(intptr_t)(uint32_t)m_entity_handle; }
+
 
         entt::entity get_handle() const { return m_entity_handle; }
         entt::registry* get_registry() const { return &m_scene->m_registry; }

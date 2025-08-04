@@ -5,16 +5,17 @@
 #include <glm/glm.hpp>
 
 #include "entity.h"
+#include "Honey/renderer/renderer.h"
 #include "Honey/renderer/renderer_2d.h"
 
 namespace Honey {
 
     Scene::Scene() {
-
-
+        m_primary_camera_entity = new Entity();
     }
 
     Scene::~Scene() {
+        delete m_primary_camera_entity;
     }
 
     Entity Scene::create_entity(const std::string &name) {
@@ -28,52 +29,77 @@ namespace Honey {
 
     void Scene::destroy_entity(Entity entity) {
         if (entity.is_valid()) {
+            if (m_has_primary_camera && entity == *m_primary_camera_entity) {
+                clear_primary_camera();
+            }
+
             m_registry.destroy(entity);
         }
     }
 
+    void Scene::set_primary_camera(Entity camera_entity) {
+        if (camera_entity.is_valid() && camera_entity.has_component<CameraComponent>()) {
+            *m_primary_camera_entity = camera_entity;
+            m_has_primary_camera = true;
+        }
+    }
+
+    void Scene::clear_primary_camera() {
+        m_has_primary_camera = false;
+        *m_primary_camera_entity = Entity();
+    }
 
     void Scene::on_update(Timestep ts) {
 
-        m_registry.view<NativeScriptComponent>().each([=](auto entity, auto& nsc) {
+        m_registry.view<NativeScriptComponent>().each([this, ts](auto entity, auto& nsc) {
 
+            // TODO: move to on_scene_play
             if (!nsc.instance) {
-                nsc.instantiate_function();
+                nsc.instance = nsc.instantiate_script();
                 nsc.instance->m_entity = Entity(entity, this);
-                nsc.on_create_function(nsc.instance);
+                nsc.instance->on_create();
             }
 
-            nsc.on_update_function(nsc.instance, ts);
+            nsc.instance->on_update(ts);
         });
 
     }
 
     void Scene::render() {
-        Camera* primary_camera = nullptr;
-        glm::mat4* primary_transform = nullptr;
-        {
-            auto view = m_registry.view<TransformComponent, CameraComponent>();
-            for (auto entity : view) {
-                auto [transform, camera_component] = view.get<TransformComponent, CameraComponent>(entity);
+        if (m_has_primary_camera && m_primary_camera_entity->is_valid()) {
+            auto& transform = m_primary_camera_entity->get_component<TransformComponent>();
+            auto& camera_component = m_primary_camera_entity->get_component<CameraComponent>();
 
-                if (camera_component.primary) {
-                    primary_camera = camera_component.get_camera();
-                    primary_transform = &transform.transform;
-                    break;
+            Camera* primary_camera = camera_component.get_camera();
+
+            if (primary_camera) {
+                Renderer2D::begin_scene(*primary_camera, transform.transform);
+
+                auto group = m_registry.group<TransformComponent>(entt::get<SpriteRendererComponent>);
+                for (auto entity : group) {
+                    auto [entity_transform, sprite] = group.get<TransformComponent, SpriteRendererComponent>(entity);
+                    Renderer2D::draw_quad(entity_transform, sprite.color);
                 }
+
+                Renderer2D::end_scene();
             }
-        }
-
-        if (primary_camera) {
-            Renderer2D::begin_scene(*primary_camera, *primary_transform);
-
-            auto group = m_registry.group<TransformComponent>(entt::get<SpriteRendererComponent>);
-            for (auto entity : group) {
-                auto [transform, sprite] = group.get<TransformComponent, SpriteRendererComponent>(entity);
-                Renderer2D::draw_quad(transform, sprite.color);
-            }
-
-            Renderer2D::end_scene();
         }
     }
+
+    void Scene::on_viewport_resize(uint32_t width, uint32_t height) {
+        Renderer::on_window_resize(width, height);
+
+        // Update camera aspect ratios for all camera entities
+        float aspect_ratio = (float)width / (float)height;
+
+        auto view = m_registry.view<CameraComponent>();
+        for (auto entity : view) {
+            auto& camera_component = view.get<CameraComponent>(entity);
+            if (!camera_component.fixed_aspect_ratio) {
+                camera_component.update_projection(aspect_ratio);
+            }
+        }
+
+    }
+
 }

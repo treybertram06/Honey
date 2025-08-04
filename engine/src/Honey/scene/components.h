@@ -55,7 +55,6 @@ namespace Honey {
         float perspective_far = 1000.0f;
 
         // Common parameters
-        bool primary = false;
         bool fixed_aspect_ratio = false;
 
         CameraComponent() {
@@ -71,7 +70,6 @@ namespace Honey {
               perspective_fov(other.perspective_fov),
               perspective_near(other.perspective_near),
               perspective_far(other.perspective_far),
-              primary(other.primary),
               fixed_aspect_ratio(other.fixed_aspect_ratio) {
 
             // Deep copy the camera
@@ -101,22 +99,13 @@ namespace Honey {
     struct NativeScriptComponent {
         ScriptableEntity* instance = nullptr;
 
-        std::function<void()> instantiate_function;
-        std::function<void()> destroy_function;
-
-        std::function<void(ScriptableEntity*)> on_create_function;
-        std::function<void(ScriptableEntity*)> on_destroy_function;
-        std::function<void(ScriptableEntity*, Timestep)> on_update_function;
-
+        ScriptableEntity*(*instantiate_script)() = nullptr;
+        void(*destroy_script)(NativeScriptComponent*) = nullptr;
 
         template<typename T>
         void bind() {
-            instantiate_function = [this]() { instance = new T(); };
-            destroy_function = [this]() { delete instance; };
-
-            on_create_function = [](ScriptableEntity* inst) { static_cast<T*>(inst)->on_create(); };
-            on_destroy_function = [](ScriptableEntity* inst) { static_cast<T*>(inst)->on_destroy(); };
-            on_update_function = [](ScriptableEntity* inst, Timestep ts) { static_cast<T*>(inst)->on_update(ts); };
+            instantiate_script = []() { return static_cast<ScriptableEntity*>(new T()); };
+            destroy_script = [](NativeScriptComponent* nsc) { delete nsc->instance; nsc->instance = nullptr;};
         }
 
     };
