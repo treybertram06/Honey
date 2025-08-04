@@ -1,6 +1,7 @@
 #include "hnpch.h"
 #include "scene.h"
 #include "components.h"
+#include "scriptable_entity.h"
 #include <glm/glm.hpp>
 
 #include "entity.h"
@@ -34,6 +35,17 @@ namespace Honey {
 
     void Scene::on_update(Timestep ts) {
 
+        m_registry.view<NativeScriptComponent>().each([=](auto entity, auto& nsc) {
+
+            if (!nsc.instance) {
+                nsc.instantiate_function();
+                nsc.instance->m_entity = Entity(entity, this);
+                nsc.on_create_function(nsc.instance);
+            }
+
+            nsc.on_update_function(nsc.instance, ts);
+        });
+
     }
 
     void Scene::render() {
@@ -64,7 +76,4 @@ namespace Honey {
             Renderer2D::end_scene();
         }
     }
-
-
-
 }

@@ -24,7 +24,6 @@ namespace Honey {
 
     private:
         entt::registry m_registry;
-
         friend class Entity;
     };
 }

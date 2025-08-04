@@ -25,6 +25,7 @@
 #include "Honey/scene/scene.h"
 #include "Honey/scene/components.h"
 #include "Honey/scene/entity.h"
+#include "Honey/scene/scriptable_entity.h"
 
 // Input & events
 #include "Honey/core/input.h"

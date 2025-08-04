@@ -4,6 +4,8 @@
 
 namespace Honey {
 
+    class ScriptableEntity;
+
     struct TagComponent {
         std::string tag;
 
@@ -36,64 +38,88 @@ namespace Honey {
     };
 
     struct CameraComponent {
-    enum class ProjectionType { Orthographic, Perspective };
+        enum class ProjectionType { Orthographic, Perspective };
 
-    // Use a unique_ptr to hold the concrete camera implementation
-    std::unique_ptr<Camera> camera;
-    ProjectionType projection_type = ProjectionType::Orthographic;
+        // Use a unique_ptr to hold the concrete camera implementation
+        std::unique_ptr<Camera> camera;
+        ProjectionType projection_type = ProjectionType::Orthographic;
 
-    // Orthographic projection parameters
-    float orthographic_size = 10.0f;
-    float orthographic_near = -1.0f;
-    float orthographic_far = 1.0f;
+        // Orthographic projection parameters
+        float orthographic_size = 10.0f;
+        float orthographic_near = -1.0f;
+        float orthographic_far = 1.0f;
 
-    // Perspective projection parameters
-    float perspective_fov = 45.0f;
-    float perspective_near = 0.1f;
-    float perspective_far = 1000.0f;
+        // Perspective projection parameters
+        float perspective_fov = 45.0f;
+        float perspective_near = 0.1f;
+        float perspective_far = 1000.0f;
 
-    // Common parameters
-    bool primary = false;
-    bool fixed_aspect_ratio = false;
+        // Common parameters
+        bool primary = false;
+        bool fixed_aspect_ratio = false;
 
-    CameraComponent() {
-        // Create default orthographic camera
-        camera = std::make_unique<OrthographicCamera>(orthographic_size, 1.6f, orthographic_near, orthographic_far);
-    }
-
-    CameraComponent(const CameraComponent& other)
-        : projection_type(other.projection_type),
-          orthographic_size(other.orthographic_size),
-          orthographic_near(other.orthographic_near),
-          orthographic_far(other.orthographic_far),
-          perspective_fov(other.perspective_fov),
-          perspective_near(other.perspective_near),
-          perspective_far(other.perspective_far),
-          primary(other.primary),
-          fixed_aspect_ratio(other.fixed_aspect_ratio) {
-
-        // Deep copy the camera
-        if (projection_type == ProjectionType::Orthographic) {
+        CameraComponent() {
+            // Create default orthographic camera
             camera = std::make_unique<OrthographicCamera>(orthographic_size, 1.6f, orthographic_near, orthographic_far);
         }
-        // Add perspective case when you have a PerspectiveCamera class
-    }
 
-    // Move constructor
-    CameraComponent(CameraComponent&& other) noexcept = default;
-    CameraComponent& operator=(CameraComponent&& other) noexcept = default;
+        CameraComponent(const CameraComponent& other)
+            : projection_type(other.projection_type),
+              orthographic_size(other.orthographic_size),
+              orthographic_near(other.orthographic_near),
+              orthographic_far(other.orthographic_far),
+              perspective_fov(other.perspective_fov),
+              perspective_near(other.perspective_near),
+              perspective_far(other.perspective_far),
+              primary(other.primary),
+              fixed_aspect_ratio(other.fixed_aspect_ratio) {
 
-    // Helper method to update the camera's projection
-    void update_projection(float aspect_ratio = 1.6f) {
-        if (projection_type == ProjectionType::Orthographic) {
-            camera = std::make_unique<OrthographicCamera>(orthographic_size, aspect_ratio, orthographic_near, orthographic_far);
+            // Deep copy the camera
+            if (projection_type == ProjectionType::Orthographic) {
+                camera = std::make_unique<OrthographicCamera>(orthographic_size, 1.6f, orthographic_near, orthographic_far);
+            }
+            // Add perspective case when you have a PerspectiveCamera class
         }
-        // Add perspective case when you have a PerspectiveCamera class
-    }
 
-    // Get the camera as the base Camera type
-    Camera* get_camera() { return camera.get(); }
-    const Camera* get_camera() const { return camera.get(); }
-};
+        // Move constructor
+        CameraComponent(CameraComponent&& other) noexcept = default;
+        CameraComponent& operator=(CameraComponent&& other) noexcept = default;
+
+        // Helper method to update the camera's projection
+        void update_projection(float aspect_ratio = 1.6f) {
+            if (projection_type == ProjectionType::Orthographic) {
+                camera = std::make_unique<OrthographicCamera>(orthographic_size, aspect_ratio, orthographic_near, orthographic_far);
+            }
+            // Add perspective case when you have a PerspectiveCamera class
+        }
+
+        // Get the camera as the base Camera type
+        Camera* get_camera() { return camera.get(); }
+        const Camera* get_camera() const { return camera.get(); }
+    };
+
+    struct NativeScriptComponent {
+        ScriptableEntity* instance = nullptr;
+
+        std::function<void()> instantiate_function;
+        std::function<void()> destroy_function;
+
+        std::function<void(ScriptableEntity*)> on_create_function;
+        std::function<void(ScriptableEntity*)> on_destroy_function;
+        std::function<void(ScriptableEntity*, Timestep)> on_update_function;
+
+
+        template<typename T>
+        void bind() {
+            instantiate_function = [this]() { instance = new T(); };
+            destroy_function = [this]() { delete instance; };
+
+            on_create_function = [](ScriptableEntity* inst) { static_cast<T*>(inst)->on_create(); };
+            on_destroy_function = [](ScriptableEntity* inst) { static_cast<T*>(inst)->on_destroy(); };
+            on_update_function = [](ScriptableEntity* inst, Timestep ts) { static_cast<T*>(inst)->on_update(ts); };
+        }
+
+    };
 
 }
+
