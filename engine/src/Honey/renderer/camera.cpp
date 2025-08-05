@@ -46,9 +46,12 @@ namespace Honey {
 
     //////perspective///////////////////////////////////////
 
-    PerspectiveCamera::PerspectiveCamera(float fov_deg, float aspect_ratio, float near_clip, float far_clip)
-        : m_fov(fov_deg), m_aspect_ratio(aspect_ratio),
-          m_near_clip(near_clip), m_far_clip(far_clip) {
+    PerspectiveCamera::PerspectiveCamera(float fov_deg, float aspect_ratio, float near_clip, float far_clip) {
+        this->m_fov = fov_deg;
+        this->m_aspect_ratio = aspect_ratio;
+        this->m_near_clip = near_clip;
+        this->m_far_clip = far_clip;
+
         recalc_projection_matrix();
         recalc_view_matrix();
     }

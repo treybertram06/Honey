@@ -31,8 +31,6 @@ namespace Honey {
         glm::vec3 m_position;
 
         float m_aspect_ratio;
-        float m_near_clip = 0.01f;
-        float m_far_clip = 1000.0f;
 
     };
 
@@ -45,15 +43,26 @@ namespace Honey {
 
         const float get_rotation() const { return m_rotation; }
         void set_rotation(const float rotation) { m_rotation = rotation; recalc_view_matrix(); }
+
         const float get_size() const { return m_size; }
         void set_size(const float size) { m_size = size; recalc_projection_matrix(); }
+
+        void set_near_clip(float near_clip) { m_near_clip = near_clip; recalc_projection_matrix(); }
+        void set_far_clip(float far_clip) { m_far_clip = far_clip; recalc_projection_matrix(); }
+
+        float get_near_clip() const { return m_near_clip; }
+        float get_far_clip() const { return m_far_clip; }
+
 
     private:
         float m_size;
         float m_rotation;
+
+        float m_near_clip = -1.0f;
+        float m_far_clip = 1.0f;
     };
 
-    class PerspectiveCamera {
+    class PerspectiveCamera : public Camera {
     public:
         PerspectiveCamera(float fov_deg,
                           float aspect_ratio,
@@ -81,16 +90,11 @@ namespace Honey {
 
     private:
         // ── data ────────────────────────────────────────────────────────
-        glm::vec3 m_position{0.0f};
         glm::vec2 m_rotation{0.0f};   // { yaw , pitch } in degrees
         float     m_fov;
-        float     m_aspect_ratio;
         float     m_near_clip;
         float     m_far_clip;
 
-        glm::mat4 m_projection_matrix{1.0f};
-        glm::mat4 m_view_matrix{1.0f};
-        glm::mat4 m_view_projection_matrix{1.0f};
 
         // ── helpers ─────────────────────────────────────────────────────
         void recalc_projection_matrix();

@@ -74,9 +74,11 @@ namespace Honey {
 
             // Deep copy the camera
             if (projection_type == ProjectionType::Orthographic) {
-                camera = std::make_unique<OrthographicCamera>(orthographic_size, 1.6f, orthographic_near, orthographic_far);
+                camera = std::make_unique<OrthographicCamera>(orthographic_size, (1.6f / 0.9f), orthographic_near, orthographic_far);
             }
-            // Add perspective case when you have a PerspectiveCamera class
+            else if (projection_type == ProjectionType::Perspective) {
+                camera = std::make_unique<PerspectiveCamera>(perspective_fov, (1.6f / 0.9f), perspective_near, perspective_far);
+            }
         }
 
         // Move constructor
@@ -88,7 +90,9 @@ namespace Honey {
             if (projection_type == ProjectionType::Orthographic) {
                 camera = std::make_unique<OrthographicCamera>(orthographic_size, aspect_ratio, orthographic_near, orthographic_far);
             }
-            // Add perspective case when you have a PerspectiveCamera class
+            else if (projection_type == ProjectionType::Perspective) {
+                camera = std::make_unique<PerspectiveCamera>(perspective_fov, aspect_ratio, perspective_near, perspective_far);
+            }
         }
 
         // Get the camera as the base Camera type
