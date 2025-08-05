@@ -46,10 +46,8 @@ struct Renderer2DData {
     Ref<IndexBuffer>  ibo;         // 6 indices
     Ref<Shader>       shader;
 
-    // CPU‑side ring buffer for instances
-    QuadInstance*     instance_base = nullptr;
-    QuadInstance*     instance_ptr  = nullptr;
-    uint32_t          instance_count = 0;
+    std::vector<QuadInstance> instances;
+    std::vector<QuadInstance> sorted_instances;
 
     // Texture slots
     uint32_t                       max_texture_slots = 0;
@@ -123,7 +121,8 @@ void Renderer2D::init()
     s_data.ibo = IndexBuffer::create(indices, 6);
     s_data.vao->set_index_buffer(s_data.ibo);
 
-    s_data.instance_base = new QuadInstance[Renderer2DData::max_quads];
+    s_data.instances.reserve(Renderer2DData::max_quads);
+    s_data.sorted_instances.reserve(Renderer2DData::max_quads);
 
     s_data.max_texture_slots = RenderCommand::get_max_texture_slots();
     s_data.texture_slots.resize(s_data.max_texture_slots);
@@ -147,19 +146,17 @@ void Renderer2D::init()
 
 void Renderer2D::shutdown()
 {
-    delete[] s_data.instance_base;
 }
 
 
-void Renderer2D::begin_scene(const OrthographicCamera& cam)
+    void Renderer2D::begin_scene(const OrthographicCamera& cam)
 {
     reset_stats();
 
     s_data.shader->bind();
     s_data.shader->set_mat4("u_view_projection", cam.get_view_projection_matrix());
 
-    s_data.instance_ptr    = s_data.instance_base;
-    s_data.instance_count  = 0;
+    s_data.instances.clear();
     s_data.texture_slot_index = 1; // keep white bound at 0
 }
 
@@ -171,17 +168,26 @@ void Renderer2D::begin_scene(const OrthographicCamera& cam)
     s_data.shader->bind();
     s_data.shader->set_mat4("u_view_projection", view_proj);
 
-    s_data.instance_ptr    = s_data.instance_base;
-    s_data.instance_count  = 0;
+    s_data.instances.clear();
     s_data.texture_slot_index = 1; // keep white bound at 0
-    }
+}
 
 
-void Renderer2D::end_scene()
-{
-    // Upload instance data (sub‑data is fine; persistent‑map even better)
-    size_t bytes = s_data.instance_count * sizeof(QuadInstance);
-    s_data.instance_vbo->set_data(s_data.instance_base, bytes);
+
+    void Renderer2D::end_scene() {
+    if (s_data.instances.empty())
+        return;
+
+    // Sort instances by Z coordinate (back to front for correct alpha blending)
+    s_data.sorted_instances = s_data.instances;
+    std::sort(s_data.sorted_instances.begin(), s_data.sorted_instances.end(),
+        [](const QuadInstance& a, const QuadInstance& b) {
+            return a.center.z > b.center.z; // Higher Z values drawn first (back to front)
+        });
+
+    // Upload sorted instance data
+    size_t bytes = s_data.sorted_instances.size() * sizeof(QuadInstance);
+    s_data.instance_vbo->set_data(s_data.sorted_instances.data(), bytes);
 
     // Bind textures in the order we populated
     for (uint32_t i = 0; i < s_data.texture_slot_index; ++i)
@@ -189,26 +195,27 @@ void Renderer2D::end_scene()
 
     // Draw all quads in one go
     s_data.vao->bind();
-    RenderCommand::draw_indexed_instanced(s_data.vao, 6, s_data.instance_count);
+    RenderCommand::draw_indexed_instanced(s_data.vao, 6, s_data.sorted_instances.size());
     s_data.stats.draw_calls++;
 }
 
 
-static void flush_and_reset()
+
+    static void flush_and_reset()
 {
     Renderer2D::end_scene();
-    s_data.instance_ptr   = s_data.instance_base;
-    s_data.instance_count = 0;
-    //s_data.texture_slot_index = 1;
+    s_data.instances.clear();
 }
+
 
 void Renderer2D::submit_quad(const glm::vec3& position, const glm::vec2& size, float rotation,
                             const Ref<Texture2D>& texture, const Ref<SubTexture2D>& sub_texture,
                             const glm::vec4& color, float tiling_factor) {
-    if (s_data.instance_count >= Renderer2DData::max_quads)
+    if (s_data.instances.size() >= Renderer2DData::max_quads)
         flush_and_reset();
 
-    QuadInstance& inst = *s_data.instance_ptr++;
+
+    QuadInstance inst;
     inst.center = position;
     inst.half_size = size * 0.5f;
     inst.rotation = rotation;
@@ -227,15 +234,15 @@ void Renderer2D::submit_quad(const glm::vec3& position, const glm::vec2& size, f
         inst.tex_coord_max = {1.0f, 1.0f};
     }
 
-    ++s_data.instance_count;
+    s_data.instances.push_back(inst);
     ++s_data.stats.quad_count;
 }
 
-void Renderer2D::decompose_transform(const glm::mat4& transform, glm::vec3& position, 
-                                    glm::vec2& scale, float& rotation) {
+    void Renderer2D::decompose_transform(const glm::mat4& transform, glm::vec3& position,
+                                        glm::vec2& scale, float& rotation) {
     // Extract position
     position = glm::vec3(transform[3]);
-    
+
     // Extract scale
     glm::vec3 scale3d = glm::vec3(
         glm::length(glm::vec3(transform[0])),
@@ -243,14 +250,11 @@ void Renderer2D::decompose_transform(const glm::mat4& transform, glm::vec3& posi
         glm::length(glm::vec3(transform[2]))
     );
     scale = glm::vec2(scale3d.x, scale3d.y);
-    
-    // Extract rotation
-    rotation = 0.0f;
-    if (scale.x > 0.0f && scale.y > 0.0f) {
-        glm::vec3 normalized_x = glm::vec3(transform[0]) / scale.x;
-        rotation = std::atan2(normalized_x.y, normalized_x.x);
-    }
+
+    // Extract rotation (simplified - assumes rotation around Z axis)
+    rotation = atan2(transform[0][1], transform[0][0]);
 }
+
 
 // Public API implementations - all delegate to submit_quad:
 
@@ -272,12 +276,12 @@ void Renderer2D::draw_quad(const glm::vec3& position, const glm::vec2& size,
     submit_quad(position, size, 0.0f, texture, nullptr, color, tiling_factor);
 }
 
-void Renderer2D::draw_rotated_quad(const glm::vec2& position, const glm::vec2& size, 
+void Renderer2D::draw_rotated_quad(const glm::vec2& position, const glm::vec2& size,
                                   float rotation, const glm::vec4& color) {
     submit_quad({position.x, position.y, 0.0f}, size, rotation, nullptr, nullptr, color, 1.0f);
 }
 
-void Renderer2D::draw_rotated_quad(const glm::vec3& position, const glm::vec2& size, 
+void Renderer2D::draw_rotated_quad(const glm::vec3& position, const glm::vec2& size,
                                   float rotation, const glm::vec4& color) {
     submit_quad(position, size, rotation, nullptr, nullptr, color, 1.0f);
 }
@@ -305,7 +309,7 @@ void Renderer2D::draw_quad(const glm::mat4& transform, const glm::vec4& color) {
     submit_quad(position, scale, rotation, nullptr, nullptr, color, 1.0f);
 }
 
-void Renderer2D::draw_quad(const glm::mat4& transform, const Ref<Texture2D>& texture, 
+void Renderer2D::draw_quad(const glm::mat4& transform, const Ref<Texture2D>& texture,
                           const glm::vec4& color, float tiling_factor) {
     glm::vec3 position;
     glm::vec2 scale;
