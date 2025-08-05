@@ -67,18 +67,18 @@ namespace Honey {
 
     void Scene::render() {
         if (m_has_primary_camera && m_primary_camera_entity->is_valid()) {
-            auto& transform = m_primary_camera_entity->get_component<TransformComponent>();
+            auto transform = m_primary_camera_entity->get_component<TransformComponent>().get_transform();
             auto& camera_component = m_primary_camera_entity->get_component<CameraComponent>();
 
             Camera* primary_camera = camera_component.get_camera();
 
             if (primary_camera) {
-                Renderer2D::begin_scene(*primary_camera, transform.transform);
+                Renderer2D::begin_scene(*primary_camera, transform);
 
                 auto group = m_registry.group<TransformComponent>(entt::get<SpriteRendererComponent>);
                 for (auto entity : group) {
                     auto [entity_transform, sprite] = group.get<TransformComponent, SpriteRendererComponent>(entity);
-                    Renderer2D::draw_quad(entity_transform, sprite.color);
+                    Renderer2D::draw_quad(entity_transform.get_transform(), sprite.color);
                 }
 
                 Renderer2D::end_scene();
