@@ -19,6 +19,7 @@ namespace Honey {
         void on_update(Timestep ts);
         void render();
 
+        Entity get_primary_camera() const;
         void set_primary_camera(Entity camera_entity);
         void clear_primary_camera();
 

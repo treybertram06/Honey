@@ -37,6 +37,11 @@ namespace Honey {
         }
     }
 
+    Entity Scene::get_primary_camera() const {
+        return *m_primary_camera_entity;
+    }
+
+
     void Scene::set_primary_camera(Entity camera_entity) {
         if (camera_entity.is_valid() && camera_entity.has_component<CameraComponent>()) {
             *m_primary_camera_entity = camera_entity;
