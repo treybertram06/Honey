@@ -44,7 +44,10 @@ endif ()
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/engine/vendor/spdlog)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/engine/vendor/glfw)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/engine/vendor/glm)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/vendor/yaml-cpp)
 add_subdirectory(engine)
+
+target_include_directories(engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor)
 
 target_link_libraries(engine PUBLIC spdlog_header_only glm)
 

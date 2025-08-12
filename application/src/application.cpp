@@ -9,7 +9,6 @@
 #include "glm/gtc/type_ptr.inl"
 #include "platform/opengl/opengl_shader.h"
 
-
 class ExampleLayer : public Honey::Layer {
 public:
     ExampleLayer()
