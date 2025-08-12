@@ -16,13 +16,13 @@ namespace Honey {
 
 
 
-    Application::Application(const std::string& name) {
+    Application::Application(const std::string& name, int width, int height) {
         HN_PROFILE_FUNCTION();
 
         HN_CORE_ASSERT(!s_instance, "Application already exists!");
         s_instance = this;
 
-        m_window = Window::create(WindowProps(name));
+        m_window = Window::create(WindowProps(name, width, height));
 
         m_window->set_event_callback([this](auto && PH1) { on_event(std::forward<decltype(PH1)>(PH1)); });
         m_window->set_vsync(false);

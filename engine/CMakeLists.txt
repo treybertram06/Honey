@@ -84,6 +84,7 @@ add_library(engine STATIC
         src/Honey/scene/entity.h
         src/Honey/scene/entity.cpp
         src/Honey/scene/scriptable_entity.h
+        src/Honey/scene/components.cpp
 )
 
 # Make sure we define the Windows platform for Visual Studio

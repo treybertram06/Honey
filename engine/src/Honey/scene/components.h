@@ -118,8 +118,11 @@ namespace Honey {
         template<typename T>
         void bind() {
             instantiate_script = []() { return static_cast<ScriptableEntity*>(new T()); };
-            destroy_script = [](NativeScriptComponent* nsc) { delete nsc->instance; nsc->instance = nullptr;};
+            destroy_script = destroy_script_impl;
         }
+
+    private:
+        static void destroy_script_impl(NativeScriptComponent* nsc);
 
     };
 

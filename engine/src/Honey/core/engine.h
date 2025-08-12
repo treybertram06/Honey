@@ -21,7 +21,7 @@ namespace Honey {
     class HONEY_API Application
     {
     public:
-        Application(const std::string& name = "Honey Application");
+        Application(const std::string& name = "Honey Application", int width = 1280, int height = 720);
         virtual ~Application();
 
         void run();
