@@ -182,10 +182,7 @@ namespace Honey {
                     auto* persp_camera = dynamic_cast<PerspectiveCamera*>(camera);
                     if (persp_camera) {
                         out << YAML::Key << "FOV" << YAML::Value << persp_camera->get_fov();
-                        out << YAML::Key << "Rotation";
-                        out << YAML::BeginSeq;
-                        out << persp_camera->get_rotation();
-                        out << YAML::EndSeq;
+                        out << YAML::Key << "Rotation" << persp_camera->get_rotation();
                     }
                 }
 
@@ -364,10 +361,7 @@ namespace Honey {
                                     persp_camera->set_far_clip(camera_data_node["FarClip"].as<float>());
                                 }
                                 if (camera_data_node["Rotation"] && camera_data_node["Rotation"].IsSequence()) {
-                                    auto rotation = camera_data_node["Rotation"].as<std::vector<float>>();
-                                    if (rotation.size() >= 2) {
-                                        persp_camera->set_rotation(glm::vec2(rotation[0], rotation[1]));
-                                    }
+                                    persp_camera->set_rotation(camera_data_node["Rotation"].as<glm::vec2>());
                                 }
                             }
                         }
