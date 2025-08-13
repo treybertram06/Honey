@@ -31,6 +31,7 @@ namespace Honey {
     private:
         entt::registry m_registry;
         friend class Entity;
+        friend class SceneSerializer;
         friend class SceneHierarchyPanel;
 
         Entity* m_primary_camera_entity = nullptr;

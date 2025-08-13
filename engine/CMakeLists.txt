@@ -85,6 +85,8 @@ add_library(engine STATIC
         src/Honey/scene/entity.cpp
         src/Honey/scene/scriptable_entity.h
         src/Honey/scene/components.cpp
+        src/Honey/scene/scene_serializer.h
+        src/Honey/scene/scene_serializer.cpp
 )
 
 # Make sure we define the Windows platform for Visual Studio
@@ -200,6 +202,7 @@ target_link_libraries(engine PRIVATE
         glm
         PUBLIC
         imgui
+        yaml-cpp::yaml-cpp
 )
 
 

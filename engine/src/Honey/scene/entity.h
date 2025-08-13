@@ -76,6 +76,7 @@ namespace Honey {
         // Operators
         bool operator==(const Entity& other) const;
         bool operator!=(const Entity& other) const;
+        bool operator!() const { return !is_valid(); }
         operator bool() const { return is_valid(); }
         operator entt::entity() const { return m_entity_handle; }
         operator uint32_t() const { return (uint32_t)m_entity_handle; }
