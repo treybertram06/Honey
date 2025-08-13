@@ -87,6 +87,9 @@ add_library(engine STATIC
         src/Honey/scene/components.cpp
         src/Honey/scene/scene_serializer.h
         src/Honey/scene/scene_serializer.cpp
+        src/Honey/utils/platform_utils.h
+        src/platform/linux/linux_platform_utils.cpp
+        src/platform/windows/windows_platform_utils.cpp
 )
 
 # Make sure we define the Windows platform for Visual Studio
@@ -206,6 +209,9 @@ target_link_libraries(engine PRIVATE
 )
 
 
+
+
+
 if (APPLE)
  #   find OpenGL.framework and link it
  find_library(OPENGL_FRAMEWORK OpenGL)
@@ -219,5 +225,21 @@ elseif (UNIX)        # Linux / BSD
  find_package(OpenGL REQUIRED)
  target_link_libraries(engine PRIVATE OpenGL::GL)
  target_link_libraries(engine PRIVATE rt)
+
+ find_package(X11 REQUIRED)
+ target_link_libraries(engine PRIVATE ${X11_LIBRARIES})
+ target_include_directories(engine PRIVATE ${X11_INCLUDE_DIR})
+
+ # Define GLFW_EXPOSE_NATIVE_X11 for X11 integration
+ target_compile_definitions(engine PRIVATE GLFW_EXPOSE_NATIVE_X11)
+
+
+ find_package(PkgConfig REQUIRED)
+ pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
+ target_link_libraries(engine PRIVATE ${GTK3_LIBRARIES})
+ target_include_directories(engine PRIVATE ${GTK3_INCLUDE_DIRS})
+ target_compile_options(engine PRIVATE ${GTK3_CFLAGS_OTHER})
+
+
 
 endif()
