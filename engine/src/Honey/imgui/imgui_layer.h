@@ -12,7 +12,8 @@ namespace Honey {
         ForestGreen = 2,
         CaramelCream = 3,
         MaltAndHops = 4,
-        Copper = 5
+        Copper = 5,
+        AudreysTheme = 6
     };
 
     class ImGuiLayer : public Layer {

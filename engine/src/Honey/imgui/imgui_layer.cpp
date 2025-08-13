@@ -323,7 +323,43 @@ namespace Honey {
                  colors[ImGuiCol_TitleBgActive] = ImVec4(0.20f, 0.12f, 0.08f, 1.0f);
                  colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.20f, 0.12f, 0.08f, 1.0f);
                  break;
+
+             case UITheme::AudreysTheme:
+                 colors[ImGuiCol_WindowBg] = ImVec4(0.18f, 0.12f, 0.14f, 1.0f);
+
+                 // Headers
+                 colors[ImGuiCol_Header] = ImVec4(0.38f, 0.30f, 0.32f, 1.0f);
+                 colors[ImGuiCol_HeaderHovered] = ImVec4(0.48f, 0.38f, 0.40f, 1.0f);
+                 colors[ImGuiCol_HeaderActive] = ImVec4(0.32f, 0.24f, 0.26f, 1.0f);
+
+                 // Buttons
+                 colors[ImGuiCol_Button] = ImVec4(0.38f, 0.30f, 0.32f, 1.0f);
+                 colors[ImGuiCol_ButtonHovered] = ImVec4(0.48f, 0.38f, 0.40f, 1.0f);
+                 colors[ImGuiCol_ButtonActive] = ImVec4(0.32f, 0.24f, 0.26f, 1.0f);
+                 colors[ImGuiCol_CheckMark] = ImVec4(0.95f, 0.75f, 0.80f, 1.0f);
+
+                 // Frame bg
+                 colors[ImGuiCol_FrameBg] = ImVec4(0.38f, 0.30f, 0.32f, 1.0f);
+                 colors[ImGuiCol_FrameBgHovered] = ImVec4(0.48f, 0.38f, 0.40f, 1.0f);
+                 colors[ImGuiCol_FrameBgActive] = ImVec4(0.32f, 0.24f, 0.26f, 1.0f);
+
+                 // Tabs
+                 colors[ImGuiCol_Tab] = ImVec4(0.32f, 0.24f, 0.26f, 1.0f);
+                 colors[ImGuiCol_TabHovered] = ImVec4(0.55f, 0.45f, 0.48f, 1.0f);
+                 colors[ImGuiCol_TabActive] = ImVec4(0.48f, 0.38f, 0.40f, 1.0f);
+                 colors[ImGuiCol_TabUnfocused] = ImVec4(0.32f, 0.24f, 0.26f, 1.0f);
+                 colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.38f, 0.30f, 0.32f, 1.0f);
+                 colors[ImGuiCol_TabSelectedOverline] = ImVec4(0.90f, 0.68f, 0.75f, 1.0f);
+
+                 colors[ImGuiCol_TitleBg] = ImVec4(0.32f, 0.24f, 0.26f, 1.0f);
+                 colors[ImGuiCol_TitleBgActive] = ImVec4(0.32f, 0.24f, 0.26f, 1.0f);
+                 colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.32f, 0.24f, 0.26f, 1.0f);
+                 break;
+
+
+
          }
+
      }
 
     const char* ImGuiLayer::get_theme_name(UITheme theme) const {
@@ -334,6 +370,7 @@ namespace Honey {
              case UITheme::CaramelCream: return "Caramel Cream";
              case UITheme::MaltAndHops: return "Malt & Hops";
              case UITheme::Copper: return "Copper";
+             case UITheme::AudreysTheme: return "Audrey's Theme";
              default: return "Unknown";
          }
      }
