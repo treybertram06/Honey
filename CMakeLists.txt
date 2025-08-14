@@ -13,9 +13,13 @@ endif()
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "Link libraries statically" FORCE)
 
 cmake_minimum_required(VERSION 3.30)
-project(game_engine)
+project(game_engine LANGUAGES C CXX OBJCXX)
 
 set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_OBJCXX_STANDARD 20)
+set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
+set(CMAKE_OBJCXX_EXTENSIONS OFF)
+
 
 if(UNIX AND NOT APPLE)
 # Force use of system wayland-scanner instead of custom KDE one

@@ -1,5 +1,7 @@
 #engine/CMakeLists.txt
 
+enable_language(OBJCXX)
+
 option(ENABLE_ASSERTS "Enable HN_ASSERT / HN_CORE_ASSERT checks" ON)
 
 add_library(engine STATIC
@@ -90,7 +92,24 @@ add_library(engine STATIC
         src/Honey/utils/platform_utils.h
         src/platform/linux/linux_platform_utils.cpp
         src/platform/windows/windows_platform_utils.cpp
+        src/platform/macos/macos_platform_utils.cpp
+
 )
+
+# Add the Objective‑C++ bridge only on macOS
+if(APPLE)
+ target_sources(engine PRIVATE
+         src/platform/macos/macos_file_dialog_bridge.mm
+ )
+ set_source_files_properties(
+         src/platform/macos/macos_file_dialog_bridge.mm
+         PROPERTIES
+         SKIP_PRECOMPILE_HEADERS ON
+         # Optionally enable ARC:
+         # COMPILE_FLAGS "-fobjc-arc"
+ )
+
+endif()
 
 # Make sure we define the Windows platform for Visual Studio
 if (MSVC)
@@ -109,21 +128,22 @@ target_compile_definitions(engine PRIVATE
 
 target_precompile_headers(engine
         PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/hnpch.h"
+        $<$<COMPILE_LANGUAGE:CXX>:"${CMAKE_CURRENT_SOURCE_DIR}/src/hnpch.h">
 )
+
 
 target_compile_definitions(engine PRIVATE
         STBI_NO_SIMD
 )
 
- # Make the engine header accessible to other targets
- target_include_directories(engine PUBLIC
-         ${CMAKE_CURRENT_SOURCE_DIR}
-         ${CMAKE_CURRENT_SOURCE_DIR}/src
-         ${CMAKE_CURRENT_SOURCE_DIR}/vendor/stb_image
-         ${CMAKE_CURRENT_SOURCE_DIR}/vendor/entt/src
-         ${CMAKE_CURRENT_BINARY_DIR}
- )
+# Make the engine header accessible to other targets
+target_include_directories(engine PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/stb_image
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/entt/src
+        ${CMAKE_CURRENT_BINARY_DIR}
+)
 
 target_compile_definitions(engine
         PUBLIC
@@ -169,14 +189,12 @@ elseif (APPLE)
          GL_SILENCE_DEPRECATION
          HN_PLATFORM_MACOS
          GLFW_INCLUDE_NONE
-
  )
 elseif (UNIX)
  message(STATUS "Configuring for Linux/Unix")
  target_compile_definitions(engine PUBLIC
          HN_PLATFORM_LINUX
          GLFW_INCLUDE_NONE
-
  )
 else()
  message(FATAL_ERROR "Unsupported platform: ${CMAKE_SYSTEM_NAME}")
@@ -208,17 +226,21 @@ target_link_libraries(engine PRIVATE
         yaml-cpp::yaml-cpp
 )
 
-
-
-
-
 if (APPLE)
- #   find OpenGL.framework and link it
+ #   find and link OpenGL.framework
  find_library(OPENGL_FRAMEWORK OpenGL)
  if(NOT OPENGL_FRAMEWORK)
   message(FATAL_ERROR "Could not find OpenGL.framework")
  endif()
  target_link_libraries(engine PRIVATE ${OPENGL_FRAMEWORK})
+
+ # Link Cocoa umbrella framework (provides AppKit for NSOpenPanel/NSSavePanel)
+ find_library(COCOA_FRAMEWORK Cocoa)
+ if(NOT COCOA_FRAMEWORK)
+  message(FATAL_ERROR "Could not find Cocoa.framework")
+ endif()
+ target_link_libraries(engine PRIVATE ${COCOA_FRAMEWORK})
+
 elseif (WIN32)
  target_link_libraries(engine PRIVATE opengl32)     # native .lib
 elseif (UNIX)        # Linux / BSD
@@ -233,13 +255,9 @@ elseif (UNIX)        # Linux / BSD
  # Define GLFW_EXPOSE_NATIVE_X11 for X11 integration
  target_compile_definitions(engine PRIVATE GLFW_EXPOSE_NATIVE_X11)
 
-
  find_package(PkgConfig REQUIRED)
  pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
  target_link_libraries(engine PRIVATE ${GTK3_LIBRARIES})
  target_include_directories(engine PRIVATE ${GTK3_INCLUDE_DIRS})
  target_compile_options(engine PRIVATE ${GTK3_CFLAGS_OTHER})
-
-
-
 endif()
