@@ -83,7 +83,7 @@ namespace Honey {
         glm::vec3 get_position() const { return m_position; }
         glm::vec2 get_rotation() const { return m_rotation; }
 
-        float get_near_clip() { return m_near_clip; }
+        float get_near_clip() const { return m_near_clip; }
         void set_near_clip(float updated) { m_near_clip = updated; }
         float get_far_clip() { return m_far_clip; }
         void set_far_clip(float updated) { m_far_clip = updated; }

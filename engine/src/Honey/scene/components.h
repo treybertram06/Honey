@@ -2,6 +2,9 @@
 #include "glm/glm.hpp"
 #include "Honey/renderer/camera.h"
 
+#define GLM_ENABLE_EXPERIMENTAL
+#include "glm/gtx/quaternion.hpp"
+
 namespace Honey {
 
     class ScriptableEntity;
@@ -26,9 +29,7 @@ namespace Honey {
             : translation(translation) {}
 
         glm::mat4 get_transform() const {
-            glm::mat4 rotation_matrix = glm::rotate(glm::mat4(1.0f), rotation.x, glm::vec3(1.0f, 0.0f, 0.0f))
-            * glm::rotate(glm::mat4(1.0f), rotation.y, glm::vec3(0.0f, 1.0f, 0.0f))
-            * glm::rotate(glm::mat4(1.0f), rotation.z, glm::vec3(0.0f, 0.0f, 1.0f));
+            glm::mat4 rotation_matrix = glm::toMat4(glm::quat(rotation));
 
             return glm::translate(glm::mat4(1.0f), translation)
             * rotation_matrix

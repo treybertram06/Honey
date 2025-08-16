@@ -66,22 +66,19 @@ namespace Honey {
         m_view_projection_matrix = m_projection_matrix * m_view_matrix;
     }
 
-    void PerspectiveCamera::recalc_view_matrix() {
-        HN_PROFILE_FUNCTION();
+    void Honey::PerspectiveCamera::recalc_view_matrix() {
+        // Build VIEW as inverse of T * R_yaw * R_pitch (no cross products)
+        // Convention: yaw around Y, pitch around X, degrees in m_rotation.{x,y}
+        const float yaw   = glm::radians(m_rotation.x);
+        const float pitch = glm::radians(m_rotation.y);
 
-        // build front vector from yaw/pitch
-        glm::vec3 front{
-            cos(glm::radians(m_rotation.x)) * cos(glm::radians(m_rotation.y)),
-            sin(glm::radians(m_rotation.y)),
-            sin(glm::radians(m_rotation.x)) * cos(glm::radians(m_rotation.y))
-        };
-        front = glm::normalize(front);
+        glm::mat4 V(1.0f);
+        // inverse rotation order is reversed and angles negated
+        V = glm::rotate(V, -pitch, glm::vec3(1.0f, 0.0f, 0.0f)); // R_x(-pitch)
+        V = glm::rotate(V, -yaw,   glm::vec3(0.0f, 1.0f, 0.0f)); // R_y(-yaw)
+        V = glm::translate(V, -m_position);                       // T(-pos)
 
-        const glm::vec3 world_up{0.0f, 1.0f, 0.0f};
-        glm::vec3 right = glm::normalize(glm::cross(world_up, front));
-        glm::vec3 up    = glm::cross(front, right);
-
-        m_view_matrix = glm::lookAt(m_position, m_position + front, up);
+        m_view_matrix = V;
         m_view_projection_matrix = m_projection_matrix * m_view_matrix;
     }
 

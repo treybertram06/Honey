@@ -93,6 +93,8 @@ add_library(engine STATIC
         src/platform/linux/linux_platform_utils.cpp
         src/platform/windows/windows_platform_utils.cpp
         src/platform/macos/macos_platform_utils.cpp
+        src/Honey/math/math.h
+        src/Honey/math/math.cpp
 
 )
 
@@ -214,6 +216,8 @@ target_compile_definitions(engine PUBLIC
 
 add_subdirectory(vendor/GLAD)
 add_subdirectory(vendor/imgui-wrapper)
+
+
 #add_subdirectory(vendor/glm)
 
 target_link_libraries(engine PRIVATE
