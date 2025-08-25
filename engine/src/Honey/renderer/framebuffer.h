@@ -2,6 +2,28 @@
 
 namespace Honey {
 
+	enum class FramebufferTextureFormat {
+		None = 0,
+
+		//color
+		RBGA8,
+
+		//depth/stencil
+		DEPTH24STENCIL8,
+
+		//defaults
+		Depth = DEPTH24STENCIL8
+	};
+
+	struct FramebufferTextureSpecification {
+		FramebufferTextureSpecification() = default;
+		FramebufferTextureSpecification(FramebufferTextureFormat format)
+			: texture_format(format) {}
+
+		FramebufferTextureFormat texture_format;
+		//TODO: filtering/wrap
+	};
+
 	struct FramebufferSpecification {
 		uint32_t width, height;
 		uint32_t samples = 1;
