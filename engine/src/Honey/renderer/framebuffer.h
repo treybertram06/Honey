@@ -6,7 +6,7 @@ namespace Honey {
 		None = 0,
 
 		//color
-		RBGA8,
+		RGBA8,
 
 		//depth/stencil
 		DEPTH24STENCIL8,
@@ -20,12 +20,21 @@ namespace Honey {
 		FramebufferTextureSpecification(FramebufferTextureFormat format)
 			: texture_format(format) {}
 
-		FramebufferTextureFormat texture_format;
+		FramebufferTextureFormat texture_format = FramebufferTextureFormat::None;
 		//TODO: filtering/wrap
 	};
 
+    struct FramebufferAttachmentSpecification {
+        FramebufferAttachmentSpecification() = default;
+        FramebufferAttachmentSpecification(std::initializer_list<FramebufferTextureSpecification> attachments)
+            : attachments(attachments) {}
+
+        std::vector<FramebufferTextureSpecification> attachments;
+    };
+
 	struct FramebufferSpecification {
 		uint32_t width, height;
+	    FramebufferAttachmentSpecification attachments;
 		uint32_t samples = 1;
 
 		bool swap_chain_target = false;
@@ -42,7 +51,7 @@ namespace Honey {
 
 	    virtual void resize(uint32_t width, uint32_t height) = 0;
 
-		virtual uint32_t get_color_attachment_renderer_id() const = 0;
+		virtual uint32_t get_color_attachment_renderer_id(uint32_t index = 0) const = 0;
 
 		//virtual FramebufferSpecification& get_specification() = 0;
 		virtual const FramebufferSpecification& get_specification() const = 0;
