@@ -95,6 +95,8 @@ add_library(engine STATIC
         src/platform/macos/macos_platform_utils.cpp
         src/Honey/math/math.h
         src/Honey/math/math.cpp
+        src/Honey/renderer/editor_camera.h
+        src/Honey/renderer/editor_camera.cpp
 
 )
 

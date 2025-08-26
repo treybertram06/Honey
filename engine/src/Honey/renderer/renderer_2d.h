@@ -1,6 +1,7 @@
 #pragma once
 
 #include "camera.h"
+#include "editor_camera.h"
 #include "texture.h"
 #include "sub_texture_2d.h"
 
@@ -12,6 +13,7 @@ namespace Honey {
         static void shutdown();
 
         static void begin_scene(const Camera& camera, const glm::mat4& transform);
+        static void begin_scene(const EditorCamera& camera);
         static void begin_scene(const OrthographicCamera& camera);
         static void end_scene();
 

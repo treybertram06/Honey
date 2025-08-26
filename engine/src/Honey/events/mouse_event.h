@@ -1,6 +1,8 @@
 #pragma once
 
 #include "event.h"
+#include <sstream>
+#include <string>
 
 namespace Honey {
 

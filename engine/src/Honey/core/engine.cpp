@@ -91,7 +91,7 @@ namespace Honey {
 
             if (!m_minimized) {
                 {
-                    HN_PROFILE_SCOPE("LayerStack on_update");
+                    HN_PROFILE_SCOPE("LayerStack on_update_runtime");
 
                     for (Layer* layer : m_layer_stack) {
                         layer->on_update(timestep);

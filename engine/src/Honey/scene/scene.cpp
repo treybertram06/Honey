@@ -54,7 +54,7 @@ namespace Honey {
         *m_primary_camera_entity = Entity();
     }
 
-    void Scene::on_update(Timestep ts) {
+    void Scene::on_update_runtime(Timestep ts) {
 
         m_registry.view<NativeScriptComponent>().each([this, ts](auto entity, auto& nsc) {
 
@@ -68,9 +68,7 @@ namespace Honey {
             nsc.instance->on_update(ts);
         });
 
-    }
-
-    void Scene::render() {
+        // render
         if (m_has_primary_camera && m_primary_camera_entity->is_valid()) {
             auto transform = m_primary_camera_entity->get_component<TransformComponent>().get_transform();
             auto& camera_component = m_primary_camera_entity->get_component<CameraComponent>();
@@ -89,7 +87,27 @@ namespace Honey {
                 Renderer2D::end_scene();
             }
         }
+
     }
+
+    void Scene::on_update_editor(Timestep ts, EditorCamera& camera) {
+        // render
+        Renderer2D::begin_scene(camera);
+
+        auto group = m_registry.group<TransformComponent>(entt::get<SpriteRendererComponent>);
+        for (auto entity : group) {
+            auto [entity_transform, sprite] = group.get<TransformComponent, SpriteRendererComponent>(entity);
+            Renderer2D::draw_quad(entity_transform.get_transform(), sprite.color);
+        }
+
+        Renderer2D::end_scene();
+    }
+
+
+
+
+
+
 
     void Scene::on_viewport_resize(uint32_t width, uint32_t height) {
         Renderer::on_window_resize(width, height);

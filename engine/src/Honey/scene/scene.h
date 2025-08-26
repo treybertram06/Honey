@@ -3,6 +3,7 @@
 #include <entt/entt.hpp>
 
 #include "Honey/core/timestep.h"
+#include "Honey/renderer/editor_camera.h"
 
 namespace Honey {
 
@@ -16,8 +17,8 @@ namespace Honey {
         Entity create_entity(const std::string& name = "");
         void destroy_entity(Entity entity);
 
-        void on_update(Timestep ts);
-        void render();
+        void on_update_runtime(Timestep ts);
+        void on_update_editor(Timestep ts, EditorCamera& camera);
 
         Entity get_primary_camera() const;
         void set_primary_camera(Entity camera_entity);
