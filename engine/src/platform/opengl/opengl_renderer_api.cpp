@@ -76,6 +76,22 @@ namespace Honey {
             glDisable(GL_BLEND);
     }
 
+    void OpenGLRendererAPI::set_blend_for_attachment(uint32_t attachment, bool mode) {
+        #if !defined(HN_PLATFORM_APPLE)
+        if (mode)
+            glEnablei(GL_BLEND, attachment);
+        else
+            glDisablei(GL_BLEND, attachment);
+        #else
+        if (index == 0) {
+            if (enabled)
+                glEnable(GL_BLEND);
+            else
+                glDisable(GL_BLEND);
+        }
+        #endif
+    }
+
 
 
 }

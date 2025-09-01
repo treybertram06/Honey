@@ -51,7 +51,7 @@ namespace Honey {
                                      float tiling_factor = 1.0f);
 
         // Transform matrix variants
-        static void draw_quad(const glm::mat4& transform, const glm::vec4& color);
+        static void draw_quad(const glm::mat4& transform, const glm::vec4& color, int entity_id);
         static void draw_quad(const glm::mat4& transform,
                              const Ref<Texture2D>& texture = nullptr,
                              const glm::vec4& color = {1.0f, 1.0f, 1.0f, 1.0f},
@@ -72,7 +72,7 @@ namespace Honey {
         // Core implementation function
         static void submit_quad(const glm::vec3& position, const glm::vec2& size, float rotation,
                                const Ref<Texture2D>& texture, const Ref<SubTexture2D>& sub_texture,
-                               const glm::vec4& color, float tiling_factor);
+                               const glm::vec4& color, float tiling_factor, int entity_id = -1);
         
         // Transform decomposition helper
         static void decompose_transform(const glm::mat4& transform, glm::vec3& position, 

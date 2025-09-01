@@ -18,6 +18,7 @@ namespace Honey {
         float      tiling_factor;
         glm::vec2  tex_coord_min;
         glm::vec2  tex_coord_max;
+        int        entity_id;
     };
 
 
@@ -110,6 +111,7 @@ namespace Honey {
                 { ShaderDataType::Float , "i_tiling", false, true }, // loc 7
                 { ShaderDataType::Float2 , "i_tex_coord_min", false, true }, // loc 8
                 { ShaderDataType::Float2 , "i_tex_coord_max", false, true }, // loc 9
+                { ShaderDataType::Int, "i_entity_id", false, true} // loc 10
             };
             s_data.instance_vbo->set_layout(layout);
             s_data.vao->add_vertex_buffer(s_data.instance_vbo);
@@ -148,6 +150,8 @@ namespace Honey {
 
     void Renderer2D::begin_scene(const OrthographicCamera& cam) {
         reset_stats();
+
+        RenderCommand::set_blend_for_attachment(1, false);
 
         s_data.shader->bind();
         s_data.shader->set_mat4("u_view_projection", cam.get_view_projection_matrix());
@@ -219,7 +223,7 @@ namespace Honey {
 
     void Renderer2D::submit_quad(const glm::vec3& position, const glm::vec2& size, float rotation,
                                 const Ref<Texture2D>& texture, const Ref<SubTexture2D>& sub_texture,
-                                const glm::vec4& color, float tiling_factor) {
+                                const glm::vec4& color, float tiling_factor, int entity_id) {
         if (s_data.instances.size() >= Renderer2DData::max_quads)
             flush_and_reset();
 
@@ -230,6 +234,8 @@ namespace Honey {
         inst.rotation = rotation;
         inst.color = color;
         inst.tiling_factor = tiling_factor;
+        inst.entity_id = entity_id;
+
 
         // Handle texture/subtexture
         if (sub_texture) {
@@ -310,12 +316,13 @@ namespace Honey {
         submit_quad(position, size, rotation, nullptr, sub_texture, color, tiling_factor);
     }
 
-    void Renderer2D::draw_quad(const glm::mat4& transform, const glm::vec4& color) {
+    void Renderer2D::draw_quad(const glm::mat4& transform, const glm::vec4& color, int entity_id) {
         glm::vec3 position;
         glm::vec2 scale;
         float rotation;
         decompose_transform(transform, position, scale, rotation);
-        submit_quad(position, scale, rotation, nullptr, nullptr, color, 1.0f);
+        submit_quad(position, scale, rotation, nullptr, nullptr, color, 1.0f, entity_id);
+        //HN_CORE_INFO("Entity ID: {0}", entity_id);
     }
 
     void Renderer2D::draw_quad(const glm::mat4& transform, const Ref<Texture2D>& texture,

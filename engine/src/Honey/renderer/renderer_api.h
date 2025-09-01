@@ -25,6 +25,7 @@ namespace Honey {
         virtual void set_wireframe(bool mode) = 0;
         virtual void set_depth_test(bool mode) = 0;
         virtual void set_blend(bool mode) = 0;
+        virtual void set_blend_for_attachment(uint32_t attachment, bool mode) = 0;
 
         inline static API get_api() { return s_api; }
 

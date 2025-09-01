@@ -28,6 +28,10 @@ namespace Honey {
             } else {
                 glTexImage2D(GL_TEXTURE_2D, 0, internal_format, width, height, 0, format, GL_UNSIGNED_BYTE, nullptr);
 
+                //test
+                GLint internal = 0;
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_INTERNAL_FORMAT, &internal);
+
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
@@ -162,10 +166,24 @@ namespace Honey {
     int OpenGLFramebuffer::read_pixel(uint32_t attachment_index, int x, int y) {
         HN_CORE_ASSERT(attachment_index < m_color_attachments.size(), "Incorrect attachment index.");
 
+        // Save current READ FBO, bind ours for read
+        GLint prevReadFbo = 0;
+        glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevReadFbo);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, m_renderer_id);
+
         glReadBuffer(GL_COLOR_ATTACHMENT0 + attachment_index);
-        int pixel_data;
+        int pixel_data = -1;
         glReadPixels(x, y, 1, 1, GL_RED_INTEGER, GL_INT, &pixel_data);
+
+        // Restore previous READ FBO
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFbo);
         return pixel_data;
+    }
+
+    void OpenGLFramebuffer::clear_color_attachment_i(uint32_t attachment_index, int value) {
+        HN_CORE_ASSERT(attachment_index < m_color_attachments.size(), "Incorrect attachment index.");
+        glBindFramebuffer(GL_FRAMEBUFFER, m_renderer_id);
+        glClearBufferiv(GL_COLOR, attachment_index, &value);
     }
 
 }

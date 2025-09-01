@@ -81,7 +81,7 @@ namespace Honey {
                 auto group = m_registry.group<TransformComponent>(entt::get<SpriteRendererComponent>);
                 for (auto entity : group) {
                     auto [entity_transform, sprite] = group.get<TransformComponent, SpriteRendererComponent>(entity);
-                    Renderer2D::draw_quad(entity_transform.get_transform(), sprite.color);
+                    Renderer2D::draw_quad(entity_transform.get_transform(), sprite.color, (int)entity);
                 }
 
                 Renderer2D::end_scene();
@@ -97,7 +97,7 @@ namespace Honey {
         auto group = m_registry.group<TransformComponent>(entt::get<SpriteRendererComponent>);
         for (auto entity : group) {
             auto [entity_transform, sprite] = group.get<TransformComponent, SpriteRendererComponent>(entity);
-            Renderer2D::draw_quad(entity_transform.get_transform(), sprite.color);
+            Renderer2D::draw_quad(entity_transform.get_transform(), sprite.color, (int)entity);
         }
 
         Renderer2D::end_scene();

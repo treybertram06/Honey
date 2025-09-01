@@ -48,6 +48,10 @@ namespace Honey {
             s_renderer_api->set_blend(mode);
         }
 
+        inline static void set_blend_for_attachment(uint32_t attachment, bool mode) {
+            s_renderer_api->set_blend_for_attachment(attachment, mode);
+        }
+
     private:
         static RendererAPI* s_renderer_api;
     };
