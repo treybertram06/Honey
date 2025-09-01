@@ -21,12 +21,12 @@ namespace Honey {
             glBindTexture(texture_target(multisample), id);
         }
 
-        static void attach_color_texture(uint32_t id, uint32_t samples, GLenum format, uint32_t width, uint32_t height, int index) {
+        static void attach_color_texture(uint32_t id, uint32_t samples, GLenum internal_format, GLenum format, uint32_t width, uint32_t height, int index) {
             bool multisample = samples > 1;
             if (multisample) {
-                glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, samples, format, width, height, GL_FALSE);
+                glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, samples, internal_format, width, height, GL_FALSE);
             } else {
-                glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+                glTexImage2D(GL_TEXTURE_2D, 0, internal_format, width, height, 0, format, GL_UNSIGNED_BYTE, nullptr);
 
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -111,7 +111,8 @@ namespace Honey {
             for (size_t i = 0; i < m_color_attachments.size(); i++) {
                 Utils::bind_texture(multisample, m_color_attachments[i]);
                 switch (m_color_attachment_specs[i].texture_format) {
-                    case FramebufferTextureFormat::RGBA8: Utils::attach_color_texture(m_color_attachments[i], m_specification.samples, GL_RGBA8, m_specification.width, m_specification.height, i); break;
+                    case FramebufferTextureFormat::RGBA8:       Utils::attach_color_texture(m_color_attachments[i], m_specification.samples, GL_RGBA8, GL_RGBA, m_specification.width, m_specification.height, i); break;
+                    case FramebufferTextureFormat::RED_INTEGER: Utils::attach_color_texture(m_color_attachments[i], m_specification.samples, GL_R32I, GL_RED_INTEGER, m_specification.width, m_specification.height, i); break;
                 }
             }
         }
@@ -156,6 +157,15 @@ namespace Honey {
 	    m_specification.width = width;
 	    m_specification.height = height;
 	    invalidate();
+    }
+
+    int OpenGLFramebuffer::read_pixel(uint32_t attachment_index, int x, int y) {
+        HN_CORE_ASSERT(attachment_index < m_color_attachments.size(), "Incorrect attachment index.");
+
+        glReadBuffer(GL_COLOR_ATTACHMENT0 + attachment_index);
+        int pixel_data;
+        glReadPixels(x, y, 1, 1, GL_RED_INTEGER, GL_INT, &pixel_data);
+        return pixel_data;
     }
 
 }
