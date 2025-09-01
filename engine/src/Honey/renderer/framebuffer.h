@@ -52,7 +52,7 @@ namespace Honey {
 
 	    virtual void resize(uint32_t width, uint32_t height) = 0;
 	    virtual int read_pixel(uint32_t attachment_index, int x, int y) = 0;
-	    virtual void clear_color_attachment_i(uint32_t attachment_index, int value) = 0;
+	    virtual void clear_attachment(uint32_t attachment_index, const void* value) = 0;
 
 		virtual uint32_t get_color_attachment_renderer_id(uint32_t index = 0) const = 0;
 

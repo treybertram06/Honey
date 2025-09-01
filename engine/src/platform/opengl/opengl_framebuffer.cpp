@@ -63,6 +63,20 @@ namespace Honey {
             }
             return false;
         }
+
+        struct ClearFormat { GLenum format; GLenum type; };
+        static ClearFormat honey_tex_format_to_gl(FramebufferTextureFormat fmt) {
+            switch (fmt) {
+                case FramebufferTextureFormat::RGBA8:
+                    return { GL_RGBA, GL_UNSIGNED_BYTE };        // not GL_RGBA8, not GL_FLOAT
+                case FramebufferTextureFormat::RED_INTEGER:
+                    return { GL_RED_INTEGER, GL_INT };
+                case FramebufferTextureFormat::DEPTH24STENCIL8:
+                    return { GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8 };
+            }
+            HN_CORE_ASSERT(false, "Unknown format!");
+            return { GL_NONE, GL_NONE };
+        }
     }
 
 	OpenGLFramebuffer::OpenGLFramebuffer(const FramebufferSpecification &spec)
@@ -165,7 +179,7 @@ namespace Honey {
 
     int OpenGLFramebuffer::read_pixel(uint32_t attachment_index, int x, int y) {
         HN_CORE_ASSERT(attachment_index < m_color_attachments.size(), "Incorrect attachment index.");
-
+        HN_CORE_ASSERT(m_color_attachment_specs[attachment_index].texture_format == FramebufferTextureFormat::RED_INTEGER, "read_pixel expects a RED_INTEGER attachment");
         // Save current READ FBO, bind ours for read
         GLint prevReadFbo = 0;
         glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevReadFbo);
@@ -180,10 +194,13 @@ namespace Honey {
         return pixel_data;
     }
 
-    void OpenGLFramebuffer::clear_color_attachment_i(uint32_t attachment_index, int value) {
+    void OpenGLFramebuffer::clear_attachment(uint32_t attachment_index, const void* value) {
         HN_CORE_ASSERT(attachment_index < m_color_attachments.size(), "Incorrect attachment index.");
-        glBindFramebuffer(GL_FRAMEBUFFER, m_renderer_id);
-        glClearBufferiv(GL_COLOR, attachment_index, &value);
+
+        auto format_type = m_color_attachment_specs[attachment_index].texture_format;
+        auto [format, type] = Utils::honey_tex_format_to_gl(format_type);
+
+        glClearTexImage(m_color_attachments[attachment_index], 0, format, type, &value);
     }
 
 }
