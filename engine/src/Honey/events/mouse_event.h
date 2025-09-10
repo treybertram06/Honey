@@ -4,6 +4,8 @@
 #include <sstream>
 #include <string>
 
+#include "Honey/core/mouse_button_codes.h"
+
 namespace Honey {
 
     class HONEY_API MouseMovedEvent : public Event {
@@ -48,19 +50,19 @@ namespace Honey {
 
     class HONEY_API MouseButtonEvent : public Event {
     public:
-        inline int get_mouse_button() const { return m_button; }
+        inline MouseButton get_mouse_button() const { return m_button; }
 
         EVENT_CLASS_CATEGORY(event_category_mouse | event_category_input)
 
     protected:
-        MouseButtonEvent(int button) : m_button(button) {}
+        MouseButtonEvent(MouseButton button) : m_button(button) {}
 
-        int m_button;
+        MouseButton m_button;
     };
 
     class HONEY_API MouseButtonPressedEvent : public MouseButtonEvent {
     public:
-        MouseButtonPressedEvent(int button) : MouseButtonEvent(button) {}
+        MouseButtonPressedEvent(MouseButton button) : MouseButtonEvent(button) {}
 
         std::string to_string() const override {
             std::stringstream ss;
@@ -73,7 +75,7 @@ namespace Honey {
 
     class HONEY_API MouseButtonReleasedEvent : public MouseButtonEvent {
     public:
-        MouseButtonReleasedEvent(int button) : MouseButtonEvent(button) {}
+        MouseButtonReleasedEvent(MouseButton button) : MouseButtonEvent(button) {}
 
         std::string to_string() const override {
             std::stringstream ss;

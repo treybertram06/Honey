@@ -4,6 +4,7 @@
 #include "editor_camera.h"
 #include "texture.h"
 #include "sub_texture_2d.h"
+#include "Honey/scene/components.h"
 
 namespace Honey {
 
@@ -51,11 +52,13 @@ namespace Honey {
                                      float tiling_factor = 1.0f);
 
         // Transform matrix variants
-        static void draw_quad(const glm::mat4& transform, const glm::vec4& color, int entity_id);
+        static void draw_quad(const glm::mat4& transform, const glm::vec4& color);
         static void draw_quad(const glm::mat4& transform,
                              const Ref<Texture2D>& texture = nullptr,
                              const glm::vec4& color = {1.0f, 1.0f, 1.0f, 1.0f},
                              float tiling_factor = 1.0f);
+
+        static void draw_sprite(const glm::mat4& transform, SpriteRendererComponent& src, int entity_id);
 
         // Statistics
         struct Statistics {

@@ -316,12 +316,12 @@ namespace Honey {
         submit_quad(position, size, rotation, nullptr, sub_texture, color, tiling_factor);
     }
 
-    void Renderer2D::draw_quad(const glm::mat4& transform, const glm::vec4& color, int entity_id) {
+    void Renderer2D::draw_quad(const glm::mat4& transform, const glm::vec4& color) {
         glm::vec3 position;
         glm::vec2 scale;
         float rotation;
         decompose_transform(transform, position, scale, rotation);
-        submit_quad(position, scale, rotation, nullptr, nullptr, color, 1.0f, entity_id);
+        submit_quad(position, scale, rotation, nullptr, nullptr, color, 1.0f);
         //HN_CORE_INFO("Entity ID: {0}", entity_id);
     }
 
@@ -333,6 +333,15 @@ namespace Honey {
         decompose_transform(transform, position, scale, rotation);
         submit_quad(position, scale, rotation, texture, nullptr, color, tiling_factor);
     }
+
+    void Renderer2D::draw_sprite(const glm::mat4& transform, SpriteRendererComponent& src, int entity_id) {
+        glm::vec3 position;
+        glm::vec2 scale;
+        float rotation;
+        decompose_transform(transform, position, scale, rotation);
+        submit_quad(position, scale, rotation, nullptr, nullptr, src.color, 1.0f, entity_id);
+    }
+
 
 
 
