@@ -1,5 +1,7 @@
 #pragma once
 
+#include <spirv_cross/spirv_cross_c.h>
+
 #include "Honey/renderer/shader.h"
 #include "glad/glad.h"
 #include "glm/glm.hpp"
@@ -10,6 +12,8 @@ namespace Honey {
     public:
         OpenGLShader(const std::string& path);
         OpenGLShader(const std::string& name, const std::string& vertex_src, const std::string& fragment_src);
+        OpenGLShader(const std::string& name, const std::vector<uint32_t>& vertex_spirv, const std::vector<uint32_t>& fragment_spirv);
+
         virtual ~OpenGLShader();
 
         virtual void bind() const override;
@@ -41,7 +45,11 @@ namespace Honey {
         std::unordered_map<GLenum, std::string> pre_process(const std::string& source);
         void compile(const std::unordered_map<GLenum, std::string>& shader_srcs);
 
-        uint32_t m_renderer_id;
+        // Compile a SPIR-V stage and return the shader object (caller must attach and delete)
+        GLuint compile_spirv_shader(GLenum type, const std::vector<uint32_t>& spirv_code);
+        std::string convert_spirv_to_glsl(spvc_context context, const std::vector<uint32_t>& spirv, bool is_vertex);
+
+        uint32_t m_renderer_id{};
         std::string m_name;
     };
 }

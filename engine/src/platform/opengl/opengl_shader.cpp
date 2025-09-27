@@ -6,6 +6,8 @@
 #include <fstream>
 
 #include <glm/gtc/type_ptr.hpp>
+#include <vector>
+#include "Honey/renderer/shader_compiler.h"
 
 namespace Honey {
 
@@ -46,6 +48,129 @@ namespace Honey {
         HN_PROFILE_FUNCTION();
 
 	    glDeleteProgram(m_renderer_id);
+    }
+
+    OpenGLShader::OpenGLShader(const std::string& name,
+                               const std::vector<uint32_t>& vertex_spirv,
+                               const std::vector<uint32_t>& fragment_spirv)
+        : m_name(name)
+    {
+        HN_PROFILE_FUNCTION();
+
+        // Check for SPIR-V support
+        bool spirv_supported = (glSpecializeShader != nullptr);
+
+        if (!spirv_supported) {
+            HN_CORE_INFO("GL_ARB_gl_spirv not available. Using SPIRV-Cross path for shader: {0}", name);
+
+            // Create SPIRV-Cross compiler with specific options to improve compatibility
+            spvc_context context;
+            if (spvc_context_create(&context) != SPVC_SUCCESS) {
+                HN_CORE_ERROR("Failed to create SPIRV-Cross context");
+                return;
+            }
+
+            // Convert SPIR-V to GLSL with careful interface handling
+            std::string v_glsl = convert_spirv_to_glsl(context, vertex_spirv, true);
+            std::string f_glsl = convert_spirv_to_glsl(context, fragment_spirv, false);
+
+            spvc_context_destroy(context);
+
+            if (v_glsl.empty() || f_glsl.empty()) {
+                HN_CORE_ERROR("Failed to convert SPIR-V to GLSL");
+                return;
+            }
+
+            // Compile converted GLSL
+            std::unordered_map<GLenum, std::string> sources;
+            sources[GL_VERTEX_SHADER] = std::move(v_glsl);
+            sources[GL_FRAGMENT_SHADER] = std::move(f_glsl);
+            compile(sources);
+            return;
+        }
+
+        // SPIR-V path (GL 4.6 or ARB_gl_spirv)
+        GLuint vert_shader = compile_spirv_shader(GL_VERTEX_SHADER, vertex_spirv);
+        GLuint frag_shader = compile_spirv_shader(GL_FRAGMENT_SHADER, fragment_spirv);
+
+        GLuint program = glCreateProgram();
+        glAttachShader(program, vert_shader);
+        glAttachShader(program, frag_shader);
+
+        glLinkProgram(program);
+        GLint is_linked = 0;
+        glGetProgramiv(program, GL_LINK_STATUS, &is_linked);
+        if (is_linked == GL_FALSE)
+        {
+            GLint log_length = 0;
+            glGetProgramiv(program, GL_INFO_LOG_LENGTH, &log_length);
+            std::vector<GLchar> info_log(log_length);
+            glGetProgramInfoLog(program, log_length, &log_length, info_log.data());
+
+            glDeleteProgram(program);
+            glDeleteShader(vert_shader);
+            glDeleteShader(frag_shader);
+
+            HN_CORE_ERROR("{0}", info_log.data());
+            HN_CORE_ASSERT(false, "Shader link error (SPIR-V)!");
+            return;
+        }
+
+        glDetachShader(program, vert_shader);
+        glDetachShader(program, frag_shader);
+        glDeleteShader(vert_shader);
+        glDeleteShader(frag_shader);
+
+        m_renderer_id = program;
+    }
+
+    std::string OpenGLShader::convert_spirv_to_glsl(spvc_context context,
+                                               const std::vector<uint32_t>& spirv,
+                                               bool is_vertex)
+    {
+        if (spirv.empty()) return "";
+
+        // Parse SPIR-V
+        spvc_parsed_ir ir;
+        if (spvc_context_parse_spirv(context, spirv.data(), spirv.size(), &ir) != SPVC_SUCCESS) {
+            HN_CORE_ERROR("Failed to parse SPIR-V");
+            return "";
+        }
+
+        // Create compiler
+        spvc_compiler compiler;
+        if (spvc_context_create_compiler(context, SPVC_BACKEND_GLSL, ir,
+                                       SPVC_CAPTURE_MODE_TAKE_OWNERSHIP, &compiler) != SPVC_SUCCESS) {
+            HN_CORE_ERROR("Failed to create GLSL compiler");
+            return "";
+                                       }
+
+        // Set options for maximum compatibility
+        spvc_compiler_options options;
+        spvc_compiler_create_compiler_options(compiler, &options);
+
+        // Set GLSL version
+        spvc_compiler_options_set_uint(options, SPVC_COMPILER_OPTION_GLSL_VERSION, 450);
+        spvc_compiler_options_set_bool(options, SPVC_COMPILER_OPTION_GLSL_ES, SPVC_FALSE);
+
+        // Improve interface handling
+        spvc_compiler_options_set_bool(options, SPVC_COMPILER_OPTION_GLSL_SEPARATE_SHADER_OBJECTS, SPVC_TRUE);
+        spvc_compiler_options_set_bool(options, SPVC_COMPILER_OPTION_GLSL_ENABLE_420PACK_EXTENSION, SPVC_FALSE);
+
+        // Handle varyings better - avoid struct interface issues
+        spvc_compiler_options_set_bool(options, SPVC_COMPILER_OPTION_GLSL_FORCE_FLATTENED_IO_BLOCKS, SPVC_TRUE);
+
+        // Apply options
+        spvc_compiler_install_compiler_options(compiler, options);
+
+        // Compile to GLSL
+        const char* glsl_source;
+        if (spvc_compiler_compile(compiler, &glsl_source) != SPVC_SUCCESS) {
+            HN_CORE_ERROR("Failed to compile SPIR-V to GLSL");
+            return "";
+        }
+
+        return std::string(glsl_source);
     }
 /*
     void OpenGLShader::compile(const std::unordered_map<GLenum, std::string> &shader_srcs) {
@@ -211,6 +336,35 @@ namespace Honey {
         m_renderer_id = program;
     }
 
+    GLuint OpenGLShader::compile_spirv_shader(GLenum type, const std::vector<uint32_t>& spirv_code)
+    {
+        GLuint shader = glCreateShader(type);
+
+        // Load SPIR-V binary
+        glShaderBinary(1, &shader, GL_SHADER_BINARY_FORMAT_SPIR_V, spirv_code.data(), (GLsizei)(spirv_code.size() * sizeof(uint32_t)));
+
+        // Specialize entry point "main" without specialization constants
+        glSpecializeShader(shader, "main", 0, nullptr, nullptr);
+
+        // Check status
+        GLint compiled = 0;
+        glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
+        if (compiled == GL_FALSE)
+        {
+            GLint log_length = 0;
+            glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &log_length);
+            std::vector<GLchar> info_log(log_length);
+            glGetShaderInfoLog(shader, log_length, &log_length, info_log.data());
+
+            glDeleteShader(shader);
+
+            HN_CORE_ERROR("{0}", info_log.data());
+            HN_CORE_ASSERT(false, "SPIR-V shader specialization failed!");
+            return 0;
+        }
+
+        return shader;
+    }
 
 
     namespace fs = std::filesystem;

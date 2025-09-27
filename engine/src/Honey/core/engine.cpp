@@ -38,6 +38,8 @@ namespace Honey {
     Application::~Application() {
         HN_PROFILE_FUNCTION();
 
+        Renderer::shutdown();
+
     }
 
     void Application::push_layer(Layer *layer) {

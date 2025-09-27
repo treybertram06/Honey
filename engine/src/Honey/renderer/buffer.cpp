@@ -39,5 +39,16 @@ namespace Honey {
         return nullptr;
     }
 
+    Ref<UniformBuffer> UniformBuffer::create(uint32_t size, uint32_t binding) {
+
+        switch (Renderer::get_api()) {
+            case RendererAPI::API::none:     HN_CORE_ASSERT(false, "RendererAPI::none is not supported."); return nullptr;
+            case RendererAPI::API::opengl:   return CreateRef<OpenGLUniformBuffer>(size, binding);
+        }
+
+        HN_CORE_ASSERT(false, "Unknown RendererAPI.");
+        return nullptr;
+    }
+
 
 }

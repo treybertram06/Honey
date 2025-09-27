@@ -5,12 +5,13 @@
 #include "texture.h"
 #include "sub_texture_2d.h"
 #include "Honey/scene/components.h"
+#include "Honey/renderer/shader_cache.h"
 
 namespace Honey {
 
     class Renderer2D {
     public:
-        static void init();
+        static void init(std::unique_ptr<ShaderCache> shader_cache);
         static void shutdown();
 
         static void begin_scene(const Camera& camera, const glm::mat4& transform);

@@ -4,7 +4,9 @@
 #include "render_command.h"
 #include "vertex_array.h"
 #include "shader.h"
+#include "shader_cache.h"
 #include "texture.h"
+#include "shader_cache.h"
 
 static const std::filesystem::path asset_root = ASSET_ROOT;
 
@@ -56,6 +58,14 @@ namespace Honey {
 
         // Stats
         Renderer2D::Statistics stats;
+
+        struct CameraData {
+            glm::mat4 view_projection;
+        };
+        CameraData camera_buffer;
+        Ref<UniformBuffer> camera_uniform_buffer;
+
+        std::unique_ptr<ShaderCache> shader_cache;
     };
 
     static Renderer2DData s_data;
@@ -82,9 +92,11 @@ namespace Honey {
     }
 
 
-    void Renderer2D::init()
+    void Renderer2D::init(std::unique_ptr<ShaderCache> shader_cache)
     {
         HN_PROFILE_FUNCTION();
+
+        s_data.shader_cache = std::move(shader_cache);
 
         s_data.vao = VertexArray::create();
 
@@ -133,7 +145,9 @@ namespace Honey {
         s_data.texture_slots[0] = s_data.white_texture;
 
         auto shader_path = asset_root / "shaders" / "texture.glsl";
-        s_data.shader = Shader::create(shader_path);
+        s_data.shader = s_data.shader_cache->get_or_compile_shader(shader_path);
+
+        s_data.camera_uniform_buffer = UniformBuffer::create(sizeof(Renderer2DData::CameraData), 0);
 
 
         s_data.shader->bind();
@@ -145,6 +159,7 @@ namespace Honey {
     }
 
     void Renderer2D::shutdown() {
+        s_data.shader_cache.reset();
     }
 
 
@@ -153,8 +168,8 @@ namespace Honey {
 
         RenderCommand::set_blend_for_attachment(1, false);
 
-        s_data.shader->bind();
-        s_data.shader->set_mat4("u_view_projection", cam.get_view_projection_matrix());
+        s_data.camera_buffer.view_projection = cam.get_view_projection_matrix();
+        s_data.camera_uniform_buffer->set_data(sizeof(Renderer2DData::CameraData), &s_data.camera_buffer);
 
         s_data.instances.clear();
         s_data.texture_slot_index = 1; // keep white bound at 0
@@ -165,8 +180,8 @@ namespace Honey {
 
         glm::mat4 view_proj = camera.get_projection_matrix() * glm::inverse(transform);
 
-        s_data.shader->bind();
-        s_data.shader->set_mat4("u_view_projection", view_proj);
+        s_data.camera_buffer.view_projection = view_proj;
+        s_data.camera_uniform_buffer->set_data(sizeof(Renderer2DData::CameraData), &s_data.camera_buffer);
 
         s_data.instances.clear();
         s_data.texture_slot_index = 1; // keep white bound at 0
@@ -177,8 +192,8 @@ namespace Honey {
 
         glm::mat4 view_proj = camera.get_view_projection_matrix();
 
-        s_data.shader->bind();
-        s_data.shader->set_mat4("u_view_projection", view_proj);
+        s_data.camera_buffer.view_projection = view_proj;
+        s_data.camera_uniform_buffer->set_data(sizeof(Renderer2DData::CameraData), &s_data.camera_buffer);
 
         s_data.instances.clear();
         s_data.texture_slot_index = 1; // keep white bound at 0

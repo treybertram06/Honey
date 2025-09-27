@@ -93,7 +93,36 @@ namespace Honey {
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
     }
 
+    // Uniform Buffer //////////////////////////////////////////////////////
 
+    OpenGLUniformBuffer::OpenGLUniformBuffer(uint32_t size, uint32_t binding)
+        : m_size(size), m_binding(binding) {
+        glCreateBuffers(1, &m_renderer_id);
+        glBindBuffer(GL_UNIFORM_BUFFER, m_renderer_id);
+        glBufferData(GL_UNIFORM_BUFFER, m_size, nullptr, GL_DYNAMIC_DRAW); // reserve space
+        glBindBuffer(GL_UNIFORM_BUFFER, 0);
+
+        // Bind it to a binding point (e.g., slot 0 by default)
+        glBindBufferBase(GL_UNIFORM_BUFFER, m_binding, m_renderer_id);
+    }
+
+    OpenGLUniformBuffer::~OpenGLUniformBuffer() {
+        glDeleteBuffers(1, &m_renderer_id);
+    }
+
+    void OpenGLUniformBuffer::bind() const {
+        glBindBuffer(GL_UNIFORM_BUFFER, m_renderer_id);
+    }
+
+    void OpenGLUniformBuffer::unbind() const {
+        glBindBuffer(GL_UNIFORM_BUFFER, 0);
+    }
+
+    void OpenGLUniformBuffer::set_data(uint32_t size, const void *data) {
+        glBindBuffer(GL_UNIFORM_BUFFER, m_renderer_id);
+        glBufferSubData(GL_UNIFORM_BUFFER, 0, size, data); // update buffer contents
+        glBindBuffer(GL_UNIFORM_BUFFER, 0);
+    }
 
 
 }

@@ -37,4 +37,20 @@ namespace Honey {
         uint32_t m_renderer_id;
         uint32_t m_count;
     };
+
+    class OpenGLUniformBuffer : public UniformBuffer {
+    public:
+        OpenGLUniformBuffer(uint32_t size, uint32_t binding);
+        virtual ~OpenGLUniformBuffer();
+
+        virtual void bind() const override;
+        virtual void unbind() const override;
+
+        virtual void set_data(uint32_t size, const void* data) override;
+
+    private:
+        uint32_t m_renderer_id;
+        uint32_t m_size;
+        uint32_t m_binding;
+    };
 }

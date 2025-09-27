@@ -24,6 +24,17 @@ namespace Honey {
 
         static Ref<Shader> create(const std::string& path);
         static Ref<Shader> create(const std::string& name, const std::string& vertex_src, const std::string& fragment_src);
+
+        static Ref<Shader> create_from_spirv(const std::string& name,
+                                         const std::vector<uint32_t>& vertex_spirv,
+                                         const std::vector<uint32_t>& fragment_spirv);
+
+        static Ref<Shader> create_from_spirv_files(const std::filesystem::path& vertex_spirv_path,
+                                                   const std::filesystem::path& fragment_spirv_path);
+
+        // For backward compatibility
+        static Ref<Shader> create_with_auto_compile(const std::filesystem::path& glsl_path);
+
     };
 
     class ShaderLibrary {

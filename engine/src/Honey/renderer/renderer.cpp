@@ -7,13 +7,25 @@
 namespace Honey {
 
     Renderer::SceneData* Renderer::m_scene_data = new Renderer::SceneData;
+    std::unique_ptr<ShaderCache> Renderer::m_shader_cache = nullptr;
+
 
     void Renderer::init() {
         HN_PROFILE_FUNCTION();
 
+        auto cache_dir = std::filesystem::current_path() / "assets" / "cache" / "shaders";
+        m_shader_cache = std::make_unique<ShaderCache>(cache_dir);
+
         RenderCommand::init();
-        Renderer2D::init();
+        Renderer2D::init(std::move(m_shader_cache));
         Renderer3D::init();
+    }
+
+    void Renderer::shutdown() {
+        HN_PROFILE_FUNCTION();
+
+        Renderer2D::shutdown();
+        Renderer3D::shutdown();
     }
 
     void Renderer::on_window_resize(uint32_t width, uint32_t height) {

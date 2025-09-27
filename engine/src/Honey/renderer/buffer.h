@@ -129,4 +129,16 @@ namespace Honey {
         static Ref<IndexBuffer> create(uint32_t* indices, uint32_t count);
 
     };
+
+    class UniformBuffer {
+    public:
+        virtual ~UniformBuffer() {}
+
+        virtual void bind() const = 0;
+        virtual void unbind() const = 0;
+
+        virtual void set_data(uint32_t size, const void* data) = 0;
+
+        static Ref<UniformBuffer> create(uint32_t size, uint32_t binding);
+    };
 }

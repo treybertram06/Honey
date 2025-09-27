@@ -97,6 +97,11 @@ add_library(engine STATIC
         src/Honey/math/math.cpp
         src/Honey/renderer/editor_camera.h
         src/Honey/renderer/editor_camera.cpp
+        src/Honey/renderer/shader_compiler.h
+        src/Honey/renderer/shader_cache.h
+        src/Honey/core/timer.h
+        src/Honey/renderer/shader_cache.cpp
+        src/Honey/renderer/shader_compiler.cpp
 
 )
 
@@ -219,18 +224,24 @@ target_compile_definitions(engine PUBLIC
 add_subdirectory(vendor/GLAD)
 add_subdirectory(vendor/imgui-wrapper)
 
-
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(SPIRV_CROSS REQUIRED spirv-cross-c-shared)
+pkg_check_modules(SHADERC REQUIRED shaderc)
 #add_subdirectory(vendor/glm)
 
-target_link_libraries(engine PRIVATE
+ target_link_libraries(engine PRIVATE
         spdlog_header_only
         glfw
         glad
         glm
+        ${SPIRV_CROSS_LIBRARIES}
+        ${SHADERC_LIBRARIES}
         PUBLIC
         imgui
         yaml-cpp::yaml-cpp
-)
+ )
+ 
+ target_include_directories(engine PRIVATE ${SPIRV_CROSS_INCLUDE_DIRS} ${SHADERC_INCLUDE_DIRS})
 
 if (APPLE)
  #   find and link OpenGL.framework
