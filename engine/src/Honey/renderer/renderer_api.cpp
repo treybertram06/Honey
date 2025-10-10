@@ -3,6 +3,6 @@
 
 namespace Honey {
 
-    RendererAPI::API RendererAPI::s_api = RendererAPI::API::opengl;
+    RendererAPI::API RendererAPI::s_api = RendererAPI::API::vulkan;
 
 }

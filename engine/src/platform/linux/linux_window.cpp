@@ -12,6 +12,7 @@
 #include "Honey/events/mouse_event.h"
 
 #include "platform/opengl/opengl_context.h"
+#include "platform/vulkan/vk_context.h"
 
 namespace Honey {
 
@@ -47,27 +48,49 @@ namespace Honey {
         HN_CORE_INFO("Creating window {0} ({1}, {2})", props.title, props.width, props.height);
 
         if (!s_glfw_initialized) {
-            //TODO: glfwTerminate on shutdown
             int success = glfwInit();
             HN_CORE_ASSERT(success, "Could not initialize GLFW!");
             glfwSetErrorCallback(GLFW_error_callback);
-
             s_glfw_initialized = true;
         }
 
-        glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 5);
-        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-        glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+        switch (Renderer::get_api()) {
+            case RendererAPI::API::none:
+                HN_CORE_ASSERT(false, "RendererAPI::none is not supported!");
+                break;
+            case RendererAPI::API::opengl:
+                glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
+                glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+                glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 5);
+                glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+                glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+                break;
+            case RendererAPI::API::vulkan:
+                glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+                break;
+            default:
+                HN_CORE_ASSERT(false, "Unknown RendererAPI!");
+        }
 
         m_window = glfwCreateWindow((int)props.width, (int)props.height, m_data.title.c_str(), nullptr, nullptr);
         HN_CORE_ASSERT(m_window, "GLFW window creation failed!");
 
-        glfwMakeContextCurrent(m_window);
-        m_context = new OpenGLContext(m_window);
+        // Only make context current for OpenGL
+        if (Renderer::get_api() == RendererAPI::API::opengl) {
+            glfwMakeContextCurrent(m_window);
+        }
+
+        switch (Renderer::get_api()) {
+            case RendererAPI::API::opengl:
+                m_context = new OpenGLContext(m_window);
+                break;
+            case RendererAPI::API::vulkan:
+                m_context = new VulkanContext(m_window);
+                break;
+            default:
+                HN_CORE_ASSERT(false, "Unknown RendererAPI!");
+        }
         m_context->init();
-        // ^
 
 
         glfwSetWindowUserPointer(m_window, &m_data);

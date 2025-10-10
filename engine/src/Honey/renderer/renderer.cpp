@@ -18,14 +18,14 @@ namespace Honey {
 
         RenderCommand::init();
         Renderer2D::init(std::move(m_shader_cache));
-        Renderer3D::init();
+        //Renderer3D::init();
     }
 
     void Renderer::shutdown() {
         HN_PROFILE_FUNCTION();
 
         Renderer2D::shutdown();
-        Renderer3D::shutdown();
+        //Renderer3D::shutdown();
     }
 
     void Renderer::on_window_resize(uint32_t width, uint32_t height) {

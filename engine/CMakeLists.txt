@@ -102,6 +102,24 @@ add_library(engine STATIC
         src/Honey/core/timer.h
         src/Honey/renderer/shader_cache.cpp
         src/Honey/renderer/shader_compiler.cpp
+        src/platform/vulkan/vk_context.h
+        src/platform/vulkan/vk_context.cpp
+        src/platform/vulkan/vk_buffer.h
+        src/platform/vulkan/vk_buffer.cpp
+        src/platform/vulkan/vk_renderer_api.h
+        src/platform/vulkan/vk_renderer_api.cpp
+        src/platform/vulkan/vk_swapchain.h
+        src/platform/vulkan/vk_swapchain.cpp
+        src/platform/vulkan/vk_shader.h
+        src/platform/vulkan/vk_shader.cpp
+        src/platform/vulkan/vk_texture.h
+        src/platform/vulkan/vk_texture.cpp
+        src/platform/vulkan/vk_framebuffer.h
+        src/platform/vulkan/vk_framebuffer.cpp
+        src/platform/vulkan/vk_pipeline.h
+        src/platform/vulkan/vk_pipeline.cpp
+        src/platform/vulkan/vk_vertex_array.cpp
+        src/platform/vulkan/vk_render_pass.cpp
 
 )
 
@@ -229,6 +247,8 @@ pkg_check_modules(SPIRV_CROSS REQUIRED spirv-cross-c-shared)
 pkg_check_modules(SHADERC REQUIRED shaderc)
 #add_subdirectory(vendor/glm)
 
+find_package(Vulkan REQUIRED)
+
  target_link_libraries(engine PRIVATE
         spdlog_header_only
         glfw
@@ -239,6 +259,7 @@ pkg_check_modules(SHADERC REQUIRED shaderc)
         PUBLIC
         imgui
         yaml-cpp::yaml-cpp
+        Vulkan::Vulkan
  )
  
  target_include_directories(engine PRIVATE ${SPIRV_CROSS_INCLUDE_DIRS} ${SHADERC_INCLUDE_DIRS})
