@@ -57,16 +57,14 @@ namespace Honey {
          Application& app = Application::get();
          GLFWwindow* window = static_cast<GLFWwindow*>(app.get_window().get_native_window());
 
-         ImGui_ImplGlfw_InitForOpenGL(window, true);
-         ImGui_ImplOpenGL3_Init("#version 410");
+         m_renderer = ImGuiRenderer::create(window);
 
      }
 
     void ImGuiLayer::on_detach() {
      	HN_PROFILE_FUNCTION();
 
-         ImGui_ImplOpenGL3_Shutdown();
-         ImGui_ImplGlfw_Shutdown();
+         m_renderer->shutdown();
          ImGui::DestroyContext();
      }
 
@@ -94,14 +92,12 @@ namespace Honey {
     void ImGuiLayer::begin() {
      	HN_PROFILE_FUNCTION();
 
-         ImGuiIO& io = ImGui::GetIO();
-         Application& app = Application::get();
-         io.DisplaySize = ImVec2(app.get_window().get_width(), app.get_window().get_height());
+        ImGuiIO& io = ImGui::GetIO();
+        Application& app = Application::get();
+        io.DisplaySize = ImVec2(app.get_window().get_width(), app.get_window().get_height());
 
-         ImGui_ImplOpenGL3_NewFrame();
-         ImGui_ImplGlfw_NewFrame();
-         ImGui::NewFrame();
-         ImGuizmo::BeginFrame();
+        m_renderer->new_frame();
+        ImGuizmo::BeginFrame();
     }
 
     void ImGuiLayer::end() {
@@ -111,7 +107,7 @@ namespace Honey {
 
 
          ImGui::Render();
-         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+         m_renderer->render_draw_data(ImGui::GetDrawData());
 
          if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
              GLFWwindow* backup_current_context = glfwGetCurrentContext();

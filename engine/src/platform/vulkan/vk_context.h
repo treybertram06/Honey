@@ -24,10 +24,13 @@ namespace Honey {
             HN_CORE_ASSERT(s_instance, "VulkanContext instance is null!");
             return s_instance->m_device;
         }
+        static VkInstance get_instance() { HN_CORE_ASSERT(s_instance, "VulkanContext instance is null!"); return s_instance->m_instance; }
         static VkPhysicalDevice get_physical_device() { return s_instance->m_physical_device; }
         static VkCommandPool get_command_pool() { return s_instance->m_command_pool; }
         static VkQueue get_graphics_queue() { return s_instance->m_graphics_queue; }
         static VulkanSwapchain* get_swapchain() { return s_instance->m_swapchain.get(); }
+        static VkRenderPass get_render_pass() { return s_instance->m_swapchain_render_pass; }
+        static VkCommandBuffer get_current_cmd_buffer() { return s_instance->m_command_buffers[s_instance->m_current_frame]; }
 
         // Frame management
         void begin_frame();

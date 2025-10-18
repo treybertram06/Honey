@@ -120,6 +120,12 @@ add_library(engine STATIC
         src/platform/vulkan/vk_pipeline.cpp
         src/platform/vulkan/vk_vertex_array.cpp
         src/platform/vulkan/vk_render_pass.cpp
+        src/Honey/imgui/imgui_renderer.h
+        src/platform/opengl/opengl_imgui_renderer.h
+        src/platform/vulkan/vk_imgui_renderer.h
+        src/Honey/imgui/imgui_renderer.cpp
+        src/platform/opengl/opengl_imgui_renderer.cpp
+        src/platform/vulkan/vk_imgui_renderer.cpp
 
 )
 

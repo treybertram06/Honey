@@ -1,4 +1,5 @@
 #pragma once
+#include "imgui_renderer.h"
 #include "Honey/events/application_event.h"
 #include "Honey/events/key_event.h"
 #include "Honey/events/mouse_event.h"
@@ -17,7 +18,6 @@ namespace Honey {
     };
 
     class ImGuiLayer : public Layer {
-
     public:
         ImGuiLayer();
         ~ImGuiLayer();
@@ -38,6 +38,7 @@ namespace Honey {
 
 
     private:
+        Scope<ImGuiRenderer> m_renderer;
         bool m_block_events = true;
         float m_time = 0.0f;
         UITheme m_current_theme = UITheme::Monochrome;
