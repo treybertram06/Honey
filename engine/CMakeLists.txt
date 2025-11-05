@@ -225,7 +225,64 @@ add_subdirectory(vendor/GLAD)
 add_subdirectory(vendor/imgui-wrapper)
 
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(SPIRV_CROSS REQUIRED spirv-cross-c-shared)
+pkg_check_modules(SPIRV_CROSS REQUIRED spirv-cross-c)
+if(NOT SPIRV_CROSS_INCLUDE_DIRS)
+ execute_process(
+         COMMAND pkg-config --cflags-only-I spirv-cross-c
+         OUTPUT_VARIABLE SPIRV_CROSS_CFLAGS
+         OUTPUT_STRIP_TRAILING_WHITESPACE
+ )
+ string(REPLACE "-I" "" SPIRV_CROSS_INCLUDE_DIRS "${SPIRV_CROSS_CFLAGS}")
+endif()
+
+# On macOS, spirv-cross-c depends on other spirv-cross components; add them explicitly
+if(APPLE)
+ # Try to locate component libraries without requiring pkg-config modules (Homebrew may not ship them)
+ find_library(SPIRV_CROSS_MSL_LIB spirv-cross-msl)
+ find_library(SPIRV_CROSS_GLSL_LIB spirv-cross-glsl)
+ find_library(SPIRV_CROSS_HLSL_LIB spirv-cross-hlsl)
+ find_library(SPIRV_CROSS_CPP_LIB spirv-cross-cpp)
+ find_library(SPIRV_CROSS_REFLECT_LIB spirv-cross-reflect)
+ find_library(SPIRV_CROSS_UTIL_LIB spirv-cross-util)
+ find_library(SPIRV_CROSS_CORE_LIB spirv-cross-core)
+
+ # Build list in correct order if found
+ set(_HN_SPVC_LIBS "")
+ if(SPIRV_CROSS_MSL_LIB)
+  list(APPEND _HN_SPVC_LIBS ${SPIRV_CROSS_MSL_LIB})
+ endif()
+ if(SPIRV_CROSS_GLSL_LIB)
+  list(APPEND _HN_SPVC_LIBS ${SPIRV_CROSS_GLSL_LIB})
+ endif()
+ if(SPIRV_CROSS_HLSL_LIB)
+  list(APPEND _HN_SPVC_LIBS ${SPIRV_CROSS_HLSL_LIB})
+ endif()
+ if(SPIRV_CROSS_CPP_LIB)
+  list(APPEND _HN_SPVC_LIBS ${SPIRV_CROSS_CPP_LIB})
+ endif()
+ if(SPIRV_CROSS_REFLECT_LIB)
+  list(APPEND _HN_SPVC_LIBS ${SPIRV_CROSS_REFLECT_LIB})
+ endif()
+ if(SPIRV_CROSS_UTIL_LIB)
+  list(APPEND _HN_SPVC_LIBS ${SPIRV_CROSS_UTIL_LIB})
+ endif()
+ if(SPIRV_CROSS_CORE_LIB)
+  list(APPEND _HN_SPVC_LIBS ${SPIRV_CROSS_CORE_LIB})
+ endif()
+
+ if(_HN_SPVC_LIBS)
+  # Prepend found component libraries before the C wrapper
+  set(SPIRV_CROSS_LIBRARIES ${_HN_SPVC_LIBS} ${SPIRV_CROSS_LIBRARIES})
+  # Propagate to consumers so final executable links them too
+  target_link_libraries(engine PUBLIC ${SPIRV_CROSS_LIBRARIES})
+ else()
+  message(WARNING "SPIRV-Cross component libraries (msl/glsl/hlsl/cpp/reflect/util/core) not found on macOS; linking may fail if spirv-cross-c needs them.")
+ endif()
+endif()
+
+target_include_directories(engine PRIVATE ${SPIRV_CROSS_INCLUDE_DIRS})
+target_link_libraries(engine PRIVATE ${SPIRV_CROSS_LIBRARIES})
+
 pkg_check_modules(SHADERC REQUIRED shaderc)
 #add_subdirectory(vendor/glm)
 
@@ -257,6 +314,21 @@ if (APPLE)
   message(FATAL_ERROR "Could not find Cocoa.framework")
  endif()
  target_link_libraries(engine PRIVATE ${COCOA_FRAMEWORK})
+
+ # Ensure runtime can locate Homebrew-provided dylibs (e.g., libshaderc_shared) during development.
+ # Use PUBLIC so consumers (the executable) inherit these rpaths.
+ execute_process(COMMAND brew --prefix OUTPUT_VARIABLE HOMEBREW_PREFIX OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+ if(HOMEBREW_PREFIX)
+  set(_HN_RPATH_CANDIDATES "${HOMEBREW_PREFIX}/lib")
+ else()
+  # Fallbacks for common Homebrew prefixes on macOS (Apple Silicon and Intel)
+  set(_HN_RPATH_CANDIDATES "/opt/homebrew/lib" "/usr/local/lib")
+ endif()
+ foreach(_rp ${_HN_RPATH_CANDIDATES})
+  if(EXISTS "${_rp}")
+   target_link_options(engine PUBLIC "-Wl,-rpath,${_rp}")
+  endif()
+ endforeach()
 
 elseif (WIN32)
  target_link_libraries(engine PRIVATE opengl32)     # native .lib

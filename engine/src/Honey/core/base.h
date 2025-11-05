@@ -98,3 +98,11 @@ namespace Honey {
         return std::make_shared<T>(std::forward<Args>(args)...);
     }
 }
+
+#if defined(_MSC_VER)
+    #define CURRENT_FUNCTION __FUNCSIG__
+#elif defined(__GNUC__) || defined(__clang__)
+    #define CURRENT_FUNCTION __PRETTY_FUNCTION__
+#else
+    #define CURRENT_FUNCTION __func__
+#endif

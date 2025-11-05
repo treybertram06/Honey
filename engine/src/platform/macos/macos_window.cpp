@@ -116,12 +116,12 @@ namespace Honey {
 
             switch (action) {
                 case GLFW_PRESS: {
-                    MouseButtonPressedEvent event(button);
+                    MouseButtonPressedEvent event((MouseButton)button);
                     data.event_callback(event);
                     break;
                 }
                 case GLFW_RELEASE: {
-                    MouseButtonReleasedEvent event(button);
+                    MouseButtonReleasedEvent event((MouseButton)button);
                     data.event_callback(event);
                     break;
                 }
