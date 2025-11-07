@@ -57,6 +57,14 @@ target_link_libraries(engine PUBLIC
         glm
         yaml-cpp::yaml-cpp
         imguizmo
+
+        spirv-cross-c
+        spirv-cross-core
+        spirv-cross-glsl
+        spirv-cross-hlsl
+        spirv-cross-msl
+        spirv-cross-reflect
+        spirv-cross-cpp
 )
 
 set(GLM_TEST_ENABLE OFF CACHE BOOL "" FORCE)

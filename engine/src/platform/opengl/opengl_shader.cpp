@@ -58,7 +58,7 @@ namespace Honey {
         HN_PROFILE_FUNCTION();
 
         // Check for SPIR-V support
-        bool spirv_supported = (glSpecializeShader != nullptr);
+        bool spirv_supported = (glSpecializeShader != nullptr); 
 
         if (!spirv_supported) {
             HN_CORE_INFO("GL_ARB_gl_spirv not available. Using SPIRV-Cross path for shader: {0}", name);
