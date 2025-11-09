@@ -354,7 +354,11 @@ namespace Honey {
         glm::vec2 scale;
         float rotation;
         decompose_transform(transform, position, scale, rotation);
-        submit_quad(position, scale, rotation, nullptr, nullptr, src.color, 1.0f, entity_id);
+
+        if (src.texture)
+            submit_quad(position, scale, rotation, src.texture, nullptr, src.color, src.tiling_factor, entity_id);
+        else
+            submit_quad(position, scale, rotation, nullptr, nullptr, src.color, 1.0f, entity_id);
     }
 
 

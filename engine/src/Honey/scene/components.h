@@ -3,6 +3,7 @@
 #include "Honey/renderer/camera.h"
 
 #define GLM_ENABLE_EXPERIMENTAL
+#include "Honey/renderer/texture.h"
 #include "glm/gtx/quaternion.hpp"
 
 namespace Honey {
@@ -39,6 +40,8 @@ namespace Honey {
 
     struct SpriteRendererComponent {
         glm::vec4 color = {1.0f, 1.0f, 1.0f, 1.0f};
+        Ref<Texture2D> texture;
+        float tiling_factor = 1.0f;
 
         SpriteRendererComponent() = default;
         SpriteRendererComponent(const SpriteRendererComponent&) = default;
