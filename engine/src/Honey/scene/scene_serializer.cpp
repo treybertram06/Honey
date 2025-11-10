@@ -130,6 +130,15 @@ namespace Honey {
 
             auto& sprite = entity.get_component<SpriteRendererComponent>();
             out << YAML::Key << "Color" << YAML::Value << sprite.color;
+            out << YAML::Key << "TilingFactor" << YAML::Value << sprite.tiling_factor;
+
+            if (sprite.texture) {
+                out << YAML::Key << "Texture" << YAML::Value
+                    << (sprite.texture_path.empty() ? "" : sprite.texture_path.string());
+            } else {
+                out << YAML::Key << "Texture" << YAML::Value << "";
+            }
+
 
             out << YAML::EndMap; // SpriteRendererComponent
         }
@@ -182,7 +191,7 @@ namespace Honey {
                     auto* persp_camera = dynamic_cast<PerspectiveCamera*>(camera);
                     if (persp_camera) {
                         out << YAML::Key << "FOV" << YAML::Value << persp_camera->get_fov();
-                        out << YAML::Key << "Rotation" << persp_camera->get_rotation();
+                        out << YAML::Key << "Rotation" << YAML::Value << persp_camera->get_rotation();
                     }
                 }
 
@@ -194,13 +203,16 @@ namespace Honey {
 
         if (entity.has_component<NativeScriptComponent>()) {
             out << YAML::Key << "NativeScriptComponent";
-            out << YAML::BeginMap; // NativeScriptComponent
+            out << YAML::BeginMap;
 
             auto& nsc = entity.get_component<NativeScriptComponent>();
             out << YAML::Key << "ScriptName" << YAML::Value << nsc.script_name;
 
-            out << YAML::EndMap; // NativeScriptComponent
+            // (Optional) If you support script properties (see Section 3 below),
+            // you can emit them here:
+            // out << YAML::Key << "Properties" << YAML::Value << nsc.serialize_properties();
 
+            out << YAML::EndMap;
         }
 
 
@@ -276,6 +288,13 @@ namespace Honey {
             if (sprite_node) {
                 auto& sprite = deserialized_entity.add_component<SpriteRendererComponent>();
                 sprite.color = sprite_node["Color"].as<glm::vec4>();
+                sprite.tiling_factor = sprite_node["TilingFactor"].as<float>();
+
+                std::string texture_path_str = sprite_node["Texture"].as<std::string>("");
+                if (!texture_path_str.empty()) {
+                    sprite.texture_path = std::filesystem::path(texture_path_str); // <-- keep it!
+                    sprite.texture = Texture2D::create(texture_path_str);
+                }
             }
 
             auto camera_node = entity_node["CameraComponent"];
@@ -369,14 +388,19 @@ namespace Honey {
                 }
             }
 
-            auto native_script = data["NativeScriptComponent"];
+            auto native_script = entity_node["NativeScriptComponent"];
             if (native_script) {
                 auto& nsc = deserialized_entity.add_component<NativeScriptComponent>();
 
                 std::string script_name = native_script["ScriptName"].as<std::string>("");
                 if (!script_name.empty()) {
-                    nsc.bind_by_name(script_name);
+                    nsc.bind_by_name(script_name); // sets instantiate/destroy closures
                 }
+
+                // (Optional) If you support properties:
+                // if (auto props = native_script["Properties"]) {
+                //     nsc.deserialize_properties(props);
+                // }
             }
         }
 

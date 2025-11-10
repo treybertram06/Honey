@@ -37,5 +37,8 @@
 #include "Honey/core/log.h"
 #include <spdlog/fmt/ostr.h>
 
+// Scripting
+#include "Honey/scene/script_registry.h"
+
 // Entry Point
 //#include "Honey/entry_point.h"

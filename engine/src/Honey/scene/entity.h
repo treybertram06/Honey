@@ -86,6 +86,7 @@ namespace Honey {
 
         entt::entity get_handle() const { return m_entity_handle; }
         entt::registry* get_registry() const { return &m_scene->m_registry; }
+        Scene* get_scene() const { return m_scene; }
 
     private:
         entt::entity m_entity_handle{ entt::null };

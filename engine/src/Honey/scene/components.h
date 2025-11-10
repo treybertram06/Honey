@@ -6,6 +6,7 @@
 #include "Honey/renderer/texture.h"
 #include "glm/gtx/quaternion.hpp"
 #include <functional>
+#include <filesystem>
 
 namespace Honey {
 
@@ -43,10 +44,14 @@ namespace Honey {
     struct SpriteRendererComponent {
         glm::vec4 color = {1.0f, 1.0f, 1.0f, 1.0f};
         Ref<Texture2D> texture;
+        std::filesystem::path texture_path;
         float tiling_factor = 1.0f;
 
         SpriteRendererComponent() = default;
         SpriteRendererComponent(const SpriteRendererComponent&) = default;
+        SpriteRendererComponent(SpriteRendererComponent&&) noexcept = default;
+        SpriteRendererComponent& operator=(const SpriteRendererComponent&) = default;
+        SpriteRendererComponent& operator=(SpriteRendererComponent&&) noexcept = default;
         SpriteRendererComponent(const glm::vec4& color)
             : color(color) {}
 
