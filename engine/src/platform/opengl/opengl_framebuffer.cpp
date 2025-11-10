@@ -14,7 +14,13 @@ namespace Honey {
         }
 
         static void create_textures(bool multisample, uint32_t* out_id, uint32_t count) {
+
+#if defined(HN_PLATFORM_WINDOWS) || defined(HN_PLATFORM_LINUX)
             glCreateTextures(texture_target(multisample), count, out_id);
+#endif
+#ifdef HN_PLATFORM_MACOS
+            glGenTextures(count, out_id);
+#endif
         }
 
         static void bind_texture(bool multisample, uint32_t id) {
@@ -41,20 +47,88 @@ namespace Honey {
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + index, texture_target(multisample), id, 0);
         }
 
-        static void attach_depth_texture(uint32_t id, uint32_t samples, GLenum format, GLenum attachment, uint32_t width, uint32_t height) {
-            bool multisample = samples > 1;
+       static void attach_depth_texture(uint32_t id, uint32_t samples, GLenum format, GLenum attachment, uint32_t width, uint32_t height) {
+            const bool multisample = samples > 1;
+            const GLenum tgt = texture_target(multisample);
+
+#if defined(HN_PLATFORM_WINDOWS) || defined(HN_PLATFORM_LINUX)
+            // DSA path
             if (multisample) {
+                // allocate immutable multisample storage
+                glTextureStorage2DMultisample(id, samples, format, width, height, GL_FALSE);
+            } else {
+                // allocate immutable storage + params
+                glTextureStorage2D(id, 1, format, width, height);
+                glTextureParameteri(id, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                glTextureParameteri(id, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                glTextureParameteri(id, GL_TEXTURE_WRAP_R,  GL_CLAMP_TO_EDGE);
+                glTextureParameteri(id, GL_TEXTURE_WRAP_S,  GL_CLAMP_TO_EDGE);
+                glTextureParameteri(id, GL_TEXTURE_WRAP_T,  GL_CLAMP_TO_EDGE);
+            }
+
+            // Attach to currently bound framebuffer
+            glFramebufferTexture2D(GL_FRAMEBUFFER, attachment, tgt, id, 0);
+#endif
+
+#ifdef HN_PLATFORM_MACOS
+            glBindTexture(tgt, id);
+
+            if (multisample) {
+                // multisample is fine on macOS
                 glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, samples, format, width, height, GL_FALSE);
             } else {
-                glTexStorage2D(GL_TEXTURE_2D, 1, format, width, height);
+                // --- Replace glTexStorage2D with glTexImage2D on macOS ---
+                GLenum baseFormat = GL_DEPTH_COMPONENT;
+                GLenum type       = GL_UNSIGNED_INT;
+
+                // Pick correct base format + type for the given internal format
+                switch (format) {
+                    //case GL_DEPTH32F:
+                    //    baseFormat = GL_DEPTH_COMPONENT;
+                    //    type       = GL_FLOAT;
+                    //    break;
+                    case GL_DEPTH_COMPONENT32:
+                    case GL_DEPTH_COMPONENT24:
+                    case GL_DEPTH_COMPONENT16:
+                        baseFormat = GL_DEPTH_COMPONENT;
+                        // GL_UNSIGNED_INT is fine for 24/32; for 16 you can also use GL_UNSIGNED_SHORT.
+                        type       = GL_UNSIGNED_INT;
+                        break;
+                    case GL_DEPTH24_STENCIL8:
+                        baseFormat = GL_DEPTH_STENCIL;
+                        type       = GL_UNSIGNED_INT_24_8;
+                        break;
+#ifdef GL_DEPTH32F_STENCIL8
+                    case GL_DEPTH32F_STENCIL8:
+                        baseFormat = GL_DEPTH_STENCIL;
+                        type       = GL_FLOAT_32_UNSIGNED_INT_24_8_REV;
+                        break;
+#endif
+                    default:
+                        // sensible fallback
+                        baseFormat = GL_DEPTH_COMPONENT;
+                        type       = GL_UNSIGNED_INT;
+                        break;
+                }
+
+                glTexImage2D(GL_TEXTURE_2D, 0, format, width, height,
+                             0, baseFormat, type, nullptr);
 
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_R,  GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,  GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,  GL_CLAMP_TO_EDGE);
+
+                // avoid sampling undefined mip levels
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL,  0);
             }
-            glFramebufferTexture2D(GL_FRAMEBUFFER, attachment, texture_target(multisample), id, 0);
+
+            glBindTexture(tgt, 0);
+
+            glFramebufferTexture2D(GL_FRAMEBUFFER, attachment, tgt, id, 0);
+#endif
         }
 
         static bool is_depth_format(FramebufferTextureFormat format) {
@@ -194,13 +268,73 @@ namespace Honey {
         return pixel_data;
     }
 
+    void OpenGLFramebuffer::clear_attachment_i32(uint32_t idx, int32_t v)   { clear_attachment(idx, &v); }
+    void OpenGLFramebuffer::clear_attachment_u32(uint32_t idx, uint32_t v)  { clear_attachment(idx, &v); }
+    void OpenGLFramebuffer::clear_attachment_f32(uint32_t idx, float v)     { clear_attachment(idx, &v); }
+
     void OpenGLFramebuffer::clear_attachment(uint32_t attachment_index, const void* value) {
         HN_CORE_ASSERT(attachment_index < m_color_attachments.size(), "Incorrect attachment index.");
 
         auto format_type = m_color_attachment_specs[attachment_index].texture_format;
         auto [format, type] = Utils::honey_tex_format_to_gl(format_type);
 
-        glClearTexImage(m_color_attachments[attachment_index], 0, format, type, &value);
+        const GLuint tex = m_color_attachments[attachment_index];
+
+        // Pick the texture target used for these attachments
+        const bool multisample = (m_specification.samples > 1); // adjust to your actual source of 'samples'
+        const GLenum tgt = multisample ? GL_TEXTURE_2D_MULTISAMPLE : GL_TEXTURE_2D;
+
+#if defined(HN_PLATFORM_WINDOWS) || defined(HN_PLATFORM_LINUX)
+        glClearTexImage(tex, 0, format, type, &value);
+#endif
+#ifdef HN_PLATFORM_MACOS
+        // value must not be null
+        HN_CORE_ASSERT(value != nullptr, "clear_attachment: value must not be null");
+
+        GLint prevFBO = 0;
+        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevFBO);
+
+        GLuint tmpFBO = 0;
+        glGenFramebuffers(1, &tmpFBO);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, tmpFBO);
+
+        // Attach the texture we want to clear at COLOR_ATTACHMENT0
+        glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, tgt, tex, 0);
+
+        // Make sure the draw buffer points at COLOR_ATTACHMENT0
+        GLenum db = GL_COLOR_ATTACHMENT0;
+        glDrawBuffers(1, &db);
+
+        GLenum status = glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER);
+        HN_CORE_ASSERT(status == GL_FRAMEBUFFER_COMPLETE, "Temp FBO incomplete while clearing attachment");
+
+        // Build a safe 4-component temp based on the declared 'type'
+        switch (type) {
+            case GL_INT: {
+                // Accept 1–4 ints; replicate if fewer
+                const GLint* in = static_cast<const GLint*>(value);
+                GLint tmp[4] = { in[0], in[0], in[0], in[0] };
+                glClearBufferiv(GL_COLOR, 0, tmp);
+                break;
+            }
+            case GL_UNSIGNED_INT: {
+                const GLuint* in = static_cast<const GLuint*>(value);
+                GLuint tmp[4] = { in[0], in[0], in[0], in[0] };
+                glClearBufferuiv(GL_COLOR, 0, tmp);
+                break;
+            }
+            default: { // float formats
+                const GLfloat* in = static_cast<const GLfloat*>(value);
+                GLfloat tmp[4] = { in[0], in[0], in[0], in[0] };
+                glClearBufferfv(GL_COLOR, 0, tmp);
+                break;
+            }
+        }
+
+        // Restore & cleanup
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, prevFBO);
+        glDeleteFramebuffers(1, &tmpFBO);
+#endif
     }
 
 }

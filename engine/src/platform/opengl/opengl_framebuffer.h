@@ -18,6 +18,9 @@ namespace Honey {
 	    virtual int read_pixel(uint32_t attachment_index, int x, int y) override;
 	    virtual void clear_attachment(uint32_t attachment_index, const void* value) override;
 
+		virtual void clear_attachment_i32(uint32_t idx, int32_t v) override;
+		virtual void clear_attachment_u32(uint32_t idx, uint32_t v) override;
+		virtual void clear_attachment_f32(uint32_t idx, float v) override;
 
 		virtual uint32_t get_color_attachment_renderer_id(uint32_t index = 0) const override { HN_CORE_ASSERT(index < m_color_attachments.size(), "Incorrect index."); return m_color_attachments[index]; }
 

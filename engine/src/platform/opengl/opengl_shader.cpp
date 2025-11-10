@@ -150,7 +150,11 @@ namespace Honey {
         spvc_compiler_create_compiler_options(compiler, &options);
 
         // Set GLSL version
+#if defined(HN_PLATFORM_MACOS)
+        spvc_compiler_options_set_uint(options, SPVC_COMPILER_OPTION_GLSL_VERSION, 410);
+#else
         spvc_compiler_options_set_uint(options, SPVC_COMPILER_OPTION_GLSL_VERSION, 450);
+#endif
         spvc_compiler_options_set_bool(options, SPVC_COMPILER_OPTION_GLSL_ES, SPVC_FALSE);
 
         // Improve interface handling
@@ -248,7 +252,7 @@ namespace Honey {
 
         // 1) Query how many texture image units the driver supports
         GLint max_texture_slots = 0;
-        glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &max_texture_slots);
+        glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, &max_texture_slots);
 
         // 2) Build a GLSL‐side define string
         std::string defines = "#define MAX_TEXTURE_SLOTS " + std::to_string(max_texture_slots) + "\n";

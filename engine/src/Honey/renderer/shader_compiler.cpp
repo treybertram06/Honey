@@ -6,8 +6,15 @@
 #include <sstream>
 #include <regex>
 #include <shaderc/shaderc.hpp>
+#include <glad/glad.h>
 
 namespace Honey {
+
+    inline int query_slots_clamped(int required = 16) {
+        GLint max_units = 0;
+        glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, &max_units);
+        return std::min(required, static_cast<int>(max_units));
+    }
 
 ShaderCompiler::CompilationResult ShaderCompiler::compile_glsl_to_spirv(const std::filesystem::path& shader_path) {
     CompilationResult result;
@@ -101,6 +108,10 @@ std::vector<uint32_t> ShaderCompiler::compile_single_stage(const std::string& so
 
     // Keep explicit bindings under our control
     options.SetAutoBindUniforms(false);
+
+        const int k_required = 16;
+        const int slots_to_use = query_slots_clamped(k_required);
+        options.AddMacroDefinition("MAX_TEXTURE_SLOTS", std::to_string(slots_to_use));
 
     // Provide a basic includer which resolves from assets/shaders for both <> and "" includes
     class FSIncluder : public shaderc::CompileOptions::IncluderInterface {
@@ -207,19 +218,19 @@ std::string ShaderCompiler::spirv_to_glsl(const std::vector<uint32_t>& spirv_cod
 }
 
 bool ShaderCompiler::validate_spirv(const std::vector<uint32_t>& spirv_code) {
-    if (spirv_code.empty()) {
-        return false;
-    }
+        if (spirv_code.empty()) {
+            return false;
+        }
 
-    // Basic validation - check SPIR-V magic number
-    if (spirv_code[0] != 0x07230203) {
-        HN_CORE_ERROR("Invalid SPIR-V magic number");
-        return false;
-    }
+        // Basic validation - check SPIR-V magic number
+        if (spirv_code[0] != 0x07230203) {
+            HN_CORE_ERROR("Invalid SPIR-V magic number");
+            return false;
+        }
 
-    // Additional validation could be done with SPIRV-Tools
-    return true;
-}
+        // Additional validation could be done with SPIRV-Tools
+        return true;
+    }
 
 ShaderCompiler::ShaderSource ShaderCompiler::parse_shader_file(const std::filesystem::path& path) {
     ShaderSource result;

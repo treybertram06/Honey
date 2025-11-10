@@ -54,6 +54,11 @@ namespace Honey {
 	    virtual int read_pixel(uint32_t attachment_index, int x, int y) = 0;
 	    virtual void clear_attachment(uint32_t attachment_index, const void* value) = 0;
 
+		virtual void clear_attachment_i32(uint32_t idx, int32_t v) = 0;
+		virtual void clear_attachment_u32(uint32_t idx, uint32_t v) = 0;
+		virtual void clear_attachment_f32(uint32_t idx, float v) = 0;
+
+
 		virtual uint32_t get_color_attachment_renderer_id(uint32_t index = 0) const = 0;
 
 		//virtual FramebufferSpecification& get_specification() = 0;

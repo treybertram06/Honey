@@ -97,7 +97,12 @@ namespace Honey {
 
     OpenGLUniformBuffer::OpenGLUniformBuffer(uint32_t size, uint32_t binding)
         : m_size(size), m_binding(binding) {
+#if defined(HN_PLATFORM_WINDOWS) || defined(HN_PLATFORM_LINUX)
         glCreateBuffers(1, &m_renderer_id);
+#endif
+#ifdef HN_PLATFORM_MACOS
+        glGenBuffers(1, &m_renderer_id);
+#endif
         glBindBuffer(GL_UNIFORM_BUFFER, m_renderer_id);
         glBufferData(GL_UNIFORM_BUFFER, m_size, nullptr, GL_DYNAMIC_DRAW); // reserve space
         glBindBuffer(GL_UNIFORM_BUFFER, 0);
