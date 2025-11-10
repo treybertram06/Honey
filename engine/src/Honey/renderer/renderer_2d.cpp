@@ -16,7 +16,7 @@ namespace Honey {
         glm::vec2  half_size;      // size * 0.5f
         float      rotation;      // radians – 0 for axis‑aligned
         glm::vec4  color;
-        float      tex_index;      // which of the bound textures to sample
+        int        tex_index;      // which of the bound textures to sample
         float      tiling_factor;
         glm::vec2  tex_coord_min;
         glm::vec2  tex_coord_max;
@@ -71,24 +71,24 @@ namespace Honey {
     static Renderer2DData s_data;
 
 
-    static float resolve_texture_slot(const Ref<Texture2D>& tex)
+    static int resolve_texture_slot(const Ref<Texture2D>& tex)
     {
         if (!tex)
-            return 0.0f; // white
+            return 0; // white
 
         // Already bound this frame?
         for (uint32_t i = 1; i < s_data.texture_slot_index; ++i)
             if (s_data.texture_slots[i] && *s_data.texture_slots[i] == *tex)
-                return static_cast<float>(i);
+                return (int)i;
 
         // Need a new slot
         if (s_data.texture_slot_index >= s_data.max_texture_slots) {
             HN_CORE_WARN("Texture slot limit exceeded – using white texture");
-            return 0.0f;
+            return 0;
         }
         uint32_t idx = s_data.texture_slot_index++;
         s_data.texture_slots[idx] = tex;
-        return static_cast<float>(idx);
+        return (int)idx;
     }
 
 
@@ -119,7 +119,7 @@ namespace Honey {
                 { ShaderDataType::Float2, "i_half_size", false, true }, // loc 3
                 { ShaderDataType::Float , "i_rotation", false, true }, // loc 4
                 { ShaderDataType::Float4, "i_color", false, true }, // loc 5
-                { ShaderDataType::Float , "i_tex_index", false, true }, // loc 6
+                { ShaderDataType::Int , "i_tex_index", false, true }, // loc 6
                 { ShaderDataType::Float , "i_tiling", false, true }, // loc 7
                 { ShaderDataType::Float2 , "i_tex_coord_min", false, true }, // loc 8
                 { ShaderDataType::Float2 , "i_tex_coord_max", false, true }, // loc 9
