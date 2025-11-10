@@ -1,8 +1,9 @@
 #pragma once
 
 #include <entt/entt.hpp>
-#include "scene.h"
+
 #include "components.h"
+#include "scene.h"
 #include "Honey/core/log.h"
 
 namespace Honey {

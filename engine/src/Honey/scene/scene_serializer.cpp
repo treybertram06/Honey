@@ -197,7 +197,7 @@ namespace Honey {
             out << YAML::BeginMap; // NativeScriptComponent
 
             auto& nsc = entity.get_component<NativeScriptComponent>();
-            //out << YAML::Key << "Script" << YAML::Value << nsc.instance->get_class_name();
+            out << YAML::Key << "ScriptName" << YAML::Value << nsc.script_name;
 
             out << YAML::EndMap; // NativeScriptComponent
 
@@ -369,10 +369,14 @@ namespace Honey {
                 }
             }
 
-            auto script_node = entity_node["NativeScriptComponent"];
-            if (script_node) {
-                //auto& nsc = deserialized_entity.add_component<NativeScriptComponent>();
-                //nsc.instance = ScriptableEntity::create(script_node["Script"].as<std::string>());
+            auto native_script = data["NativeScriptComponent"];
+            if (native_script) {
+                auto& nsc = deserialized_entity.add_component<NativeScriptComponent>();
+
+                std::string script_name = native_script["ScriptName"].as<std::string>("");
+                if (!script_name.empty()) {
+                    nsc.bind_by_name(script_name);
+                }
             }
         }
 

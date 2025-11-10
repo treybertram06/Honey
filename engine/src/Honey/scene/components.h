@@ -5,10 +5,12 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include "Honey/renderer/texture.h"
 #include "glm/gtx/quaternion.hpp"
+#include <functional>
 
 namespace Honey {
 
     class ScriptableEntity;
+    class ScriptRegistry;
 
     struct TagComponent {
         std::string tag;
@@ -115,15 +117,19 @@ namespace Honey {
 
     struct NativeScriptComponent {
         ScriptableEntity* instance = nullptr;
+        std::string script_name = "";
 
-        ScriptableEntity*(*instantiate_script)() = nullptr;
-        void(*destroy_script)(NativeScriptComponent*) = nullptr;
+        std::function<ScriptableEntity*()> instantiate_script = nullptr;
+        std::function<void(NativeScriptComponent*)> destroy_script = nullptr;
 
         template<typename T>
         void bind() {
             instantiate_script = []() { return static_cast<ScriptableEntity*>(new T()); };
             destroy_script = destroy_script_impl;
         }
+
+        // Bind by name using registry
+        void bind_by_name(const std::string& name);
 
     private:
         static void destroy_script_impl(NativeScriptComponent* nsc);

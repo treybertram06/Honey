@@ -102,6 +102,7 @@ add_library(engine STATIC
         src/Honey/core/timer.h
         src/Honey/renderer/shader_cache.cpp
         src/Honey/renderer/shader_compiler.cpp
+        src/Honey/scene/script_registry.h
 
 )
 
