@@ -232,7 +232,7 @@ namespace Honey {
             if (!entity)
                 return;
 
-            serialize_entity(entity, out);
+            serialize_entity(entity, out); // Children?
         }
 
         out << YAML::EndSeq;

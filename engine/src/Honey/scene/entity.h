@@ -88,6 +88,20 @@ namespace Honey {
         entt::registry* get_registry() const { return &m_scene->m_registry; }
         Scene* get_scene() const { return m_scene; }
 
+        void set_parent(Entity parent);
+        void remove_parent();
+        Entity get_parent() const;
+        bool has_parent() const;
+
+        void add_child(Entity child);
+        void remove_child(Entity child);
+        std::vector<Entity> get_children() const;
+        bool has_children() const;
+
+        // Transform hierarchy
+        glm::mat4 get_world_transform() const;
+        void set_world_transform(const glm::mat4& world_transform);
+
     private:
         entt::entity m_entity_handle{ entt::null };
         Scene* m_scene = nullptr;

@@ -7,6 +7,7 @@
 #include "glm/gtx/quaternion.hpp"
 #include <functional>
 #include <filesystem>
+#include <entt/entt.hpp>
 
 namespace Honey {
 
@@ -139,6 +140,15 @@ namespace Honey {
     private:
         static void destroy_script_impl(NativeScriptComponent* nsc);
 
+    };
+
+
+    struct RelationshipComponent { // No gay allowed though
+        entt::entity parent = entt::null;
+        std::vector<entt::entity> children;
+
+        RelationshipComponent() = default;
+        RelationshipComponent(const RelationshipComponent&) = default;
     };
 
 }
