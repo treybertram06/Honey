@@ -1,18 +1,28 @@
 #pragma once
-#include "glm/glm.hpp"
 #include "Honey/renderer/camera.h"
-
-#define GLM_ENABLE_EXPERIMENTAL
+#include "Honey/core/uuid.h"
 #include "Honey/renderer/texture.h"
+
+#include "glm/glm.hpp"
+#define GLM_ENABLE_EXPERIMENTAL
 #include "glm/gtx/quaternion.hpp"
 #include <functional>
 #include <filesystem>
 #include <entt/entt.hpp>
 
+
 namespace Honey {
 
     class ScriptableEntity;
     class ScriptRegistry;
+
+    struct IDComponent {
+        UUID id;
+
+        IDComponent() = default;
+        IDComponent(const IDComponent&) = default;
+        IDComponent(UUID id) : id(id) {}
+    };
 
     struct TagComponent {
         std::string tag;

@@ -220,6 +220,14 @@ namespace Honey {
         return !rel.children.empty();
     }
 
+    UUID Entity::get_uuid() const {
+        if (has_component<IDComponent>())
+            return get_component<IDComponent>().id;
+
+        HN_CORE_ASSERT(false, "Entity does not have IDComponent!");
+        return {};
+    }
+
     // --- Transform hierarchy ------------------------------------------------------
 
     glm::mat4 Entity::get_world_transform() const {

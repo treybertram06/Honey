@@ -3,6 +3,7 @@
 #include <entt/entt.hpp>
 
 #include "Honey/core/timestep.h"
+#include "Honey/core/uuid.h"
 #include "Honey/renderer/editor_camera.h"
 
 namespace Honey {
@@ -15,6 +16,7 @@ namespace Honey {
         ~Scene();
 
         Entity create_entity(const std::string& name = "");
+        Entity create_entity(const std::string& name, UUID uuid);
         void destroy_entity(Entity entity);
 
         void on_update_runtime(Timestep ts);

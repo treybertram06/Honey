@@ -99,8 +99,10 @@ namespace Honey {
     SceneSerializer::SceneSerializer(const Ref<Scene> &scene) : m_scene(scene) {}
 
     static void serialize_entity(Entity entity, YAML::Emitter &out) {
+        HN_CORE_ASSERT(entity.has_component<IDComponent>(), "Entity is missing IDComponent!");
+
         out << YAML::BeginMap; // Entity
-        out << YAML::Key << "Entity" << YAML::Value << "1234567890"; //todo: create uuids
+        out << YAML::Key << "Entity" << YAML::Value << entity.get_uuid();
 
         if (entity.has_component<TagComponent>()) {
             out << YAML::Key << "TagComponent";
@@ -267,14 +269,15 @@ namespace Honey {
 
         auto entities_node = data["Entities"];
         for (auto entity_node : entities_node) {
-            uint64_t uuid = entity_node["Entity"].as<uint64_t>(); //todo
+
+            UUID uuid = entity_node["Entity"].as<uint64_t>();
 
             std::string name;
             auto tag_node = entity_node["TagComponent"];
             if (tag_node)
                 name = tag_node["Tag"].as<std::string>();
 
-            Entity deserialized_entity = m_scene->create_entity(name);
+            Entity deserialized_entity = m_scene->create_entity(name, uuid);
 
             auto transform_node = entity_node["TransformComponent"];
             if (transform_node) {

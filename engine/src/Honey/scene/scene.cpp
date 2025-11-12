@@ -19,13 +19,19 @@ namespace Honey {
     }
 
     Entity Scene::create_entity(const std::string &name) {
+        return create_entity(name, UUID());
+    }
+
+    Entity Scene::create_entity(const std::string &name, UUID uuid) {
         Entity entity = Entity(m_registry.create(), this);
 
+        entity.add_component<IDComponent>(uuid);
         entity.add_component<TransformComponent>();
         entity.add_component<TagComponent>(name.empty() ? "Entity" : name);
 
         return entity;
     }
+
 
     void Scene::destroy_entity(Entity entity) {
         if (entity.is_valid()) {

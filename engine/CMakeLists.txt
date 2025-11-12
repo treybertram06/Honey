@@ -103,6 +103,8 @@ add_library(engine STATIC
         src/Honey/renderer/shader_cache.cpp
         src/Honey/renderer/shader_compiler.cpp
         src/Honey/scene/script_registry.h
+        src/Honey/core/uuid.h
+        src/Honey/core/uuid.cpp
 
 )
 
