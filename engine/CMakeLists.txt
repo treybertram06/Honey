@@ -4,6 +4,8 @@ enable_language(OBJCXX)
 
 option(ENABLE_ASSERTS "Enable HN_ASSERT / HN_CORE_ASSERT checks" ON)
 
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 add_library(engine STATIC
         src/Honey/core/engine.cpp
         src/Honey/core/engine.h

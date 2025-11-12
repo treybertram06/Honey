@@ -24,6 +24,7 @@ namespace Honey {
                 return static_cast<ScriptableEntity*>(new T());
             };
             m_script_paths[script_name] = "";
+            HN_CORE_INFO("Registered script: {0}", script_name);
         }
 
         // Create an instance of a script by name
