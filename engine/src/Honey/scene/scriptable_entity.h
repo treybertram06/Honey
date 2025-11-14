@@ -33,6 +33,8 @@ namespace Honey {
         virtual void on_destroy() {}
         virtual void on_update(Timestep ts) {}
 
+        Scene* get_scene() { return m_entity.get_scene(); }
+
     private:
         Entity m_entity;
         friend class Scene;

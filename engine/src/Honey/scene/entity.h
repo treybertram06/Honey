@@ -20,7 +20,10 @@ namespace Honey {
 
         template<typename T, typename... Args>
         T& add_component(Args&&... args) {
-            HN_CORE_ASSERT(!has_component<T>(), "Entity already has component!");
+            if (has_component<T>()) {
+                HN_CORE_WARN("Entity {} already has component: {}", this->get_component<TagComponent>().tag, typeid(T).name());
+                return get_component<T>();
+            }
             return m_scene->m_registry.emplace<T>(m_entity_handle, std::forward<Args>(args)...);
         }
 
