@@ -66,31 +66,6 @@ namespace Honey {
             m_script_paths.clear();
         }
 
-        /*
-    public:
-        // C interface registration for script DLLs
-        static void register_script(const char* name, ScriptInstance instance) {
-            auto& registry = get();
-
-            // Defensive: ensure valid function pointers
-            if (!instance.on_create && !instance.on_update && !instance.on_destroy) {
-                HN_CORE_WARN("Skipping registration of script '{}' because it has no valid callbacks.", name);
-                return;
-            }
-
-            registry.m_script_creators[name] = [instance]() -> ScriptableEntity* {
-                struct CScriptWrapper : ScriptableEntity {
-                    ScriptInstance inst;
-                    CScriptWrapper(ScriptInstance i) : inst(i) {}
-                    void on_create() override { if (inst.on_create) inst.on_create(inst.user_data); }
-                    void on_update(Timestep ts) override { if (inst.on_update) inst.on_update(inst.user_data, ts.get_seconds()); }
-                    void on_destroy() override { if (inst.on_destroy) inst.on_destroy(inst.user_data); }
-                };
-                return new CScriptWrapper(instance);
-            };
-
-            HN_CORE_INFO("Registered C-interface script: {0}", name);
-        }*/
 
     private:
         ScriptRegistry() = default;
@@ -98,12 +73,4 @@ namespace Honey {
         std::unordered_map<std::string, std::filesystem::path> m_script_paths;
     };
 
-    // Helper macro to auto-register scripts
-    #define REGISTER_SCRIPT(ScriptClass) \
-        struct ScriptClass##Registrar { \
-            ScriptClass##Registrar() { \
-                Honey::ScriptRegistry::get().register_script<ScriptClass>(#ScriptClass); \
-            } \
-        }; \
-        static ScriptClass##Registrar g_##ScriptClass##Registrar;
 }
