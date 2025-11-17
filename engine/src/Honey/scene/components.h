@@ -152,6 +152,10 @@ namespace Honey {
 
     };
 
+    struct ScriptComponent {
+        std::string class_name;
+    };
+
 
     struct RelationshipComponent { // No gay allowed though
         entt::entity parent = entt::null;

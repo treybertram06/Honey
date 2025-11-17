@@ -107,8 +107,34 @@ add_library(engine STATIC
         src/Honey/scene/script_registry.h
         src/Honey/core/uuid.h
         src/Honey/core/uuid.cpp
+        src/Honey/scripting/mono_script_engine.h
+        src/Honey/scripting/mono_script_engine.cpp
+        src/Honey/scripting/mono_script_glue.cpp
+        src/Honey/scripting/mono_script_glue.h
+        src/Honey/scripting/mono_script_utils.h
 
 )
+
+if (UNIX AND NOT APPLE)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(MONO mono-2)
+    if (MONO_FOUND)
+        message(STATUS "Found Mono via pkg-config")
+        # Explicitly add both root and nested include directories for Arch Linux
+        # Force absolute include paths for Mono to ensure clang-scan-deps can resolve them
+        target_include_directories(engine PUBLIC
+                /usr/include/mono-2.0
+                /usr/include/mono-2.0/mono
+        )
+        message(STATUS "Using explicit Mono include paths: /usr/include/mono-2.0 and /usr/include/mono-2.0/mono")
+        link_directories(${MONO_LIBRARY_DIRS})
+        target_link_libraries(engine PUBLIC ${MONO_LIBRARIES})
+    else()
+        message(WARNING "Mono not found via pkg-config; falling back to manual include/link paths")
+        include_directories(/usr/include/mono-2.0 /usr/include/mono-2.0/mono)
+        target_link_libraries(engine PRIVATE /usr/lib/libmono-2.0.so)
+    endif()
+endif()
 
 # Add the Objective‑C++ bridge only on macOS
 if(APPLE)
@@ -291,16 +317,17 @@ target_link_libraries(engine PRIVATE ${SPIRV_CROSS_LIBRARIES})
 pkg_check_modules(SHADERC REQUIRED shaderc)
 #add_subdirectory(vendor/glm)
 
- target_link_libraries(engine PRIVATE
-        spdlog_header_only
-        glfw
-        glad
-        glm
-        ${SPIRV_CROSS_LIBRARIES}
-        ${SHADERC_LIBRARIES}
+ target_link_libraries(engine
+        PRIVATE
+            spdlog_header_only
+            glfw
+            glad
+            glm
+            ${SPIRV_CROSS_LIBRARIES}
+            ${SHADERC_LIBRARIES}
         PUBLIC
-        imgui
-        yaml-cpp::yaml-cpp
+            imgui
+            yaml-cpp::yaml-cpp
  )
  
  target_include_directories(engine PRIVATE ${SPIRV_CROSS_INCLUDE_DIRS} ${SHADERC_INCLUDE_DIRS})

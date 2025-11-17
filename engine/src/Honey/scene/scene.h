@@ -31,7 +31,11 @@ namespace Honey {
 
         void on_viewport_resize(uint32_t width, uint32_t height);
 
+        static Scene* get_active_scene() { return s_active_scene; }
+        static void set_active_scene(Scene* scene) { s_active_scene = scene; }
+
     private:
+        static Scene* s_active_scene;
         entt::registry m_registry;
         friend class Entity;
         friend class SceneSerializer;

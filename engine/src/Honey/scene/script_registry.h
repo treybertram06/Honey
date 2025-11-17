@@ -5,7 +5,6 @@
 #include <functional>
 #include <filesystem>
 #include "scriptable_entity.h"
-#include "Honey/scripting/script_api.h"
 
 namespace Honey {
 

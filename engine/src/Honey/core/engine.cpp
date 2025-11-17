@@ -3,6 +3,8 @@
 #include "engine.h"
 #include "input.h"
 #include "Honey/renderer/renderer.h"
+#include "Honey/scripting/mono_script_engine.h"
+#include "Honey/scripting/mono_script_glue.h"
 
 #include "Honey/renderer/camera.h"
 #include <GLFW/glfw3.h>
@@ -32,6 +34,9 @@ namespace Honey {
         m_imgui_layer = new ImGuiLayer();
         push_overlay(m_imgui_layer);
 
+        Scripting::MonoScriptEngine::init();
+        Scripting::MonoScriptEngine::load_assembly("../assets/scripts/TestScript.dll");
+
 
     }
 
@@ -39,6 +44,8 @@ namespace Honey {
         HN_PROFILE_FUNCTION();
 
         Renderer::shutdown();
+
+        Scripting::MonoScriptEngine::shutdown();
 
     }
 
