@@ -107,34 +107,33 @@ add_library(engine STATIC
         src/Honey/scene/script_registry.h
         src/Honey/core/uuid.h
         src/Honey/core/uuid.cpp
-        src/Honey/scripting/mono_script_engine.h
-        src/Honey/scripting/mono_script_engine.cpp
-        src/Honey/scripting/mono_script_glue.cpp
-        src/Honey/scripting/mono_script_glue.h
-        src/Honey/scripting/mono_script_utils.h
 
 )
 
-if (UNIX AND NOT APPLE)
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(MONO mono-2)
-    if (MONO_FOUND)
-        message(STATUS "Found Mono via pkg-config")
-        # Explicitly add both root and nested include directories for Arch Linux
-        # Force absolute include paths for Mono to ensure clang-scan-deps can resolve them
-        target_include_directories(engine PUBLIC
-                /usr/include/mono-2.0
-                /usr/include/mono-2.0/mono
-        )
-        message(STATUS "Using explicit Mono include paths: /usr/include/mono-2.0 and /usr/include/mono-2.0/mono")
-        link_directories(${MONO_LIBRARY_DIRS})
-        target_link_libraries(engine PUBLIC ${MONO_LIBRARIES})
-    else()
-        message(WARNING "Mono not found via pkg-config; falling back to manual include/link paths")
-        include_directories(/usr/include/mono-2.0 /usr/include/mono-2.0/mono)
-        target_link_libraries(engine PRIVATE /usr/lib/libmono-2.0.so)
-    endif()
+# Integrate bundled Mono instead of system Mono
+include(ExternalProject)
+
+ExternalProject_Add(mono
+        SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/mono
+        CONFIGURE_COMMAND bash -c "cd ${CMAKE_CURRENT_SOURCE_DIR}/vendor/mono && ./autogen.sh --prefix=${CMAKE_BINARY_DIR}/mono-install"
+        BUILD_COMMAND make -C ${CMAKE_CURRENT_SOURCE_DIR}/vendor/mono
+        INSTALL_COMMAND make -C ${CMAKE_CURRENT_SOURCE_DIR}/vendor/mono install
+)
+
+if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/vendor/mono/autogen.sh)
+ message(FATAL_ERROR "Mono submodule not initialized. Run 'git submodule update --init --recursive' before building.")
 endif()
+
+
+add_dependencies(engine mono)
+include_directories(${CMAKE_BINARY_DIR}/mono-install/include/mono-2.0)
+link_directories(${CMAKE_BINARY_DIR}/mono-install/lib)
+find_library(MONO_STATIC_LIB monosgen-2.0 PATHS ${CMAKE_BINARY_DIR}/mono-install/lib)
+if(NOT MONO_STATIC_LIB)
+ message(FATAL_ERROR "Static Mono library not found in ${CMAKE_BINARY_DIR}/mono-install/lib")
+endif()
+target_link_libraries(engine PRIVATE ${MONO_STATIC_LIB})
+
 
 # Add the Objective‑C++ bridge only on macOS
 if(APPLE)

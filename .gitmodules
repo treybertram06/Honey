@@ -23,3 +23,6 @@
 [submodule "vendor/imguizmo"]
 	path = vendor/imguizmo
 	url = https://github.com/CedricGuillemet/ImGuizmo.git
+[submodule "engine/vendor/mono"]
+	path = engine/vendor/mono
+	url = https://github.com/mono/mono.git

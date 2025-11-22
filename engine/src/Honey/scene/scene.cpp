@@ -7,7 +7,7 @@
 #include "entity.h"
 #include "Honey/renderer/renderer.h"
 #include "Honey/renderer/renderer_2d.h"
-#include "Honey/scripting/mono_script_engine.h"
+//#include "Honey/scripting/mono_script_engine.h"
 
 namespace Honey {
 
@@ -78,7 +78,7 @@ namespace Honey {
             nsc.instance->on_update(ts);
         });
 
-        m_registry.view<ScriptComponent>().each([this, &ts](auto entity, ScriptComponent& script) {
+        /*m_registry.view<ScriptComponent>().each([this, &ts](auto entity, ScriptComponent& script) {
             auto id = m_registry.get<IDComponent>(entity).id;
 
             // If this entity doesn't have an active script instance, create one
@@ -133,7 +133,7 @@ namespace Honey {
             auto& active_scripts = Scripting::MonoScriptEngine::get_active_scripts();
             auto& instance = active_scripts[id];
             instance.invoke_on_update(ts.get_seconds());
-        });
+        });*/
 
 
         // render
