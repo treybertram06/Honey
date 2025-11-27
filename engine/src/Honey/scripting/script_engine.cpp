@@ -1,0 +1,152 @@
+#include "hnpch.h"
+#include "script_engine.h"
+
+#include <mono/jit/jit.h>
+#include <mono/metadata/assembly.h>
+
+#include "script_glue.h"
+#include "glm/vec3.hpp"
+
+namespace Honey {
+
+    namespace utils {
+
+        static char* read_bytes(const std::string& filepath, uint32_t* out_size) {
+            std::ifstream stream(filepath, std::ios::binary | std::ios::ate);
+
+            if (!stream) {
+                // Failed to open the file
+                return nullptr;
+            }
+
+            std::streampos end = stream.tellg();
+            stream.seekg(0, std::ios::beg);
+            uint32_t size = end - stream.tellg();
+
+            if (size == 0) {
+                // File is empty
+                return nullptr;
+            }
+
+            char* buffer = new char[size];
+            stream.read((char*)buffer, size);
+            stream.close();
+
+            *out_size = size;
+            return buffer;
+        }
+
+        static MonoAssembly *load_mono_assembly(const std::filesystem::path& assembly_path) {
+            uint32_t file_size = 0;
+            char* file_data = read_bytes(assembly_path, &file_size);
+
+            // NOTE: We can't use this image for anything other than loading the assembly because this image doesn't have a reference to the assembly
+            MonoImageOpenStatus status;
+            MonoImage* image = mono_image_open_from_data_full(file_data, file_size, 1, &status, 0);
+
+            if (status != MONO_IMAGE_OK) {
+                const char* error_message = mono_image_strerror(status);
+                HN_CORE_ERROR("Failed to load assembly '{0}': {1}", assembly_path.string(), error_message);
+                return nullptr;
+            }
+
+            std::string path_string = assembly_path.string();
+            MonoAssembly* assembly = mono_assembly_load_from_full(image, path_string.c_str(), &status, 0);
+            mono_image_close(image);
+
+            // Don't forget to free the file data
+            delete[] file_data;
+
+            return assembly;
+        }
+
+        static void print_assembly_types(MonoAssembly* assembly) {
+            MonoImage* image = mono_assembly_get_image(assembly);
+            const MonoTableInfo* type_definitions_table = mono_image_get_table_info(image, MONO_TABLE_TYPEDEF);
+            int32_t num_types = mono_table_info_get_rows(type_definitions_table);
+
+            for (int32_t i = 0; i < num_types; i++) {
+                uint32_t cols[MONO_TYPEDEF_SIZE];
+                mono_metadata_decode_row(type_definitions_table, i, cols, MONO_TYPEDEF_SIZE);
+
+                const char* name_space = mono_metadata_string_heap(image, cols[MONO_TYPEDEF_NAMESPACE]);
+                const char* name = mono_metadata_string_heap(image, cols[MONO_TYPEDEF_NAME]);
+
+                HN_CORE_TRACE("{}.{}", name_space, name);
+            }
+        }
+
+    }
+
+    std::unique_ptr<ScriptEngine::ScriptEngineData> ScriptEngine::s_data = nullptr;
+
+    ScriptClass::ScriptClass(const std::string& klass_namespace, const std::string& klass_name)
+    : m_klass_namespace(klass_namespace), m_klass_name(klass_name) {
+        m_klass = mono_class_from_name(ScriptEngine::s_data->core_image, m_klass_namespace.c_str(), m_klass_name.c_str());
+    }
+
+    MonoObject* ScriptClass::instantiate() {
+        return ScriptEngine::instantiate_class(m_klass);
+    }
+
+    MonoMethod* ScriptClass::get_method(const std::string& method_name, int param_count) {
+        return mono_class_get_method_from_name(m_klass, method_name.c_str(), param_count);
+    }
+
+    MonoObject* ScriptClass::invoke_method(MonoObject* instance, MonoMethod* method, void** params = nullptr) {
+        return mono_runtime_invoke(method, instance, params, nullptr);
+    }
+
+
+    void ScriptEngine::init() {
+        s_data = std::make_unique<ScriptEngineData>();
+        load_assembly("../assets/scripts/scripts/Honey-ScriptCore.dll");
+        ScriptGlue::register_functions();
+
+        s_data->entity_class = ScriptClass("Honey", "Entity");
+        init_mono();
+
+    }
+
+    void ScriptEngine::shutdown() {
+        shutdown_mono();
+    }
+
+    void ScriptEngine::init_mono() { // this should probably be called something different
+
+
+        auto instance = s_data->entity_class.instantiate();
+
+        ///2: Call a function
+        auto method = s_data->entity_class.get_method("PrintMessage", 0);
+        s_data->entity_class.invoke_method(instance, method);
+    }
+
+    void ScriptEngine::shutdown_mono() {
+        mono_jit_cleanup(s_data->domain);
+    }
+
+    void ScriptEngine::load_assembly(const std::filesystem::path& path) {
+        mono_set_assemblies_path("mono-install/lib/mono/");
+
+        MonoDomain* domain = mono_jit_init("HoneyJitRuntime");
+        HN_CORE_ASSERT(domain, "Failed to initialize Mono JIT runtime!");
+        s_data->domain = domain;
+
+        // move?
+        s_data->core_assembly = utils::load_mono_assembly(path);
+        HN_CORE_ASSERT(s_data->core_assembly, "Failed to load assembly!");
+        s_data->core_image = mono_assembly_get_image(s_data->core_assembly);
+        HN_CORE_ASSERT(s_data->core_image, "Failed to get MonoImage from assembly!");
+        //print_assembly_types(s_data->core_assembly);
+    }
+
+    MonoObject* ScriptEngine::instantiate_class(MonoClass *klass) {
+        MonoObject* instance = mono_object_new(s_data->domain, klass);
+        HN_CORE_ASSERT(instance, "Failed to create MonoObject!");
+        mono_runtime_object_init(instance);
+        return instance;
+    }
+
+
+}

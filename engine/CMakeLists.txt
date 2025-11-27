@@ -107,6 +107,10 @@ add_library(engine STATIC
         src/Honey/scene/script_registry.h
         src/Honey/core/uuid.h
         src/Honey/core/uuid.cpp
+        src/Honey/scripting/script_engine.h
+        src/Honey/scripting/script_engine.cpp
+        src/Honey/scripting/script_glue.h
+        src/Honey/scripting/script_glue.cpp
 
 )
 
