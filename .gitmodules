@@ -1,15 +1,15 @@
 [submodule "vendor/spdlog"]
 	path = vendor/spdlog
 	url = https://github.com/treybertram06/spdlog.git
-[submodule "engine/vendor/GLFW"]
-	path = engine/vendor/GLFW
-	url = https://github.com/treybertram06/glfw.git
+	branch = v1.x
 [submodule "engine/vendor/glfw"]
 	path = engine/vendor/glfw
 	url = https://github.com/treybertram06/glfw.git
+	branch = master
 [submodule "engine/vendor/glm"]
 	path = engine/vendor/glm
 	url = https://github.com/treybertram06/glm.git
+	branch = master
 [submodule "engine/vendor/imgui"]
 	path = engine/vendor/imgui
 	url = https://github.com/treybertram06/imgui.git
@@ -17,15 +17,20 @@
 [submodule "engine/vendor/entt"]
 	path = engine/vendor/entt
 	url = https://github.com/treybertram06/entt.git
+	branch = main
 [submodule "vendor/yaml-cpp"]
 	path = vendor/yaml-cpp
 	url = https://github.com/treybertram06/yaml-cpp.git
+	branch = master
 [submodule "vendor/imguizmo"]
 	path = vendor/imguizmo
 	url = https://github.com/treybertram06/ImGuizmo.git
+	branch = master
 [submodule "engine/vendor/mono"]
 	path = engine/vendor/mono
 	url = https://github.com/treybertram06/mono.git
+	branch = main
 [submodule "vendor/box2d"]
 	path = vendor/box2d
 	url = https://github.com/treybertram06/box2d.git
+	branch = main
