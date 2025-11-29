@@ -60,7 +60,7 @@ namespace Honey {
             return assembly;
         }
 
-        static void print_assembly_types(MonoAssembly* assembly) {
+        void print_assembly_types(MonoAssembly* assembly) {
             MonoImage* image = mono_assembly_get_image(assembly);
             const MonoTableInfo* type_definitions_table = mono_image_get_table_info(image, MONO_TABLE_TYPEDEF);
             int32_t num_types = mono_table_info_get_rows(type_definitions_table);
@@ -75,6 +75,8 @@ namespace Honey {
                 HN_CORE_TRACE("{}.{}", name_space, name);
             }
         }
+
+
 
     }
 
@@ -97,14 +99,31 @@ namespace Honey {
         return mono_runtime_invoke(method, instance, params, nullptr);
     }
 
+    ScriptInstance::ScriptInstance(Ref<ScriptClass> script_class)
+        : m_script_class(script_class) {
+        m_instance = m_script_class->instantiate();
+
+        m_on_create_method = m_script_class->get_method("OnCreate", 0);
+        m_on_update_method = m_script_class->get_method("OnUpdate", 1);
+    }
+
+    void ScriptInstance::invoke_on_create() {
+        m_script_class->invoke_method(m_instance, m_on_create_method);
+    }
+
+    void ScriptInstance::invoke_on_update(float ts) {
+        m_script_class->invoke_method(m_instance, m_on_update_method, reinterpret_cast<void**>(&ts));
+    }
+
 
     void ScriptEngine::init() {
         s_data = std::make_unique<ScriptEngineData>();
         load_assembly("../assets/scripts/scripts/Honey-ScriptCore.dll");
+        load_assembly_classes(s_data->core_assembly);
         ScriptGlue::register_functions();
 
-        s_data->entity_class = ScriptClass("Honey", "Entity");
-        init_mono();
+        //s_data->entity_class = ScriptClass("Honey", "Entity");
+        //init_mono();
 
     }
 
@@ -112,6 +131,7 @@ namespace Honey {
         shutdown_mono();
     }
 
+    /*
     void ScriptEngine::init_mono() { // this should probably be called something different
 
 
@@ -121,6 +141,7 @@ namespace Honey {
         auto method = s_data->entity_class.get_method("PrintMessage", 0);
         s_data->entity_class.invoke_method(instance, method);
     }
+    */
 
     void ScriptEngine::shutdown_mono() {
         mono_jit_cleanup(s_data->domain);
@@ -139,6 +160,34 @@ namespace Honey {
         s_data->core_image = mono_assembly_get_image(s_data->core_assembly);
         HN_CORE_ASSERT(s_data->core_image, "Failed to get MonoImage from assembly!");
         //print_assembly_types(s_data->core_assembly);
+    }
+
+    void ScriptEngine::load_assembly_classes(MonoAssembly* assembly) {
+        s_data->entity_classes.clear();
+
+        MonoImage* image = mono_assembly_get_image(assembly);
+        const MonoTableInfo* type_definitions_table = mono_image_get_table_info(image, MONO_TABLE_TYPEDEF);
+        int32_t num_types = mono_table_info_get_rows(type_definitions_table);
+        MonoClass* entity_class = mono_class_from_name(image, "Honey", "Entity");
+
+        for (int32_t i = 0; i < num_types; i++) {
+            uint32_t cols[MONO_TYPEDEF_SIZE];
+            mono_metadata_decode_row(type_definitions_table, i, cols, MONO_TYPEDEF_SIZE);
+
+            const char* name_space = mono_metadata_string_heap(image, cols[MONO_TYPEDEF_NAMESPACE]);
+            const char* name = mono_metadata_string_heap(image, cols[MONO_TYPEDEF_NAME]);
+            std::string full_name;
+            if (strlen(name_space) != 0)
+                full_name = fmt::format("{}.{}", name_space, name);
+            else
+                full_name = name;
+
+            MonoClass* mono_class = mono_class_from_name(image, name_space, name);
+            if (mono_class == entity_class) continue;
+            bool is_subclass = mono_class_is_subclass_of(mono_class, entity_class, false);
+            if (is_subclass)
+                s_data->entity_classes[full_name] = CreateRef<ScriptClass>(name_space, name);
+        }
     }
 
     MonoObject* ScriptEngine::instantiate_class(MonoClass *klass) {

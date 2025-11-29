@@ -154,10 +154,13 @@ namespace Honey {
 
     struct ScriptComponent {
         std::string class_name;
+
+        ScriptComponent() = default;
+        ScriptComponent(const ScriptComponent&) = default;
     };
 
 
-    struct RelationshipComponent { // No gay allowed though
+    struct RelationshipComponent {
         entt::entity parent = entt::null;
         std::vector<entt::entity> children;
 

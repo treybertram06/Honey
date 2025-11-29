@@ -27,15 +27,33 @@ namespace Honey {
         MonoClass* m_klass = nullptr;
     };
 
+    class ScriptInstance {
+    public:
+        ScriptInstance(Ref<ScriptClass> script_class);
+
+        void invoke_on_create();
+        void invoke_on_update(float ts);
+
+    private:
+        Ref<ScriptClass> m_script_class;
+
+        MonoObject* m_instance = nullptr;
+        MonoMethod* m_on_create_method = nullptr;
+        MonoMethod* m_on_update_method = nullptr;
+    };
+
     class ScriptEngine {
     public:
         static void init();
         static void shutdown();
 
-    private:
-        static void init_mono();
-        static void shutdown_mono();
         static void load_assembly(const std::filesystem::path& path);
+
+        static std::unordered_map<std::string, Ref<ScriptClass>>& get_entity_classes() { return s_data->entity_classes; }
+    private:
+        //static void init_mono();
+        static void shutdown_mono();
+        static void load_assembly_classes(MonoAssembly* assembly);
         static MonoObject* instantiate_class(MonoClass* klass);
 
         struct ScriptEngineData {
@@ -44,6 +62,8 @@ namespace Honey {
             MonoImage* core_image = nullptr;
 
             ScriptClass entity_class;
+
+            std::unordered_map<std::string, Ref<ScriptClass>> entity_classes;
         };
         static std::unique_ptr<ScriptEngineData> s_data;
 
