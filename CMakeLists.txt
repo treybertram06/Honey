@@ -50,6 +50,7 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/engine/vendor/glfw)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/engine/vendor/glm)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/vendor/yaml-cpp)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/vendor/imguizmo)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/vendor/box2d)
 add_subdirectory(engine)
 
 target_link_libraries(engine PUBLIC
@@ -57,6 +58,7 @@ target_link_libraries(engine PUBLIC
         glm
         yaml-cpp::yaml-cpp
         imguizmo
+        box2d
 
         spirv-cross-c
         spirv-cross-core

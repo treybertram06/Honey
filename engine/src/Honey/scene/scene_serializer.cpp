@@ -217,6 +217,30 @@ namespace Honey {
             out << YAML::EndMap;
         }
 
+        if (entity.has_component<Rigidbody2DComponent>()) {
+            out << YAML::Key << "Rigidbody2DComponent";
+            out << YAML::BeginMap;
+
+            auto& rb = entity.get_component<Rigidbody2DComponent>();
+            out << YAML::Key << "BodyType" << YAML::Value << (int)rb.body_type; // Rigidbody2DComponent::BodyType is an enum class and can be serialized as an integer index
+            out << YAML::Key << "FixedRotation" << YAML::Value << rb.fixed_rotation;
+            out << YAML::EndMap;
+        }
+
+        if (entity.has_component<BoxCollider2DComponent>()) {
+            out << YAML::Key << "BoxCollider2DComponent";
+            out << YAML::BeginMap;
+
+            auto& bc = entity.get_component<BoxCollider2DComponent>();
+            out << YAML::Key << "Offset" << YAML::Value << bc.offset;
+            out << YAML::Key << "Size" << YAML::Value << bc.size;
+
+            out << YAML::Key << "Density" << YAML::Value << bc.density;
+            out << YAML::Key << "Friction" << YAML::Value << bc.friction;
+            out << YAML::Key << "Restitution" << YAML::Value << bc.restitution;
+            out << YAML::EndMap;
+        }
+
 
 
         out <<YAML::EndMap; // Entity
@@ -404,6 +428,23 @@ namespace Honey {
                 // if (auto props = native_script["Properties"]) {
                 //     nsc.deserialize_properties(props);
                 // }
+            }
+
+            auto rigidbody_node = entity_node["Rigidbody2DComponent"];
+            if (rigidbody_node) {
+                auto& rb = deserialized_entity.add_component<Rigidbody2DComponent>();
+                rb.body_type = (Rigidbody2DComponent::BodyType)rigidbody_node["BodyType"].as<int>();
+                rb.fixed_rotation = rigidbody_node["FixedRotation"].as<bool>();
+            }
+
+            auto collider_node = entity_node["BoxCollider2DComponent"];
+            if (collider_node) {
+                auto& bc = deserialized_entity.add_component<BoxCollider2DComponent>();
+                bc.offset = collider_node["Offset"].as<glm::vec2>();
+                bc.size = collider_node["Size"].as<glm::vec2>();
+                bc.density = collider_node["Density"].as<float>();
+                bc.friction = collider_node["Friction"].as<float>();
+                bc.restitution = collider_node["Restitution"].as<float>();
             }
         }
 

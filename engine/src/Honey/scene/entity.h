@@ -27,6 +27,11 @@ namespace Honey {
             return m_scene->m_registry.emplace<T>(m_entity_handle, std::forward<Args>(args)...);
         }
 
+        template<typename T, typename... Args>
+        T& add_or_replace_component(Args&&... args) {
+            return m_scene->m_registry.emplace_or_replace<T>(m_entity_handle, std::forward<Args>(args)...);
+        }
+
         template<typename T>
         T& get_component() {
             HN_CORE_ASSERT(has_component<T>(), "Entity does not have component!");
@@ -91,6 +96,7 @@ namespace Honey {
         entt::registry* get_registry() const { return &m_scene->m_registry; }
         Scene* get_scene() const { return m_scene; }
         UUID get_uuid() const;
+        const std::string& get_tag() const { return get_component<TagComponent>().tag; }
 
         void set_parent(Entity parent);
         void remove_parent();
