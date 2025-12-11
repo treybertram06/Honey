@@ -115,13 +115,24 @@ function(set_fast_math_flags tgt)
                 $<$<CONFIG:Release>:/arch:AVX2 /fp:fast>
         )
     else()
-        target_compile_options(${tgt} PRIVATE
-                $<$<CONFIG:Release>:-mavx2 -mfma -ffp-contract=fast
-                -fno-math-errno -funsafe-math-optimizations
-                -fno-trapping-math>
-        )
+        if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64")
+            # Apple Silicon: use safe ARM64 optimization flags
+            target_compile_options(${tgt} PRIVATE
+                    $<$<CONFIG:Release>:-ffp-contract=fast
+                    -fno-math-errno -funsafe-math-optimizations
+                    -fno-trapping-math>
+            )
+        else()
+            # x86_64 or other architectures: enable AVX2/FMA
+            target_compile_options(${tgt} PRIVATE
+                    $<$<CONFIG:Release>:-mavx2 -mfma -ffp-contract=fast
+                    -fno-math-errno -funsafe-math-optimizations
+                    -fno-trapping-math>
+            )
+        endif()
     endif()
 endfunction()
+
 
 set_fast_math_flags(engine)
 set_fast_math_flags(application)
