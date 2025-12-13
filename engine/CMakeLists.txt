@@ -117,6 +117,7 @@ add_library(engine STATIC
         src/Honey/scripting/script_glue.cpp
 )
 
+# ---------------- Mono (vendored, required) ----------------
 function(hn_require_mono target)
  # Headers (required)
  set(_mono_inc "${HN_MONO_VENDOR_DIR}/include/mono-2.0")
@@ -147,7 +148,6 @@ function(hn_require_mono target)
    message(FATAL_ERROR "Expected Mono DLL not found: ${_mono_root}/bin/mono-2.0-sgen.dll")
   endif()
   target_compile_definitions(${target} PRIVATE HN_MONO_DYNAMIC_LOAD)
-
  else()
   # macOS/Linux: link to the shared library in the bundle (simplest)
   find_library(MONO_LIB
@@ -166,7 +166,7 @@ endfunction()
 
 hn_require_mono(engine)
 
-# ---------- Objective-C++ bridge only on macOS ----------
+# ---------------- Objective-C++ bridge only on macOS ----------------
 if(APPLE)
  target_sources(engine PRIVATE src/platform/macos/macos_file_dialog_bridge.mm)
  set_source_files_properties(
@@ -177,7 +177,7 @@ if(APPLE)
  )
 endif()
 
-# ---------- MSVC specifics ----------
+# ---------------- MSVC specifics ----------------
 if(MSVC)
  target_compile_definitions(engine PRIVATE
          HN_PLATFORM_WINDOWS
@@ -185,7 +185,6 @@ if(MSVC)
  )
 endif()
 
-# Define platform (you already also do this below; keep just one if you want)
 target_compile_definitions(engine PRIVATE
         $<$<PLATFORM_ID:Windows>:HN_PLATFORM_WINDOWS>
 )
@@ -268,69 +267,66 @@ target_compile_definitions(engine PUBLIC
 add_subdirectory(vendor/GLAD)
 add_subdirectory(vendor/imgui-wrapper)
 
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(SPIRV_CROSS REQUIRED spirv-cross-c)
-if(NOT SPIRV_CROSS_INCLUDE_DIRS)
- execute_process(
-         COMMAND pkg-config --cflags-only-I spirv-cross-c
-         OUTPUT_VARIABLE SPIRV_CROSS_CFLAGS
-         OUTPUT_STRIP_TRAILING_WHITESPACE
- )
- string(REPLACE "-I" "" SPIRV_CROSS_INCLUDE_DIRS "${SPIRV_CROSS_CFLAGS}")
+# ---------------- SPIRV-Cross (build from source on ALL platforms) ----------------
+# Keep SPIRV-Cross lightweight for embedding use
+set(SPIRV_CROSS_CLI OFF CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+
+add_subdirectory(vendor/spirv-cross)
+
+# Link the C API wrapper (you include spirv_cross_c.h / spirv_cross_c.cpp uses this)
+# Some SPIRV-Cross versions require core as well; linking both is safe.
+if(TARGET spirv-cross-c)
+ target_link_libraries(engine PRIVATE spirv-cross-c)
+else()
+ message(FATAL_ERROR "SPIRV-Cross target 'spirv-cross-c' not found. Check the submodule and its CMake targets.")
 endif()
 
-# On macOS, spirv-cross-c may depend on other spirv-cross components; add them explicitly if found
-if(APPLE)
- find_library(SPIRV_CROSS_MSL_LIB spirv-cross-msl)
- find_library(SPIRV_CROSS_GLSL_LIB spirv-cross-glsl)
- find_library(SPIRV_CROSS_HLSL_LIB spirv-cross-hlsl)
- find_library(SPIRV_CROSS_CPP_LIB spirv-cross-cpp)
- find_library(SPIRV_CROSS_REFLECT_LIB spirv-cross-reflect)
- find_library(SPIRV_CROSS_UTIL_LIB spirv-cross-util)
- find_library(SPIRV_CROSS_CORE_LIB spirv-cross-core)
-
- set(_HN_SPVC_LIBS "")
-
- if(SPIRV_CROSS_MSL_LIB)
-  list(APPEND _HN_SPVC_LIBS ${SPIRV_CROSS_MSL_LIB})
- endif()
-
- if(SPIRV_CROSS_GLSL_LIB)
-  list(APPEND _HN_SPVC_LIBS ${SPIRV_CROSS_GLSL_LIB})
- endif()
-
- if(SPIRV_CROSS_HLSL_LIB)
-  list(APPEND _HN_SPVC_LIBS ${SPIRV_CROSS_HLSL_LIB})
- endif()
-
- if(SPIRV_CROSS_CPP_LIB)
-  list(APPEND _HN_SPVC_LIBS ${SPIRV_CROSS_CPP_LIB})
- endif()
-
- if(SPIRV_CROSS_REFLECT_LIB)
-  list(APPEND _HN_SPVC_LIBS ${SPIRV_CROSS_REFLECT_LIB})
- endif()
-
- if(SPIRV_CROSS_UTIL_LIB)
-  list(APPEND _HN_SPVC_LIBS ${SPIRV_CROSS_UTIL_LIB})
- endif()
-
- if(SPIRV_CROSS_CORE_LIB)
-  list(APPEND _HN_SPVC_LIBS ${SPIRV_CROSS_CORE_LIB})
- endif()
-
- if(_HN_SPVC_LIBS)
-  set(SPIRV_CROSS_LIBRARIES ${_HN_SPVC_LIBS} ${SPIRV_CROSS_LIBRARIES})
-  target_link_libraries(engine PUBLIC ${SPIRV_CROSS_LIBRARIES})
- else()
-  message(WARNING "SPIRV-Cross component libraries not found on macOS; linking may fail if spirv-cross-c needs them.")
- endif()
+# If core target exists, link it too (harmless if spirv-cross-c already pulls it in, but helps older versions)
+if(TARGET spirv-cross-core)
+ target_link_libraries(engine PRIVATE spirv-cross-core)
 endif()
 
-target_include_directories(engine PRIVATE ${SPIRV_CROSS_INCLUDE_DIRS})
-target_link_libraries(engine PRIVATE ${SPIRV_CROSS_LIBRARIES})
+# I don't understand this, in GPT 5.2 we trust...
+# ---- Prevent vendored deps from generating install/export rules ----
+set(CMAKE_SKIP_INSTALL_RULES ON CACHE BOOL "" FORCE)
+set(CMAKE_SKIP_INSTALL_ALL_DEPENDENCY ON CACHE BOOL "" FORCE)
 
-pkg_check_modules(SHADERC REQUIRED shaderc)
+# SPIRV-Headers / SPIRV-Tools / glslang commonly honor these:
+set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "" FORCE)
+set(GLSLANG_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+set(SPIRV_HEADERS_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+set(SPIRV_TOOLS_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+
+# ShaderC
+
+set(SHADERC_THIRD_PARTY_ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor" CACHE STRING "" FORCE)
+
+set(SHADERC_SPIRV_TOOLS_DIR   "${CMAKE_CURRENT_SOURCE_DIR}/vendor/spirv-tools"   CACHE STRING "" FORCE)
+set(SHADERC_SPIRV_HEADERS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/spirv-headers" CACHE STRING "" FORCE)
+set(SHADERC_GLSLANG_DIR       "${CMAKE_CURRENT_SOURCE_DIR}/vendor/glslang"       CACHE STRING "" FORCE)
+
+# Keep shaderc minimal (no tests/examples/tools)
+set(SHADERC_SKIP_TESTS ON CACHE BOOL "" FORCE)
+set(SHADERC_SKIP_EXAMPLES ON CACHE BOOL "" FORCE)
+set(SHADERC_SKIP_EXECUTABLES ON CACHE BOOL "" FORCE)
+set(SHADERC_SKIP_INSTALL ON CACHE BOOL "" FORCE)
+
+# Back-compat with some shaderc forks/versions
+set(SHADERC_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+set(SHADERC_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(SHADERC_ENABLE_EXECUTABLES OFF CACHE BOOL "" FORCE)
+set(SHADERC_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+
+add_subdirectory(vendor/shaderc)
+
+if(TARGET shaderc_shared)
+ target_link_libraries(engine PRIVATE shaderc_shared)
+elseif(TARGET shaderc)
+ target_link_libraries(engine PRIVATE shaderc)
+else()
+ message(FATAL_ERROR "Shaderc target not found. Ensure vendor/shaderc is added via add_subdirectory().")
+endif()
 
 target_link_libraries(engine
         PRIVATE
@@ -338,15 +334,12 @@ target_link_libraries(engine
         glfw
         glad
         glm
-        ${SPIRV_CROSS_LIBRARIES}
-        ${SHADERC_LIBRARIES}
         PUBLIC
         imgui
         yaml-cpp::yaml-cpp
 )
 
 target_include_directories(engine PRIVATE
-        ${SPIRV_CROSS_INCLUDE_DIRS}
         ${SHADERC_INCLUDE_DIRS}
 )
 

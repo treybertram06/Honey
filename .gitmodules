@@ -37,3 +37,15 @@
 [submodule "engine/vendor/spirv-cross"]
 	path = engine/vendor/spirv-cross
 	url = https://github.com/treybertram06/SPIRV-Cross.git
+[submodule "engine/vendor/shaderc"]
+	path = engine/vendor/shaderc
+	url = https://github.com/treybertram06/shaderc.git
+[submodule "engine/vendor/glslang"]
+	path = engine/vendor/glslang
+	url = https://github.com/KhronosGroup/glslang.git
+[submodule "engine/vendor/spirv-tools"]
+	path = engine/vendor/spirv-tools
+	url = https://github.com/KhronosGroup/SPIRV-Tools.git
+[submodule "engine/vendor/spirv-headers"]
+	path = engine/vendor/spirv-headers
+	url = https://github.com/KhronosGroup/SPIRV-Headers.git
