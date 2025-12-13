@@ -1,10 +1,14 @@
-#engine/CMakeLists.txt
+# engine/CMakeLists.txt
 
-enable_language(OBJCXX)
+if(APPLE)
+ enable_language(OBJCXX)
+endif()
 
 option(ENABLE_ASSERTS "Enable HN_ASSERT / HN_CORE_ASSERT checks" ON)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(HN_MONO_VENDOR_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/mono-bin" CACHE PATH "Vendored Mono root")
 
 add_library(engine STATIC
         src/Honey/core/engine.cpp
@@ -111,86 +115,88 @@ add_library(engine STATIC
         src/Honey/scripting/script_engine.cpp
         src/Honey/scripting/script_glue.h
         src/Honey/scripting/script_glue.cpp
-
 )
-if(APPLE)
- message(STATUS "Using system Mono from Homebrew")
 
- # Homebrew paths differ between Intel and Apple Silicon
- if(EXISTS /opt/homebrew)
-  set(MONO_PREFIX /opt/homebrew)
+function(hn_require_mono target)
+ # Headers (required)
+ set(_mono_inc "${HN_MONO_VENDOR_DIR}/include/mono-2.0")
+ if(NOT EXISTS "${_mono_inc}")
+  message(FATAL_ERROR "Vendored Mono headers not found: ${_mono_inc}")
+ endif()
+ target_include_directories(${target} PRIVATE "${_mono_inc}")
+
+ # Pick platform runtime root
+ if(WIN32)
+  set(_mono_root "${HN_MONO_VENDOR_DIR}/windows/x64")
+ elseif(APPLE)
+  set(_mono_root "${HN_MONO_VENDOR_DIR}/macos/universal")
  else()
-  set(MONO_PREFIX /usr/local)
+  set(_mono_root "${HN_MONO_VENDOR_DIR}/linux/x64")
  endif()
 
- include_directories(${MONO_PREFIX}/include/mono-2.0)
- find_library(MONO_STATIC_LIB monosgen-2.0 PATHS ${MONO_PREFIX}/lib)
-
- if(NOT MONO_STATIC_LIB)
-  message(FATAL_ERROR "Mono library not found. Make sure Mono is installed via Homebrew.")
+ if(NOT EXISTS "${_mono_root}")
+  message(FATAL_ERROR "Vendored Mono runtime not found: ${_mono_root}")
  endif()
 
-else()
- # Linux or Windows: build bundled Mono
- include(ExternalProject)
- ExternalProject_Add(mono
-         SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/mono
-         CONFIGURE_COMMAND bash -c "cd ${CMAKE_CURRENT_SOURCE_DIR}/vendor/mono && ./autogen.sh --prefix=${CMAKE_BINARY_DIR}/mono-install"
-         BUILD_COMMAND make -C ${CMAKE_CURRENT_SOURCE_DIR}/vendor/mono
-         INSTALL_COMMAND make -C ${CMAKE_CURRENT_SOURCE_DIR}/vendor/mono install
- )
+ # Expose runtime root to C++ so you can call mono_set_dirs(<root>/lib, <root>/etc)
+ target_compile_definitions(${target} PRIVATE HN_MONO_ROOT=\"${_mono_root}\")
 
- add_dependencies(engine mono)
- include_directories(${CMAKE_BINARY_DIR}/mono-install/include/mono-2.0)
- find_library(MONO_STATIC_LIB monosgen-2.0 PATHS ${CMAKE_BINARY_DIR}/mono-install/lib)
-endif()
+ if(WIN32)
+  # Do NOT link Mono on Windows; dynamic-load mono-2.0-sgen.dll instead (works with MinGW + MSVC)
+  if(NOT EXISTS "${_mono_root}/bin/mono-2.0-sgen.dll")
+   message(FATAL_ERROR "Expected Mono DLL not found: ${_mono_root}/bin/mono-2.0-sgen.dll")
+  endif()
+  target_compile_definitions(${target} PRIVATE HN_MONO_DYNAMIC_LOAD)
 
-if(NOT MONO_STATIC_LIB)
- message(FATAL_ERROR "Static Mono library not found.")
-endif()
+ else()
+  # macOS/Linux: link to the shared library in the bundle (simplest)
+  find_library(MONO_LIB
+          NAMES monosgen-2.0 mono-2.0-sgen mono-2.0
+          PATHS "${_mono_root}/lib" "${_mono_root}"
+          REQUIRED
+  )
+  target_link_libraries(${target} PRIVATE "${MONO_LIB}")
 
-target_link_libraries(engine PRIVATE ${MONO_STATIC_LIB})
-# Add the Objective‑C++ bridge only on macOS
+  # Linux runtime search path (so the exe finds the bundled .so)
+  if(UNIX AND NOT APPLE)
+   target_link_options(${target} PRIVATE "-Wl,-rpath,$ORIGIN")
+  endif()
+ endif()
+endfunction()
+
+hn_require_mono(engine)
+
+# ---------- Objective-C++ bridge only on macOS ----------
 if(APPLE)
- target_sources(engine PRIVATE
-         src/platform/macos/macos_file_dialog_bridge.mm
- )
+ target_sources(engine PRIVATE src/platform/macos/macos_file_dialog_bridge.mm)
  set_source_files_properties(
          src/platform/macos/macos_file_dialog_bridge.mm
          PROPERTIES
          SKIP_PRECOMPILE_HEADERS ON
-         # Optionally enable ARC:
          # COMPILE_FLAGS "-fobjc-arc"
  )
-
 endif()
 
-# Make sure we define the Windows platform for Visual Studio
-if (MSVC)
+# ---------- MSVC specifics ----------
+if(MSVC)
  target_compile_definitions(engine PRIVATE
          HN_PLATFORM_WINDOWS
          _CRT_SECURE_NO_WARNINGS
  )
 endif()
 
-
-
+# Define platform (you already also do this below; keep just one if you want)
 target_compile_definitions(engine PRIVATE
         $<$<PLATFORM_ID:Windows>:HN_PLATFORM_WINDOWS>
 )
 
-
-target_precompile_headers(engine
-        PRIVATE
+target_precompile_headers(engine PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:"${CMAKE_CURRENT_SOURCE_DIR}/src/hnpch.h">
 )
 
+target_compile_definitions(engine PRIVATE STBI_NO_SIMD)
 
-target_compile_definitions(engine PRIVATE
-        STBI_NO_SIMD
-)
-
-# Make the engine header accessible to other targets
+# Public headers for consumers
 target_include_directories(engine PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -199,28 +205,24 @@ target_include_directories(engine PUBLIC
         ${CMAKE_CURRENT_BINARY_DIR}
 )
 
-target_compile_definitions(engine
-        PUBLIC
+target_compile_definitions(engine PUBLIC
         $<$<CONFIG:Debug,RelWithDebInfo>:BUILD_DEBUG>
         $<$<CONFIG:Release>:BUILD_RELEASE NDEBUG>
 )
 
 if(MSVC)
- target_compile_options(engine
-         PRIVATE
-         $<$<CONFIG:Release>:/O2 /Ot /Ob2>      # high optimisation
-         $<$<CONFIG:Debug>:/Od /RTC1>           # no optimisation + run-time checks
+ target_compile_options(engine PRIVATE
+         $<$<CONFIG:Release>:/O2 /Ot /Ob2>
+         $<$<CONFIG:Debug>:/Od /RTC1>
  )
  target_link_options(engine PRIVATE
-         $<$<CONFIG:Release>:/LTCG>                 # link-time optimisation (LTO)
+         $<$<CONFIG:Release>:/LTCG>
  )
-else() # GCC / Clang / AppleClang
- target_compile_options(engine
-         PRIVATE
-         $<$<CONFIG:Release>:-O3 -march=native> # high optimisation
-         $<$<CONFIG:Debug>:-O0 -g>              # debug friendly
+else()
+ target_compile_options(engine PRIVATE
+         $<$<CONFIG:Release>:-O3 -march=native>
+         $<$<CONFIG:Debug>:-O0 -g>
  )
- # Try to enable LTO for Release when the toolchain supports it
  include(CheckIPOSupported)
  check_ipo_supported(RESULT IPO_OK OUTPUT IPO_ERR)
  if(IPO_OK)
@@ -228,23 +230,21 @@ else() # GCC / Clang / AppleClang
  endif()
 endif()
 
-
-
-# Platform‑specific compile definitions
-if (WIN32)
+# Platform-specific compile definitions
+if(WIN32)
  message(STATUS "Configuring for Windows")
  target_compile_definitions(engine PUBLIC
          HN_PLATFORM_WINDOWS
          GLFW_INCLUDE_NONE
  )
-elseif (APPLE)
+elseif(APPLE)
  message(STATUS "Configuring for macOS")
  target_compile_definitions(engine PUBLIC
          GL_SILENCE_DEPRECATION
          HN_PLATFORM_MACOS
          GLFW_INCLUDE_NONE
  )
-elseif (UNIX)
+elseif(UNIX)
  message(STATUS "Configuring for Linux/Unix")
  target_compile_definitions(engine PUBLIC
          HN_PLATFORM_LINUX
@@ -265,7 +265,6 @@ target_compile_definitions(engine PUBLIC
         $<$<CONFIG:Release>:GLM_FORCE_SIMD_AVX2>
 )
 
-
 add_subdirectory(vendor/GLAD)
 add_subdirectory(vendor/imgui-wrapper)
 
@@ -280,9 +279,8 @@ if(NOT SPIRV_CROSS_INCLUDE_DIRS)
  string(REPLACE "-I" "" SPIRV_CROSS_INCLUDE_DIRS "${SPIRV_CROSS_CFLAGS}")
 endif()
 
-# On macOS, spirv-cross-c depends on other spirv-cross components; add them explicitly
+# On macOS, spirv-cross-c may depend on other spirv-cross components; add them explicitly if found
 if(APPLE)
- # Try to locate component libraries without requiring pkg-config modules (Homebrew may not ship them)
  find_library(SPIRV_CROSS_MSL_LIB spirv-cross-msl)
  find_library(SPIRV_CROSS_GLSL_LIB spirv-cross-glsl)
  find_library(SPIRV_CROSS_HLSL_LIB spirv-cross-hlsl)
@@ -291,37 +289,41 @@ if(APPLE)
  find_library(SPIRV_CROSS_UTIL_LIB spirv-cross-util)
  find_library(SPIRV_CROSS_CORE_LIB spirv-cross-core)
 
- # Build list in correct order if found
  set(_HN_SPVC_LIBS "")
+
  if(SPIRV_CROSS_MSL_LIB)
   list(APPEND _HN_SPVC_LIBS ${SPIRV_CROSS_MSL_LIB})
  endif()
+
  if(SPIRV_CROSS_GLSL_LIB)
   list(APPEND _HN_SPVC_LIBS ${SPIRV_CROSS_GLSL_LIB})
  endif()
+
  if(SPIRV_CROSS_HLSL_LIB)
   list(APPEND _HN_SPVC_LIBS ${SPIRV_CROSS_HLSL_LIB})
  endif()
+
  if(SPIRV_CROSS_CPP_LIB)
   list(APPEND _HN_SPVC_LIBS ${SPIRV_CROSS_CPP_LIB})
  endif()
+
  if(SPIRV_CROSS_REFLECT_LIB)
   list(APPEND _HN_SPVC_LIBS ${SPIRV_CROSS_REFLECT_LIB})
  endif()
+
  if(SPIRV_CROSS_UTIL_LIB)
   list(APPEND _HN_SPVC_LIBS ${SPIRV_CROSS_UTIL_LIB})
  endif()
+
  if(SPIRV_CROSS_CORE_LIB)
   list(APPEND _HN_SPVC_LIBS ${SPIRV_CROSS_CORE_LIB})
  endif()
 
  if(_HN_SPVC_LIBS)
-  # Prepend found component libraries before the C wrapper
   set(SPIRV_CROSS_LIBRARIES ${_HN_SPVC_LIBS} ${SPIRV_CROSS_LIBRARIES})
-  # Propagate to consumers so final executable links them too
   target_link_libraries(engine PUBLIC ${SPIRV_CROSS_LIBRARIES})
  else()
-  message(WARNING "SPIRV-Cross component libraries (msl/glsl/hlsl/cpp/reflect/util/core) not found on macOS; linking may fail if spirv-cross-c needs them.")
+  message(WARNING "SPIRV-Cross component libraries not found on macOS; linking may fail if spirv-cross-c needs them.")
  endif()
 endif()
 
@@ -329,56 +331,55 @@ target_include_directories(engine PRIVATE ${SPIRV_CROSS_INCLUDE_DIRS})
 target_link_libraries(engine PRIVATE ${SPIRV_CROSS_LIBRARIES})
 
 pkg_check_modules(SHADERC REQUIRED shaderc)
-#add_subdirectory(vendor/glm)
 
- target_link_libraries(engine
+target_link_libraries(engine
         PRIVATE
-            spdlog_header_only
-            glfw
-            glad
-            glm
-            ${SPIRV_CROSS_LIBRARIES}
-            ${SHADERC_LIBRARIES}
+        spdlog_header_only
+        glfw
+        glad
+        glm
+        ${SPIRV_CROSS_LIBRARIES}
+        ${SHADERC_LIBRARIES}
         PUBLIC
-            imgui
-            yaml-cpp::yaml-cpp
- )
- 
- target_include_directories(engine PRIVATE ${SPIRV_CROSS_INCLUDE_DIRS} ${SHADERC_INCLUDE_DIRS})
+        imgui
+        yaml-cpp::yaml-cpp
+)
 
-if (APPLE)
- #   find and link OpenGL.framework
+target_include_directories(engine PRIVATE
+        ${SPIRV_CROSS_INCLUDE_DIRS}
+        ${SHADERC_INCLUDE_DIRS}
+)
+
+if(APPLE)
  find_library(OPENGL_FRAMEWORK OpenGL)
  if(NOT OPENGL_FRAMEWORK)
   message(FATAL_ERROR "Could not find OpenGL.framework")
  endif()
  target_link_libraries(engine PRIVATE ${OPENGL_FRAMEWORK})
 
- # Link Cocoa umbrella framework (provides AppKit for NSOpenPanel/NSSavePanel)
  find_library(COCOA_FRAMEWORK Cocoa)
  if(NOT COCOA_FRAMEWORK)
   message(FATAL_ERROR "Could not find Cocoa.framework")
  endif()
  target_link_libraries(engine PRIVATE ${COCOA_FRAMEWORK})
 
- # Ensure runtime can locate Homebrew-provided dylibs (e.g., libshaderc_shared) during development.
- # Use PUBLIC so consumers (the executable) inherit these rpaths.
  execute_process(COMMAND brew --prefix OUTPUT_VARIABLE HOMEBREW_PREFIX OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
  if(HOMEBREW_PREFIX)
   set(_HN_RPATH_CANDIDATES "${HOMEBREW_PREFIX}/lib")
  else()
-  # Fallbacks for common Homebrew prefixes on macOS (Apple Silicon and Intel)
   set(_HN_RPATH_CANDIDATES "/opt/homebrew/lib" "/usr/local/lib")
  endif()
+
  foreach(_rp ${_HN_RPATH_CANDIDATES})
   if(EXISTS "${_rp}")
    target_link_options(engine PUBLIC "-Wl,-rpath,${_rp}")
   endif()
  endforeach()
 
-elseif (WIN32)
- target_link_libraries(engine PRIVATE opengl32)     # native .lib
-elseif (UNIX)        # Linux / BSD
+elseif(WIN32)
+ target_link_libraries(engine PRIVATE opengl32)
+
+elseif(UNIX)
  find_package(OpenGL REQUIRED)
  target_link_libraries(engine PRIVATE OpenGL::GL)
  target_link_libraries(engine PRIVATE rt)
@@ -386,8 +387,6 @@ elseif (UNIX)        # Linux / BSD
  find_package(X11 REQUIRED)
  target_link_libraries(engine PRIVATE ${X11_LIBRARIES})
  target_include_directories(engine PRIVATE ${X11_INCLUDE_DIR})
-
- # Define GLFW_EXPOSE_NATIVE_X11 for X11 integration
  target_compile_definitions(engine PRIVATE GLFW_EXPOSE_NATIVE_X11)
 
  find_package(PkgConfig REQUIRED)

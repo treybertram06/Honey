@@ -34,3 +34,6 @@
 	path = vendor/box2d
 	url = https://github.com/treybertram06/box2d.git
 	branch = main
+[submodule "engine/vendor/spirv-cross"]
+	path = engine/vendor/spirv-cross
+	url = https://github.com/treybertram06/SPIRV-Cross.git
