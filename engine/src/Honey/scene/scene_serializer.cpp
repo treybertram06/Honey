@@ -246,7 +246,7 @@ namespace Honey {
         out <<YAML::EndMap; // Entity
     }
 
-    void SceneSerializer::serialize(const std::string &path) {
+    void SceneSerializer::serialize(const std::filesystem::path &path) {
         YAML::Emitter out;
         out << YAML::BeginMap;
         out << YAML::Key << "Scene" << YAML::Value << "Untitled";
@@ -271,15 +271,15 @@ namespace Honey {
         fout << out.c_str();
         fout.close();
 
-        HN_CORE_INFO("Serialized scene to {0}", path);
+        HN_CORE_INFO("Serialized scene to {0}", path.generic_string());
     }
 
-    void SceneSerializer::serialize_runtime(const std::string &path) {
+    void SceneSerializer::serialize_runtime(const std::filesystem::path &path) {
         //not implemented
         HN_CORE_ASSERT(false, "Not implemented!");
     }
 
-    bool SceneSerializer::deserialize(const std::string &path) {
+    bool SceneSerializer::deserialize(const std::filesystem::path &path) {
         std::ifstream stream(path);
         std::stringstream str_stream;
         str_stream << stream.rdbuf();
@@ -451,7 +451,7 @@ namespace Honey {
         return true;
     }
 
-    bool SceneSerializer::deserialize_runtime(const std::string &path) {
+    bool SceneSerializer::deserialize_runtime(const std::filesystem::path &path) {
 
         //not implemented
         HN_CORE_ASSERT(false, "Not implemented!");

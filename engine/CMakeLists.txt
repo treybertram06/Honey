@@ -1,15 +1,54 @@
 # engine/CMakeLists.txt
 
+cmake_minimum_required(VERSION 3.5)
+
 if(APPLE)
  enable_language(OBJCXX)
 endif()
 
 option(ENABLE_ASSERTS "Enable HN_ASSERT / HN_CORE_ASSERT checks" ON)
 
+# Engine is a static lib, but we still build some deps as static/shared; keep this ON
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# Vendored Mono root (you already have this layout)
 set(HN_MONO_VENDOR_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/mono-bin" CACHE PATH "Vendored Mono root")
 
+# ------------------------------------------------------------------------------
+# MSVC Runtime: make engine + its vendored deps (shaderc, glslang, spirv-tools, etc.)
+# use the SAME CRT as the final app (Debug=/MDd, Release=/MD).
+#
+# IMPORTANT: This is intentionally scoped to THIS subtree, so Honey_Editor does not
+# need to mention shaderc or engine internals. Honey_Editor just links "engine".
+# ------------------------------------------------------------------------------
+function(hn_force_msvc_runtime target_name)
+ if(NOT MSVC)
+  return()
+ endif()
+
+ if(NOT TARGET ${target_name})
+  return()
+ endif()
+
+ # If it's an ALIAS target, resolve it.
+ get_target_property(_aliased ${target_name} ALIASED_TARGET)
+ if(_aliased)
+  set(target_name ${_aliased})
+ endif()
+
+ if(NOT TARGET ${target_name})
+  return()
+ endif()
+
+ set_property(TARGET ${target_name} PROPERTY
+         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"
+ )
+endfunction()
+
+
+# ------------------------------------------------------------------------------
+# Engine library
+# ------------------------------------------------------------------------------
 add_library(engine STATIC
         src/Honey/core/engine.cpp
         src/Honey/core/engine.h
@@ -117,16 +156,19 @@ add_library(engine STATIC
         src/Honey/scripting/script_glue.cpp
 )
 
-# ---------------- Mono (vendored, required) ----------------
+# Apply MSVC runtime to engine itself
+hn_force_msvc_runtime(engine)
+
+# ------------------------------------------------------------------------------
+# Mono (vendored, required)
+# ------------------------------------------------------------------------------
 function(hn_require_mono target)
- # Headers (required)
  set(_mono_inc "${HN_MONO_VENDOR_DIR}/include/mono-2.0")
  if(NOT EXISTS "${_mono_inc}")
   message(FATAL_ERROR "Vendored Mono headers not found: ${_mono_inc}")
  endif()
  target_include_directories(${target} PRIVATE "${_mono_inc}")
 
- # Pick platform runtime root
  if(WIN32)
   set(_mono_root "${HN_MONO_VENDOR_DIR}/windows/x64")
  elseif(APPLE)
@@ -143,21 +185,46 @@ function(hn_require_mono target)
  target_compile_definitions(${target} PRIVATE HN_MONO_ROOT=\"${_mono_root}\")
 
  if(WIN32)
-  # Do NOT link Mono on Windows; dynamic-load mono-2.0-sgen.dll instead (works with MinGW + MSVC)
-  if(NOT EXISTS "${_mono_root}/bin/mono-2.0-sgen.dll")
-   message(FATAL_ERROR "Expected Mono DLL not found: ${_mono_root}/bin/mono-2.0-sgen.dll")
-  endif()
-  target_compile_definitions(${target} PRIVATE HN_MONO_DYNAMIC_LOAD)
- else()
-  # macOS/Linux: link to the shared library in the bundle (simplest)
+  # On Windows, you almost always link an import-lib and ship the DLL next to the exe.
   find_library(MONO_LIB
-          NAMES monosgen-2.0 mono-2.0-sgen mono-2.0
+          NAMES mono-2.0-sgen monosgen-2.0 mono-2.0
+          PATHS "${_mono_root}/lib" "${_mono_root}/bin"
+          REQUIRED
+  )
+  target_link_libraries(${target} PRIVATE "${MONO_LIB}")
+
+  set(_mono_dll_candidates
+          "${_mono_root}/bin/mono-2.0-sgen.dll"
+          "${_mono_root}/bin/monosgen-2.0.dll"
+          "${_mono_root}/bin/mono-2.0.dll"
+  )
+  set(_mono_dll "")
+  foreach(_cand IN LISTS _mono_dll_candidates)
+   if(EXISTS "${_cand}")
+    set(_mono_dll "${_cand}")
+    break()
+   endif()
+  endforeach()
+
+  if(NOT _mono_dll)
+   message(FATAL_ERROR
+           "Mono DLL not found in ${_mono_root}/bin. Expected one of: mono-2.0-sgen.dll / monosgen-2.0.dll / mono-2.0.dll"
+   )
+  endif()
+
+  add_custom_command(TARGET ${target} POST_BUILD
+          COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "${_mono_dll}" "$<TARGET_FILE_DIR:${target}>"
+  )
+ else()
+  # macOS/Linux: prefer static if present, otherwise shared (depends on how you vendored)
+  find_library(MONO_LIB
+          NAMES monosgen-2.0-static mono-2.0-sgen-static monosgen-2.0 mono-2.0-sgen mono-2.0
           PATHS "${_mono_root}/lib" "${_mono_root}"
           REQUIRED
   )
   target_link_libraries(${target} PRIVATE "${MONO_LIB}")
 
-  # Linux runtime search path (so the exe finds the bundled .so)
   if(UNIX AND NOT APPLE)
    target_link_options(${target} PRIVATE "-Wl,-rpath,$ORIGIN")
   endif()
@@ -166,18 +233,20 @@ endfunction()
 
 hn_require_mono(engine)
 
-# ---------------- Objective-C++ bridge only on macOS ----------------
+# ------------------------------------------------------------------------------
+# Objective-C++ bridge only on macOS
+# ------------------------------------------------------------------------------
 if(APPLE)
  target_sources(engine PRIVATE src/platform/macos/macos_file_dialog_bridge.mm)
  set_source_files_properties(
          src/platform/macos/macos_file_dialog_bridge.mm
-         PROPERTIES
-         SKIP_PRECOMPILE_HEADERS ON
-         # COMPILE_FLAGS "-fobjc-arc"
+         PROPERTIES SKIP_PRECOMPILE_HEADERS ON
  )
 endif()
 
-# ---------------- MSVC specifics ----------------
+# ------------------------------------------------------------------------------
+# MSVC specifics
+# ------------------------------------------------------------------------------
 if(MSVC)
  target_compile_definitions(engine PRIVATE
          HN_PLATFORM_WINDOWS
@@ -185,17 +254,31 @@ if(MSVC)
  )
 endif()
 
+# ------------------------------------------------------------------------------
+# Platform compile definitions
+# ------------------------------------------------------------------------------
+if(WIN32)
+ message(STATUS "Configuring for Windows")
+ target_compile_definitions(engine PUBLIC HN_PLATFORM_WINDOWS GLFW_INCLUDE_NONE)
+elseif(APPLE)
+ message(STATUS "Configuring for macOS")
+ target_compile_definitions(engine PUBLIC GL_SILENCE_DEPRECATION HN_PLATFORM_MACOS GLFW_INCLUDE_NONE)
+elseif(UNIX)
+ message(STATUS "Configuring for Linux/Unix")
+ target_compile_definitions(engine PUBLIC HN_PLATFORM_LINUX GLFW_INCLUDE_NONE)
+else()
+ message(FATAL_ERROR "Unsupported platform: ${CMAKE_SYSTEM_NAME}")
+endif()
+
+if(ENABLE_ASSERTS)
+ target_compile_definitions(engine PUBLIC HN_ENABLE_ASSERTS)
+endif()
+
 target_compile_definitions(engine PRIVATE
-        $<$<PLATFORM_ID:Windows>:HN_PLATFORM_WINDOWS>
+        STBI_NO_SIMD
 )
 
-target_precompile_headers(engine PRIVATE
-        $<$<COMPILE_LANGUAGE:CXX>:"${CMAKE_CURRENT_SOURCE_DIR}/src/hnpch.h">
-)
-
-target_compile_definitions(engine PRIVATE STBI_NO_SIMD)
-
-# Public headers for consumers
+# Public headers for consumers (Honey_Editor is a consumer of engine)
 target_include_directories(engine PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -209,6 +292,9 @@ target_compile_definitions(engine PUBLIC
         $<$<CONFIG:Release>:BUILD_RELEASE NDEBUG>
 )
 
+# ------------------------------------------------------------------------------
+# Optimization flags
+# ------------------------------------------------------------------------------
 if(MSVC)
  target_compile_options(engine PRIVATE
          $<$<CONFIG:Release>:/O2 /Ot /Ob2>
@@ -229,34 +315,6 @@ else()
  endif()
 endif()
 
-# Platform-specific compile definitions
-if(WIN32)
- message(STATUS "Configuring for Windows")
- target_compile_definitions(engine PUBLIC
-         HN_PLATFORM_WINDOWS
-         GLFW_INCLUDE_NONE
- )
-elseif(APPLE)
- message(STATUS "Configuring for macOS")
- target_compile_definitions(engine PUBLIC
-         GL_SILENCE_DEPRECATION
-         HN_PLATFORM_MACOS
-         GLFW_INCLUDE_NONE
- )
-elseif(UNIX)
- message(STATUS "Configuring for Linux/Unix")
- target_compile_definitions(engine PUBLIC
-         HN_PLATFORM_LINUX
-         GLFW_INCLUDE_NONE
- )
-else()
- message(FATAL_ERROR "Unsupported platform: ${CMAKE_SYSTEM_NAME}")
-endif()
-
-if(ENABLE_ASSERTS)
- target_compile_definitions(engine PUBLIC HN_ENABLE_ASSERTS)
-endif()
-
 target_compile_definitions(engine PUBLIC
         GLM_FORCE_SILENT_WARNINGS
         GLM_FORCE_INLINE
@@ -264,70 +322,95 @@ target_compile_definitions(engine PUBLIC
         $<$<CONFIG:Release>:GLM_FORCE_SIMD_AVX2>
 )
 
+# ------------------------------------------------------------------------------
+# Subprojects (needed early for include dirs / PCH correctness)
+# ------------------------------------------------------------------------------
 add_subdirectory(vendor/GLAD)
 add_subdirectory(vendor/imgui-wrapper)
 
-# ---------------- SPIRV-Cross (build from source on ALL platforms) ----------------
-# Keep SPIRV-Cross lightweight for embedding use
+# ------------------------------------------------------------------------------
+# SPIRV-Cross (MUST be before PCH so PCH sees include dirs)
+# ------------------------------------------------------------------------------
 set(SPIRV_CROSS_CLI OFF CACHE BOOL "" FORCE)
 set(SPIRV_CROSS_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
-
 add_subdirectory(vendor/spirv-cross)
 
-# Link the C API wrapper (you include spirv_cross_c.h / spirv_cross_c.cpp uses this)
-# Some SPIRV-Cross versions require core as well; linking both is safe.
 if(TARGET spirv-cross-c)
  target_link_libraries(engine PRIVATE spirv-cross-c)
 else()
  message(FATAL_ERROR "SPIRV-Cross target 'spirv-cross-c' not found. Check the submodule and its CMake targets.")
 endif()
 
-# If core target exists, link it too (harmless if spirv-cross-c already pulls it in, but helps older versions)
 if(TARGET spirv-cross-core)
  target_link_libraries(engine PRIVATE spirv-cross-core)
 endif()
 
-# I don't understand this, in GPT 5.2 we trust...
-# ---- Prevent vendored deps from generating install/export rules ----
-set(CMAKE_SKIP_INSTALL_RULES ON CACHE BOOL "" FORCE)
-set(CMAKE_SKIP_INSTALL_ALL_DEPENDENCY ON CACHE BOOL "" FORCE)
+target_include_directories(engine PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/spirv-cross/include
+)
 
-# SPIRV-Headers / SPIRV-Tools / glslang commonly honor these:
-set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "" FORCE)
-set(GLSLANG_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
-set(SPIRV_HEADERS_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
-set(SPIRV_TOOLS_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+# ------------------------------------------------------------------------------
+# Precompiled headers (AFTER all critical include dirs are set)
+# ------------------------------------------------------------------------------
+target_precompile_headers(engine PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:"${CMAKE_CURRENT_SOURCE_DIR}/src/hnpch.h">
+)
 
-# ShaderC
+# ------------------------------------------------------------------------------
+# Shaderc (vendored) - DEBUG-friendly Windows setup (dynamic)
+# Engine links shaderc_shared; the final EXE will copy runtime DLLs automatically.
+# ------------------------------------------------------------------------------
 
+# Make sure shaderc + its deps use the same CRT as the rest of the build on MSVC.
+# This is directory-scoped (applies to vendor/shaderc subtree too).
+if(MSVC)
+ # Debug = /MDd, Release = /MD
+ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+endif()
+
+# Point shaderc at your vendored third_party folders
 set(SHADERC_THIRD_PARTY_ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor" CACHE STRING "" FORCE)
+set(SHADERC_SPIRV_TOOLS_DIR     "${CMAKE_CURRENT_SOURCE_DIR}/vendor/spirv-tools"   CACHE STRING "" FORCE)
+set(SHADERC_SPIRV_HEADERS_DIR   "${CMAKE_CURRENT_SOURCE_DIR}/vendor/spirv-headers" CACHE STRING "" FORCE)
+set(SHADERC_GLSLANG_DIR         "${CMAKE_CURRENT_SOURCE_DIR}/vendor/glslang"       CACHE STRING "" FORCE)
 
-set(SHADERC_SPIRV_TOOLS_DIR   "${CMAKE_CURRENT_SOURCE_DIR}/vendor/spirv-tools"   CACHE STRING "" FORCE)
-set(SHADERC_SPIRV_HEADERS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/spirv-headers" CACHE STRING "" FORCE)
-set(SHADERC_GLSLANG_DIR       "${CMAKE_CURRENT_SOURCE_DIR}/vendor/glslang"       CACHE STRING "" FORCE)
+# Keep shaderc minimal
+set(SHADERC_SKIP_TESTS        ON  CACHE BOOL "" FORCE)
+set(SHADERC_SKIP_EXAMPLES     ON  CACHE BOOL "" FORCE)
+set(SHADERC_SKIP_EXECUTABLES  ON  CACHE BOOL "" FORCE)
+set(SHADERC_SKIP_INSTALL      ON  CACHE BOOL "" FORCE)
 
-# Keep shaderc minimal (no tests/examples/tools)
-set(SHADERC_SKIP_TESTS ON CACHE BOOL "" FORCE)
-set(SHADERC_SKIP_EXAMPLES ON CACHE BOOL "" FORCE)
-set(SHADERC_SKIP_EXECUTABLES ON CACHE BOOL "" FORCE)
-set(SHADERC_SKIP_INSTALL ON CACHE BOOL "" FORCE)
-
-# Back-compat with some shaderc forks/versions
-set(SHADERC_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
-set(SHADERC_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(SHADERC_ENABLE_TESTS       OFF CACHE BOOL "" FORCE)
+set(SHADERC_ENABLE_EXAMPLES    OFF CACHE BOOL "" FORCE)
 set(SHADERC_ENABLE_EXECUTABLES OFF CACHE BOOL "" FORCE)
-set(SHADERC_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+set(SHADERC_ENABLE_INSTALL     OFF CACHE BOOL "" FORCE)
 
+set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "" FORCE)
+set(GLSLANG_ENABLE_INSTALL  OFF CACHE BOOL "" FORCE)
+set(SPIRV_HEADERS_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+set(SPIRV_TOOLS_ENABLE_INSTALL   OFF CACHE BOOL "" FORCE)
+
+set(CMAKE_SKIP_INSTALL_RULES ON)
 add_subdirectory(vendor/shaderc)
 
+# Ensure <shaderc/shaderc.hpp> resolves even if vendored targets don’t propagate includes properly
+target_include_directories(engine PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/vendor/shaderc/libshaderc/include"
+)
+
+# Prefer dynamic for Debug builds on Windows: simplest and avoids CRT static mismatch pain
 if(TARGET shaderc_shared)
  target_link_libraries(engine PRIVATE shaderc_shared)
 elseif(TARGET shaderc)
+ # Some setups only provide static 'shaderc'
  target_link_libraries(engine PRIVATE shaderc)
 else()
- message(FATAL_ERROR "Shaderc target not found. Ensure vendor/shaderc is added via add_subdirectory().")
+ message(FATAL_ERROR "Expected shaderc targets were not created (shaderc_shared or shaderc). Check vendor/shaderc CMake.")
 endif()
 
+# ------------------------------------------------------------------------------
+# Engine dependencies
+# ------------------------------------------------------------------------------
 target_link_libraries(engine
         PRIVATE
         spdlog_header_only
@@ -339,10 +422,9 @@ target_link_libraries(engine
         yaml-cpp::yaml-cpp
 )
 
-target_include_directories(engine PRIVATE
-        ${SHADERC_INCLUDE_DIRS}
-)
-
+# ------------------------------------------------------------------------------
+# Platform graphics / window system libs
+# ------------------------------------------------------------------------------
 if(APPLE)
  find_library(OPENGL_FRAMEWORK OpenGL)
  if(NOT OPENGL_FRAMEWORK)
@@ -356,7 +438,11 @@ if(APPLE)
  endif()
  target_link_libraries(engine PRIVATE ${COCOA_FRAMEWORK})
 
- execute_process(COMMAND brew --prefix OUTPUT_VARIABLE HOMEBREW_PREFIX OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+ execute_process(COMMAND brew --prefix
+         OUTPUT_VARIABLE HOMEBREW_PREFIX
+         OUTPUT_STRIP_TRAILING_WHITESPACE
+         ERROR_QUIET
+ )
  if(HOMEBREW_PREFIX)
   set(_HN_RPATH_CANDIDATES "${HOMEBREW_PREFIX}/lib")
  else()
@@ -374,8 +460,7 @@ elseif(WIN32)
 
 elseif(UNIX)
  find_package(OpenGL REQUIRED)
- target_link_libraries(engine PRIVATE OpenGL::GL)
- target_link_libraries(engine PRIVATE rt)
+ target_link_libraries(engine PRIVATE OpenGL::GL rt)
 
  find_package(X11 REQUIRED)
  target_link_libraries(engine PRIVATE ${X11_LIBRARIES})

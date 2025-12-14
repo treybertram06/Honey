@@ -7,7 +7,7 @@
 
 // SPIRV-Cross includes
 extern "C" {
-#include <spirv_cross/spirv_cross_c.h>
+#include <spirv_cross_c.h>
 }
 
 namespace Honey {

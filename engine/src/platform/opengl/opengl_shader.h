@@ -1,6 +1,6 @@
 #pragma once
 
-#include <spirv_cross/spirv_cross_c.h>
+#include <spirv_cross_c.h>
 
 #include "Honey/renderer/shader.h"
 #include "glad/glad.h"

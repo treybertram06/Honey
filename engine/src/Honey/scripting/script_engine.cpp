@@ -38,7 +38,7 @@ namespace Honey {
 
         static MonoAssembly *load_mono_assembly(const std::filesystem::path& assembly_path) {
             uint32_t file_size = 0;
-            char* file_data = read_bytes(assembly_path, &file_size);
+            char* file_data = read_bytes(assembly_path.generic_string(), &file_size);
 
             // NOTE: We can't use this image for anything other than loading the assembly because this image doesn't have a reference to the assembly
             MonoImageOpenStatus status;

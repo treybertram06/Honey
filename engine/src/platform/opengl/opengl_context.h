@@ -2,7 +2,7 @@
 
 #include "Honey/renderer/graphics_context.h"
 
-class GLFWwindow;
+struct GLFWwindow;
 
 namespace Honey {
     class OpenGLContext : public GraphicsContext {

@@ -9,11 +9,11 @@ namespace Honey {
     public:
         SceneSerializer(const Ref<Scene>& scene);
 
-        void serialize(const std::string& path);
-        void serialize_runtime(const std::string& path);
+        void serialize(const std::filesystem::path& path);
+        void serialize_runtime(const std::filesystem::path& path);
 
-        bool deserialize(const std::string& path);
-        bool deserialize_runtime(const std::string& path);
+        bool deserialize(const std::filesystem::path& path);
+        bool deserialize_runtime(const std::filesystem::path& path);
     private:
         Ref<Scene> m_scene;
     };
