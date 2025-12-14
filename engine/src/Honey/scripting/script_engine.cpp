@@ -76,7 +76,25 @@ namespace Honey {
             }
         }
 
+        static std::filesystem::path get_mono_root() {
+#ifdef HN_MONO_ROOT
+            return std::filesystem::path(HN_MONO_ROOT);
+#else
+            #error "HN_MONO_ROOT must be defined (cause how else should it know where the hell the mono libraries live???)"
+#endif
+        }
 
+        static void configure_mono_dirs()
+        {
+            const auto root = get_mono_root();
+
+            const auto lib_dir = (root / "lib").string();
+            const auto etc_dir = (root / "etc").string();
+            const auto assemblies_dir = (root / "lib" / "mono").string();
+
+            mono_set_dirs(lib_dir.c_str(), etc_dir.c_str());
+            mono_set_assemblies_path(assemblies_dir.c_str());
+        }
 
     }
 
@@ -112,49 +130,43 @@ namespace Honey {
     }
 
     void ScriptInstance::invoke_on_update(float ts) {
-        m_script_class->invoke_method(m_instance, m_on_update_method, reinterpret_cast<void**>(&ts));
+        void* params[1];
+        params[0] = &ts;
+        m_script_class->invoke_method(m_instance, m_on_update_method, params);
     }
 
 
     void ScriptEngine::init() {
         s_data = std::make_unique<ScriptEngineData>();
+
+        init_mono();
+
         load_assembly("../assets/scripts/scripts/Honey-ScriptCore.dll");
         load_assembly_classes(s_data->core_assembly);
         ScriptGlue::register_functions();
-
-        //s_data->entity_class = ScriptClass("Honey", "Entity");
-        //init_mono();
-
     }
 
     void ScriptEngine::shutdown() {
         shutdown_mono();
     }
 
-    /*
-    void ScriptEngine::init_mono() { // this should probably be called something different
 
+    void ScriptEngine::init_mono() {
+        utils::configure_mono_dirs();
 
-        auto instance = s_data->entity_class.instantiate();
+        // mono_config_parse(nullptr);
 
-        ///2: Call a function
-        auto method = s_data->entity_class.get_method("PrintMessage", 0);
-        s_data->entity_class.invoke_method(instance, method);
+        MonoDomain* domain = mono_jit_init("HoneyJitRuntime");
+        HN_CORE_ASSERT(domain, "Failed to initialize Mono JIT runtime!");
+        s_data->domain = domain;
     }
-    */
+
 
     void ScriptEngine::shutdown_mono() {
         mono_jit_cleanup(s_data->domain);
     }
 
     void ScriptEngine::load_assembly(const std::filesystem::path& path) {
-        mono_set_assemblies_path("mono-install/lib/mono/");
-
-        MonoDomain* domain = mono_jit_init("HoneyJitRuntime");
-        HN_CORE_ASSERT(domain, "Failed to initialize Mono JIT runtime!");
-        s_data->domain = domain;
-
-        // move?
         s_data->core_assembly = utils::load_mono_assembly(path);
         HN_CORE_ASSERT(s_data->core_assembly, "Failed to load assembly!");
         s_data->core_image = mono_assembly_get_image(s_data->core_assembly);

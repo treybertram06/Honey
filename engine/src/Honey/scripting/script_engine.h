@@ -51,7 +51,7 @@ namespace Honey {
 
         static std::unordered_map<std::string, Ref<ScriptClass>>& get_entity_classes() { return s_data->entity_classes; }
     private:
-        //static void init_mono();
+        static void init_mono();
         static void shutdown_mono();
         static void load_assembly_classes(MonoAssembly* assembly);
         static MonoObject* instantiate_class(MonoClass* klass);
