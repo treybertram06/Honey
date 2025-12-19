@@ -167,6 +167,7 @@ namespace Honey {
 
             // Serialize common parameters
             out << YAML::Key << "FixedAspectRatio" << YAML::Value << camera_component.fixed_aspect_ratio;
+            out << YAML::Key << "Primary" << YAML::Value << camera_component.primary;
 
             // Serialize camera-specific data
             auto* camera = camera_component.get_camera();
@@ -330,6 +331,7 @@ namespace Honey {
 
                 // Deserialize component parameters
                 camera_component.fixed_aspect_ratio = camera_node["FixedAspectRatio"].as<bool>();
+                camera_component.primary = camera_node["Primary"].as<bool>();
                 camera_component.projection_type = camera_node["ProjectionType"].as<std::string>() == "Orthographic" ?
                     CameraComponent::ProjectionType::Orthographic : CameraComponent::ProjectionType::Perspective;
 

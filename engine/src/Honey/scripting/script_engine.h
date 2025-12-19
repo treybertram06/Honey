@@ -1,4 +1,5 @@
 #pragma once
+#include "Honey/scene/entity.h"
 
 extern "C" { // Because mono headers are massive, and written in C, it's being forward declared
     typedef struct _MonoDomain MonoDomain;
@@ -10,6 +11,7 @@ extern "C" { // Because mono headers are massive, and written in C, it's being f
 }
 
 namespace Honey {
+    class Scene;
 
 
     class ScriptClass {
@@ -49,6 +51,14 @@ namespace Honey {
 
         static void load_assembly(const std::filesystem::path& path);
 
+        static void on_runtime_start(Scene* scene);
+        static void on_runtime_stop();
+
+        static bool entity_class_exists(const std::string& full_class_name);
+        static void on_create_entity(Entity entity);
+        static void on_update_entity(Entity entity, Timestep ts);
+        static void on_destroy_entity(Entity entity);
+
         static std::unordered_map<std::string, Ref<ScriptClass>>& get_entity_classes() { return s_data->entity_classes; }
     private:
         static void init_mono();
@@ -64,6 +74,10 @@ namespace Honey {
             ScriptClass entity_class;
 
             std::unordered_map<std::string, Ref<ScriptClass>> entity_classes;
+            std::unordered_map<UUID, Ref<ScriptInstance>> entity_instances;
+
+            // runtime
+            Scene* scene_context = nullptr;
         };
         static std::unique_ptr<ScriptEngineData> s_data;
 

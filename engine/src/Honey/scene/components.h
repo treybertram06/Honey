@@ -87,6 +87,7 @@ namespace Honey {
 
         // Common parameters
         bool fixed_aspect_ratio = false;
+        bool primary = false;
 
         CameraComponent() {
             // Create default orthographic camera

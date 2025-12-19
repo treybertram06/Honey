@@ -20,6 +20,8 @@ namespace Honey {
         Entity create_entity(const std::string& name, UUID uuid);
         void destroy_entity(Entity entity);
 
+        void on_physics_2D_start();
+        void on_physics_2D_stop();
         void on_runtime_start();
         void on_runtime_stop();
 
@@ -27,8 +29,6 @@ namespace Honey {
         void on_update_editor(Timestep ts, EditorCamera& camera);
 
         Entity get_primary_camera() const;
-        void set_primary_camera(Entity camera_entity);
-        void clear_primary_camera();
 
         entt::registry& get_registry() { return m_registry; }
         const entt::registry& get_registry() const { return m_registry; }
@@ -51,8 +51,5 @@ namespace Honey {
         friend class Entity;
         friend class SceneSerializer;
         friend class SceneHierarchyPanel;
-
-        Entity* m_primary_camera_entity = nullptr;
-        bool m_has_primary_camera = false;
     };
 }

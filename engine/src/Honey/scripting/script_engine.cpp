@@ -126,6 +126,7 @@ namespace Honey {
     }
 
     void ScriptInstance::invoke_on_create() {
+        HN_CORE_ASSERT(m_on_create_method, "Script does not have an 'OnCreate' method!");
         m_script_class->invoke_method(m_instance, m_on_create_method);
     }
 
@@ -134,6 +135,7 @@ namespace Honey {
         params[0] = &ts;
         m_script_class->invoke_method(m_instance, m_on_update_method, params);
     }
+
 
 
     void ScriptEngine::init() {
@@ -174,6 +176,42 @@ namespace Honey {
         //print_assembly_types(s_data->core_assembly);
     }
 
+    void ScriptEngine::on_runtime_start(Scene *scene) {
+        s_data->scene_context = scene;
+    }
+
+    void ScriptEngine::on_runtime_stop() {
+        s_data->scene_context = nullptr;
+
+        s_data->entity_instances.clear();
+    }
+
+    bool ScriptEngine::entity_class_exists(const std::string &full_class_name) {
+        return s_data->entity_classes.find(full_class_name) != s_data->entity_classes.end();
+    }
+
+    void ScriptEngine::on_create_entity(Entity entity) {
+        const auto& sc = entity.get_component<ScriptComponent>();
+        if (entity_class_exists(sc.class_name)) {
+            Ref<ScriptInstance> instance = CreateRef<ScriptInstance>(s_data->entity_classes[sc.class_name]);
+            s_data->entity_instances[entity.get_uuid()] = instance;
+
+            instance->invoke_on_create();
+        }
+    }
+
+    void ScriptEngine::on_update_entity(Entity entity, Timestep ts) {
+        UUID entity_uuid = entity.get_uuid();
+        HN_CORE_ASSERT(s_data->entity_instances.find(entity_uuid) != s_data->entity_instances.end(), "Entity has no script instance!");
+
+        Ref<ScriptInstance> instance = s_data->entity_instances[entity_uuid];
+        instance->invoke_on_update((float)ts);
+    }
+
+    void ScriptEngine::on_destroy_entity(Entity entity) {
+
+    }
+
     void ScriptEngine::load_assembly_classes(MonoAssembly* assembly) {
         s_data->entity_classes.clear();
 
@@ -208,6 +246,8 @@ namespace Honey {
         mono_runtime_object_init(instance);
         return instance;
     }
+
+
 
 
 }

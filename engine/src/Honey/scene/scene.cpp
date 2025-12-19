@@ -8,6 +8,8 @@
 
 #include <glm/glm.hpp>
 #include <box2d/box2d.h>
+
+#include "Honey/scripting/script_engine.h"
 //#include "Honey/scripting/mono_script_engine.h"
 
 namespace Honey {
@@ -26,15 +28,11 @@ namespace Honey {
     Scene* Scene::s_active_scene = nullptr;
 
     Scene::Scene() {
-        m_primary_camera_entity = new Entity();
     }
 
     Scene::~Scene() {
-
         if (b2World_IsValid(m_world))
             b2DestroyWorld(m_world);
-
-        delete m_primary_camera_entity;
     }
 
     Entity Scene::create_entity(const std::string &name) {
@@ -54,15 +52,11 @@ namespace Honey {
 
     void Scene::destroy_entity(Entity entity) {
         if (entity.is_valid()) {
-            if (m_has_primary_camera && entity == *m_primary_camera_entity) {
-                clear_primary_camera();
-            }
-
             m_registry.destroy(entity);
         }
     }
 
-    void Scene::on_runtime_start() {
+    void Scene::on_physics_2D_start() {
         b2WorldDef world_def = b2DefaultWorldDef();
         world_def.gravity = {0.0f, -9.81f};
         m_world = b2CreateWorld(&world_def);
@@ -107,49 +101,67 @@ namespace Honey {
         }
     }
 
-    void Scene::on_runtime_stop() {
+    void Scene::on_physics_2D_stop() {
         if (b2World_IsValid(m_world)) {
             b2DestroyWorld(m_world);
             m_world = b2_nullWorldId;
         }
     }
 
-    Entity Scene::get_primary_camera() const {
-        return *m_primary_camera_entity;
-    }
+    void Scene::on_runtime_start() {
+        on_physics_2D_start();
 
+        // Scripting
+        {
+            ScriptEngine::on_runtime_start(this);
+            // Instantiate all script entities
 
-    void Scene::set_primary_camera(Entity camera_entity) {
-        if (camera_entity.is_valid() && camera_entity.has_component<CameraComponent>()) {
-            *m_primary_camera_entity = camera_entity;
-            m_has_primary_camera = true;
+            auto view = m_registry.view<ScriptComponent>();
+            for (auto e : view) {
+                Entity entity = { e, this };
+                ScriptEngine::on_create_entity(entity);
+
+            }
         }
     }
 
-    void Scene::clear_primary_camera() {
-        m_has_primary_camera = false;
-        *m_primary_camera_entity = Entity();
+    void Scene::on_runtime_stop() {
+        on_physics_2D_stop();
+        ScriptEngine::on_runtime_stop();
+    }
+
+    Entity Scene::get_primary_camera() const {
+        auto view = m_registry.view<CameraComponent>();
+        for (auto entity : view) {
+            auto& camera = view.get<CameraComponent>(entity);
+            if (camera.primary)
+                return Entity(entity, const_cast<Scene*>(this));
+        }
+        return {}; // invalid entity if none found
     }
 
     void Scene::on_update_runtime(Timestep ts) {
         s_active_scene = this;
 
-        m_registry.view<NativeScriptComponent>().each([this, ts](auto entity, auto& nsc) {
-
-            // TODO: move to on_scene_play
-            if (!nsc.instance) {
-                nsc.instance = nsc.instantiate_script();
-                nsc.instance->m_entity = Entity(entity, this);
-                nsc.instance->on_create();
+        // Scripts
+        {
+            // C# scripts
+            auto view = m_registry.view<ScriptComponent>();
+            for (auto e : view) {
+                Entity entity = { e, this };
+                ScriptEngine::on_update_entity(entity, ts);
             }
 
-            nsc.instance->on_update(ts);
-        });
-
-        //m_registry.view<ScriptComponent>().each([this, &ts](auto entity, ScriptComponent& script) {
-        //    auto id = m_registry.get<IDComponent>(entity).id;
-        //});
-
+            // C++ scripts
+            m_registry.view<NativeScriptComponent>().each([this, ts](auto entity, auto& nsc) {
+                if (!nsc.instance) {
+                    nsc.instance = nsc.instantiate_script();
+                    nsc.instance->m_entity = Entity(entity, this);
+                    nsc.instance->on_create();
+                }
+                nsc.instance->on_update(ts);
+            });
+        }
         //physics
         {
             const int32_t sub_steps = 6;
@@ -181,9 +193,10 @@ namespace Honey {
 
 
         // render
-        if (m_has_primary_camera && m_primary_camera_entity->is_valid()) {
-            auto transform = m_primary_camera_entity->get_component<TransformComponent>().get_transform();
-            auto& camera_component = m_primary_camera_entity->get_component<CameraComponent>();
+        Entity primary_camera_entity = get_primary_camera();
+        if (primary_camera_entity.is_valid()) {
+            auto transform = primary_camera_entity.get_component<TransformComponent>().get_transform();
+            auto& camera_component = primary_camera_entity.get_component<CameraComponent>();
 
             Camera* primary_camera = camera_component.get_camera();
 
@@ -273,11 +286,17 @@ namespace Honey {
         copy_component<Rigidbody2DComponent>        (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<BoxCollider2DComponent>      (dst_scene_registry, src_scene_registry, entt_map);
 
-        if (source->m_primary_camera_entity) {
-            UUID primary_uuid = source->m_primary_camera_entity->get_uuid();
-            if (entt_map.contains(primary_uuid)) {
-                Entity new_primary = { entt_map[primary_uuid], copy.get() };
-                copy->set_primary_camera(new_primary);
+        auto src_view = src_scene_registry.view<CameraComponent>();
+        for (auto e : src_view) {
+            auto& src_camera = src_view.get<CameraComponent>(e);
+            if (src_camera.primary) {
+                UUID uuid = src_scene_registry.get<IDComponent>(e).id;
+                if (entt_map.contains(uuid)) {
+                    Entity new_primary = { entt_map[uuid], copy.get() };
+                    auto& dst_camera = new_primary.get_component<CameraComponent>();
+                    dst_camera.primary = true;
+                }
+                break;
             }
         }
 
