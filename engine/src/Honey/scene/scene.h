@@ -48,6 +48,8 @@ namespace Honey {
 
         b2WorldId m_world = b2_nullWorldId;
 
+        Entity entity_from_body(b2BodyId body);
+
         friend class Entity;
         friend class SceneSerializer;
         friend class SceneHierarchyPanel;

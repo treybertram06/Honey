@@ -1,253 +1,188 @@
 #include "hnpch.h"
 #include "script_engine.h"
 
-#include <mono/jit/jit.h>
-#include <mono/metadata/assembly.h>
-
 #include "script_glue.h"
-#include "glm/vec3.hpp"
+#include "Honey/scene/scene.h"
+#include "Honey/scene/entity.h"
+#include "Honey/scene/components.h"
+#include <sol/sol.hpp>
+#include <filesystem>
 
 namespace Honey {
 
-    namespace utils {
+    struct ScriptEngine::ScriptEngineData {
+        sol::state LuaState;
+        Scene* SceneContext = nullptr;
+        std::filesystem::path ScriptRoot = "../assets/scripts";
 
-        static char* read_bytes(const std::string& filepath, uint32_t* out_size) {
-            std::ifstream stream(filepath, std::ios::binary | std::ios::ate);
+        struct ScriptInstance {
+            std::string ScriptName;
+            sol::environment Env;
+            sol::function OnCreate;
+            sol::function OnUpdate;
+            sol::function OnDestroy;
+            sol::function OnCollisionBegin;
+            sol::function OnCollisionEnd;
+            bool Valid = false;
+        };
 
-            if (!stream) {
-                // Failed to open the file
-                return nullptr;
-            }
-
-            std::streampos end = stream.tellg();
-            stream.seekg(0, std::ios::beg);
-            uint32_t size = end - stream.tellg();
-
-            if (size == 0) {
-                // File is empty
-                return nullptr;
-            }
-
-            char* buffer = new char[size];
-            stream.read((char*)buffer, size);
-            stream.close();
-
-            *out_size = size;
-            return buffer;
-        }
-
-        static MonoAssembly *load_mono_assembly(const std::filesystem::path& assembly_path) {
-            uint32_t file_size = 0;
-            char* file_data = read_bytes(assembly_path.generic_string(), &file_size);
-
-            // NOTE: We can't use this image for anything other than loading the assembly because this image doesn't have a reference to the assembly
-            MonoImageOpenStatus status;
-            MonoImage* image = mono_image_open_from_data_full(file_data, file_size, 1, &status, 0);
-
-            if (status != MONO_IMAGE_OK) {
-                const char* error_message = mono_image_strerror(status);
-                HN_CORE_ERROR("Failed to load assembly '{0}': {1}", assembly_path.string(), error_message);
-                return nullptr;
-            }
-
-            std::string path_string = assembly_path.string();
-            MonoAssembly* assembly = mono_assembly_load_from_full(image, path_string.c_str(), &status, 0);
-            mono_image_close(image);
-
-            // Don't forget to free the file data
-            delete[] file_data;
-
-            return assembly;
-        }
-
-        void print_assembly_types(MonoAssembly* assembly) {
-            MonoImage* image = mono_assembly_get_image(assembly);
-            const MonoTableInfo* type_definitions_table = mono_image_get_table_info(image, MONO_TABLE_TYPEDEF);
-            int32_t num_types = mono_table_info_get_rows(type_definitions_table);
-
-            for (int32_t i = 0; i < num_types; i++) {
-                uint32_t cols[MONO_TYPEDEF_SIZE];
-                mono_metadata_decode_row(type_definitions_table, i, cols, MONO_TYPEDEF_SIZE);
-
-                const char* name_space = mono_metadata_string_heap(image, cols[MONO_TYPEDEF_NAMESPACE]);
-                const char* name = mono_metadata_string_heap(image, cols[MONO_TYPEDEF_NAME]);
-
-                HN_CORE_TRACE("{}.{}", name_space, name);
-            }
-        }
-
-        static std::filesystem::path get_mono_root() {
-#ifdef HN_MONO_ROOT
-            return std::filesystem::path(HN_MONO_ROOT);
-#else
-            #error "HN_MONO_ROOT must be defined (cause how else should it know where the hell the mono libraries live???)"
-#endif
-        }
-
-        static void configure_mono_dirs()
-        {
-            const auto root = get_mono_root();
-
-            const auto lib_dir = (root / "lib").string();
-            const auto etc_dir = (root / "etc").string();
-            const auto assemblies_dir = (root / "lib" / "mono").string();
-
-            mono_set_dirs(lib_dir.c_str(), etc_dir.c_str());
-            mono_set_assemblies_path(assemblies_dir.c_str());
-        }
-
-    }
+        std::unordered_map<UUID, ScriptInstance> EntityInstances;
+    };
 
     std::unique_ptr<ScriptEngine::ScriptEngineData> ScriptEngine::s_data = nullptr;
 
-    ScriptClass::ScriptClass(const std::string& klass_namespace, const std::string& klass_name)
-    : m_klass_namespace(klass_namespace), m_klass_name(klass_name) {
-        m_klass = mono_class_from_name(ScriptEngine::s_data->core_image, m_klass_namespace.c_str(), m_klass_name.c_str());
-    }
-
-    MonoObject* ScriptClass::instantiate() {
-        return ScriptEngine::instantiate_class(m_klass);
-    }
-
-    MonoMethod* ScriptClass::get_method(const std::string& method_name, int param_count) {
-        return mono_class_get_method_from_name(m_klass, method_name.c_str(), param_count);
-    }
-
-    MonoObject* ScriptClass::invoke_method(MonoObject* instance, MonoMethod* method, void** params = nullptr) {
-        return mono_runtime_invoke(method, instance, params, nullptr);
-    }
-
-    ScriptInstance::ScriptInstance(Ref<ScriptClass> script_class)
-        : m_script_class(script_class) {
-        m_instance = m_script_class->instantiate();
-
-        m_on_create_method = m_script_class->get_method("OnCreate", 0);
-        m_on_update_method = m_script_class->get_method("OnUpdate", 1);
-    }
-
-    void ScriptInstance::invoke_on_create() {
-        HN_CORE_ASSERT(m_on_create_method, "Script does not have an 'OnCreate' method!");
-        m_script_class->invoke_method(m_instance, m_on_create_method);
-    }
-
-    void ScriptInstance::invoke_on_update(float ts) {
-        void* params[1];
-        params[0] = &ts;
-        m_script_class->invoke_method(m_instance, m_on_update_method, params);
-    }
-
-
-
     void ScriptEngine::init() {
         s_data = std::make_unique<ScriptEngineData>();
+        sol::state& lua = s_data->LuaState;
 
-        init_mono();
+        lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::table, sol::lib::string, sol::lib::package);
 
-        load_assembly("../assets/scripts/scripts/Honey-ScriptCore.dll");
-        load_assembly_classes(s_data->core_assembly);
+        lua.set_function("HN_Log", [](const std::string& msg) {
+            HN_CORE_INFO("[Lua] {}", msg);
+        });
+
         ScriptGlue::register_functions();
     }
 
     void ScriptEngine::shutdown() {
-        shutdown_mono();
+        s_data.reset();
     }
 
-
-    void ScriptEngine::init_mono() {
-        utils::configure_mono_dirs();
-
-        // mono_config_parse(nullptr);
-
-        MonoDomain* domain = mono_jit_init("HoneyJitRuntime");
-        HN_CORE_ASSERT(domain, "Failed to initialize Mono JIT runtime!");
-        s_data->domain = domain;
+    sol::state& ScriptEngine::get_lua_state() {
+        HN_CORE_ASSERT(s_data, "ScriptEngine not initialized!");
+        return s_data->LuaState;
     }
 
-
-    void ScriptEngine::shutdown_mono() {
-        mono_jit_cleanup(s_data->domain);
+    Scene* ScriptEngine::get_scene_context() {
+        return s_data ? s_data->SceneContext : nullptr;
     }
 
-    void ScriptEngine::load_assembly(const std::filesystem::path& path) {
-        s_data->core_assembly = utils::load_mono_assembly(path);
-        HN_CORE_ASSERT(s_data->core_assembly, "Failed to load assembly!");
-        s_data->core_image = mono_assembly_get_image(s_data->core_assembly);
-        HN_CORE_ASSERT(s_data->core_image, "Failed to get MonoImage from assembly!");
-        //print_assembly_types(s_data->core_assembly);
-    }
-
-    void ScriptEngine::on_runtime_start(Scene *scene) {
-        s_data->scene_context = scene;
+    void ScriptEngine::on_runtime_start(Scene* scene) {
+        HN_CORE_ASSERT(s_data, "ScriptEngine not initialized!");
+        s_data->SceneContext = scene;
     }
 
     void ScriptEngine::on_runtime_stop() {
-        s_data->scene_context = nullptr;
-
-        s_data->entity_instances.clear();
+        HN_CORE_ASSERT(s_data, "ScriptEngine not initialized!");
+        s_data->SceneContext = nullptr;
+        s_data->EntityInstances.clear();
     }
 
-    bool ScriptEngine::entity_class_exists(const std::string &full_class_name) {
-        return s_data->entity_classes.find(full_class_name) != s_data->entity_classes.end();
+    bool ScriptEngine::entity_class_exists(const std::string& full_class_name) {
+        HN_CORE_ASSERT(s_data, "ScriptEngine not initialized!");
+        std::filesystem::path scriptPath = s_data->ScriptRoot / (full_class_name + ".lua");
+        return std::filesystem::exists(scriptPath);
     }
 
     void ScriptEngine::on_create_entity(Entity entity) {
-        const auto& sc = entity.get_component<ScriptComponent>();
-        if (entity_class_exists(sc.class_name)) {
-            Ref<ScriptInstance> instance = CreateRef<ScriptInstance>(s_data->entity_classes[sc.class_name]);
-            s_data->entity_instances[entity.get_uuid()] = instance;
+        HN_CORE_ASSERT(s_data, "ScriptEngine not initialized!");
 
-            instance->invoke_on_create();
+        auto& sc = entity.get_component<ScriptComponent>();
+        const std::string& scriptName = sc.script_name;
+        std::filesystem::path scriptPath = s_data->ScriptRoot / (scriptName + ".lua");
+
+        if (!std::filesystem::exists(scriptPath)) {
+            HN_CORE_ERROR("Lua script '{}' not found at '{}'", scriptName, scriptPath.string());
+            return;
+        }
+
+        ScriptEngineData::ScriptInstance instance;
+        instance.ScriptName = scriptName;
+
+        sol::state& lua = s_data->LuaState;
+        instance.Env = sol::environment(lua, sol::create, lua.globals());
+
+        sol::protected_function_result loadResult = lua.safe_script_file(scriptPath.string(), instance.Env, &sol::script_pass_on_error);
+        if (!loadResult.valid()) {
+            sol::error err = loadResult;
+            HN_CORE_ERROR("Error loading Lua script '{}': {}", scriptPath.string(), err.what());
+            return;
+        }
+
+        instance.OnCreate        = instance.Env["OnCreate"];
+        instance.OnUpdate        = instance.Env["OnUpdate"];
+        instance.OnDestroy       = instance.Env["OnDestroy"];
+        instance.OnCollisionBegin = instance.Env["OnCollisionBegin"];
+        instance.OnCollisionEnd   = instance.Env["OnCollisionEnd"];
+        instance.Valid = true;
+
+        UUID uuid = entity.get_uuid();
+        s_data->EntityInstances[uuid] = std::move(instance);
+
+        auto& stored = s_data->EntityInstances[uuid];
+        if (stored.OnCreate.valid()) {
+            sol::protected_function_result r = stored.OnCreate(entity);
+            if (!r.valid()) {
+                sol::error err = r;
+                HN_CORE_ERROR("Lua OnCreate error in '{}': {}", stored.ScriptName, err.what());
+            }
         }
     }
 
     void ScriptEngine::on_update_entity(Entity entity, Timestep ts) {
-        UUID entity_uuid = entity.get_uuid();
-        HN_CORE_ASSERT(s_data->entity_instances.find(entity_uuid) != s_data->entity_instances.end(), "Entity has no script instance!");
+        HN_CORE_ASSERT(s_data, "ScriptEngine not initialized!");
 
-        Ref<ScriptInstance> instance = s_data->entity_instances[entity_uuid];
-        instance->invoke_on_update((float)ts);
-    }
+        UUID uuid = entity.get_uuid();
+        auto it = s_data->EntityInstances.find(uuid);
+        if (it == s_data->EntityInstances.end()) return;
 
-    void ScriptEngine::on_destroy_entity(Entity entity) {
+        auto& inst = it->second;
+        if (!inst.Valid || !inst.OnUpdate.valid()) return;
 
-    }
-
-    void ScriptEngine::load_assembly_classes(MonoAssembly* assembly) {
-        s_data->entity_classes.clear();
-
-        MonoImage* image = mono_assembly_get_image(assembly);
-        const MonoTableInfo* type_definitions_table = mono_image_get_table_info(image, MONO_TABLE_TYPEDEF);
-        int32_t num_types = mono_table_info_get_rows(type_definitions_table);
-        MonoClass* entity_class = mono_class_from_name(image, "Honey", "Entity");
-
-        for (int32_t i = 0; i < num_types; i++) {
-            uint32_t cols[MONO_TYPEDEF_SIZE];
-            mono_metadata_decode_row(type_definitions_table, i, cols, MONO_TYPEDEF_SIZE);
-
-            const char* name_space = mono_metadata_string_heap(image, cols[MONO_TYPEDEF_NAMESPACE]);
-            const char* name = mono_metadata_string_heap(image, cols[MONO_TYPEDEF_NAME]);
-            std::string full_name;
-            if (strlen(name_space) != 0)
-                full_name = fmt::format("{}.{}", name_space, name);
-            else
-                full_name = name;
-
-            MonoClass* mono_class = mono_class_from_name(image, name_space, name);
-            if (mono_class == entity_class) continue;
-            bool is_subclass = mono_class_is_subclass_of(mono_class, entity_class, false);
-            if (is_subclass)
-                s_data->entity_classes[full_name] = CreateRef<ScriptClass>(name_space, name);
+        sol::protected_function_result r = inst.OnUpdate(entity, (float)ts);
+        if (!r.valid()) {
+            sol::error err = r;
+            HN_CORE_ERROR("Lua OnUpdate error in '{}': {}", inst.ScriptName, err.what());
         }
     }
 
-    MonoObject* ScriptEngine::instantiate_class(MonoClass *klass) {
-        MonoObject* instance = mono_object_new(s_data->domain, klass);
-        HN_CORE_ASSERT(instance, "Failed to create MonoObject!");
-        mono_runtime_object_init(instance);
-        return instance;
+    void ScriptEngine::on_destroy_entity(Entity entity) {
+        HN_CORE_ASSERT(s_data, "ScriptEngine not initialized!");
+
+        UUID uuid = entity.get_uuid();
+        auto it = s_data->EntityInstances.find(uuid);
+        if (it == s_data->EntityInstances.end()) return;
+
+        auto& inst = it->second;
+        if (inst.Valid && inst.OnDestroy.valid()) {
+            sol::protected_function_result r = inst.OnDestroy(entity);
+            if (!r.valid()) {
+                sol::error err = r;
+                HN_CORE_ERROR("Lua OnDestroy error in '{}': {}", inst.ScriptName, err.what());
+            }
+        }
+
+        s_data->EntityInstances.erase(it);
     }
 
+    void ScriptEngine::on_collision_begin(Entity a, Entity b) {
+        UUID uuid = a.get_uuid();
+        auto it = s_data->EntityInstances.find(uuid);
+        if (it == s_data->EntityInstances.end()) return;
 
+        auto& inst = it->second;
+        if (inst.Valid && inst.OnCollisionBegin.valid()) {
+            sol::protected_function_result r = inst.OnCollisionBegin(a, b);
+            if (!r.valid()) {
+                sol::error err = r;
+                HN_CORE_ERROR("Lua OnCollisionBegin error in '{}': {}", inst.ScriptName, err.what());
+            }
+        }
+    }
 
+    void ScriptEngine::on_collision_end(Entity a, Entity b) {
+        UUID uuid = a.get_uuid();
+        auto it = s_data->EntityInstances.find(uuid);
+        if (it == s_data->EntityInstances.end()) return;
+
+        auto& inst = it->second;
+        if (inst.Valid && inst.OnCollisionEnd.valid()) {
+            sol::protected_function_result r = inst.OnCollisionEnd(a, b);
+            if (!r.valid()) {
+                sol::error err = r;
+                HN_CORE_ERROR("Lua OnCollisionEnd error in '{}': {}", inst.ScriptName, err.what());
+            }
+        }
+    }
 
 }

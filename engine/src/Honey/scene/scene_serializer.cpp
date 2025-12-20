@@ -218,6 +218,16 @@ namespace Honey {
             out << YAML::EndMap;
         }
 
+        if (entity.has_component<ScriptComponent>()) {
+            out << YAML::Key << "ScriptComponent";
+            out << YAML::BeginMap;
+
+            auto& script = entity.get_component<ScriptComponent>();
+            out << YAML::Key << "ScriptName" << YAML::Value << script.script_name;
+
+            out << YAML::EndMap;
+        }
+
         if (entity.has_component<Rigidbody2DComponent>()) {
             out << YAML::Key << "Rigidbody2DComponent";
             out << YAML::BeginMap;
@@ -430,6 +440,16 @@ namespace Honey {
                 // if (auto props = native_script["Properties"]) {
                 //     nsc.deserialize_properties(props);
                 // }
+            }
+
+            auto script_component = entity_node["ScriptComponent"];
+            if (script_component) {
+
+                std::string script_name = script_component["ScriptName"].as<std::string>("");
+                if (!script_name.empty()) {
+                    auto& sc = deserialized_entity.add_component<ScriptComponent>();
+                    sc.script_name = script_name;
+                }
             }
 
             auto rigidbody_node = entity_node["Rigidbody2DComponent"];

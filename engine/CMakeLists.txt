@@ -11,9 +11,6 @@ option(ENABLE_ASSERTS "Enable HN_ASSERT / HN_CORE_ASSERT checks" ON)
 # Engine is a static lib, but we still build some deps as static/shared; keep this ON
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# Vendored Mono root (you already have this layout)
-set(HN_MONO_VENDOR_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/mono-bin" CACHE PATH "Vendored Mono root")
-
 # ------------------------------------------------------------------------------
 # MSVC Runtime: make engine + its vendored deps (shaderc, glslang, spirv-tools, etc.)
 # use the SAME CRT as the final app (Debug=/MDd, Release=/MD).
@@ -160,78 +157,62 @@ add_library(engine STATIC
 hn_force_msvc_runtime(engine)
 
 # ------------------------------------------------------------------------------
-# Mono (vendored, required)
+# Lua (vendored) + sol2 (header-only)
+# Assumes:
+#   - Lua sources are in: ${CMAKE_CURRENT_SOURCE_DIR}/vendor/lua
+#   - sol2 headers are in: ${CMAKE_CURRENT_SOURCE_DIR}/vendor/sol2/include
+#
+# If your lua.c files live in a "src" subfolder, change ${HN_LUA_DIR}/lapi.c to
+# ${HN_LUA_DIR}/src/lapi.c, etc.
 # ------------------------------------------------------------------------------
-function(hn_require_mono target)
- set(_mono_inc "${HN_MONO_VENDOR_DIR}/include/mono-2.0")
- if(NOT EXISTS "${_mono_inc}")
-  message(FATAL_ERROR "Vendored Mono headers not found: ${_mono_inc}")
- endif()
- target_include_directories(${target} PRIVATE "${_mono_inc}")
+set(HN_LUA_DIR  "${CMAKE_CURRENT_SOURCE_DIR}/vendor/lua"  CACHE PATH "Vendored Lua source root")
+set(HN_SOL2_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/sol2" CACHE PATH "Vendored sol2 root")
 
- if(WIN32)
-  set(_mono_root "${HN_MONO_VENDOR_DIR}/windows/x64")
- elseif(APPLE)
-  set(_mono_root "${HN_MONO_VENDOR_DIR}/macos/universal")
- else()
-  set(_mono_root "${HN_MONO_VENDOR_DIR}/linux/x64")
- endif()
+add_library(lua STATIC
+        ${HN_LUA_DIR}/lapi.c
+        ${HN_LUA_DIR}/lcode.c
+        ${HN_LUA_DIR}/lctype.c
+        ${HN_LUA_DIR}/ldebug.c
+        ${HN_LUA_DIR}/ldo.c
+        ${HN_LUA_DIR}/ldump.c
+        ${HN_LUA_DIR}/lfunc.c
+        ${HN_LUA_DIR}/lgc.c
+        ${HN_LUA_DIR}/llex.c
+        ${HN_LUA_DIR}/lmem.c
+        ${HN_LUA_DIR}/lobject.c
+        ${HN_LUA_DIR}/lopcodes.c
+        ${HN_LUA_DIR}/lparser.c
+        ${HN_LUA_DIR}/lstate.c
+        ${HN_LUA_DIR}/lstring.c
+        ${HN_LUA_DIR}/ltable.c
+        ${HN_LUA_DIR}/ltm.c
+        ${HN_LUA_DIR}/lundump.c
+        ${HN_LUA_DIR}/lvm.c
+        ${HN_LUA_DIR}/lzio.c
+        ${HN_LUA_DIR}/lauxlib.c
+        ${HN_LUA_DIR}/lbaselib.c
+        ${HN_LUA_DIR}/lcorolib.c
+        ${HN_LUA_DIR}/ldblib.c
+        ${HN_LUA_DIR}/liolib.c
+        ${HN_LUA_DIR}/lmathlib.c
+        ${HN_LUA_DIR}/loslib.c
+        ${HN_LUA_DIR}/lstrlib.c
+        ${HN_LUA_DIR}/ltablib.c
+        ${HN_LUA_DIR}/lutf8lib.c
+        ${HN_LUA_DIR}/loadlib.c
+        ${HN_LUA_DIR}/linit.c
+)
 
- if(NOT EXISTS "${_mono_root}")
-  message(FATAL_ERROR "Vendored Mono runtime not found: ${_mono_root}")
- endif()
+target_include_directories(lua PUBLIC ${HN_LUA_DIR})
 
- # Expose runtime root to C++ so you can call mono_set_dirs(<root>/lib, <root>/etc)
- target_compile_definitions(${target} PRIVATE HN_MONO_ROOT=\"${_mono_root}\")
+# Make sure Lua uses the same CRT on MSVC
+hn_force_msvc_runtime(lua)
 
- if(WIN32)
-  # On Windows, you almost always link an import-lib and ship the DLL next to the exe.
-  find_library(MONO_LIB
-          NAMES mono-2.0-sgen monosgen-2.0 mono-2.0
-          PATHS "${_mono_root}/lib" "${_mono_root}/bin"
-          REQUIRED
-  )
-  target_link_libraries(${target} PRIVATE "${MONO_LIB}")
+add_library(sol2 INTERFACE)
+target_include_directories(sol2 INTERFACE ${HN_SOL2_DIR}/include)
 
-  set(_mono_dll_candidates
-          "${_mono_root}/bin/mono-2.0-sgen.dll"
-          "${_mono_root}/bin/monosgen-2.0.dll"
-          "${_mono_root}/bin/mono-2.0.dll"
-  )
-  set(_mono_dll "")
-  foreach(_cand IN LISTS _mono_dll_candidates)
-   if(EXISTS "${_cand}")
-    set(_mono_dll "${_cand}")
-    break()
-   endif()
-  endforeach()
-
-  if(NOT _mono_dll)
-   message(FATAL_ERROR
-           "Mono DLL not found in ${_mono_root}/bin. Expected one of: mono-2.0-sgen.dll / monosgen-2.0.dll / mono-2.0.dll"
-   )
-  endif()
-
-  add_custom_command(TARGET ${target} POST_BUILD
-          COMMAND ${CMAKE_COMMAND} -E copy_if_different
-          "${_mono_dll}" "$<TARGET_FILE_DIR:${target}>"
-  )
- else()
-  # macOS/Linux: prefer static if present, otherwise shared (depends on how you vendored)
-  find_library(MONO_LIB
-          NAMES monosgen-2.0-static mono-2.0-sgen-static monosgen-2.0 mono-2.0-sgen mono-2.0
-          PATHS "${_mono_root}/lib" "${_mono_root}"
-          REQUIRED
-  )
-  target_link_libraries(${target} PRIVATE "${MONO_LIB}")
-
-  if(UNIX AND NOT APPLE)
-   target_link_options(${target} PRIVATE "-Wl,-rpath,$ORIGIN")
-  endif()
- endif()
-endfunction()
-
-hn_require_mono(engine)
+# Link engine against Lua + sol2
+target_link_libraries(engine PRIVATE lua sol2)
 
 # ------------------------------------------------------------------------------
 # Objective-C++ bridge only on macOS

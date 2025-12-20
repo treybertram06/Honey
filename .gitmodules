@@ -26,10 +26,6 @@
 	path = vendor/imguizmo
 	url = https://github.com/treybertram06/ImGuizmo.git
 	branch = master
-[submodule "engine/vendor/mono"]
-	path = engine/vendor/mono
-	url = https://github.com/treybertram06/mono.git
-	branch = main
 [submodule "vendor/box2d"]
 	path = vendor/box2d
 	url = https://github.com/treybertram06/box2d.git
@@ -49,3 +45,9 @@
 [submodule "engine/vendor/spirv-headers"]
 	path = engine/vendor/spirv-headers
 	url = https://github.com/KhronosGroup/SPIRV-Headers.git
+[submodule "engine/vendor/sol2"]
+	path = engine/vendor/sol2
+	url = https://github.com/treybertram06/sol2
+[submodule "engine/vendor/lua"]
+	path = engine/vendor/lua
+	url = https://github.com/treybertram06/lua

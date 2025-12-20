@@ -154,7 +154,7 @@ namespace Honey {
     };
 
     struct ScriptComponent {
-        std::string class_name;
+        std::string script_name;
 
         ScriptComponent() = default;
         ScriptComponent(const ScriptComponent&) = default;
