@@ -9,6 +9,7 @@
 #include <glm/glm.hpp>
 #include <box2d/box2d.h>
 
+#include "scene_serializer.h"
 #include "Honey/scripting/script_engine.h"
 //#include "Honey/scripting/mono_script_engine.h"
 
@@ -65,39 +66,7 @@ namespace Honey {
         auto view = m_registry.view<Rigidbody2DComponent>();
         for (auto e : view) {
             Entity entity = { e, this };
-            auto& transform = entity.get_component<TransformComponent>();
-            auto& rigidbody2d = entity.get_component<Rigidbody2DComponent>();
-
-            b2BodyDef body_def = b2DefaultBodyDef();
-            body_def.type = hn_rigidbody2d_type_to_box2d_type(rigidbody2d.body_type);
-            body_def.position = { transform.translation.x, transform.translation.y };
-            body_def.rotation = b2MakeRot(transform.rotation.z);
-
-            b2BodyId body = b2CreateBody(m_world, &body_def);
-            auto locks = b2MotionLocks{ false, false, rigidbody2d.fixed_rotation }; // do lin x & y need to be set to true based on body type?
-            b2Body_SetMotionLocks(body, locks);
-            memcpy(&rigidbody2d.runtime_body, &body, sizeof(b2BodyId));
-            // retrieval example so I dont forget
-            //b2BodyId body;
-            //memcpy(&body, &rigidbody2d.runtime_body, sizeof(b2BodyId));
-
-            if (entity.has_component<BoxCollider2DComponent>()) {
-                auto& collider = entity.get_component<BoxCollider2DComponent>();
-
-                b2ShapeDef shape_def = b2DefaultShapeDef();
-                shape_def.density = collider.density;
-
-                b2SurfaceMaterial material;
-                material.friction = collider.friction;
-                material.restitution = collider.restitution;
-
-                b2Polygon box = b2MakeBox(transform.scale.x * collider.size.x, transform.scale.y * collider.size.y);
-                b2ShapeId shape = b2CreatePolygonShape(body, &shape_def, &box);
-
-                b2Shape_SetSurfaceMaterial(shape, &material);
-
-            }
-
+            create_physics_body(entity);
         }
     }
 
@@ -164,6 +133,21 @@ namespace Honey {
         }
         //physics
         {
+            // Sync physics bodies with their transforms if needed
+            for (auto e : m_registry.view<TransformComponent, Rigidbody2DComponent>()) {
+                Entity entity = { e, this };
+                auto& tc = entity.get_component<TransformComponent>();
+                if (tc.dirty) {
+                    auto& rb = entity.get_component<Rigidbody2DComponent>();
+
+                    b2BodyId body;
+                    memcpy(&body, &rb.runtime_body, sizeof(b2BodyId));
+
+                    b2Body_SetTransform(body, { tc.translation.x, tc.translation.y }, b2MakeRot(tc.rotation.z));
+                    tc.dirty = false;
+                }
+            }
+
             const int32_t sub_steps = 6;
 
             if (b2World_IsValid(m_world)) {
@@ -317,5 +301,52 @@ namespace Honey {
         copy_component_if_exists<BoxCollider2DComponent>    (new_entity, entity);
 
     }
+    //void Scene::create_prefab(const Entity& entity, const std::string& path) {
+    //
+    //}
+//
+    Entity Scene::instantiate_prefab(const std::string& path) {
+        Ref<Scene> scene_ref = Ref<Scene>(this, [](Scene*){});
+        SceneSerializer serializer(scene_ref);
 
+        auto entity = serializer.deserialize_entity_prefab(path);
+        create_physics_body(entity);
+        ScriptEngine::on_create_entity(entity);
+        return entity;
+    }
+
+    void Scene::create_physics_body(Entity entity) {
+        auto& transform = entity.get_component<TransformComponent>();
+        auto& rigidbody2d = entity.get_component<Rigidbody2DComponent>();
+
+        b2BodyDef body_def = b2DefaultBodyDef();
+        body_def.type = hn_rigidbody2d_type_to_box2d_type(rigidbody2d.body_type);
+        body_def.position = { transform.translation.x, transform.translation.y };
+        body_def.rotation = b2MakeRot(transform.rotation.z);
+
+        b2BodyId body = b2CreateBody(m_world, &body_def);
+        auto locks = b2MotionLocks{ false, false, rigidbody2d.fixed_rotation }; // do lin x & y need to be set to true based on body type?
+        b2Body_SetMotionLocks(body, locks);
+        memcpy(&rigidbody2d.runtime_body, &body, sizeof(b2BodyId));
+        // retrieval example so I dont forget
+        //b2BodyId body;
+        //memcpy(&body, &rigidbody2d.runtime_body, sizeof(b2BodyId));
+
+        if (entity.has_component<BoxCollider2DComponent>()) {
+            auto& collider = entity.get_component<BoxCollider2DComponent>();
+
+            b2ShapeDef shape_def = b2DefaultShapeDef();
+            shape_def.density = collider.density;
+
+            b2SurfaceMaterial material;
+            material.friction = collider.friction;
+            material.restitution = collider.restitution;
+
+            b2Polygon box = b2MakeBox(transform.scale.x * collider.size.x, transform.scale.y * collider.size.y);
+            b2ShapeId shape = b2CreatePolygonShape(body, &shape_def, &box);
+
+            b2Shape_SetSurfaceMaterial(shape, &material);
+
+        }
+    }
 }

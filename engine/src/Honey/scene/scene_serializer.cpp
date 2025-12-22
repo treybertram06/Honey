@@ -122,6 +122,7 @@ namespace Honey {
             out << YAML::Key << "Translation" << YAML::Value << tc.translation;
             out << YAML::Key << "Rotation" << YAML::Value << tc.rotation;
             out << YAML::Key << "Scale" << YAML::Value << tc.scale;
+            out << YAML::Key << "Dirty" << YAML::Value << tc.dirty;
 
             out << YAML::EndMap; // TransformComponent
         }
@@ -285,6 +286,28 @@ namespace Honey {
         HN_CORE_INFO("Serialized scene to {0}", path.generic_string());
     }
 
+    void SceneSerializer::serialize_entity_prefab(const Entity& entity, const std::filesystem::path& path) {
+        YAML::Emitter out;
+        out << YAML::BeginMap;
+        out << YAML::Key << "Prefab" << YAML::Value << entity.get_tag();
+
+        if (!entity) return;
+
+        out << YAML::Key << "Entity";
+        serialize_entity(entity, out); // Children?
+
+        out << YAML::EndMap;
+
+        std::filesystem::path file_path(path);
+        std::filesystem::create_directories(file_path.parent_path());
+
+        std::ofstream fout(path);
+        fout << out.c_str();
+        fout.close();
+
+        HN_CORE_INFO("Serialized prefab to {0}", path.generic_string());
+    }
+
     void SceneSerializer::serialize_runtime(const std::filesystem::path &path) {
         //not implemented
         HN_CORE_ASSERT(false, "Not implemented!");
@@ -311,6 +334,202 @@ namespace Honey {
             auto tag_node = entity_node["TagComponent"];
             if (tag_node)
                 name = tag_node["Tag"].as<std::string>();
+
+            Entity deserialized_entity = m_scene->create_entity(name, uuid);
+
+            auto transform_node = entity_node["TransformComponent"];
+            if (transform_node) {
+                auto& tc = deserialized_entity.get_component<TransformComponent>();
+                tc.translation = transform_node["Translation"].as<glm::vec3>();
+                tc.rotation = transform_node["Rotation"].as<glm::vec3>();
+                tc.scale = transform_node["Scale"].as<glm::vec3>();
+                tc.dirty = transform_node["Dirty"].as<bool>(false); // I'm not sure if this should be serialized? It should always be false when saving, or it could default to true to force a physics sync on-load.
+            }
+
+            auto sprite_node = entity_node["SpriteRendererComponent"];
+            if (sprite_node) {
+                auto& sprite = deserialized_entity.add_component<SpriteRendererComponent>();
+                sprite.color = sprite_node["Color"].as<glm::vec4>();
+                sprite.tiling_factor = sprite_node["TilingFactor"].as<float>();
+
+                std::string texture_path_str = sprite_node["Texture"].as<std::string>("");
+                if (!texture_path_str.empty()) {
+                    sprite.texture_path = std::filesystem::path(texture_path_str); // <-- keep it!
+                    sprite.texture = Texture2D::create(texture_path_str);
+                }
+            }
+
+            auto camera_node = entity_node["CameraComponent"];
+            if (camera_node) {
+                auto& camera_component = deserialized_entity.add_component<CameraComponent>();
+
+                // Deserialize component parameters
+                camera_component.fixed_aspect_ratio = camera_node["FixedAspectRatio"].as<bool>();
+                camera_component.primary = camera_node["Primary"].as<bool>();
+                camera_component.projection_type = camera_node["ProjectionType"].as<std::string>() == "Orthographic" ?
+                    CameraComponent::ProjectionType::Orthographic : CameraComponent::ProjectionType::Perspective;
+
+                camera_component.orthographic_size = camera_node["OrthographicSize"].as<float>();
+                camera_component.orthographic_near = camera_node["OrthographicNear"].as<float>();
+                camera_component.orthographic_far = camera_node["OrthographicFar"].as<float>();
+
+                camera_component.perspective_fov = camera_node["PerspectiveFOV"].as<float>();
+                camera_component.perspective_near = camera_node["PerspectiveNear"].as<float>();
+                camera_component.perspective_far = camera_node["PerspectiveFar"].as<float>();
+
+                // Recreate the camera with the correct type and parameters
+                if (camera_component.projection_type == CameraComponent::ProjectionType::Orthographic) {
+                    camera_component.camera = std::make_unique<OrthographicCamera>(
+                        camera_component.orthographic_size,
+                        1.6f, // Default aspect ratio, will be updated below
+                        camera_component.orthographic_near,
+                        camera_component.orthographic_far
+                    );
+                } else {
+                    camera_component.camera = std::make_unique<PerspectiveCamera>(
+                        camera_component.perspective_fov,
+                        1.6f, // Default aspect ratio, will be updated below
+                        camera_component.perspective_near,
+                        camera_component.perspective_far
+                    );
+                }
+
+                // Deserialize camera-specific data
+                auto* camera = camera_component.get_camera();
+                if (camera) {
+                    auto camera_data_node = camera_node["Camera"];
+                    if (camera_data_node && !camera_data_node.IsNull()) {
+                        // Fix the position parsing - your YAML has nested array
+                        auto position_node = camera_data_node["Position"];
+                        if (position_node && position_node.IsSequence() && position_node[0].IsSequence()) {
+                            auto pos_array = position_node[0].as<std::vector<float>>();
+                            if (pos_array.size() >= 3) {
+                                camera->set_position(glm::vec3(pos_array[0], pos_array[1], pos_array[2]));
+                            }
+                        }
+
+                        // Set aspect ratio
+                        if (camera_data_node["AspectRatio"]) {
+                            camera->set_aspect_ratio(camera_data_node["AspectRatio"].as<float>());
+                        }
+
+                        // Handle type-specific camera properties
+                        if (camera_component.projection_type == CameraComponent::ProjectionType::Orthographic) {
+                            auto* ortho_camera = dynamic_cast<OrthographicCamera*>(camera);
+                            if (ortho_camera) {
+                                if (camera_data_node["Rotation"]) {
+                                    ortho_camera->set_rotation(camera_data_node["Rotation"].as<float>());
+                                }
+                                if (camera_data_node["Size"]) {
+                                    ortho_camera->set_size(camera_data_node["Size"].as<float>());
+                                }
+                                if (camera_data_node["NearClip"]) {
+                                    ortho_camera->set_near_clip(camera_data_node["NearClip"].as<float>());
+                                }
+                                if (camera_data_node["FarClip"]) {
+                                    ortho_camera->set_far_clip(camera_data_node["FarClip"].as<float>());
+                                }
+                            }
+                        } else if (camera_component.projection_type == CameraComponent::ProjectionType::Perspective) {
+                            auto* persp_camera = dynamic_cast<PerspectiveCamera*>(camera);
+                            if (persp_camera) {
+                                if (camera_data_node["FOV"]) {
+                                    persp_camera->set_fov(camera_data_node["FOV"].as<float>());
+                                }
+                                if (camera_data_node["NearClip"]) {
+                                    persp_camera->set_near_clip(camera_data_node["NearClip"].as<float>());
+                                }
+                                if (camera_data_node["FarClip"]) {
+                                    persp_camera->set_far_clip(camera_data_node["FarClip"].as<float>());
+                                }
+                                if (camera_data_node["Rotation"] && camera_data_node["Rotation"].IsSequence()) {
+                                    persp_camera->set_rotation(camera_data_node["Rotation"].as<glm::vec2>());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            auto native_script = entity_node["NativeScriptComponent"];
+            if (native_script) {
+                auto& nsc = deserialized_entity.add_component<NativeScriptComponent>();
+
+                std::string script_name = native_script["ScriptName"].as<std::string>("");
+                if (!script_name.empty()) {
+                    nsc.bind_by_name(script_name); // sets instantiate/destroy closures
+                }
+
+                // (Optional) If you support properties:
+                // if (auto props = native_script["Properties"]) {
+                //     nsc.deserialize_properties(props);
+                // }
+            }
+
+            auto script_component = entity_node["ScriptComponent"];
+            if (script_component) {
+
+                std::string script_name = script_component["ScriptName"].as<std::string>("");
+                if (!script_name.empty()) {
+                    auto& sc = deserialized_entity.add_component<ScriptComponent>();
+                    sc.script_name = script_name;
+                }
+            }
+
+            auto rigidbody_node = entity_node["Rigidbody2DComponent"];
+            if (rigidbody_node) {
+                auto& rb = deserialized_entity.add_component<Rigidbody2DComponent>();
+                rb.body_type = (Rigidbody2DComponent::BodyType)rigidbody_node["BodyType"].as<int>();
+                rb.fixed_rotation = rigidbody_node["FixedRotation"].as<bool>();
+            }
+
+            auto collider_node = entity_node["BoxCollider2DComponent"];
+            if (collider_node) {
+                auto& bc = deserialized_entity.add_component<BoxCollider2DComponent>();
+                bc.offset = collider_node["Offset"].as<glm::vec2>();
+                bc.size = collider_node["Size"].as<glm::vec2>();
+                bc.density = collider_node["Density"].as<float>();
+                bc.friction = collider_node["Friction"].as<float>();
+                bc.restitution = collider_node["Restitution"].as<float>();
+            }
+        }
+
+        return true;
+    }
+
+    Entity SceneSerializer::deserialize_entity_prefab(const std::filesystem::path& path) {
+        std::ifstream stream(path);
+        if (!stream.is_open()) {
+            HN_CORE_ERROR("Failed to open prefab file: {}", path.string());
+            return {};
+        }
+
+        std::stringstream str_stream;
+        str_stream << stream.rdbuf();
+
+        YAML::Node data = YAML::Load(str_stream.str());
+        if (!data["Prefab"]) {
+            HN_CORE_ERROR("Invalid prefab file: missing 'Prefab' node");
+            return {};
+        }
+
+        std::string prefab_name = data["Prefab"].as<std::string>();
+        HN_CORE_INFO("Deserializing prefab '{}'", prefab_name);
+
+        // This must exist
+        YAML::Node entity_node = data["Entity"];
+        if (!entity_node) {
+            HN_CORE_ERROR("Prefab '{}' has no 'Entity' node", prefab_name);
+            return {};
+        }
+
+        // --- Entity Creation ---
+        UUID uuid = entity_node["Entity"].as<uint64_t>();
+
+        std::string name = prefab_name;
+        if (auto tag_node = entity_node["TagComponent"]) {
+            name = tag_node["Tag"].as<std::string>(prefab_name);
+        }
 
             Entity deserialized_entity = m_scene->create_entity(name, uuid);
 
@@ -468,9 +687,9 @@ namespace Honey {
                 bc.friction = collider_node["Friction"].as<float>();
                 bc.restitution = collider_node["Restitution"].as<float>();
             }
-        }
 
-        return true;
+
+        return deserialized_entity;
     }
 
     bool SceneSerializer::deserialize_runtime(const std::filesystem::path &path) {

@@ -10,13 +10,16 @@
 #include <sol/sol.hpp>
 #include <box2d/box2d.h>
 
+#include "type_proxies.h"
+#include "Honey/scene/scene_serializer.h"
+
 namespace Honey {
 
-    static Scene* GetActiveScene() {
+    static Scene* get_active_scene() {
         return ScriptEngine::get_scene_context();
     }
 
-    static b2BodyId GetBodyId(Rigidbody2DComponent& rb) {
+    static b2BodyId get_body_id(Rigidbody2DComponent& rb) {
         b2BodyId body;
         memcpy(&body, &rb.runtime_body, sizeof(b2BodyId));
         return body;
@@ -39,6 +42,11 @@ namespace Honey {
             "x", &glm::vec2::x,
             "y", &glm::vec2::y
         );
+
+        lua.set_function("vec2", [](float x, float y) {
+            return glm::vec2(x, y);
+        });
+
 
         // Entity
         lua.new_usertype<Entity>("Entity",
@@ -84,13 +92,49 @@ namespace Honey {
             "GetTransform", [](Entity e) { return &e.get_component<TransformComponent>(); }
         );
 
+        lua.new_usertype<LuaVec3Proxy>("LuaVec3",
+            "x", sol::property(&LuaVec3Proxy::get_x, &LuaVec3Proxy::set_x),
+            "y", sol::property(&LuaVec3Proxy::get_y, &LuaVec3Proxy::set_y),
+            "z", sol::property(&LuaVec3Proxy::get_z, &LuaVec3Proxy::set_z)
+        );
+
+
         // TransformComponent
         lua.new_usertype<TransformComponent>("TransformComponent",
             sol::constructors<TransformComponent()>(),
-            "translation", &TransformComponent::translation,
-            "rotation", &TransformComponent::rotation,
-            "scale", &TransformComponent::scale
+
+            "translation", sol::property(
+                [](TransformComponent& tc) {
+                    return LuaVec3Proxy{ &tc, &tc.translation };
+                },
+                [](TransformComponent& tc, glm::vec3 val) {
+                    tc.translation = val;
+                    tc.dirty = true;
+                }
+            ),
+
+            "rotation", sol::property(
+                [](TransformComponent& tc) {
+                    return LuaVec3Proxy{ &tc, &tc.rotation };
+                },
+                [](TransformComponent& tc, glm::vec3 val) {
+                    tc.rotation = val;
+                    tc.dirty = true;
+                }
+            ),
+
+            "scale", sol::property(
+                [](TransformComponent& tc) {
+                    return LuaVec3Proxy{ &tc, &tc.scale };
+                },
+                [](TransformComponent& tc, glm::vec3 val) {
+                    tc.scale = val;
+                    tc.dirty = true;
+                }
+            )
         );
+
+
 
         // SpriteRendererComponent
         lua.new_usertype<SpriteRendererComponent>("SpriteRendererComponent",
@@ -103,23 +147,23 @@ namespace Honey {
             sol::constructors<Rigidbody2DComponent()>(),
 
             "GetVelocity", [](Rigidbody2DComponent& rb) {
-                b2BodyId body = GetBodyId(rb);
+                b2BodyId body = get_body_id(rb);
                 b2Vec2 v = b2Body_GetLinearVelocity(body);
                 return glm::vec2(v.x, v.y);
             },
 
             "SetVelocity", [](Rigidbody2DComponent& rb, glm::vec2 vel) {
-                b2BodyId body = GetBodyId(rb);
+                b2BodyId body = get_body_id(rb);
                 b2Body_SetLinearVelocity(body, { vel.x, vel.y });
             },
 
             "GetAngularVelocity", [](Rigidbody2DComponent& rb) {
-                b2BodyId body = GetBodyId(rb);
+                b2BodyId body = get_body_id(rb);
                 return b2Body_GetAngularVelocity(body);
             },
 
             "SetAngularVelocity", [](Rigidbody2DComponent& rb, float value) {
-                b2BodyId body = GetBodyId(rb);
+                b2BodyId body = get_body_id(rb);
                 b2Body_SetAngularVelocity(body, value);
             },
 
@@ -141,21 +185,32 @@ namespace Honey {
         honey.set_function("Log", [](const std::string& msg){ HN_INFO("[Lua] {}", msg); });
 
         honey.set_function("CreateEntity", [](const std::string& name){
-            Scene* scene = GetActiveScene();
+            Scene* scene = get_active_scene();
             if (!scene) return Entity();
             return scene->create_entity(name);
         });
 
         honey.set_function("DestroyEntity", [](Entity e){
-            Scene* scene = GetActiveScene();
+            Scene* scene = get_active_scene();
             if (scene) scene->destroy_entity(e);
+        });
+
+        honey.set_function("InstantiatePrefab", [](const std::string& name) {
+            Scene* scene = get_active_scene();
+            if (!scene) return Entity();
+
+            auto path = std::filesystem::path("..") / "assets" / "prefabs" / name;
+            path.replace_extension(".hnp");
+
+            HN_CORE_INFO("Instantiating prefab '{0}'", path.string());
+            return scene->instantiate_prefab(path.string());
         });
 
         honey.set_function("IsKeyPressed", [](int key){ return Input::is_key_pressed((KeyCode)key); });
         honey.set_function("IsMouseButtonPressed", [](int button){ return Input::is_mouse_button_pressed((MouseButton)button); });
         honey.set_function("GetMousePosition", [](){ return Input::get_mouse_position(); });
 
-        //honey.set_function("Random", [](float a, float b){ return a + static_cast<float>(rand()) / RAND_MAX * (b - a); });
+        honey.set_function("Random", [](float a, float b){ return a + static_cast<float>(rand()) / RAND_MAX * (b - a); });
 
         // Key enum
         sol::table key = lua.create_named_table("Key");

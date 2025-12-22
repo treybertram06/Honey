@@ -42,13 +42,19 @@ namespace Honey {
 
         void duplicate_entity(Entity entity);
 
+        //void create_prefab(const Entity& entity, const std::string& path);
+        Entity instantiate_prefab(const std::string& path);
+
+        void create_physics_body(Entity entity);
+
+
     private:
         static Scene* s_active_scene;
         entt::registry m_registry;
 
         b2WorldId m_world = b2_nullWorldId;
 
-        Entity entity_from_body(b2BodyId body);
+        //Entity entity_from_body(b2BodyId body);
 
         friend class Entity;
         friend class SceneSerializer;

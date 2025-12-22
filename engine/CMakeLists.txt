@@ -151,6 +151,7 @@ add_library(engine STATIC
         src/Honey/scripting/script_engine.cpp
         src/Honey/scripting/script_glue.h
         src/Honey/scripting/script_glue.cpp
+        src/Honey/scripting/type_proxies.h
 )
 
 # Apply MSVC runtime to engine itself
