@@ -20,6 +20,8 @@ namespace Honey {
         Entity create_entity(const std::string& name, UUID uuid);
         void destroy_entity(Entity entity);
 
+        Entity get_entity(UUID uuid);
+
         void on_physics_2D_start();
         void on_physics_2D_stop();
         void on_runtime_start();

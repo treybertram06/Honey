@@ -70,6 +70,24 @@ namespace Honey {
 
     };
 
+    struct CircleRendererComponent {
+        glm::vec4 color = {1.0f, 1.0f, 1.0f, 1.0f};
+        float thickness = 1.0f;
+        float fade = 0.005f;
+
+        Ref<Texture2D> texture;
+        std::filesystem::path texture_path;
+
+        CircleRendererComponent() = default;
+        CircleRendererComponent(const CircleRendererComponent&) = default;
+        CircleRendererComponent(CircleRendererComponent&&) noexcept = default;
+        CircleRendererComponent& operator=(const CircleRendererComponent&) = default;
+        CircleRendererComponent& operator=(CircleRendererComponent&&) noexcept = default;
+        CircleRendererComponent(const glm::vec4& color)
+            : color(color) {}
+
+    };
+
     struct CameraComponent {
         enum class ProjectionType { Orthographic, Perspective };
 

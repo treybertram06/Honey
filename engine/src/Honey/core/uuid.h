@@ -10,6 +10,7 @@ namespace Honey {
         UUID(const UUID&) = default;
 
         operator uint64_t() const { return m_uuid; }
+        //operator void*() const { return reinterpret_cast<void*>(m_uuid); }
 
     private:
         uint64_t m_uuid;

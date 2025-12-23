@@ -8,7 +8,6 @@
 #include "Honey/renderer/shader_cache.h"
 
 namespace Honey {
-
     class Renderer2D {
     public:
         static void init(std::unique_ptr<ShaderCache> shader_cache);
@@ -18,6 +17,8 @@ namespace Honey {
         static void begin_scene(const EditorCamera& camera);
         static void begin_scene(const OrthographicCamera& camera);
         static void end_scene();
+        static void quad_end_scene();
+        static void circle_end_scene();
 
         // Position-based overloads
         static void draw_quad(const glm::vec2& position, const glm::vec2& size, const glm::vec4& color);
@@ -61,6 +62,64 @@ namespace Honey {
 
         static void draw_sprite(const glm::mat4& transform, SpriteRendererComponent& src, int entity_id);
 
+        // --------------------------------------------------------
+        //  Circle Rendering API (Header)
+        // --------------------------------------------------------
+
+        // Solid color
+        static void draw_circle(const glm::vec2& position, const glm::vec2& size,
+                                const glm::vec4& color, float thickness = 1.0f, float fade = 0.005f);
+
+        static void draw_circle(const glm::vec3& position, const glm::vec2& size,
+                                const glm::vec4& color, float thickness = 1.0f, float fade = 0.005f);
+
+        // With texture
+        static void draw_circle(const glm::vec2& position, const glm::vec2& size,
+                                const Ref<Texture2D>& texture, const glm::vec4& color,
+                                float thickness = 1.0f, float fade = 0.005f);
+
+        static void draw_circle(const glm::vec3& position, const glm::vec2& size,
+                                const Ref<Texture2D>& texture, const glm::vec4& color,
+                                float thickness = 1.0f, float fade = 0.005f);
+
+        // Rotated color circle
+        static void draw_rotated_circle(const glm::vec2& position, const glm::vec2& size,
+                                        float rotation, const glm::vec4& color,
+                                        float thickness = 1.0f, float fade = 0.005f);
+
+        static void draw_rotated_circle(const glm::vec3& position, const glm::vec2& size,
+                                        float rotation, const glm::vec4& color,
+                                        float thickness = 1.0f, float fade = 0.005f);
+
+        // Rotated textured circle
+        static void draw_rotated_circle(const glm::vec3& position, const glm::vec2& size,
+                                        float rotation, const Ref<Texture2D>& texture,
+                                        const glm::vec4& color,
+                                        float thickness = 1.0f, float fade = 0.005f);
+
+        // Subtexture support
+        static void draw_circle(const glm::vec3& position, const glm::vec2& size,
+                                const Ref<SubTexture2D>& sub_texture, const glm::vec4& color,
+                                float thickness = 1.0f, float fade = 0.005f);
+
+        static void draw_rotated_circle(const glm::vec3& position, const glm::vec2& size,
+                                        float rotation, const Ref<SubTexture2D>& sub_texture,
+                                        const glm::vec4& color,
+                                        float thickness = 1.0f, float fade = 0.005f);
+
+        // Using transform matrix
+        static void draw_circle(const glm::mat4& transform, const glm::vec4& color,
+                                float thickness = 1.0f, float fade = 0.005f);
+
+        static void draw_circle(const glm::mat4& transform, const Ref<Texture2D>& texture,
+                                const glm::vec4& color,
+                                float thickness = 1.0f, float fade = 0.005f);
+
+        // ECS component version
+        static void draw_circle_sprite(const glm::mat4& transform, CircleRendererComponent& src,
+                                       int entity_id);
+
+
         // Statistics
         struct Statistics {
             uint32_t draw_calls = 0;
@@ -74,7 +133,11 @@ namespace Honey {
 
     private:
         // Core implementation function
-        static void submit_quad(const glm::vec3& position, const glm::vec2& size, float rotation,
+        static void submit_quad(const glm::vec3& position, const glm::vec2& size, float thickness,
+                               const Ref<Texture2D>& texture, const Ref<SubTexture2D>& sub_texture,
+                               const glm::vec4& color, float fade, int entity_id = -1);
+
+        static void submit_circle(const glm::vec3& position, const glm::vec2& size, float rotation,
                                const Ref<Texture2D>& texture, const Ref<SubTexture2D>& sub_texture,
                                const glm::vec4& color, float tiling_factor, int entity_id = -1);
         

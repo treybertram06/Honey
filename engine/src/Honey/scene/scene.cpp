@@ -53,8 +53,20 @@ namespace Honey {
 
     void Scene::destroy_entity(Entity entity) {
         if (entity.is_valid()) {
+            ScriptEngine::on_destroy_entity(entity);
             m_registry.destroy(entity);
         }
+    }
+
+    Entity Scene::get_entity(UUID uuid) {
+        auto view = m_registry.view<IDComponent>();
+        for (auto e : view) {
+            auto& id = view.get<IDComponent>(e);
+            if (id.id == uuid)
+                return Entity{ e, this };
+        }
+
+        return {};
     }
 
     void Scene::on_physics_2D_start() {
@@ -114,7 +126,7 @@ namespace Honey {
 
         // Scripts
         {
-            // C# scripts
+            // Lua scripts
             auto view = m_registry.view<ScriptComponent>();
             for (auto e : view) {
                 Entity entity = { e, this };
@@ -154,6 +166,43 @@ namespace Honey {
                 b2World_Step(m_world, ts, sub_steps);
             }
 
+            b2ContactEvents events = b2World_GetContactEvents(m_world);
+
+            for (int i = 0; i < events.beginCount; i++) {
+                b2ContactBeginTouchEvent* evt = &events.beginEvents[i];
+
+                b2BodyId body_a = b2Shape_GetBody(evt->shapeIdA);
+                b2BodyId body_b = b2Shape_GetBody(evt->shapeIdB);
+
+                UUID uuid_a = (uint64_t)b2Body_GetUserData(body_a);
+                UUID uuid_b = (uint64_t)b2Body_GetUserData(body_b);
+
+                Entity entity_a = get_entity(uuid_a);
+                Entity entity_b = get_entity(uuid_b);
+
+                if (entity_a.is_valid() && entity_b.is_valid()) {
+                    ScriptEngine::on_collision_begin(entity_a, entity_b); // I could be checking if entity_a has a script component before calling this
+                    ScriptEngine::on_collision_begin(entity_b, entity_a); // Likewise but entity_b
+                }
+            }
+            for (int i = 0; i < events.endCount; i++) {
+                b2ContactEndTouchEvent* evt = &events.endEvents[i];
+
+                b2BodyId body_a = b2Shape_GetBody(evt->shapeIdA);
+                b2BodyId body_b = b2Shape_GetBody(evt->shapeIdB);
+
+                UUID uuid_a = (uint64_t)b2Body_GetUserData(body_a);
+                UUID uuid_b = (uint64_t)b2Body_GetUserData(body_b);
+
+                Entity entity_a = get_entity(uuid_a);
+                Entity entity_b = get_entity(uuid_b);
+
+                if (entity_a.is_valid() && entity_b.is_valid()) {
+                    ScriptEngine::on_collision_end(entity_a, entity_b);
+                    ScriptEngine::on_collision_end(entity_b, entity_a);
+                }
+            }
+
             auto view = m_registry.view<Rigidbody2DComponent>();
             for (auto e : view) {
                 Entity entity = { e, this };
@@ -175,7 +224,6 @@ namespace Honey {
             }
         }
 
-
         // render
         Entity primary_camera_entity = get_primary_camera();
         if (primary_camera_entity.is_valid()) {
@@ -187,10 +235,16 @@ namespace Honey {
             if (primary_camera) {
                 Renderer2D::begin_scene(*primary_camera, transform);
 
-                auto group = m_registry.group<TransformComponent>(entt::get<SpriteRendererComponent>);
+                auto group = m_registry.group<SpriteRendererComponent>(entt::get<TransformComponent>);
                 for (auto entity : group) {
-                    auto [entity_transform, sprite] = group.get<TransformComponent, SpriteRendererComponent>(entity);
+                    auto [sprite, entity_transform] = group.get<SpriteRendererComponent, TransformComponent>(entity);
                     Renderer2D::draw_sprite(entity_transform.get_transform(), sprite, (int)entity);
+                }
+
+                auto cicle_group = m_registry.group<CircleRendererComponent>(entt::get<TransformComponent>);
+                for (auto entity : cicle_group) {
+                    auto [sprite, entity_transform] = cicle_group.get<CircleRendererComponent, TransformComponent>(entity);
+                    Renderer2D::draw_circle_sprite(entity_transform.get_transform(), sprite, (int)entity);
                 }
 
                 Renderer2D::end_scene();
@@ -203,10 +257,16 @@ namespace Honey {
         // render
         Renderer2D::begin_scene(camera);
 
-        auto group = m_registry.group<TransformComponent>(entt::get<SpriteRendererComponent>);
+        auto group = m_registry.group<SpriteRendererComponent>(entt::get<TransformComponent>);
         for (auto entity : group) {
-            auto [entity_transform, sprite] = group.get<TransformComponent, SpriteRendererComponent>(entity);
+            auto [sprite, entity_transform] = group.get<SpriteRendererComponent, TransformComponent>(entity);
             Renderer2D::draw_sprite(entity_transform.get_transform(), sprite, (int)entity);
+        }
+
+        auto cicle_group = m_registry.group<CircleRendererComponent>(entt::get<TransformComponent>);
+        for (auto entity : cicle_group) {
+            auto [sprite, entity_transform] = cicle_group.get<CircleRendererComponent, TransformComponent>(entity);
+            Renderer2D::draw_circle_sprite(entity_transform.get_transform(), sprite, (int)entity);
         }
 
         Renderer2D::end_scene();
@@ -263,6 +323,7 @@ namespace Honey {
 
         copy_component<TransformComponent>          (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<SpriteRendererComponent>     (dst_scene_registry, src_scene_registry, entt_map);
+        copy_component<CircleRendererComponent>     (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<CameraComponent>             (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<NativeScriptComponent>       (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<ScriptComponent>             (dst_scene_registry, src_scene_registry, entt_map);
@@ -293,6 +354,7 @@ namespace Honey {
 
         copy_component_if_exists<TransformComponent>        (new_entity, entity);
         copy_component_if_exists<SpriteRendererComponent>   (new_entity, entity);
+        copy_component_if_exists<CircleRendererComponent>   (new_entity, entity);
         copy_component_if_exists<CameraComponent>           (new_entity, entity);
         copy_component_if_exists<NativeScriptComponent>     (new_entity, entity);
         copy_component_if_exists<ScriptComponent>           (new_entity, entity);
@@ -325,6 +387,10 @@ namespace Honey {
         body_def.rotation = b2MakeRot(transform.rotation.z);
 
         b2BodyId body = b2CreateBody(m_world, &body_def);
+
+        UUID uuid = entity.get_uuid();
+        b2Body_SetUserData(body, (void*)(uint64_t)uuid);
+
         auto locks = b2MotionLocks{ false, false, rigidbody2d.fixed_rotation }; // do lin x & y need to be set to true based on body type?
         b2Body_SetMotionLocks(body, locks);
         memcpy(&rigidbody2d.runtime_body, &body, sizeof(b2BodyId));

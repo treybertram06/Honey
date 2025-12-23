@@ -202,7 +202,7 @@ namespace Honey {
             auto path = std::filesystem::path("..") / "assets" / "prefabs" / name;
             path.replace_extension(".hnp");
 
-            HN_CORE_INFO("Instantiating prefab '{0}'", path.string());
+            //HN_CORE_INFO("Instantiating prefab '{0}'", path.string());
             return scene->instantiate_prefab(path.string());
         });
 

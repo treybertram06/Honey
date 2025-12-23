@@ -134,7 +134,7 @@ void Application2D::on_update(Honey::Timestep ts) {
         }
         */
 
-        Honey::Renderer2D::end_scene();
+        Honey::Renderer2D::quad_end_scene();
     }
 
 }
