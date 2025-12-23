@@ -2,8 +2,11 @@
 
 #include "scene.h"
 #include "Honey/core/base.h"
+#include "yaml-cpp/node/node.h"
 
 namespace Honey {
+
+    //namespace YAML { class Node; }
 
     class SceneSerializer {
     public:
@@ -14,6 +17,7 @@ namespace Honey {
         void serialize_runtime(const std::filesystem::path& path);
 
         bool deserialize(const std::filesystem::path& path);
+        Entity deserialize_entity_node(YAML::Node& entity_node);
         Entity deserialize_entity_prefab(const std::filesystem::path& path);
         bool deserialize_runtime(const std::filesystem::path& path);
     private:
