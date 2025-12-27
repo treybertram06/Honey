@@ -292,6 +292,20 @@ namespace Honey {
             out << YAML::EndMap;
         }
 
+        if (entity.has_component<CircleCollider2DComponent>()) {
+            out << YAML::Key << "CircleCollider2DComponent";
+            out << YAML::BeginMap;
+
+            auto& cc = entity.get_component<CircleCollider2DComponent>();
+            out << YAML::Key << "Offset" << YAML::Value << cc.offset;
+            out << YAML::Key << "Radius" << YAML::Value << cc.radius;
+
+            out << YAML::Key << "Density" << YAML::Value << cc.density;
+            out << YAML::Key << "Friction" << YAML::Value << cc.friction;
+            out << YAML::Key << "Restitution" << YAML::Value << cc.restitution;
+            out << YAML::EndMap;
+        }
+
 
 
         out <<YAML::EndMap; // Entity
@@ -535,14 +549,24 @@ namespace Honey {
             rb.fixed_rotation = rigidbody_node["FixedRotation"].as<bool>();
         }
 
-        auto collider_node = entity_node["BoxCollider2DComponent"];
-        if (collider_node) {
+        auto box_collider_node = entity_node["BoxCollider2DComponent"];
+        if (box_collider_node) {
             auto& bc = deserialized_entity.add_component<BoxCollider2DComponent>();
-            bc.offset = collider_node["Offset"].as<glm::vec2>();
-            bc.size = collider_node["Size"].as<glm::vec2>();
-            bc.density = collider_node["Density"].as<float>();
-            bc.friction = collider_node["Friction"].as<float>();
-            bc.restitution = collider_node["Restitution"].as<float>();
+            bc.offset = box_collider_node["Offset"].as<glm::vec2>();
+            bc.size = box_collider_node["Size"].as<glm::vec2>();
+            bc.density = box_collider_node["Density"].as<float>();
+            bc.friction = box_collider_node["Friction"].as<float>();
+            bc.restitution = box_collider_node["Restitution"].as<float>();
+        }
+
+        auto circle_collider_node = entity_node["CircleCollider2DComponent"];
+        if (circle_collider_node) {
+            auto& cc = deserialized_entity.add_component<CircleCollider2DComponent>();
+            cc.offset = circle_collider_node["Offset"].as<glm::vec2>();
+            cc.radius = circle_collider_node["Radius"].as<float>();
+            cc.density = circle_collider_node["Density"].as<float>();
+            cc.friction = circle_collider_node["Friction"].as<float>();
+            cc.restitution = circle_collider_node["Restitution"].as<float>();
         }
 
         return deserialized_entity;

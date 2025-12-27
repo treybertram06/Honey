@@ -337,6 +337,7 @@ namespace Honey {
         copy_component<RelationshipComponent>       (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<Rigidbody2DComponent>        (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<BoxCollider2DComponent>      (dst_scene_registry, src_scene_registry, entt_map);
+        copy_component<CircleCollider2DComponent>      (dst_scene_registry, src_scene_registry, entt_map);
 
         auto src_view = src_scene_registry.view<CameraComponent>();
         for (auto e : src_view) {
@@ -369,6 +370,7 @@ namespace Honey {
         copy_component_if_exists<RelationshipComponent>     (new_entity, entity);
         copy_component_if_exists<Rigidbody2DComponent>      (new_entity, entity);
         copy_component_if_exists<BoxCollider2DComponent>    (new_entity, entity);
+        copy_component_if_exists<CircleCollider2DComponent>    (new_entity, entity);
 
     }
     //void Scene::create_prefab(const Entity& entity, const std::string& path) {
@@ -420,7 +422,24 @@ namespace Honey {
             b2ShapeId shape = b2CreatePolygonShape(body, &shape_def, &box);
 
             b2Shape_SetSurfaceMaterial(shape, &material);
+        }
 
+        if (entity.has_component<CircleCollider2DComponent>()) {
+            auto& collider = entity.get_component<CircleCollider2DComponent>();
+
+            b2ShapeDef shape_def = b2DefaultShapeDef();
+            shape_def.density = collider.density;
+
+            b2SurfaceMaterial material;
+            material.friction = collider.friction;
+            material.restitution = collider.restitution;
+
+            b2Circle circle{};
+            circle.center = { collider.offset.x, collider.offset.y };
+            circle.radius = collider.radius;
+            b2ShapeId shape = b2CreateCircleShape(body, &shape_def, &circle);
+
+            b2Shape_SetSurfaceMaterial(shape, &material);
         }
     }
 }
