@@ -31,7 +31,18 @@ namespace Honey {
         glm::vec4   color;
         float       fade;
         int         tex_index;
-        //float     tiling_factor;
+        glm::vec2   tex_coord_min;
+        glm::vec2   tex_coord_max;
+        int         entity_id;
+    };
+
+    struct LineInstance {
+        glm::vec3   center;
+        glm::vec2   half_size;
+        float       rotation;
+        glm::vec4   color;
+        float       fade;
+        int         tex_index;
         glm::vec2   tex_coord_min;
         glm::vec2   tex_coord_max;
         int         entity_id;
@@ -74,6 +85,16 @@ namespace Honey {
         std::vector<CircleInstance> circle_instances;
         std::vector<CircleInstance> circle_sorted_instances;
 
+        // Line GL objects
+        Ref<VertexArray>  line_vertex_array;
+        Ref<VertexBuffer> s_line_vertex_buffer;   // 4 vertices
+        Ref<VertexBuffer> i_line_vertex_buffer; // maxQuads * QuadInstance
+        Ref<IndexBuffer>  line_ibo;         // 6 indices
+        Ref<Shader>       line_shader;
+
+        std::vector<LineInstance> line_instances;
+        std::vector<LineInstance> line_sorted_instances;
+
         // Texture slots
         uint32_t                       max_texture_slots = 0;
         std::vector<Ref<Texture2D>>    texture_slots;
@@ -95,8 +116,7 @@ namespace Honey {
     static Renderer2DData s_data;
 
 
-    static int resolve_texture_slot(const Ref<Texture2D>& tex)
-    {
+    static int resolve_texture_slot(const Ref<Texture2D>& tex) {
         if (!tex)
             return 0; // white
 
@@ -116,8 +136,7 @@ namespace Honey {
     }
 
 
-    void Renderer2D::init(std::unique_ptr<ShaderCache> shader_cache)
-    {
+    void Renderer2D::init(std::unique_ptr<ShaderCache> shader_cache) {
         HN_PROFILE_FUNCTION();
 
         s_data.shader_cache = std::move(shader_cache);
@@ -225,6 +244,57 @@ namespace Honey {
         auto circle_shader_path = asset_root / "shaders" / "Renderer2D_Circle.glsl";
         s_data.circle_shader = s_data.shader_cache->get_or_compile_shader(circle_shader_path);
 
+        ////////////////// LINES //////////////////////////
+        s_data.line_vertex_array = VertexArray::create();
+
+
+        s_data.s_line_vertex_buffer = VertexBuffer::create(sizeof(s_static_quad));
+        s_data.s_line_vertex_buffer->set_data(s_static_quad, sizeof(s_static_quad));
+        {
+            BufferLayout layout = {
+                { ShaderDataType::Float2, "a_local_pos"  },  // loc 0
+                { ShaderDataType::Float2, "a_local_tex"  },  // loc 1
+            };
+            s_data.s_line_vertex_buffer->set_layout(layout);
+            s_data.line_vertex_array->add_vertex_buffer(s_data.s_line_vertex_buffer); // divisor 0 (default)
+        }
+
+        s_data.i_line_vertex_buffer = VertexBuffer::create(Renderer2DData::max_quads * sizeof(LineInstance));
+        {
+            BufferLayout layout = {
+                { ShaderDataType::Float3, "i_center", false, true }, // loc 2
+                //{ ShaderDataType::Float3, "i_local_position", false, true }, // loc
+                { ShaderDataType::Float2, "i_half_size", false, true }, // loc 3
+                { ShaderDataType::Float, "i_rotation", false, true }, // loc 4
+                { ShaderDataType::Float4, "i_color", false, true }, // loc 5
+                { ShaderDataType::Float, "i_fade", false, true }, // loc 6
+                { ShaderDataType::Int , "i_tex_index", false, true }, // loc 7
+                { ShaderDataType::Float2 , "i_tex_coord_min", false, true }, // loc 8
+                { ShaderDataType::Float2 , "i_tex_coord_max", false, true }, // loc 9
+                { ShaderDataType::Int, "i_entity_id", false, true} // loc 10
+            };
+            s_data.i_line_vertex_buffer->set_layout(layout);
+            s_data.line_vertex_array->add_vertex_buffer(s_data.i_line_vertex_buffer);
+        }
+
+        //uint32_t indices[6] = {0,1,2, 2,3,0};
+        s_data.line_ibo = IndexBuffer::create(indices, 6);
+        s_data.line_vertex_array->set_index_buffer(s_data.line_ibo);
+
+        s_data.line_instances.reserve(Renderer2DData::max_quads);
+        s_data.line_sorted_instances.reserve(Renderer2DData::max_quads);
+
+        s_data.max_texture_slots = RenderCommand::get_max_texture_slots();
+        s_data.texture_slots.resize(s_data.max_texture_slots);
+
+        s_data.white_texture = Texture2D::create(1,1);
+        //uint32_t white = 0xffffffff;
+        s_data.white_texture->set_data(&white, sizeof(uint32_t));
+        s_data.texture_slots[0] = s_data.white_texture;
+
+        auto line_shader_path = asset_root / "shaders" / "Renderer2D_Line.glsl";
+        s_data.line_shader = s_data.shader_cache->get_or_compile_shader(line_shader_path);
+
 
 
 
@@ -234,11 +304,13 @@ namespace Honey {
 
         s_data.quad_shader->bind();
         s_data.circle_shader->bind();
+        s_data.line_shader->bind(); // Are these doing anything?
         {
             std::vector<int> samplers(s_data.max_texture_slots);
             std::iota(samplers.begin(), samplers.end(), 0);
-            s_data.quad_shader->set_int_array("u_textures", samplers.data(), samplers.size());
-            s_data.circle_shader->set_int_array("u_textures", samplers.data(), samplers.size());
+            s_data.quad_shader->    set_int_array("u_textures", samplers.data(), samplers.size());
+            s_data.circle_shader->  set_int_array("u_textures", samplers.data(), samplers.size());
+            s_data.line_shader->    set_int_array("u_textures", samplers.data(), samplers.size());
         }
     }
 
@@ -257,6 +329,7 @@ namespace Honey {
 
         s_data.quad_instances.clear();
         s_data.circle_instances.clear();
+        s_data.line_instances.clear();
 
         s_data.texture_slot_index = 1; // keep white bound at 0
     }
@@ -271,6 +344,7 @@ namespace Honey {
 
         s_data.quad_instances.clear();
         s_data.circle_instances.clear();
+        s_data.line_instances.clear();
 
         s_data.texture_slot_index = 1; // keep white bound at 0
     }
@@ -285,6 +359,7 @@ namespace Honey {
 
         s_data.quad_instances.clear();
         s_data.circle_instances.clear();
+        s_data.line_instances.clear();
 
         s_data.texture_slot_index = 1; // keep white bound at 0
     }
@@ -292,6 +367,33 @@ namespace Honey {
     void Renderer2D::end_scene() {
         quad_end_scene();
         circle_end_scene();
+        line_end_scene();
+    }
+
+    void Renderer2D::line_end_scene() {
+        if (s_data.line_instances.empty())
+            return;
+
+        s_data.line_shader->bind();
+        // Sort instances by Z coordinate (back to front for correct alpha blending)
+        s_data.line_sorted_instances = s_data.line_instances;
+        std::sort(s_data.line_sorted_instances.begin(), s_data.line_sorted_instances.end(),
+            [](const LineInstance& a, const LineInstance& b) {
+                return a.center.z > b.center.z; // Higher Z values drawn first (back to front)
+            });
+
+        // Upload sorted instance data
+        size_t bytes = s_data.line_sorted_instances.size() * sizeof(LineInstance);
+        s_data.i_line_vertex_buffer->set_data(s_data.line_sorted_instances.data(), bytes);
+
+        // Bind textures in the order we populated
+        for (uint32_t i = 0; i < s_data.texture_slot_index; ++i)
+            s_data.texture_slots[i]->bind(i);
+
+        // Draw all lines in one go
+        s_data.line_vertex_array->bind();
+        RenderCommand::draw_indexed_instanced(s_data.line_vertex_array, 6, s_data.line_sorted_instances.size());
+        s_data.stats.draw_calls++;
     }
 
     void Renderer2D::circle_end_scene() {
@@ -348,16 +450,19 @@ namespace Honey {
 
 
 
-    static void quad_flush_and_reset()
-    {
+    static void quad_flush_and_reset() {
         Renderer2D::quad_end_scene();
         s_data.quad_instances.clear();
     }
 
-    static void circle_flush_and_reset()
-    {
+    static void circle_flush_and_reset() {
         Renderer2D::circle_end_scene();
         s_data.circle_instances.clear();
+    }
+
+    static void line_flush_and_reset() {
+        Renderer2D::line_end_scene();
+        s_data.line_instances.clear();
     }
 
 
@@ -423,6 +528,39 @@ namespace Honey {
         }
 
         s_data.circle_instances.push_back(inst);
+        ++s_data.stats.quad_count;
+    }
+
+    void Renderer2D::submit_line(const glm::vec3& position, const glm::vec2& size, float rotation,
+                                const Ref<Texture2D>& texture, const Ref<SubTexture2D>& sub_texture,
+                                const glm::vec4& color, float fade, int entity_id) {
+        if (s_data.line_instances.size() >= Renderer2DData::max_quads)
+            line_flush_and_reset();
+
+
+        LineInstance inst;
+        inst.center = position;
+        //inst.local_position = local_position;
+        inst.half_size = size * 0.5f;
+        inst.rotation = rotation;
+        inst.color = color;
+        inst.fade = fade;
+        inst.entity_id = entity_id;
+
+
+        // Handle texture/subtexture
+        if (sub_texture) {
+            const glm::vec2* tex_coords = sub_texture->get_tex_coords();
+            inst.tex_index = resolve_texture_slot(sub_texture->get_texture());
+            inst.tex_coord_min = tex_coords[0];
+            inst.tex_coord_max = tex_coords[2];
+        } else {
+            inst.tex_index = resolve_texture_slot(texture);
+            inst.tex_coord_min = {0.0f, 0.0f};
+            inst.tex_coord_max = {1.0f, 1.0f};
+        }
+
+        s_data.line_instances.push_back(inst);
         ++s_data.stats.quad_count;
     }
 
@@ -574,8 +712,7 @@ namespace Honey {
                       texture, nullptr, color, fade, -1);
     }
 
-    void Renderer2D::draw_circle_sprite(const glm::mat4& transform, CircleRendererComponent& src,
-                                        int entity_id) {
+    void Renderer2D::draw_circle_sprite(const glm::mat4& transform, CircleRendererComponent& src, int entity_id) {
         glm::vec3 position;
         glm::vec2 scale;
         float rotation;
@@ -587,6 +724,19 @@ namespace Honey {
         else
             submit_circle(position, scale, src.thickness,
                           nullptr, nullptr, src.color, src.fade, entity_id);
+    }
+
+    // lines!!
+    void Renderer2D::draw_line_sprite(const glm::mat4& transform, LineRendererComponent& src, int entity_id) { // Note to future self: do some math here to make the line renderers inputs (fade thickness etc) work for quads
+        glm::vec3 position;                                                                                     // Note to two seconds ago self: you cannot do a fade effect without a different shader so this might as well follow the circles method (third shader)
+        glm::vec2 scale;
+        float rotation;
+        decompose_transform(transform, position, scale, rotation);
+
+        if (src.texture)
+            submit_line(position, scale, rotation, src.texture, nullptr, src.color, src.fade, entity_id);
+        else
+            submit_line(position, scale, rotation, nullptr, nullptr, src.color, src.fade, entity_id);
     }
 
 

@@ -88,6 +88,23 @@ namespace Honey {
 
     };
 
+    struct LineRendererComponent {
+        glm::vec4 color = {1.0f, 1.0f, 1.0f, 1.0f};
+        float fade = 0.005f;
+
+        Ref<Texture2D> texture;
+        std::filesystem::path texture_path;
+
+        LineRendererComponent() = default;
+        LineRendererComponent(const LineRendererComponent&) = default;
+        LineRendererComponent(LineRendererComponent&&) noexcept = default;
+        LineRendererComponent& operator=(const LineRendererComponent&) = default;
+        LineRendererComponent& operator=(LineRendererComponent&&) noexcept = default;
+        LineRendererComponent(const glm::vec4& color)
+            : color(color) {}
+
+    };
+
     struct CameraComponent {
         enum class ProjectionType { Orthographic, Perspective };
 

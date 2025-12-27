@@ -19,6 +19,7 @@ namespace Honey {
         static void end_scene();
         static void quad_end_scene();
         static void circle_end_scene();
+        static void line_end_scene();
 
         // Position-based overloads
         static void draw_quad(const glm::vec2& position, const glm::vec2& size, const glm::vec4& color);
@@ -116,9 +117,9 @@ namespace Honey {
                                 float thickness = 1.0f, float fade = 0.005f);
 
         // ECS component version
-        static void draw_circle_sprite(const glm::mat4& transform, CircleRendererComponent& src,
-                                       int entity_id);
+        static void draw_circle_sprite(const glm::mat4& transform, CircleRendererComponent& src, int entity_id);
 
+        static void draw_line_sprite(const glm::mat4& transform, LineRendererComponent& src, int entity_id);
 
         // Statistics
         struct Statistics {
@@ -133,13 +134,17 @@ namespace Honey {
 
     private:
         // Core implementation function
-        static void submit_quad(const glm::vec3& position, const glm::vec2& size, float thickness,
-                               const Ref<Texture2D>& texture, const Ref<SubTexture2D>& sub_texture,
-                               const glm::vec4& color, float fade, int entity_id = -1);
+        static void submit_quad(const glm::vec3& position, const glm::vec2& size, float rotation,
+                                const Ref<Texture2D>& texture, const Ref<SubTexture2D>& sub_texture,
+                                const glm::vec4& color, float tiling_factor, int entity_id = -1);
 
-        static void submit_circle(const glm::vec3& position, const glm::vec2& size, float rotation,
-                               const Ref<Texture2D>& texture, const Ref<SubTexture2D>& sub_texture,
-                               const glm::vec4& color, float tiling_factor, int entity_id = -1);
+        static void submit_circle(const glm::vec3& position, const glm::vec2& size, float thickness,
+                                const Ref<Texture2D>& texture, const Ref<SubTexture2D>& sub_texture,
+                                const glm::vec4& color, float fade, int entity_id = -1);
+
+        static void submit_line(const glm::vec3& position, const glm::vec2& size, float rotation,
+                                const Ref<Texture2D>& texture, const Ref<SubTexture2D>& sub_texture,
+                                const glm::vec4& color, float fade, int entity_id = -1);
         
         // Transform decomposition helper
         static void decompose_transform(const glm::mat4& transform, glm::vec3& position, 

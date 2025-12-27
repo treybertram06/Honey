@@ -166,6 +166,25 @@ namespace Honey {
             out << YAML::EndMap; // CircleRendererComponent
         }
 
+        if (entity.has_component<LineRendererComponent>()) {
+            out << YAML::Key << "LineRendererComponent";
+            out << YAML::BeginMap; // CircleRendererComponent
+
+            auto& sprite = entity.get_component<LineRendererComponent>();
+            out << YAML::Key << "Color" << YAML::Value << sprite.color;
+            out << YAML::Key << "Fade" << YAML::Value << sprite.fade;
+
+            if (sprite.texture) {
+                out << YAML::Key << "Texture" << YAML::Value
+                    << (sprite.texture_path.empty() ? "" : sprite.texture_path.string());
+            } else {
+                out << YAML::Key << "Texture" << YAML::Value << "";
+            }
+
+
+            out << YAML::EndMap; // LineRendererComponent
+        }
+
         if (entity.has_component<CameraComponent>()) {
             out << YAML::Key << "CameraComponent";
             out << YAML::BeginMap; // CameraComponent
@@ -373,6 +392,19 @@ namespace Honey {
             sprite.fade = circle_node["Fade"].as<float>();
 
             std::string texture_path_str = circle_node["Texture"].as<std::string>("");
+            if (!texture_path_str.empty()) {
+                sprite.texture_path = std::filesystem::path(texture_path_str); // <-- keep it!
+                sprite.texture = Texture2D::create(texture_path_str);
+            }
+        }
+
+        auto line_node = entity_node["LineRendererComponent"];
+        if (line_node) {
+            auto& sprite = deserialized_entity.add_component<LineRendererComponent>();
+            sprite.color = line_node["Color"].as<glm::vec4>();
+            sprite.fade = line_node["Fade"].as<float>();
+
+            std::string texture_path_str = line_node["Texture"].as<std::string>("");
             if (!texture_path_str.empty()) {
                 sprite.texture_path = std::filesystem::path(texture_path_str); // <-- keep it!
                 sprite.texture = Texture2D::create(texture_path_str);

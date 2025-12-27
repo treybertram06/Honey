@@ -269,6 +269,12 @@ namespace Honey {
             Renderer2D::draw_circle_sprite(entity_transform.get_transform(), sprite, (int)entity);
         }
 
+        auto line_group = m_registry.group<LineRendererComponent>(entt::get<TransformComponent>);
+        for (auto entity : line_group) {
+            auto [sprite, entity_transform] = line_group.get<LineRendererComponent, TransformComponent>(entity);
+            Renderer2D::draw_line_sprite(entity_transform.get_transform(), sprite, (int)entity);
+        }
+
         Renderer2D::end_scene();
     }
 
@@ -324,6 +330,7 @@ namespace Honey {
         copy_component<TransformComponent>          (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<SpriteRendererComponent>     (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<CircleRendererComponent>     (dst_scene_registry, src_scene_registry, entt_map);
+        copy_component<LineRendererComponent>     (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<CameraComponent>             (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<NativeScriptComponent>       (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<ScriptComponent>             (dst_scene_registry, src_scene_registry, entt_map);
@@ -355,6 +362,7 @@ namespace Honey {
         copy_component_if_exists<TransformComponent>        (new_entity, entity);
         copy_component_if_exists<SpriteRendererComponent>   (new_entity, entity);
         copy_component_if_exists<CircleRendererComponent>   (new_entity, entity);
+        copy_component_if_exists<LineRendererComponent>   (new_entity, entity);
         copy_component_if_exists<CameraComponent>           (new_entity, entity);
         copy_component_if_exists<NativeScriptComponent>     (new_entity, entity);
         copy_component_if_exists<ScriptComponent>           (new_entity, entity);
