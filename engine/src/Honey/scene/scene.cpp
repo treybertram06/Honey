@@ -247,6 +247,12 @@ namespace Honey {
                     Renderer2D::draw_circle_sprite(entity_transform.get_transform(), sprite, (int)entity);
                 }
 
+                auto line_group = m_registry.group<LineRendererComponent>(entt::get<TransformComponent>);
+                for (auto entity : line_group) {
+                    auto [sprite, entity_transform] = line_group.get<LineRendererComponent, TransformComponent>(entity);
+                    Renderer2D::draw_line_sprite(entity_transform.get_transform(), sprite, (int)entity);
+                }
+
                 Renderer2D::end_scene();
             }
         }
@@ -436,7 +442,7 @@ namespace Honey {
 
             b2Circle circle{};
             circle.center = { collider.offset.x, collider.offset.y };
-            circle.radius = collider.radius;
+            circle.radius = transform.scale.x * collider.radius;
             b2ShapeId shape = b2CreateCircleShape(body, &shape_def, &circle);
 
             b2Shape_SetSurfaceMaterial(shape, &material);

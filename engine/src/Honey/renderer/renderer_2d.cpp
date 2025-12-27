@@ -739,8 +739,69 @@ namespace Honey {
             submit_line(position, scale, rotation, nullptr, nullptr, src.color, src.fade, entity_id);
     }
 
+    void Renderer2D::draw_rect(const glm::mat4& transform, const glm::vec4& color) {
+        glm::vec3 position;
+        glm::vec2 scale;
+        float rotation;
+        decompose_transform(transform, position, scale, rotation);
 
+        constexpr float thickness = 0.05f;
 
+        const float half_w = scale.x * 0.5f;
+        const float half_h = scale.y * 0.5f;
+
+        // Edge centers in LOCAL (unrotated) space
+        const glm::vec3 top    = position + glm::vec3(0.0f,  half_h, 0.0f);
+        const glm::vec3 bottom = position + glm::vec3(0.0f, -half_h, 0.0f);
+        const glm::vec3 left   = position + glm::vec3(-half_w, 0.0f, 0.0f);
+        const glm::vec3 right  = position + glm::vec3( half_w, 0.0f, 0.0f);
+
+        // Horizontal edges
+        submit_line(
+            top,
+            { scale.x, thickness },
+            rotation,
+            nullptr,
+            nullptr,
+            color,
+            0.0f,
+            -1
+        );
+
+        submit_line(
+            bottom,
+            { scale.x, thickness },
+            rotation,
+            nullptr,
+            nullptr,
+            color,
+            0.0f,
+            -1
+        );
+
+        // Vertical edges (90° relative to rectangle)
+        submit_line(
+            left,
+            { scale.y, thickness },
+            rotation + glm::half_pi<float>(),
+            nullptr,
+            nullptr,
+            color,
+            0.0f,
+            -1
+        );
+
+        submit_line(
+            right,
+            { scale.y, thickness },
+            rotation + glm::half_pi<float>(),
+            nullptr,
+            nullptr,
+            color,
+            0.0f,
+            -1
+        );
+    }
 
 
     Renderer2D::Statistics Renderer2D::get_stats() { return s_data.stats; }

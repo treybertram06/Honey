@@ -49,6 +49,11 @@ namespace Honey {
 
         void create_physics_body(Entity entity);
 
+        template<typename... Components>
+        auto get_all_entities_with() {
+            return m_registry.view<Components...>();
+        }
+
 
     private:
         static Scene* s_active_scene;

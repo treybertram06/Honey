@@ -121,6 +121,8 @@ namespace Honey {
 
         static void draw_line_sprite(const glm::mat4& transform, LineRendererComponent& src, int entity_id);
 
+        static void draw_rect(const glm::mat4& transform, const glm::vec4& color);
+
         // Statistics
         struct Statistics {
             uint32_t draw_calls = 0;
