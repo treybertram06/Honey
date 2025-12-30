@@ -52,10 +52,36 @@ namespace Honey {
 
 
     void Scene::destroy_entity(Entity entity) {
-        if (entity.is_valid()) {
-            ScriptEngine::on_destroy_entity(entity);
-            m_registry.destroy(entity);
+        if (!entity.is_valid())
+            return;
+
+        if (entity.has_component<RelationshipComponent>()) {
+            auto& relationship = entity.get_component<RelationshipComponent>();
+
+            // Copy the list because destroy_entity mutates the registry
+            auto children = relationship.children;
+            for (auto child : children) {
+                if (m_registry.valid(child)) {
+                    destroy_entity(Entity{ child, this });
+                }
+            }
         }
+
+        if (entity.has_component<RelationshipComponent>()) {
+            auto& relationship = entity.get_component<RelationshipComponent>();
+            if (relationship.parent != entt::null && m_registry.valid(relationship.parent)) {
+                auto& parent_rel = m_registry.get<RelationshipComponent>(relationship.parent);
+                auto& siblings = parent_rel.children;
+
+                siblings.erase(
+                    std::remove(siblings.begin(), siblings.end(), (entt::entity)entity),
+                    siblings.end()
+                );
+            }
+        }
+
+        ScriptEngine::on_destroy_entity(entity);
+        m_registry.destroy(entity);
     }
 
     Entity Scene::get_entity(UUID uuid) {
@@ -97,12 +123,12 @@ namespace Honey {
             ScriptEngine::on_runtime_start(this);
             // Instantiate all script entities
 
-            auto view = m_registry.view<ScriptComponent>();
-            for (auto e : view) {
-                Entity entity = { e, this };
-                ScriptEngine::on_create_entity(entity);
-
-            }
+            //auto view = m_registry.view<ScriptComponent>();
+            //for (auto e : view) {
+            //    Entity entity = { e, this };
+            //    ScriptEngine::on_create_entity(entity);
+            //
+            //} // Every entities on_create is called automatically if its 'initialized' flag is false
         }
     }
 
@@ -130,6 +156,11 @@ namespace Honey {
             auto view = m_registry.view<ScriptComponent>();
             for (auto e : view) {
                 Entity entity = { e, this };
+                auto& sc = entity.get_component<ScriptComponent>();
+                if (!sc.initialized) {
+                    ScriptEngine::on_create_entity(entity);
+                    sc.initialized = true;
+                }
                 ScriptEngine::on_update_entity(entity, ts);
             }
 
@@ -389,7 +420,7 @@ namespace Honey {
 
         auto entity = serializer.deserialize_entity_prefab(path);
         create_physics_body(entity);
-        ScriptEngine::on_create_entity(entity);
+        //ScriptEngine::on_create_entity(entity); // Now handled by on_update
         return entity;
     }
 
@@ -424,7 +455,12 @@ namespace Honey {
             material.friction = collider.friction;
             material.restitution = collider.restitution;
 
-            b2Polygon box = b2MakeBox(transform.scale.x * collider.size.x, transform.scale.y * collider.size.y);
+            b2Polygon box = b2MakeOffsetBox(
+                transform.scale.x * collider.size.x,
+                transform.scale.y * collider.size.y,
+                { collider.offset.x, collider.offset.y },
+                b2MakeRot(transform.rotation.z)
+            );
             b2ShapeId shape = b2CreatePolygonShape(body, &shape_def, &box);
 
             b2Shape_SetSurfaceMaterial(shape, &material);
