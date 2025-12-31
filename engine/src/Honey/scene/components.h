@@ -8,6 +8,7 @@
 #include "glm/gtx/quaternion.hpp"
 #include <functional>
 #include <filesystem>
+#include <variant>
 #include <entt/entt.hpp>
 
 
@@ -193,6 +194,12 @@ namespace Honey {
     struct ScriptComponent {
         std::string script_name;
         bool initialized = false;
+
+        std::unordered_map<std::string, std::variant<
+                               float,
+                               bool,
+                               std::string
+                           >> property_overrides;
 
         ScriptComponent() = default;
         ScriptComponent(const ScriptComponent&) = default;

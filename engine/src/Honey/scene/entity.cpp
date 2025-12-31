@@ -105,6 +105,7 @@ namespace Honey {
         HN_CORE_ASSERT(!parent || parent.is_valid(), "Parent is invalid");
         HN_CORE_ASSERT(!parent || parent.get_scene() == m_scene, "Parent must be in the same scene");
         HN_CORE_ASSERT(parent != *this, "Entity cannot parent itself");
+        HN_CORE_ASSERT(!this->has_component<Rigidbody2DComponent>(), "Cannot parent entity with Rigidbody2DComponent");
 
         // Preserve current world transform across reparenting
         const glm::mat4 world_before = get_world_transform();

@@ -20,6 +20,9 @@ namespace Honey {
 
         template<typename T, typename... Args>
         T& add_component(Args&&... args) {
+            if constexpr (std::is_same_v<T, Rigidbody2DComponent>)
+                HN_CORE_ASSERT(!this->has_parent(), "Rigidbody2DComponent cannot be added to an entity with a parent!");
+
             if (has_component<T>()) {
                 HN_CORE_WARN("Entity {} already has component: {}", this->get_component<TagComponent>().tag, typeid(T).name());
                 return get_component<T>();

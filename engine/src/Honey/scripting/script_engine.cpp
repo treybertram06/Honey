@@ -9,7 +9,6 @@
 #include <filesystem>
 
 namespace Honey {
-
     struct ScriptEngine::ScriptEngineData {
         sol::state lua_state;
         Scene* scene_context = nullptr;
@@ -25,12 +24,34 @@ namespace Honey {
             sol::function OnCollisionBegin;
             sol::function OnCollisionEnd;
             bool valid = false;
+            bool errored = false;
+
+            sol::table properties;
         };
 
         std::unordered_map<UUID, ScriptInstance> entity_instances;
     };
 
     std::unique_ptr<ScriptEngine::ScriptEngineData> ScriptEngine::s_data = nullptr;
+
+    static sol::table build_effective_properties(sol::state& lua, const sol::table& lua_defaults, const ScriptComponent& sc) {
+        sol::table result = lua.create_table();
+
+        if (lua_defaults.valid()) {
+            for (auto& [key, value] : lua_defaults) {
+                if (key.valid())
+                    result[key] = value;
+            }
+        }
+
+        for (const auto& [name, override_value] : sc.property_overrides) {
+            std::visit([&](auto&& v) {
+                result[name] = v;
+            }, override_value);
+        }
+
+        return result;
+    }
 
     void ScriptEngine::init() {
         s_data = std::make_unique<ScriptEngineData>();
@@ -107,6 +128,14 @@ namespace Honey {
         instance.OnCollisionEnd   = instance.env["OnCollisionEnd"];
         instance.valid = true;
 
+        sol::table lua_defaults;
+        sol::object props = instance.env["Properties"];
+        if (props.valid() && props.is<sol::table>()) {
+            lua_defaults = props.as<sol::table>();
+        }
+
+        instance.properties = build_effective_properties(lua, lua_defaults, sc);
+
         instance.instance = lua.create_table();
         instance.instance["entity"] = entity;
 
@@ -115,10 +144,25 @@ namespace Honey {
 
         auto& stored = s_data->entity_instances[uuid];
         if (stored.OnCreate.valid()) {
-            sol::protected_function_result r = stored.OnCreate(stored.instance);
-            if (!r.valid()) {
-                sol::error err = r;
-                HN_CORE_ERROR("Lua OnCreate error in '{}': {}", stored.script_name, err.what());
+
+            if (!stored.errored) {
+
+                stored.env["self"] = entity;
+                if (stored.properties.valid())
+                    stored.env["Properties"] = stored.properties;
+                else
+                    stored.env["Properties"] = sol::nil;
+
+                sol::protected_function_result r = stored.OnCreate();
+
+                stored.env["self"] = sol::nil;
+                stored.env["Properties"] = sol::nil;
+
+                if (!r.valid()) {
+                    sol::error err = r;
+                    HN_CORE_ERROR("Lua OnCreate error in '{}': {}", stored.script_name, err.what());
+                    stored.errored = true;
+                }
             }
         }
     }
@@ -131,12 +175,25 @@ namespace Honey {
         if (it == s_data->entity_instances.end()) return;
 
         auto& inst = it->second;
-        if (!inst.valid || !inst.OnUpdate.valid()) return;
+        if (!inst.valid || !inst.OnUpdate.valid() || inst.errored) return;
 
-        sol::protected_function_result r = inst.OnUpdate(inst.instance, (float)ts);
+        inst.env["self"] = entity;
+        inst.env["dt"]   = ts;
+        if (inst.properties.valid())
+            inst.env["Properties"] = inst.properties;
+        else
+            inst.env["Properties"] = sol::nil;
+
+        sol::protected_function_result r = inst.OnUpdate();
+
+        inst.env["self"] = sol::nil;
+        inst.env["dt"]   = sol::nil;
+        inst.env["Properties"] = sol::nil;
+
         if (!r.valid()) {
             sol::error err = r;
             HN_CORE_ERROR("Lua OnUpdate error in '{}': {}", inst.script_name, err.what());
+            inst.errored = true;
         }
     }
 
@@ -162,31 +219,132 @@ namespace Honey {
     void ScriptEngine::on_collision_begin(Entity a, Entity b) {
         UUID uuid = a.get_uuid();
         auto it = s_data->entity_instances.find(uuid);
-        if (it == s_data->entity_instances.end()) return;
+        if (it == s_data->entity_instances.end())
+            return;
 
         auto& inst = it->second;
-        if (inst.valid && inst.OnCollisionBegin.valid()) {
-            sol::protected_function_result r = inst.OnCollisionBegin(inst.instance, b);
-            if (!r.valid()) {
-                sol::error err = r;
-                HN_CORE_ERROR("Lua OnCollisionBegin error in '{}': {}", inst.script_name, err.what());
-            }
+
+        if (!inst.valid || inst.errored || !inst.OnCollisionBegin.valid())
+            return;
+
+        inst.env["self"] = a;
+
+        sol::protected_function_result r = inst.OnCollisionBegin(b);
+
+        inst.env["self"] = sol::nil;
+
+        if (!r.valid()) {
+            sol::error err = r;
+
+            HN_CORE_ERROR(
+                "Lua OnCollisionBegin error in '{}' (Entity: {}): {}",
+                inst.script_name,
+                a.get_tag(),
+                err.what()
+            );
+
+            inst.errored = true;
         }
     }
 
     void ScriptEngine::on_collision_end(Entity a, Entity b) {
         UUID uuid = a.get_uuid();
         auto it = s_data->entity_instances.find(uuid);
-        if (it == s_data->entity_instances.end()) return;
+        if (it == s_data->entity_instances.end())
+            return;
 
         auto& inst = it->second;
-        if (inst.valid && inst.OnCollisionEnd.valid()) {
-            sol::protected_function_result r = inst.OnCollisionEnd(inst.instance, b);
-            if (!r.valid()) {
-                sol::error err = r;
-                HN_CORE_ERROR("Lua OnCollisionEnd error in '{}': {}", inst.script_name, err.what());
-            }
+
+        if (!inst.valid || inst.errored || !inst.OnCollisionEnd.valid())
+            return;
+
+        inst.env["self"] = a;
+
+        sol::protected_function_result r = inst.OnCollisionEnd(b);
+
+        inst.env["self"] = sol::nil;
+
+        if (!r.valid()) {
+            sol::error err = r;
+
+            HN_CORE_ERROR(
+                "Lua OnCollisionEnd error in '{}' (Entity: {}): {}",
+                inst.script_name,
+                a.get_tag(),
+                err.what()
+            );
+
+            inst.errored = true;
         }
     }
 
+    template<typename T>
+    std::optional<T> ScriptEngine::get_property(Entity entity, const std::string& name) {
+        if (!s_data || !entity.is_valid())
+            return std::nullopt;
+
+        UUID uuid = entity.get_uuid();
+        auto it = s_data->entity_instances.find(uuid);
+        if (it == s_data->entity_instances.end())
+            return std::nullopt;
+
+        const auto& instance = it->second;
+
+        // Script failed earlier — properties are undefined
+        if (instance.errored)
+            return std::nullopt;
+
+        if (!instance.properties.valid())
+            return std::nullopt;
+
+        sol::object value = instance.properties[name];
+        if (!value.valid())
+            return std::nullopt;
+
+        // Type safety
+        if (!value.is<T>())
+            return std::nullopt;
+
+        return value.as<T>();
+    }
+
+    // Explicit template instantiations
+    template std::optional<float>       ScriptEngine::get_property<float>(Entity, const std::string&);
+    template std::optional<double>      ScriptEngine::get_property<double>(Entity, const std::string&);
+    template std::optional<int>         ScriptEngine::get_property<int>(Entity, const std::string&);
+    template std::optional<bool>        ScriptEngine::get_property<bool>(Entity, const std::string&);
+    template std::optional<std::string> ScriptEngine::get_property<std::string>(Entity, const std::string&);
+
+    std::unordered_map<std::string, std::variant<float, bool, std::string>>
+    ScriptEngine::get_default_properties(Entity entity) {
+        std::unordered_map<std::string, std::variant<float, bool, std::string>> result;
+
+        if (!s_data || !entity.is_valid())
+            return result;
+
+        auto it = s_data->entity_instances.find(entity.get_uuid());
+        if (it == s_data->entity_instances.end())
+            return result;
+
+        const auto& inst = it->second;
+        if (!inst.properties.valid())
+            return result;
+
+        for (auto& [key, value] : inst.properties) {
+            if (!key.is<std::string>())
+                continue;
+
+            const std::string name = key.as<std::string>();
+
+            if (value.is<float>() || value.is<double>()) {
+                result[name] = value.as<float>();
+            } else if (value.is<bool>()) {
+                result[name] = value.as<bool>();
+            } else if (value.is<std::string>()) {
+                result[name] = value.as<std::string>();
+            }
+        }
+
+        return result;
+    }
 }

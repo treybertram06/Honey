@@ -47,6 +47,63 @@ namespace Honey {
             return glm::vec2(x, y);
         });
 
+        lua.new_usertype<Timestep>("Timestep",
+            // Methods
+            "GetSeconds", &Timestep::get_seconds,
+            "GetMilliseconds", &Timestep::get_millis,
+
+            // Arithmetic: Timestep + number
+            sol::meta_function::addition,
+            [](const Timestep& ts, float v) {
+                return ts.get_seconds() + v;
+            },
+
+            sol::meta_function::addition,
+            [](float v, const Timestep& ts) {
+                return v + ts.get_seconds();
+            },
+
+            // Subtraction
+            sol::meta_function::subtraction,
+            [](const Timestep& ts, float v) {
+                return ts.get_seconds() - v;
+            },
+
+            sol::meta_function::subtraction,
+            [](float v, const Timestep& ts) {
+                return v - ts.get_seconds();
+            },
+
+            // Multiplication
+            sol::meta_function::multiplication,
+            [](const Timestep& ts, float v) {
+                return ts.get_seconds() * v;
+            },
+
+            sol::meta_function::multiplication,
+            [](float v, const Timestep& ts) {
+                return v * ts.get_seconds();
+            },
+
+            // Division
+            sol::meta_function::division,
+            [](const Timestep& ts, float v) {
+                return ts.get_seconds() / v;
+            },
+
+            // Unary minus: -dt
+            sol::meta_function::unary_minus,
+            [](const Timestep& ts) {
+                return -ts.get_seconds();
+            },
+
+            // tostring(dt)
+            sol::meta_function::to_string,
+            [](const Timestep& ts) {
+                return std::to_string(ts.get_seconds());
+            }
+        );
+
 
         // Entity
         lua.new_usertype<Entity>("Entity",
@@ -89,7 +146,32 @@ namespace Honey {
                 return sol::nil;
             },
 
-            "GetTransform", [](Entity e) { return &e.get_component<TransformComponent>(); }
+            "GetTransform", [](Entity e) { return &e.get_component<TransformComponent>(); },
+
+            "CreateChildEntity", [](Entity e, const std::string& name) {
+                if (!e.is_valid()) return Entity{};
+
+                Scene* scene = e.get_scene();
+                if (!scene) return Entity{};
+
+                return scene->create_child_for(e, name);
+            },
+
+            "InstantiatePrefabAsChild", [](Entity e, const std::string& name) {
+                if (!e.is_valid()) return Entity{};
+
+                Scene* scene = e.get_scene();
+                if (!scene) return Entity{};
+
+                auto path = std::filesystem::path("..") / "assets" / "prefabs" / name;
+                path.replace_extension(".hnp");
+
+                Entity prefab_entity = scene->instantiate_prefab(path.string());
+                if (!prefab_entity.is_valid()) return Entity{};
+
+                prefab_entity.set_parent(e);
+                return prefab_entity;
+            }
         );
 
         lua.new_usertype<LuaVec3Proxy>("LuaVec3",

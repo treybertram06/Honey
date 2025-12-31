@@ -268,6 +268,22 @@ namespace Honey {
             out << YAML::EndMap;
         }
 
+        if (entity.has_component<RelationshipComponent>()) {
+            out << YAML::Key << "RelationshipComponent";
+            out << YAML::BeginMap;
+
+            auto& rc = entity.get_component<RelationshipComponent>();
+
+            if (rc.parent != entt::null) {
+                Entity parent{ rc.parent, entity.get_scene() };
+                out << YAML::Key << "Parent" << YAML::Value << parent.get_uuid();
+            } else {
+                out << YAML::Key << "Parent" << YAML::Value << YAML::Null;
+            }
+
+            out << YAML::EndMap;
+        }
+
         if (entity.has_component<Rigidbody2DComponent>()) {
             out << YAML::Key << "Rigidbody2DComponent";
             out << YAML::BeginMap;
@@ -378,11 +394,12 @@ namespace Honey {
 
         auto transform_node = entity_node["TransformComponent"];
         if (transform_node) {
-            auto& tc = deserialized_entity.get_component<TransformComponent>();
-            tc.translation = transform_node["Translation"].as<glm::vec3>();
-            tc.rotation = transform_node["Rotation"].as<glm::vec3>();
-            tc.scale = transform_node["Scale"].as<glm::vec3>();
-            tc.dirty = transform_node["Dirty"].as<bool>(false); // I'm not sure if this should be serialized? It should always be false when saving, or it could default to true to force a physics sync on-load.
+            m_pending_transforms.push_back({
+                deserialized_entity,
+                transform_node["Translation"].as<glm::vec3>(),
+                transform_node["Rotation"].as<glm::vec3>(),
+                transform_node["Scale"].as<glm::vec3>()
+            });
         }
 
         auto sprite_node = entity_node["SpriteRendererComponent"];
@@ -542,6 +559,16 @@ namespace Honey {
             }
         }
 
+        auto relationship_node = entity_node["RelationshipComponent"];
+        if (relationship_node && relationship_node["Parent"] && !relationship_node["Parent"].IsNull()) {
+            UUID parent_uuid = relationship_node["Parent"].as<uint64_t>();
+            m_pending_relationships.push_back({
+                deserialized_entity,
+                parent_uuid
+            });
+        }
+
+
         auto rigidbody_node = entity_node["Rigidbody2DComponent"];
         if (rigidbody_node) {
             auto& rb = deserialized_entity.add_component<Rigidbody2DComponent>();
@@ -588,6 +615,27 @@ namespace Honey {
         for (auto entity_node : entities_node)
             deserialize_entity_node(entity_node);
 
+        for (auto& rel : m_pending_relationships) {
+            Entity parent = m_scene->get_entity(rel.parent_uuid);
+            if (parent.is_valid()) {
+                rel.child.set_parent(parent);
+            } else {
+                HN_CORE_WARN("Missing parent UUID {}", (uint64_t)rel.parent_uuid);
+            }
+        }
+
+        for (auto& t : m_pending_transforms) {
+            if (!t.entity.is_valid())
+                continue;
+
+            auto& tc = t.entity.get_component<TransformComponent>();
+            tc.translation = t.translation;
+            tc.rotation    = t.rotation;
+            tc.scale       = t.scale;
+        }
+
+        m_pending_relationships.clear();
+        m_pending_transforms.clear();
 
         return true;
     }

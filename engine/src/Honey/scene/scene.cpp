@@ -84,6 +84,12 @@ namespace Honey {
         m_registry.destroy(entity);
     }
 
+    Entity Scene::create_child_for(Entity parent, const std::string& name) {
+        Entity child = create_entity(name);
+        child.set_parent(parent);
+        return child;
+    }
+
     Entity Scene::get_entity(UUID uuid) {
         auto view = m_registry.view<IDComponent>();
         for (auto e : view) {
@@ -258,7 +264,7 @@ namespace Honey {
         // render
         Entity primary_camera_entity = get_primary_camera();
         if (primary_camera_entity.is_valid()) {
-            auto transform = primary_camera_entity.get_component<TransformComponent>().get_transform();
+            auto transform = primary_camera_entity.get_world_transform();
             auto& camera_component = primary_camera_entity.get_component<CameraComponent>();
 
             Camera* primary_camera = camera_component.get_camera();
@@ -268,20 +274,23 @@ namespace Honey {
 
                 auto group = m_registry.group<SpriteRendererComponent>(entt::get<TransformComponent>);
                 for (auto entity : group) {
-                    auto [sprite, entity_transform] = group.get<SpriteRendererComponent, TransformComponent>(entity);
-                    Renderer2D::draw_sprite(entity_transform.get_transform(), sprite, (int)entity);
+                    auto sprite = group.get<SpriteRendererComponent>(entity);
+                    Entity entity_ref = { entity, this };
+                    Renderer2D::draw_sprite(entity_ref.get_world_transform(), sprite, (int)entity);
                 }
 
                 auto cicle_group = m_registry.group<CircleRendererComponent>(entt::get<TransformComponent>);
                 for (auto entity : cicle_group) {
-                    auto [sprite, entity_transform] = cicle_group.get<CircleRendererComponent, TransformComponent>(entity);
-                    Renderer2D::draw_circle_sprite(entity_transform.get_transform(), sprite, (int)entity);
+                    auto sprite = cicle_group.get<CircleRendererComponent>(entity);
+                    Entity entity_ref = { entity, this };
+                    Renderer2D::draw_circle_sprite(entity_ref.get_world_transform(), sprite, (int)entity);
                 }
 
                 auto line_group = m_registry.group<LineRendererComponent>(entt::get<TransformComponent>);
                 for (auto entity : line_group) {
-                    auto [sprite, entity_transform] = line_group.get<LineRendererComponent, TransformComponent>(entity);
-                    Renderer2D::draw_line_sprite(entity_transform.get_transform(), sprite, (int)entity);
+                    auto sprite = line_group.get<LineRendererComponent>(entity);
+                    Entity entity_ref = { entity, this };
+                    Renderer2D::draw_line_sprite(entity_ref.get_world_transform(), sprite, (int)entity);
                 }
 
                 Renderer2D::end_scene();
@@ -296,20 +305,23 @@ namespace Honey {
 
         auto group = m_registry.group<SpriteRendererComponent>(entt::get<TransformComponent>);
         for (auto entity : group) {
-            auto [sprite, entity_transform] = group.get<SpriteRendererComponent, TransformComponent>(entity);
-            Renderer2D::draw_sprite(entity_transform.get_transform(), sprite, (int)entity);
+            auto sprite = group.get<SpriteRendererComponent>(entity);
+            Entity entity_ref = { entity, this };
+            Renderer2D::draw_sprite(entity_ref.get_world_transform(), sprite, (int)entity);
         }
 
         auto cicle_group = m_registry.group<CircleRendererComponent>(entt::get<TransformComponent>);
         for (auto entity : cicle_group) {
-            auto [sprite, entity_transform] = cicle_group.get<CircleRendererComponent, TransformComponent>(entity);
-            Renderer2D::draw_circle_sprite(entity_transform.get_transform(), sprite, (int)entity);
+            auto sprite = cicle_group.get<CircleRendererComponent>(entity);
+            Entity entity_ref = { entity, this };
+            Renderer2D::draw_circle_sprite(entity_ref.get_world_transform(), sprite, (int)entity);
         }
 
         auto line_group = m_registry.group<LineRendererComponent>(entt::get<TransformComponent>);
         for (auto entity : line_group) {
-            auto [sprite, entity_transform] = line_group.get<LineRendererComponent, TransformComponent>(entity);
-            Renderer2D::draw_line_sprite(entity_transform.get_transform(), sprite, (int)entity);
+            auto sprite = line_group.get<LineRendererComponent>(entity);
+            Entity entity_ref = { entity, this };
+            Renderer2D::draw_line_sprite(entity_ref.get_world_transform(), sprite, (int)entity);
         }
 
         Renderer2D::end_scene();

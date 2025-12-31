@@ -19,6 +19,7 @@ namespace Honey {
         Entity create_entity(const std::string& name = "");
         Entity create_entity(const std::string& name, UUID uuid);
         void destroy_entity(Entity entity);
+        Entity create_child_for(Entity parent, const std::string& name = "");
 
         Entity get_entity(UUID uuid);
 
