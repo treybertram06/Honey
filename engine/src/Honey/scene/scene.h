@@ -47,6 +47,7 @@ namespace Honey {
 
         //void create_prefab(const Entity& entity, const std::string& path);
         Entity instantiate_prefab(const std::string& path);
+        Entity add_prefab_to_scene(const std::string& path);
 
         void create_physics_body(Entity entity);
 

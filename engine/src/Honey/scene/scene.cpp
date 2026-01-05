@@ -436,6 +436,15 @@ namespace Honey {
         return entity;
     }
 
+    Entity Scene::add_prefab_to_scene(const std::string& path) {
+        Ref<Scene> scene_ref = Ref<Scene>(this, [](Scene*){});
+        SceneSerializer serializer(scene_ref);
+
+        auto entity = serializer.deserialize_entity_prefab(path);
+        //ScriptEngine::on_create_entity(entity); // Now handled by on_update
+        return entity;
+    }
+
     void Scene::create_physics_body(Entity entity) {
         auto& transform = entity.get_component<TransformComponent>();
         auto& rigidbody2d = entity.get_component<Rigidbody2DComponent>();
