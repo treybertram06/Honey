@@ -122,6 +122,7 @@ namespace Honey {
     }
 
     void Scene::on_runtime_start() {
+        clear_state();
         on_physics_2D_start();
 
         // Scripting
@@ -140,6 +141,7 @@ namespace Honey {
 
     void Scene::on_runtime_stop() {
         on_physics_2D_stop();
+        clear_state();
         ScriptEngine::on_runtime_stop();
     }
 
@@ -178,6 +180,7 @@ namespace Honey {
 
             b2ShapeDef shape_def = b2DefaultShapeDef();
             shape_def.density = collider.density;
+            shape_def.enableContactEvents = true;
 
             b2SurfaceMaterial material{
                 collider.friction,
@@ -209,6 +212,7 @@ namespace Honey {
 
             b2ShapeDef shape_def = b2DefaultShapeDef();
             shape_def.density = collider.density;
+            shape_def.enableContactEvents = true;
 
             b2SurfaceMaterial material{
                 collider.friction,
@@ -232,14 +236,35 @@ namespace Honey {
         // Scripts
         {
             // Lua scripts
+            //auto view = m_registry.view<ScriptComponent>();
+            //for (auto e : view) {
+            //    Entity entity = { e, this };
+            //    auto& sc = entity.get_component<ScriptComponent>();
+            //    if (!sc.initialized) {
+            //        ScriptEngine::on_create_entity(entity);
+            //        sc.initialized = true;
+            //    }
+            //    ScriptEngine::on_update_entity(entity, ts);
+            //}
             auto view = m_registry.view<ScriptComponent>();
-            for (auto e : view) {
+            std::vector<entt::entity> script_entities;
+            script_entities.reserve(view.size());
+
+            for (auto e : view)
+                script_entities.push_back(e);
+
+            for (auto e : script_entities) {
+                if (!m_registry.valid(e))
+                    continue;
+
                 Entity entity = { e, this };
                 auto& sc = entity.get_component<ScriptComponent>();
+
                 if (!sc.initialized) {
                     ScriptEngine::on_create_entity(entity);
                     sc.initialized = true;
                 }
+
                 ScriptEngine::on_update_entity(entity, ts);
             }
 
@@ -549,6 +574,7 @@ namespace Honey {
 
             b2ShapeDef shape_def = b2DefaultShapeDef();
             shape_def.density = collider.density;
+            shape_def.enableContactEvents = true;
 
             b2SurfaceMaterial material;
             material.friction = collider.friction;
@@ -571,6 +597,7 @@ namespace Honey {
 
             b2ShapeDef shape_def = b2DefaultShapeDef();
             shape_def.density = collider.density;
+            shape_def.enableContactEvents = true;
 
             b2SurfaceMaterial material;
             material.friction = collider.friction;

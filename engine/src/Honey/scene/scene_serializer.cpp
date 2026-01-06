@@ -382,8 +382,10 @@ namespace Honey {
         HN_CORE_ASSERT(false, "Not implemented!");
     }
 
-    Entity SceneSerializer::deserialize_entity_node(YAML::Node& entity_node) {
-        UUID uuid = entity_node["Entity"].as<uint64_t>();
+    Entity SceneSerializer::deserialize_entity_node(YAML::Node& entity_node, bool generate_new_uuid) {
+        UUID uuid = generate_new_uuid
+        ? UUID()
+        : (UUID)entity_node["Entity"].as<uint64_t>();
 
         std::string name;
         auto tag_node = entity_node["TagComponent"];
@@ -666,7 +668,7 @@ namespace Honey {
             return {};
         }
 
-        return deserialize_entity_node(entity_node);
+        return deserialize_entity_node(entity_node, true);
     }
 
     bool SceneSerializer::deserialize_runtime(const std::filesystem::path &path) {

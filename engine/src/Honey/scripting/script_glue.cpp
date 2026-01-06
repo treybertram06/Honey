@@ -307,6 +307,57 @@ namespace Honey {
         sol::table mouse = lua.create_named_table("Mouse");
         mouse["Left"] = MouseButton::Button1;
         mouse["Right"] = MouseButton::Button2;
+
+
+
+        /// Scene State
+
+        sol::table scene_tbl = lua.create_table();
+
+        scene_tbl.set_function("Set", [](const std::string& key, sol::object value) {
+            Scene* scene = get_active_scene();
+            if (!scene || !value.valid())
+                return;
+
+            if (value.is<bool>())
+                scene->set_state(key, value.as<bool>());
+            else if (value.is<int>())
+                scene->set_state(key, value.as<int>());
+            else if (value.is<float>() || value.is<double>())
+                scene->set_state(key, (float)value.as<double>());
+            else if (value.is<std::string>())
+                scene->set_state(key, value.as<std::string>());
+        });
+
+        scene_tbl.set_function("Get", [](const std::string& key) -> sol::object {
+            Scene* scene = get_active_scene();
+            if (!scene)
+                return sol::nil;
+
+            const auto* value = scene->get_state(key);
+            if (!value)
+                return sol::nil;
+
+            return std::visit([](auto&& v) {
+                return sol::make_object(ScriptEngine::get_lua_state(), v);
+            }, *value);
+        });
+
+        scene_tbl.set_function("GetOr", [](const std::string& key, sol::object fallback) {
+            Scene* scene = get_active_scene();
+            if (!scene)
+                return fallback;
+
+            const auto* value = scene->get_state(key);
+            if (!value)
+                return fallback;
+
+            return std::visit([](auto&& v) {
+                return sol::make_object(ScriptEngine::get_lua_state(), v);
+            }, *value);
+        });
+
+        honey["Scene"] = scene_tbl;
     }
 
 }

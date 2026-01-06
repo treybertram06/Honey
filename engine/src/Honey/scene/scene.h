@@ -1,5 +1,6 @@
 #pragma once
 
+#include <variant>
 #include <entt/entt.hpp>
 
 #include "Honey/core/timestep.h"
@@ -57,9 +58,30 @@ namespace Honey {
         }
 
 
+        using SceneValue = std::variant<bool, int, float, std::string>;
+
+        void set_state(const std::string& key, SceneValue value) {
+            m_scene_state[key] = std::move(value);
+        }
+
+        bool has_state(const std::string& key) const {
+            return m_scene_state.contains(key);
+        }
+
+        const SceneValue* get_state(const std::string& key) const {
+            auto it = m_scene_state.find(key);
+            return it != m_scene_state.end() ? &it->second : nullptr;
+        }
+
+        void clear_state() {
+            m_scene_state.clear();
+        }
+
+
     private:
         static Scene* s_active_scene;
         entt::registry m_registry;
+        std::unordered_map<std::string, SceneValue> m_scene_state;
 
         b2WorldId m_world = b2_nullWorldId;
 

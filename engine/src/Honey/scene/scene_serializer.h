@@ -18,7 +18,7 @@ namespace Honey {
         void serialize_runtime(const std::filesystem::path& path);
 
         bool deserialize(const std::filesystem::path& path);
-        Entity deserialize_entity_node(YAML::Node& entity_node);
+        Entity deserialize_entity_node(YAML::Node& entity_node, bool generate_new_uuid = false);
         Entity deserialize_entity_prefab(const std::filesystem::path& path);
         bool deserialize_runtime(const std::filesystem::path& path);
     private:
