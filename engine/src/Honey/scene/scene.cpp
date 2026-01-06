@@ -153,6 +153,79 @@ namespace Honey {
         return {}; // invalid entity if none found
     }
 
+    static void rebuild_colliders(Scene* scene, Entity entity) {
+        if (!entity.has_component<Rigidbody2DComponent>())
+            return;
+
+        auto& rb = entity.get_component<Rigidbody2DComponent>();
+
+        b2BodyId body;
+        memcpy(&body, &rb.runtime_body, sizeof(b2BodyId));
+        if (!b2Body_IsValid(body))
+            return;
+
+        auto& tc = entity.get_component<TransformComponent>();
+
+        // ---- BoxCollider ----
+        if (entity.has_component<BoxCollider2DComponent>()) {
+            auto& collider = entity.get_component<BoxCollider2DComponent>();
+
+            for (b2ShapeId shape : collider.runtime_shapes) {
+                if (b2Shape_IsValid(shape))
+                    b2DestroyShape(shape, true);
+            }
+            collider.runtime_shapes.clear();
+
+            b2ShapeDef shape_def = b2DefaultShapeDef();
+            shape_def.density = collider.density;
+
+            b2SurfaceMaterial material{
+                collider.friction,
+                collider.restitution
+            };
+
+            b2Polygon box = b2MakeOffsetBox(
+                tc.scale.x * collider.size.x,
+                tc.scale.y * collider.size.y,
+                { collider.offset.x, collider.offset.y },
+                b2MakeRot(tc.rotation.z)
+            );
+
+            b2ShapeId shape = b2CreatePolygonShape(body, &shape_def, &box);
+            b2Shape_SetSurfaceMaterial(shape, &material);
+
+            collider.runtime_shapes.push_back(shape);
+        }
+
+        // ---- CircleCollider ----
+        if (entity.has_component<CircleCollider2DComponent>()) {
+            auto& collider = entity.get_component<CircleCollider2DComponent>();
+
+            for (b2ShapeId shape : collider.runtime_shapes) {
+                if (b2Shape_IsValid(shape))
+                    b2DestroyShape(shape, true);
+            }
+            collider.runtime_shapes.clear();
+
+            b2ShapeDef shape_def = b2DefaultShapeDef();
+            shape_def.density = collider.density;
+
+            b2SurfaceMaterial material{
+                collider.friction,
+                collider.restitution
+            };
+
+            b2Circle circle{};
+            circle.center = { collider.offset.x, collider.offset.y };
+            circle.radius = tc.scale.x * collider.radius;
+
+            b2ShapeId shape = b2CreateCircleShape(body, &shape_def, &circle);
+            b2Shape_SetSurfaceMaterial(shape, &material);
+
+            collider.runtime_shapes.push_back(shape);
+        }
+    }
+
     void Scene::on_update_runtime(Timestep ts) {
         s_active_scene = this;
 
@@ -194,6 +267,11 @@ namespace Honey {
 
                     b2Body_SetTransform(body, { tc.translation.x, tc.translation.y }, b2MakeRot(tc.rotation.z));
                     tc.dirty = false;
+                }
+
+                if (tc.collider_dirty) {
+                    rebuild_colliders(this, entity);
+                    tc.collider_dirty = false;
                 }
             }
 
@@ -485,6 +563,7 @@ namespace Honey {
             b2ShapeId shape = b2CreatePolygonShape(body, &shape_def, &box);
 
             b2Shape_SetSurfaceMaterial(shape, &material);
+            collider.runtime_shapes.push_back(shape);
         }
 
         if (entity.has_component<CircleCollider2DComponent>()) {
@@ -503,6 +582,7 @@ namespace Honey {
             b2ShapeId shape = b2CreateCircleShape(body, &shape_def, &circle);
 
             b2Shape_SetSurfaceMaterial(shape, &material);
+            collider.runtime_shapes.push_back(shape);
         }
     }
 }

@@ -187,7 +187,7 @@ namespace Honey {
 
             "translation", sol::property(
                 [](TransformComponent& tc) {
-                    return LuaVec3Proxy{ &tc, &tc.translation };
+                    return LuaVec3Proxy{ &tc, &tc.translation, TransformVec3Kind::Translation };
                 },
                 [](TransformComponent& tc, glm::vec3 val) {
                     tc.translation = val;
@@ -197,7 +197,7 @@ namespace Honey {
 
             "rotation", sol::property(
                 [](TransformComponent& tc) {
-                    return LuaVec3Proxy{ &tc, &tc.rotation };
+                    return LuaVec3Proxy{ &tc, &tc.rotation, TransformVec3Kind::Rotation };
                 },
                 [](TransformComponent& tc, glm::vec3 val) {
                     tc.rotation = val;
@@ -207,11 +207,12 @@ namespace Honey {
 
             "scale", sol::property(
                 [](TransformComponent& tc) {
-                    return LuaVec3Proxy{ &tc, &tc.scale };
+                    return LuaVec3Proxy{ &tc, &tc.scale, TransformVec3Kind::Scale };
                 },
                 [](TransformComponent& tc, glm::vec3 val) {
                     tc.scale = val;
                     tc.dirty = true;
+                    tc.collider_dirty = true;
                 }
             )
         );
