@@ -106,6 +106,7 @@ namespace Honey {
         HN_CORE_ASSERT(!parent || parent.get_scene() == m_scene, "Parent must be in the same scene");
         HN_CORE_ASSERT(parent != *this, "Entity cannot parent itself");
         HN_CORE_ASSERT(!this->has_component<Rigidbody2DComponent>(), "Cannot parent entity with Rigidbody2DComponent");
+        HN_CORE_ASSERT(!parent || !is_ancestor_of(parent), "Hierarchy cycle detected: cannot parent entity to its own descendant");
 
         // Preserve current world transform across reparenting
         const glm::mat4 world_before = get_world_transform();
@@ -237,12 +238,21 @@ namespace Honey {
         HN_CORE_ASSERT(has_component<TransformComponent>(),
                        "Entity must have TransformComponent to query transform");
 
-        const glm::mat4 local = get_component<TransformComponent>().get_transform();
+        static thread_local std::unordered_set<entt::entity> visiting;
+
+        HN_CORE_ASSERT(
+            visiting.insert(m_entity_handle).second,
+            "Hierarchy cycle detected during world transform evaluation"
+        );
+
+        glm::mat4 world = get_component<TransformComponent>().get_transform();
 
         if (has_parent()) {
-            return get_parent().get_world_transform() * local;
+            world = get_parent().get_world_transform() * world;
         }
-        return local;
+
+        visiting.erase(m_entity_handle);
+        return world;
     }
 
     void Entity::set_world_transform(const glm::mat4& world_transform) {
@@ -264,4 +274,18 @@ namespace Honey {
         tc.rotation    = R_euler; // radians
         tc.scale       = S;
     }
+
+    bool Entity::is_ancestor_of(Entity other) const {
+        if (!is_valid() || !other.is_valid())
+            return false;
+
+        Entity current = other;
+        while (current.has_parent()) {
+            current = current.get_parent();
+            if (current == *this)
+                return true;
+        }
+        return false;
+    }
+
 }

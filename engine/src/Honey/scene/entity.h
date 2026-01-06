@@ -115,6 +115,8 @@ namespace Honey {
         glm::mat4 get_world_transform() const;
         void set_world_transform(const glm::mat4& world_transform);
 
+        bool is_ancestor_of(Entity other) const;
+
     private:
         entt::entity m_entity_handle{ entt::null };
         Scene* m_scene = nullptr;

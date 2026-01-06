@@ -486,10 +486,25 @@ namespace Honey {
         copy_component<CameraComponent>             (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<NativeScriptComponent>       (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<ScriptComponent>             (dst_scene_registry, src_scene_registry, entt_map);
-        copy_component<RelationshipComponent>       (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<Rigidbody2DComponent>        (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<BoxCollider2DComponent>      (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<CircleCollider2DComponent>      (dst_scene_registry, src_scene_registry, entt_map);
+
+        auto view = src_scene_registry.view<RelationshipComponent>();
+        for (auto e : view) {
+            const auto& srcRel = src_scene_registry.get<RelationshipComponent>(e);
+
+            if (srcRel.parent == entt::null)
+                continue;
+
+            UUID childUUID  = src_scene_registry.get<IDComponent>(e).id;
+            UUID parentUUID = src_scene_registry.get<IDComponent>(srcRel.parent).id;
+
+            Entity child  = { entt_map.at(childUUID), copy.get() };
+            Entity parent = { entt_map.at(parentUUID), copy.get() };
+
+            child.set_parent(parent);
+        }
 
         auto src_view = src_scene_registry.view<CameraComponent>();
         for (auto e : src_view) {
