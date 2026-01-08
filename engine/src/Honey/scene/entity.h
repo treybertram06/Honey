@@ -101,7 +101,7 @@ namespace Honey {
         UUID get_uuid() const;
         const std::string& get_tag() const { return get_component<TagComponent>().tag; }
 
-        void set_parent(Entity parent);
+        void set_parent(Entity parent, bool recompute_world_transform = true);
         void remove_parent();
         Entity get_parent() const;
         bool has_parent() const;

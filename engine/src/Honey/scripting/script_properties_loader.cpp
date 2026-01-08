@@ -68,6 +68,7 @@ namespace Honey {
 
     void ScriptPropertiesLoader::invalidate_all() {
         s_cache.clear();
+        HN_CORE_INFO("ScriptPropertiesLoader: Invalidating all properties");
     }
 
 }

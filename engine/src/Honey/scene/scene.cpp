@@ -10,16 +10,17 @@
 #include <box2d/box2d.h>
 
 #include "scene_serializer.h"
+#include "Honey/core/settings.h"
+#include "Honey/math/math.h"
 #include "Honey/scripting/script_engine.h"
 //#include "Honey/scripting/mono_script_engine.h"
 
 namespace Honey {
-
     static b2BodyType hn_rigidbody2d_type_to_box2d_type(Rigidbody2DComponent::BodyType type) {
         switch (type) {
-            case Rigidbody2DComponent::BodyType::Static: return b2_staticBody;
-            case Rigidbody2DComponent::BodyType::Dynamic: return b2_dynamicBody;
-            case Rigidbody2DComponent::BodyType::Kinematic: return b2_kinematicBody;
+        case Rigidbody2DComponent::BodyType::Static: return b2_staticBody;
+        case Rigidbody2DComponent::BodyType::Dynamic: return b2_dynamicBody;
+        case Rigidbody2DComponent::BodyType::Kinematic: return b2_kinematicBody;
         }
 
         HN_CORE_ASSERT(false, "Unknown Rigidbody2D type!");
@@ -279,7 +280,8 @@ namespace Honey {
             });
         }
         //physics
-        {
+        auto& physics_settings = get_settings().physics;
+        if (physics_settings.enabled) {
             // Sync physics bodies with their transforms if needed
             for (auto e : m_registry.view<TransformComponent, Rigidbody2DComponent>()) {
                 Entity entity = { e, this };
@@ -300,7 +302,7 @@ namespace Honey {
                 }
             }
 
-            const int32_t sub_steps = 6;
+            const int32_t sub_steps = physics_settings.substeps;
 
             if (b2World_IsValid(m_world)) {
                 b2World_Step(m_world, ts, sub_steps);
@@ -346,20 +348,41 @@ namespace Honey {
             auto view = m_registry.view<Rigidbody2DComponent>();
             for (auto e : view) {
                 Entity entity = { e, this };
-                auto& transform = entity.get_component<TransformComponent>();
-                auto& rigidbody2d = entity.get_component<Rigidbody2DComponent>();
+                auto& tc = entity.get_component<TransformComponent>();
+                auto& rb = entity.get_component<Rigidbody2DComponent>();
 
                 b2BodyId body;
-                memcpy(&body, &rigidbody2d.runtime_body, sizeof(b2BodyId));
+                memcpy(&body, &rb.runtime_body, sizeof(b2BodyId));
 
-                if (b2Body_IsValid(body)) {
-                    b2Transform bodyTransform = b2Body_GetTransform(body);
-                    b2Vec2 position = bodyTransform.p;
-                    float angle = b2Rot_GetAngle(bodyTransform.q);
+                if (!b2Body_IsValid(body))
+                    continue;
 
-                    transform.translation.x = position.x;
-                    transform.translation.y = position.y;
-                    transform.rotation.z = angle;
+                b2Transform bt = b2Body_GetTransform(body);
+                glm::vec3 world_pos(bt.p.x, bt.p.y, tc.translation.z);
+                float world_rot = b2Rot_GetAngle(bt.q);
+
+                if (!entity.has_parent()) {
+                    // Root Rigidbody: world == local
+                    tc.translation = world_pos;
+                    tc.rotation.z = world_rot;
+                } else {
+                    // Child Rigidbody: convert world → local
+                    Entity parent = entity.get_parent();
+                    glm::mat4 parent_world = parent.get_world_transform();
+                    glm::mat4 inv_parent = glm::inverse(parent_world);
+
+                    glm::mat4 world =
+                        glm::translate(glm::mat4(1.0f), world_pos) *
+                        glm::rotate(glm::mat4(1.0f), world_rot, {0,0,1});
+
+                    glm::mat4 local = inv_parent * world;
+
+                    Math::decompose_transform(
+                        local,
+                        tc.translation,
+                        tc.rotation,
+                        tc.scale
+                    );
                 }
             }
         }
@@ -503,7 +526,7 @@ namespace Honey {
             Entity child  = { entt_map.at(childUUID), copy.get() };
             Entity parent = { entt_map.at(parentUUID), copy.get() };
 
-            child.set_parent(parent);
+            child.set_parent(parent, false);
         }
 
         auto src_view = src_scene_registry.view<CameraComponent>();
@@ -543,7 +566,7 @@ namespace Honey {
     //void Scene::create_prefab(const Entity& entity, const std::string& path) {
     //
     //}
-//
+    //
     Entity Scene::instantiate_prefab(const std::string& path) {
         Ref<Scene> scene_ref = Ref<Scene>(this, [](Scene*){});
         SceneSerializer serializer(scene_ref);
@@ -563,68 +586,116 @@ namespace Honey {
         return entity;
     }
 
+    static void collect_collider_entities(Scene* scene, Entity root, std::vector<Entity>& out_entities) {
+        out_entities.push_back(root);
+
+        if (!root.has_component<RelationshipComponent>())
+            return;
+
+        auto& rel = root.get_component<RelationshipComponent>();
+        for (auto child_handle : rel.children) {
+            Entity child{ child_handle, scene };
+            if (!child.is_valid())
+                continue;
+
+            // Stop at nested Rigidbody (Unity rule)
+            if (child.has_component<Rigidbody2DComponent>())
+                continue;
+
+            collect_collider_entities(scene, child, out_entities);
+        }
+    }
+
     void Scene::create_physics_body(Entity entity) {
-        auto& transform = entity.get_component<TransformComponent>();
-        auto& rigidbody2d = entity.get_component<Rigidbody2DComponent>();
+
+        if (entity.has_parent()) {
+            HN_CORE_WARN("Rigidbody2D entity '{0}' has a parent. Detaching.", entity.get_tag());
+            entity.set_parent(Entity{}, false);
+        }
+
+        //auto& root_tc = entity.get_component<TransformComponent>();
+        auto& rb = entity.get_component<Rigidbody2DComponent>();
+
+        glm::mat4 world = entity.get_world_transform();
+
+        glm::vec3 world_translation;
+        glm::vec3 world_rotation;
+        glm::vec3 world_scale;
+        Math::decompose_transform(world, world_translation, world_rotation, world_scale);
 
         b2BodyDef body_def = b2DefaultBodyDef();
-        body_def.type = hn_rigidbody2d_type_to_box2d_type(rigidbody2d.body_type);
-        body_def.position = { transform.translation.x, transform.translation.y };
-        body_def.rotation = b2MakeRot(transform.rotation.z);
+        body_def.type = hn_rigidbody2d_type_to_box2d_type(rb.body_type);
+        body_def.position = { world_translation.x, world_translation.y };
+        body_def.rotation = b2MakeRot(world_rotation.z);
 
         b2BodyId body = b2CreateBody(m_world, &body_def);
 
-        UUID uuid = entity.get_uuid();
-        b2Body_SetUserData(body, (void*)(uint64_t)uuid);
+        b2Body_SetUserData(body, (void*)(uint64_t)entity.get_uuid());
+        b2Body_SetMotionLocks(body, { false, false, rb.fixed_rotation });
 
-        auto locks = b2MotionLocks{ false, false, rigidbody2d.fixed_rotation }; // do lin x & y need to be set to true based on body type?
-        b2Body_SetMotionLocks(body, locks);
-        memcpy(&rigidbody2d.runtime_body, &body, sizeof(b2BodyId));
-        // retrieval example so I dont forget
-        //b2BodyId body;
-        //memcpy(&body, &rigidbody2d.runtime_body, sizeof(b2BodyId));
+        memcpy(&rb.runtime_body, &body, sizeof(b2BodyId));
 
-        if (entity.has_component<BoxCollider2DComponent>()) {
-            auto& collider = entity.get_component<BoxCollider2DComponent>();
+        // ---- COMPOUND COLLIDERS ----
+        std::vector<Entity> collider_entities;
+        collect_collider_entities(this, entity, collider_entities);
 
-            b2ShapeDef shape_def = b2DefaultShapeDef();
-            shape_def.density = collider.density;
-            shape_def.enableContactEvents = true;
+        glm::mat4 root_world = entity.get_world_transform();
+        glm::mat4 inv_root = glm::inverse(root_world);
 
-            b2SurfaceMaterial material;
-            material.friction = collider.friction;
-            material.restitution = collider.restitution;
+        for (Entity e : collider_entities) {
+            auto& tc = e.get_component<TransformComponent>();
+            glm::mat4 local_to_root = inv_root * e.get_world_transform();
 
-            b2Polygon box = b2MakeOffsetBox(
-                transform.scale.x * collider.size.x,
-                transform.scale.y * collider.size.y,
-                { collider.offset.x, collider.offset.y },
-                b2MakeRot(transform.rotation.z)
-            );
-            b2ShapeId shape = b2CreatePolygonShape(body, &shape_def, &box);
+            glm::vec3 rel_pos;
+            glm::vec3 rel_rot;
+            glm::vec3 rel_scale;
+            Math::decompose_transform(local_to_root, rel_pos, rel_rot, rel_scale);
 
-            b2Shape_SetSurfaceMaterial(shape, &material);
-            collider.runtime_shapes.push_back(shape);
-        }
+            // ---- BoxCollider ----
+            if (e.has_component<BoxCollider2DComponent>()) {
+                auto& bc = e.get_component<BoxCollider2DComponent>();
 
-        if (entity.has_component<CircleCollider2DComponent>()) {
-            auto& collider = entity.get_component<CircleCollider2DComponent>();
+                b2ShapeDef shape_def = b2DefaultShapeDef();
+                shape_def.density = bc.density;
+                shape_def.enableContactEvents = true;
 
-            b2ShapeDef shape_def = b2DefaultShapeDef();
-            shape_def.density = collider.density;
-            shape_def.enableContactEvents = true;
+                b2SurfaceMaterial mat{ bc.friction, bc.restitution };
 
-            b2SurfaceMaterial material;
-            material.friction = collider.friction;
-            material.restitution = collider.restitution;
+                b2Polygon box = b2MakeOffsetBox(
+                    rel_scale.x * bc.size.x,
+                    rel_scale.y * bc.size.y,
+                    { rel_pos.x + bc.offset.x, rel_pos.y + bc.offset.y },
+                    b2MakeRot(rel_rot.z)
+                );
 
-            b2Circle circle{};
-            circle.center = { collider.offset.x, collider.offset.y };
-            circle.radius = transform.scale.x * collider.radius;
-            b2ShapeId shape = b2CreateCircleShape(body, &shape_def, &circle);
+                b2ShapeId shape = b2CreatePolygonShape(body, &shape_def, &box);
+                b2Shape_SetSurfaceMaterial(shape, &mat);
 
-            b2Shape_SetSurfaceMaterial(shape, &material);
-            collider.runtime_shapes.push_back(shape);
+                bc.runtime_shapes.push_back(shape);
+            }
+
+            // ---- CircleCollider ----
+            if (e.has_component<CircleCollider2DComponent>()) {
+                auto& cc = e.get_component<CircleCollider2DComponent>();
+
+                b2ShapeDef shape_def = b2DefaultShapeDef();
+                shape_def.density = cc.density;
+                shape_def.enableContactEvents = true;
+
+                b2SurfaceMaterial mat{ cc.friction, cc.restitution };
+
+                b2Circle circle{};
+                circle.center = {
+                    rel_pos.x + cc.offset.x,
+                    rel_pos.y + cc.offset.y
+                };
+                circle.radius = rel_scale.x * cc.radius;
+
+                b2ShapeId shape = b2CreateCircleShape(body, &shape_def, &circle);
+                b2Shape_SetSurfaceMaterial(shape, &mat);
+
+                cc.runtime_shapes.push_back(shape);
+            }
         }
     }
 }

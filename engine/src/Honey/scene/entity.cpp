@@ -100,7 +100,7 @@ namespace Honey {
             vec.erase(it);
     }
 
-    void Entity::set_parent(Entity parent) {
+    void Entity::set_parent(Entity parent, bool recompute_world_transform) {
         HN_CORE_ASSERT(is_valid(), "set_parent() on invalid entity");
         HN_CORE_ASSERT(!parent || parent.is_valid(), "Parent is invalid");
         HN_CORE_ASSERT(!parent || parent.get_scene() == m_scene, "Parent must be in the same scene");
@@ -109,7 +109,7 @@ namespace Honey {
         HN_CORE_ASSERT(!parent || !is_ancestor_of(parent), "Hierarchy cycle detected: cannot parent entity to its own descendant");
 
         // Preserve current world transform across reparenting
-        const glm::mat4 world_before = get_world_transform();
+        glm::mat4 world_before = get_world_transform();
 
         // Ensure this has a RelationshipComponent
         auto& rel = ensure_rel(*this);
@@ -135,6 +135,7 @@ namespace Honey {
             // Null parent
             rel.parent = entt::null;
         }
+        if (!recompute_world_transform) return;
 
         // Recompute local transform so that world stays the same
         set_world_transform(world_before);
@@ -235,24 +236,19 @@ namespace Honey {
     glm::mat4 Entity::get_world_transform() const {
         HN_CORE_ASSERT(is_valid(), "get_world_transform() on invalid entity");
 
-        HN_CORE_ASSERT(has_component<TransformComponent>(),
-                       "Entity must have TransformComponent to query transform");
-
-        static thread_local std::unordered_set<entt::entity> visiting;
-
-        HN_CORE_ASSERT(
-            visiting.insert(m_entity_handle).second,
-            "Hierarchy cycle detected during world transform evaluation"
-        );
-
-        glm::mat4 world = get_component<TransformComponent>().get_transform();
-
-        if (has_parent()) {
-            world = get_parent().get_world_transform() * world;
+        if (!has_component<TransformComponent>()) {
+            HN_CORE_WARN("Entity {0} does not have a TransformComponent, returning identity transform", (uint64_t)get_uuid());
+            return glm::mat4(1.0f);
         }
 
-        visiting.erase(m_entity_handle);
-        return world;
+        const auto& tc = get_component<TransformComponent>();
+        glm::mat4 local = tc.get_transform();
+
+        if (!has_parent())
+            return local;
+
+        Entity parent = get_parent();
+        return parent.get_world_transform() * local;
     }
 
     void Entity::set_world_transform(const glm::mat4& world_transform) {

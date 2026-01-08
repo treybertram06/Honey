@@ -745,62 +745,40 @@ namespace Honey {
         float rotation;
         decompose_transform(transform, position, scale, rotation);
 
-        constexpr float thickness = 0.05f;
+        constexpr float thickness = 0.025f;
+        const float half_t = thickness * 0.5f;
 
         const float half_w = scale.x * 0.5f;
         const float half_h = scale.y * 0.5f;
 
-        // Edge centers in LOCAL (unrotated) space
-        const glm::vec3 top    = position + glm::vec3(0.0f,  half_h, 0.0f);
-        const glm::vec3 bottom = position + glm::vec3(0.0f, -half_h, 0.0f);
-        const glm::vec3 left   = position + glm::vec3(-half_w, 0.0f, 0.0f);
-        const glm::vec3 right  = position + glm::vec3( half_w, 0.0f, 0.0f);
+        auto rotate = [](const glm::vec2& v, float r) {
+            float c = std::cos(r);
+            float s = std::sin(r);
+            return glm::vec2(
+                c * v.x - s * v.y,
+                s * v.x + c * v.y
+            );
+        };
+
+        // Local edge centers
+        const glm::vec2 top_local    = { 0.0f,  half_h - half_t };
+        const glm::vec2 bottom_local = { 0.0f, -half_h + half_t };
+        const glm::vec2 left_local   = { -half_w + half_t, 0.0f };
+        const glm::vec2 right_local  = {  half_w - half_t, 0.0f };
+
+        // Rotate into world space
+        const glm::vec3 top    = position + glm::vec3(rotate(top_local, rotation), 0.0f);
+        const glm::vec3 bottom = position + glm::vec3(rotate(bottom_local, rotation), 0.0f);
+        const glm::vec3 left   = position + glm::vec3(rotate(left_local, rotation), 0.0f);
+        const glm::vec3 right  = position + glm::vec3(rotate(right_local, rotation), 0.0f);
 
         // Horizontal edges
-        submit_line(
-            top,
-            { scale.x, thickness },
-            rotation,
-            nullptr,
-            nullptr,
-            color,
-            0.0f,
-            -1
-        );
+        submit_line(top,    { scale.x, thickness }, rotation, nullptr, nullptr, color, 0.0f, -1);
+        submit_line(bottom, { scale.x, thickness }, rotation, nullptr, nullptr, color, 0.0f, -1);
 
-        submit_line(
-            bottom,
-            { scale.x, thickness },
-            rotation,
-            nullptr,
-            nullptr,
-            color,
-            0.0f,
-            -1
-        );
-
-        // Vertical edges (90° relative to rectangle)
-        submit_line(
-            left,
-            { scale.y, thickness },
-            rotation + glm::half_pi<float>(),
-            nullptr,
-            nullptr,
-            color,
-            0.0f,
-            -1
-        );
-
-        submit_line(
-            right,
-            { scale.y, thickness },
-            rotation + glm::half_pi<float>(),
-            nullptr,
-            nullptr,
-            color,
-            0.0f,
-            -1
-        );
+        // Vertical edges
+        submit_line(left,  { scale.y, thickness }, rotation + glm::half_pi<float>(), nullptr, nullptr, color, 0.0f, -1);
+        submit_line(right, { scale.y, thickness }, rotation + glm::half_pi<float>(), nullptr, nullptr, color, 0.0f, -1);
     }
 
 

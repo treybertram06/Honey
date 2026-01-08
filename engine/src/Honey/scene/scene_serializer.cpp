@@ -122,7 +122,7 @@ namespace Honey {
             out << YAML::Key << "Translation" << YAML::Value << tc.translation;
             out << YAML::Key << "Rotation" << YAML::Value << tc.rotation;
             out << YAML::Key << "Scale" << YAML::Value << tc.scale;
-            out << YAML::Key << "Dirty" << YAML::Value << tc.dirty;
+            //out << YAML::Key << "Dirty" << YAML::Value << tc.dirty;
 
             out << YAML::EndMap; // TransformComponent
         }
@@ -631,9 +631,11 @@ namespace Honey {
                 continue;
 
             auto& tc = t.entity.get_component<TransformComponent>();
-            tc.translation = t.translation;
-            tc.rotation    = t.rotation;
-            tc.scale       = t.scale;
+            tc.translation      = t.translation;
+            tc.rotation         = t.rotation;
+            tc.scale            = t.scale;
+            tc.dirty            = true;
+            tc.collider_dirty   = true;
         }
 
         m_pending_relationships.clear();

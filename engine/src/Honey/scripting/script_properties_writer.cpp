@@ -3,8 +3,9 @@
 #include <fstream>
 #include <sstream>
 
-namespace Honey {
+#include "script_properties_loader.h"
 
+namespace Honey {
     static std::string value_to_lua(const ScriptPropertyValue& v) {
         return std::visit([](auto&& val) -> std::string {
             using T = std::decay_t<decltype(val)>;
@@ -19,11 +20,7 @@ namespace Honey {
         }, v);
     }
 
-    bool ScriptPropertiesWriter::write_defaults(
-        const std::string& script_name,
-        const std::unordered_map<std::string, ScriptPropertyValue>& values,
-        std::string* out_error
-    ) {
+    bool ScriptPropertiesWriter::write_defaults(const std::string& script_name, const std::unordered_map<std::string, ScriptPropertyValue>& values, std::string* out_error) {
         std::filesystem::path path = "../assets/scripts";
         path /= script_name;
         path.replace_extension(".lua");
@@ -52,13 +49,17 @@ namespace Honey {
             return false;
         }
 
-        std::ostringstream new_props;
-        new_props << "Properties = {\n";
+        auto existing = ScriptPropertiesLoader::load_from_file(script_name);
 
-        for (auto& [name, value] : values) {
-            new_props << "    " << name << " = " << value_to_lua(value) << ",\n";
+        for (const auto& [name, value] : values) {
+            existing[name] = value;
         }
 
+        std::ostringstream new_props;
+        new_props << "Properties = {\n";
+        for (const auto& [name, value] : existing) {
+            new_props << "    " << name << " = " << value_to_lua(value) << ",\n";
+        }
         new_props << "}";
 
         source.replace(
@@ -72,5 +73,4 @@ namespace Honey {
 
         return true;
     }
-
 }
