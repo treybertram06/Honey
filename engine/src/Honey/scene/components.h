@@ -12,6 +12,7 @@
 #include <entt/entt.hpp>
 
 #include "box2d/id.h"
+#include "Honey/renderer/sprite.h"
 
 
 namespace Honey {
@@ -60,9 +61,9 @@ namespace Honey {
 
     struct SpriteRendererComponent {
         glm::vec4 color = {1.0f, 1.0f, 1.0f, 1.0f};
-        Ref<Texture2D> texture;
-        std::filesystem::path texture_path;
-        float tiling_factor = 1.0f;
+
+        Ref<Sprite> sprite;
+        std::filesystem::path sprite_path;
 
         SpriteRendererComponent() = default;
         SpriteRendererComponent(const SpriteRendererComponent&) = default;

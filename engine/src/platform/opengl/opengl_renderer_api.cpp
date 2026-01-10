@@ -69,10 +69,19 @@ namespace Honey {
             glDisable(GL_DEPTH_TEST);
     }
 
-    void OpenGLRendererAPI::set_blend(bool mode) {
+    void OpenGLRendererAPI::set_depth_write(bool mode) {
         if (mode)
-            glEnable(GL_BLEND);
+            glDepthMask(GL_TRUE);
         else
+            glDepthMask(GL_FALSE);
+    }
+
+    void OpenGLRendererAPI::set_blend(bool mode) {
+        if (mode) {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glBlendEquation(GL_FUNC_ADD);
+        } else
             glDisable(GL_BLEND);
     }
 

@@ -7,6 +7,7 @@ namespace Honey {
         glm::vec4 clear_color = { 0.1f, 0.1f, 0.1f, 1.0f };
         bool wireframe = false;
         bool depth_test = true;
+        bool depth_write = false;
         bool face_culling = true;
         bool blending = true;
         bool vsync = true;

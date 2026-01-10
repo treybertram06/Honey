@@ -57,7 +57,9 @@ namespace Honey {
         s_data = std::make_unique<ScriptEngineData>();
         sol::state& lua = s_data->lua_state;
 
-        lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::table, sol::lib::string, sol::lib::package);
+        lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::table, sol::lib::string, sol::lib::package,
+            sol::lib::debug
+            );
 
         lua.set_function("HN_Log", [](const std::string& msg) {
             HN_CORE_INFO("[Lua] {}", msg);
@@ -177,6 +179,15 @@ namespace Honey {
         auto& inst = it->second;
         if (!inst.valid || !inst.OnUpdate.valid() || inst.errored) return;
 
+
+
+        HN_CORE_INFO("[Lua] Enter OnUpdate for script '{}' (entity tag='{}')",
+                 inst.script_name,
+                 entity.has_component<TagComponent>() ? entity.get_component<TagComponent>().tag : "<no tag>");
+
+
+
+
         inst.env["self"] = entity;
         inst.env["dt"]   = ts;
         if (inst.properties.valid())
@@ -184,7 +195,25 @@ namespace Honey {
         else
             inst.env["Properties"] = sol::nil;
 
-        sol::protected_function_result r = inst.OnUpdate();
+        //sol::protected_function_result r = inst.OnUpdate();
+
+        sol::state& lua = s_data->lua_state;
+        // Wrap OnUpdate with xpcall + debug.traceback for a clear Lua stack trace
+        inst.env["__HN_LuaOnUpdateWrapper"] = inst.OnUpdate;
+        lua.safe_script(R"(
+        function __HN_DebugOnUpdate()
+            local ok, err = xpcall(__HN_LuaOnUpdateWrapper, debug.traceback)
+            if not ok then
+                HN_Log("Lua OnUpdate traceback:\n" .. tostring(err))
+                error(err, 0)
+            end
+        end
+        )", inst.env);
+
+        sol::function debug_on_update = inst.env["__HN_DebugOnUpdate"];
+        sol::protected_function_result r = debug_on_update();
+
+
 
         inst.env["self"] = sol::nil;
         inst.env["dt"]   = sol::nil;

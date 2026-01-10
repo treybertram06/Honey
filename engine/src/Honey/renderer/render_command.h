@@ -44,6 +44,10 @@ namespace Honey {
             s_renderer_api->set_depth_test(mode);
         }
 
+        inline static void set_depth_write(bool mode) {
+            s_renderer_api->set_depth_write(mode);
+        }
+
         inline static void set_blend(bool mode) {
             s_renderer_api->set_blend(mode);
         }

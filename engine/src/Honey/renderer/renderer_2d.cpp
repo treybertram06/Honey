@@ -379,7 +379,7 @@ namespace Honey {
         s_data.line_sorted_instances = s_data.line_instances;
         std::sort(s_data.line_sorted_instances.begin(), s_data.line_sorted_instances.end(),
             [](const LineInstance& a, const LineInstance& b) {
-                return a.center.z > b.center.z; // Higher Z values drawn first (back to front)
+                return a.center.z < b.center.z; // Higher Z values drawn first (back to front)
             });
 
         // Upload sorted instance data
@@ -405,7 +405,7 @@ namespace Honey {
         s_data.circle_sorted_instances = s_data.circle_instances;
         std::sort(s_data.circle_sorted_instances.begin(), s_data.circle_sorted_instances.end(),
             [](const CircleInstance& a, const CircleInstance& b) {
-                return a.center.z > b.center.z; // Higher Z values drawn first (back to front)
+                return a.center.z < b.center.z; // Higher Z values drawn first (back to front)
             });
 
         // Upload sorted instance data
@@ -431,7 +431,7 @@ namespace Honey {
         s_data.quad_sorted_instances = s_data.quad_instances;
         std::sort(s_data.quad_sorted_instances.begin(), s_data.quad_sorted_instances.end(),
             [](const QuadInstance& a, const QuadInstance& b) {
-                return a.center.z > b.center.z; // Higher Z values drawn first (back to front)
+                return a.center.z < b.center.z; // Higher Z values drawn first (back to front)
             });
 
         // Upload sorted instance data
@@ -651,10 +651,43 @@ namespace Honey {
         float rotation;
         decompose_transform(transform, position, scale, rotation);
 
-        if (src.texture)
-            submit_quad(position, scale, rotation, src.texture, nullptr, src.color, src.tiling_factor, entity_id);
-        else
-            submit_quad(position, scale, rotation, nullptr, nullptr, src.color, 1.0f, entity_id);
+        if (src.sprite && src.sprite->get_texture()) {
+
+            glm::vec2 pivot_offset = src.sprite->get_pivot_offset();
+            glm::vec2 rotated_offset = {
+                pivot_offset.x * std::cos(rotation) - pivot_offset.y * std::sin(rotation),
+                pivot_offset.x * std::sin(rotation) + pivot_offset.y * std::cos(rotation)
+            };
+            position += glm::vec3(rotated_offset, 0.0f);
+
+            glm::vec2 size = src.sprite->get_world_size();
+
+            glm::vec2 uv_min, uv_max;
+            src.sprite->get_uvs(uv_min, uv_max);
+
+            submit_quad(
+                position,
+                size,
+                rotation,
+                src.sprite->get_texture(),
+                nullptr,
+                src.color,
+                1.0f,
+                entity_id
+            );
+        }
+        else {
+            submit_quad(
+                position,
+                scale,
+                rotation,
+                nullptr,      // uses white texture in slot 0
+                nullptr,
+                src.color,
+                1.0f,
+                entity_id
+            );
+        }
     }
 
     // Circles!

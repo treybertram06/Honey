@@ -158,6 +158,9 @@ add_library(engine STATIC
         src/Honey/scripting/script_properties_writer.cpp
         src/Honey/core/settings.h
         src/Honey/core/settings.cpp
+        src/Honey/renderer/sprite.h
+        src/Honey/renderer/sprite.cpp
+        src/Honey/renderer/texture_cache.h
 )
 
 # Apply MSVC runtime to engine itself

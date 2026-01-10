@@ -133,11 +133,14 @@ namespace Honey {
 
             auto& sprite = entity.get_component<SpriteRendererComponent>();
             out << YAML::Key << "Color" << YAML::Value << sprite.color;
-            out << YAML::Key << "TilingFactor" << YAML::Value << sprite.tiling_factor;
 
-            if (sprite.texture) {
+            if (sprite.sprite) {
                 out << YAML::Key << "Texture" << YAML::Value
-                    << (sprite.texture_path.empty() ? "" : sprite.texture_path.string());
+                    << (sprite.sprite_path.empty() ? "" : sprite.sprite_path.string());
+
+                out << YAML::Key << "PPU" << YAML::Value << sprite.sprite->get_pixels_per_unit();
+                out << YAML::Key << "Pivot" << YAML::Value << sprite.sprite->get_pivot();
+
             } else {
                 out << YAML::Key << "Texture" << YAML::Value << "";
             }
@@ -408,12 +411,15 @@ namespace Honey {
         if (sprite_node) {
             auto& sprite = deserialized_entity.add_component<SpriteRendererComponent>();
             sprite.color = sprite_node["Color"].as<glm::vec4>();
-            sprite.tiling_factor = sprite_node["TilingFactor"].as<float>();
 
             std::string texture_path_str = sprite_node["Texture"].as<std::string>("");
+            int ppu = sprite_node["PPU"].as<int>(100);
+            glm::vec2 pivot = sprite_node["Pivot"].as<glm::vec2>(glm::vec2(0.5f));
+
             if (!texture_path_str.empty()) {
-                sprite.texture_path = std::filesystem::path(texture_path_str); // <-- keep it!
-                sprite.texture = Texture2D::create(texture_path_str);
+                sprite.sprite_path = std::filesystem::path(texture_path_str); // <-- keep it!
+                //HN_CORE_INFO("PPU: {0}, Pivot: {1},{2}", ppu, pivot.x, pivot.y);
+                sprite.sprite = Sprite::create_from_texture( Texture2D::create(texture_path_str), ppu, pivot );
             }
         }
 
