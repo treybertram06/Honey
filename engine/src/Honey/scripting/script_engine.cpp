@@ -174,55 +174,46 @@ namespace Honey {
 
         UUID uuid = entity.get_uuid();
         auto it = s_data->entity_instances.find(uuid);
-        if (it == s_data->entity_instances.end()) return;
+        if (it == s_data->entity_instances.end())
+            return;
 
-        auto& inst = it->second;
-        if (!inst.valid || !inst.OnUpdate.valid() || inst.errored) return;
+        ScriptEngineData::ScriptInstance* inst = &it->second;
+        if (!inst->valid || !inst->OnUpdate.valid() || inst->errored)
+            return;
 
+        // If the entity is already gone, skip this instance entirely.
+        if (!entity.is_valid()) {
+            inst->errored = true;
+            return;
+        }
 
-
-        HN_CORE_INFO("[Lua] Enter OnUpdate for script '{}' (entity tag='{}')",
-                 inst.script_name,
-                 entity.has_component<TagComponent>() ? entity.get_component<TagComponent>().tag : "<no tag>");
-
-
-
-
-        inst.env["self"] = entity;
-        inst.env["dt"]   = ts;
-        if (inst.properties.valid())
-            inst.env["Properties"] = inst.properties;
+        // Inject per-call variables into the script environment.
+        inst->env["self"] = entity;
+        inst->env["dt"]   = ts;
+        if (inst->properties.valid())
+            inst->env["Properties"] = inst->properties;
         else
-            inst.env["Properties"] = sol::nil;
+            inst->env["Properties"] = sol::nil;
 
-        //sol::protected_function_result r = inst.OnUpdate();
+        // Call Lua OnUpdate directly with a protected call.
+        sol::protected_function on_update = inst->OnUpdate;
+        sol::protected_function_result r = on_update();
 
-        sol::state& lua = s_data->lua_state;
-        // Wrap OnUpdate with xpcall + debug.traceback for a clear Lua stack trace
-        inst.env["__HN_LuaOnUpdateWrapper"] = inst.OnUpdate;
-        lua.safe_script(R"(
-        function __HN_DebugOnUpdate()
-            local ok, err = xpcall(__HN_LuaOnUpdateWrapper, debug.traceback)
-            if not ok then
-                HN_Log("Lua OnUpdate traceback:\n" .. tostring(err))
-                error(err, 0)
-            end
-        end
-        )", inst.env);
+        // If the entity destroyed itself inside OnUpdate, do NOT touch the env anymore.
+        if (!entity.is_valid()) {
+            inst->errored = true;
+            return;
+        }
 
-        sol::function debug_on_update = inst.env["__HN_DebugOnUpdate"];
-        sol::protected_function_result r = debug_on_update();
-
-
-
-        inst.env["self"] = sol::nil;
-        inst.env["dt"]   = sol::nil;
-        inst.env["Properties"] = sol::nil;
+        // Clean per-call keys now that we know the entity & instance are still valid.
+        inst->env["self"]        = sol::nil;
+        inst->env["dt"]          = sol::nil;
+        inst->env["Properties"]  = sol::nil;
 
         if (!r.valid()) {
             sol::error err = r;
-            HN_CORE_ERROR("Lua OnUpdate error in '{}': {}", inst.script_name, err.what());
-            inst.errored = true;
+            HN_CORE_ERROR("Lua OnUpdate error in '{}': {}", inst->script_name, err.what());
+            inst->errored = true;
         }
     }
 
@@ -231,17 +222,26 @@ namespace Honey {
 
         UUID uuid = entity.get_uuid();
         auto it = s_data->entity_instances.find(uuid);
-        if (it == s_data->entity_instances.end()) return;
+        if (it == s_data->entity_instances.end())
+            return;
 
         auto& inst = it->second;
-        if (inst.valid && inst.OnDestroy.valid()) {
-            sol::protected_function_result r = inst.OnDestroy(inst.instance);
+
+        if (inst.valid && inst.OnDestroy.valid() && !inst.errored) {
+            // Provide 'self' if your scripts expect it
+            inst.env["self"] = entity;
+
+            sol::protected_function_result r = inst.OnDestroy();
+
+            inst.env["self"] = sol::nil;
+
             if (!r.valid()) {
                 sol::error err = r;
                 HN_CORE_ERROR("Lua OnDestroy error in '{}': {}", inst.script_name, err.what());
             }
         }
 
+        // Just remove the ScriptInstance; don't mutate env further.
         s_data->entity_instances.erase(it);
     }
 
