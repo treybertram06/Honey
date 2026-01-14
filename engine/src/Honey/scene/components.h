@@ -265,5 +265,18 @@ namespace Honey {
         CircleCollider2DComponent(const CircleCollider2DComponent&) = default;
     };
 
+    struct AudioSourceComponent {
+        std::filesystem::path file_path;
+        float volume = 1.0f;
+        float pitch = 1.0f;
+        bool loop = false;
+        bool play_on_scene_start = false;
+
+        void* runtime_handle = nullptr;
+
+        AudioSourceComponent() = default;
+        AudioSourceComponent(const AudioSourceComponent&) = default;
+    };
+
 }
 

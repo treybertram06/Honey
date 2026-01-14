@@ -161,6 +161,8 @@ add_library(engine STATIC
         src/Honey/renderer/sprite.h
         src/Honey/renderer/sprite.cpp
         src/Honey/renderer/texture_cache.h
+        src/Honey/audio/audio_system.h
+        src/Honey/audio/audio_system.cpp
 )
 
 # Apply MSVC runtime to engine itself
@@ -389,6 +391,54 @@ target_include_directories(engine PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/vendor/shaderc/libshaderc/include"
 )
 
+# ------------------------------------------------------------------------------
+# SoLoud (inline) with miniaudio backend
+# ------------------------------------------------------------------------------
+set(SOLOUD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/soloud)
+
+file(GLOB SOLOUD_CORE
+        ${SOLOUD_DIR}/src/core/*.cpp
+        ${SOLOUD_DIR}/src/filter/*.cpp
+)
+
+# Only include the audio sources you actually need.
+set(SOLOUD_AUDIO_SOURCES
+        ${SOLOUD_DIR}/src/audiosource/wav/soloud_wav.cpp
+        ${SOLOUD_DIR}/src/audiosource/wav/dr_impl.cpp
+        ${SOLOUD_DIR}/src/audiosource/wav/stb_vorbis.c
+        ${SOLOUD_DIR}/src/audiosource/wav/soloud_wavstream.cpp     # optional, for streaming/ogg
+        # If you want speech too:
+        ${SOLOUD_DIR}/src/audiosource/speech/soloud_speech.cpp
+        ${SOLOUD_DIR}/src/audiosource/speech/resonator.cpp
+        ${SOLOUD_DIR}/src/audiosource/speech/tts.cpp
+        ${SOLOUD_DIR}/src/audiosource/speech/darray.cpp
+        ${SOLOUD_DIR}/src/audiosource/speech/klatt.cpp
+)
+
+set(SOLOUD_BACKENDS
+        ${SOLOUD_DIR}/src/backend/miniaudio/soloud_miniaudio.cpp
+)
+
+add_library(soloud STATIC
+        ${SOLOUD_CORE}
+        ${SOLOUD_AUDIO_SOURCES}
+        ${SOLOUD_BACKENDS}
+)
+
+target_include_directories(soloud PUBLIC
+        ${SOLOUD_DIR}/include
+)
+
+if (UNIX AND NOT APPLE)
+   target_compile_definitions(soloud PUBLIC WITH_MINIAUDIO)
+else ()
+   error("SoLoud currently only supports the miniaudio backend on Linux.")
+endif ()
+# Make sure SoLoud uses the same CRT on MSVC
+hn_force_msvc_runtime(soloud)
+
+
+
 # Prefer dynamic for Debug builds on Windows: simplest and avoids CRT static mismatch pain
 if(TARGET shaderc_shared)
  target_link_libraries(engine PRIVATE shaderc_shared)
@@ -408,6 +458,7 @@ target_link_libraries(engine
         glfw
         glad
         glm
+        soloud
         PUBLIC
         imgui
         yaml-cpp::yaml-cpp

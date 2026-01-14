@@ -10,6 +10,7 @@
 #include <box2d/box2d.h>
 
 #include "scene_serializer.h"
+#include "Honey/audio/audio_system.h"
 #include "Honey/core/settings.h"
 #include "Honey/math/math.h"
 #include "Honey/scripting/script_engine.h"
@@ -28,6 +29,19 @@ namespace Honey {
     }
 
     Scene* Scene::s_active_scene = nullptr;
+
+    static void release_audio_for_entity(Entity entity) {
+        if (!entity.is_valid())
+            return;
+
+        if (entity.has_component<AudioSourceComponent>()) {
+            auto& audio = entity.get_component<AudioSourceComponent>();
+            if (audio.runtime_handle) {
+                AudioSystem::destroy_source(audio.runtime_handle);
+                audio.runtime_handle = nullptr;
+            }
+        }
+    }
 
     Scene::Scene() {
     }
@@ -82,6 +96,8 @@ namespace Honey {
         }
 
         ScriptEngine::on_destroy_entity(entity);
+        release_audio_for_entity(entity);
+
         m_registry.destroy(entity);
     }
 
@@ -126,6 +142,8 @@ namespace Honey {
         clear_state();
         on_physics_2D_start();
 
+        AudioSystem::init();
+
         // Scripting
         {
             ScriptEngine::on_runtime_start(this);
@@ -144,6 +162,7 @@ namespace Honey {
         on_physics_2D_stop();
         clear_state();
         ScriptEngine::on_runtime_stop();
+        AudioSystem::shutdown();
     }
 
     Entity Scene::get_primary_camera() const {
@@ -279,6 +298,39 @@ namespace Honey {
                 nsc.instance->on_update(ts);
             });
         }
+
+        // Audio sources
+        {
+            auto view = m_registry.view<AudioSourceComponent>();
+            for (auto e : view) {
+                Entity entity = { e, this };
+                auto& audio = entity.get_component<AudioSourceComponent>();
+
+                // If we have a clip and no runtime handle yet, create one.
+                if (!audio.file_path.empty() && !audio.runtime_handle) {
+                    audio.runtime_handle = AudioSystem::create_source(audio.file_path);
+                    if (audio.runtime_handle) {
+                        AudioSystem::set_volume(audio.runtime_handle, audio.volume);
+                        AudioSystem::set_pitch(audio.runtime_handle,  audio.pitch);
+                    }
+                }
+
+                // Update every frame in case values changed
+                if (audio.runtime_handle) {
+                    AudioSystem::set_looping(audio.runtime_handle, audio.loop);
+                    AudioSystem::set_volume(audio.runtime_handle, audio.volume);
+                    AudioSystem::set_pitch(audio.runtime_handle,  audio.pitch);
+                }
+
+                if (audio.runtime_handle && audio.play_on_scene_start) {
+                    AudioSystem::play(audio.runtime_handle);
+                    audio.play_on_scene_start = false;
+                }
+            }
+
+            AudioSystem::on_update(ts);
+        }
+
         //physics
         auto& physics_settings = get_settings().physics;
         if (physics_settings.enabled) {
@@ -505,13 +557,14 @@ namespace Honey {
         copy_component<TransformComponent>          (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<SpriteRendererComponent>     (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<CircleRendererComponent>     (dst_scene_registry, src_scene_registry, entt_map);
-        copy_component<LineRendererComponent>     (dst_scene_registry, src_scene_registry, entt_map);
+        copy_component<LineRendererComponent>       (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<CameraComponent>             (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<NativeScriptComponent>       (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<ScriptComponent>             (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<Rigidbody2DComponent>        (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<BoxCollider2DComponent>      (dst_scene_registry, src_scene_registry, entt_map);
-        copy_component<CircleCollider2DComponent>      (dst_scene_registry, src_scene_registry, entt_map);
+        copy_component<CircleCollider2DComponent>   (dst_scene_registry, src_scene_registry, entt_map);
+        copy_component<AudioSourceComponent>        (dst_scene_registry, src_scene_registry, entt_map);
 
         auto view = src_scene_registry.view<RelationshipComponent>();
         for (auto e : view) {
@@ -550,17 +603,18 @@ namespace Honey {
         std::string new_name = entity.get_tag() + " (copy)";
         Entity new_entity = create_entity(new_name);
 
-        copy_component_if_exists<TransformComponent>        (new_entity, entity);
-        copy_component_if_exists<SpriteRendererComponent>   (new_entity, entity);
-        copy_component_if_exists<CircleRendererComponent>   (new_entity, entity);
-        copy_component_if_exists<LineRendererComponent>   (new_entity, entity);
-        copy_component_if_exists<CameraComponent>           (new_entity, entity);
-        copy_component_if_exists<NativeScriptComponent>     (new_entity, entity);
-        copy_component_if_exists<ScriptComponent>           (new_entity, entity);
-        copy_component_if_exists<RelationshipComponent>     (new_entity, entity);
-        copy_component_if_exists<Rigidbody2DComponent>      (new_entity, entity);
-        copy_component_if_exists<BoxCollider2DComponent>    (new_entity, entity);
-        copy_component_if_exists<CircleCollider2DComponent>    (new_entity, entity);
+        copy_component_if_exists<TransformComponent>            (new_entity, entity);
+        copy_component_if_exists<SpriteRendererComponent>       (new_entity, entity);
+        copy_component_if_exists<CircleRendererComponent>       (new_entity, entity);
+        copy_component_if_exists<LineRendererComponent>         (new_entity, entity);
+        copy_component_if_exists<CameraComponent>               (new_entity, entity);
+        copy_component_if_exists<NativeScriptComponent>         (new_entity, entity);
+        copy_component_if_exists<ScriptComponent>               (new_entity, entity);
+        copy_component_if_exists<RelationshipComponent>         (new_entity, entity);
+        copy_component_if_exists<Rigidbody2DComponent>          (new_entity, entity);
+        copy_component_if_exists<BoxCollider2DComponent>        (new_entity, entity);
+        copy_component_if_exists<CircleCollider2DComponent>     (new_entity, entity);
+        copy_component_if_exists<AudioSourceComponent>          (new_entity, entity);
 
     }
     //void Scene::create_prefab(const Entity& entity, const std::string& path) {

@@ -11,6 +11,7 @@
 #include <box2d/box2d.h>
 
 #include "type_proxies.h"
+#include "Honey/audio/audio_system.h"
 #include "Honey/scene/scene_serializer.h"
 
 namespace Honey {
@@ -114,6 +115,7 @@ namespace Honey {
                 if (type == "SpriteRenderer") return (void)e.add_component<SpriteRendererComponent>();
                 if (type == "Rigidbody2D") return (void)e.add_component<Rigidbody2DComponent>();
                 if (type == "BoxCollider2D") return (void)e.add_component<BoxCollider2DComponent>();
+                if (type == "AudioSource") return (void)e.add_component<AudioSourceComponent>();
             },
 
             "HasComponent", [](Entity e, const std::string& type) {
@@ -121,6 +123,7 @@ namespace Honey {
                 if (type == "SpriteRenderer") return e.has_component<SpriteRendererComponent>();
                 if (type == "Rigidbody2D") return e.has_component<Rigidbody2DComponent>();
                 if (type == "BoxCollider2D") return e.has_component<BoxCollider2DComponent>();
+                if (type == "AudioSource") return e.has_component<AudioSourceComponent>();
                 return false;
             },
 
@@ -142,6 +145,10 @@ namespace Honey {
                 if (type == "BoxCollider2D") {
                     if (!e.has_component<BoxCollider2DComponent>()) return sol::nil;
                     return sol::make_object(L, &e.get_component<BoxCollider2DComponent>());
+                }
+                if (type == "AudioSource") {
+                    if (!e.has_component<AudioSourceComponent>()) return sol::nil;
+                    return sol::make_object(L, &e.get_component<AudioSourceComponent>());
                 }
                 return sol::nil;
             },
@@ -261,6 +268,47 @@ namespace Honey {
             "friction", &BoxCollider2DComponent::friction,
             "restitution", &BoxCollider2DComponent::restitution
         );
+
+        lua.new_usertype<AudioSourceComponent>("AudioSourceComponent",
+                sol::constructors<AudioSourceComponent()>(),
+                "volume", &AudioSourceComponent::volume,
+                "pitch",  &AudioSourceComponent::pitch,
+                "loop",   &AudioSourceComponent::loop,
+                "play_on_scene_start", &AudioSourceComponent::play_on_scene_start,
+                // Methods
+                "play", [](AudioSourceComponent& src) {
+                    if (!src.runtime_handle && !src.file_path.empty()) {
+                        src.runtime_handle = AudioSystem::create_source(src.file_path);
+                        if (src.runtime_handle) {
+                            AudioSystem::set_volume(src.runtime_handle, src.volume);
+                            AudioSystem::set_pitch(src.runtime_handle,  src.pitch);
+                            AudioSystem::set_looping(src.runtime_handle, src.loop);
+                        }
+                    }
+
+                    if (src.runtime_handle)
+                        AudioSystem::play(src.runtime_handle);
+                    else
+                        HN_CORE_WARN("AudioSystem::play called with null handle!");
+                },
+                "play_at", [](AudioSourceComponent& src, float time) {
+                    if (!src.runtime_handle && !src.file_path.empty()) {
+                        src.runtime_handle = AudioSystem::create_source(src.file_path);
+                        if (src.runtime_handle) {
+                            AudioSystem::set_volume(src.runtime_handle, src.volume);
+                            AudioSystem::set_pitch(src.runtime_handle,  src.pitch);
+                            AudioSystem::set_looping(src.runtime_handle, src.loop);
+                        }
+                    }
+
+                    if (src.runtime_handle)
+                        AudioSystem::play_at(src.runtime_handle, time);
+                },
+                "stop", [](AudioSourceComponent& src) {
+                    if (src.runtime_handle)
+                        AudioSystem::stop(src.runtime_handle);
+                }
+            );
 
         // Honey namespace
         sol::table honey = lua.create_named_table("Honey");

@@ -325,6 +325,19 @@ namespace Honey {
             out << YAML::EndMap;
         }
 
+        if (entity.has_component<AudioSourceComponent>()) {
+            out << YAML::Key << "AudioSourceComponent";
+            out << YAML::BeginMap;
+
+            auto& audio = entity.get_component<AudioSourceComponent>();
+            out << YAML::Key << "FilePath" << YAML::Value << (audio.file_path.empty() ? "" : audio.file_path.string());
+            out << YAML::Key << "Loop" << YAML::Value << audio.loop;
+            out << YAML::Key << "Pitch" << YAML::Value << audio.pitch;
+            out << YAML::Key << "PlayOnSceneStart" << YAML::Value << audio.play_on_scene_start;
+            out << YAML::Key << "Volume" << YAML::Value << audio.volume;
+            out << YAML::EndMap;
+        }
+
 
 
         out <<YAML::EndMap; // Entity
@@ -602,6 +615,16 @@ namespace Honey {
             cc.density = circle_collider_node["Density"].as<float>();
             cc.friction = circle_collider_node["Friction"].as<float>();
             cc.restitution = circle_collider_node["Restitution"].as<float>();
+        }
+
+        auto audio_source_node = entity_node["AudioSourceComponent"];
+        if (audio_source_node) {
+            auto& as = deserialized_entity.add_component<AudioSourceComponent>();
+            as.file_path = audio_source_node["FilePath"].as<std::string>();
+            as.loop = audio_source_node["Loop"].as<bool>();
+            as.pitch = audio_source_node["Pitch"].as<float>();
+            as.play_on_scene_start = audio_source_node["PlayOnSceneStart"].as<bool>();
+            as.volume = audio_source_node["Volume"].as<float>();
         }
 
         return deserialized_entity;
