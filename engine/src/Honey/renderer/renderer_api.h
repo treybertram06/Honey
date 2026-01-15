@@ -9,7 +9,9 @@ namespace Honey {
     public:
 
         enum class API {
-            none = 0, opengl = 1
+            none = 0,
+            opengl,
+            vulkan
         };
 
         virtual void init() = 0;
