@@ -3,34 +3,7 @@
 #include "imgui.h"
 #include "glm/gtc/type_ptr.hpp"
 #include "hnpch.h"
-
-static const uint32_t s_map_width = 25;
-static const char* s_map_tiles =
-    "wwwwwwwwwwwwwwwwwwwwwwwww"
-    "wwwwwwwwddddddddwwwwwwwww"
-    "wwwwwwwwddddddddwwwwwwwww"
-    "wwwwwwwwddddddddwwwwwwwww"
-    "wwwdddddddwwwwwdddddddwww"
-    "wwwdddddddwwwwwdddddddwww"
-    "wwwdddddddwwwwwdddddddwww"
-    "wwwdddwwwwwwwwwwwwddddddw"
-    "wwwdddwwwwwwwwwwwwddddddw"
-    "wwwdddwwwwwwwwwwwwdddddww"
-    "wwwdddwwwwwwwwwwwwddddwww"
-    "wwwdddwwwwwwwwwwwwddddwww"
-    "wwwdddwwwwwwwwwwwwddddwww"
-    "wwwdddwwwwwwwwwwwwddddwww"
-    "wwwdddwwwwwwwwwwwwddddwww"
-    "wwwdddwwwwwwwwwwwwddddwww"
-    "wwwdddwwwwwwwwwwwwddddwww"
-    "wwwdddwwwwwwwwwwwwddddwww"
-    "wwwdddwwwwwwwwwwwwddddwww"
-    "wwddddddddwwwwwdddddwwwww"
-    "wwddddddddwwwwwdddddwwwww"
-    "wwddddddddwwwwwdddddwwwww"
-    "wwwwwwwwddddddddwwwwwwwww"
-    "wwwwwwwwddddddddwwwwwwwww"
-    "wwwwwwwwddddddddwwwwwwwww";
+#include "Honey/core/settings.h"
 
 static const std::filesystem::path asset_root = ASSET_ROOT;
 
@@ -41,9 +14,9 @@ Application2D::Application2D()
 
 
 void Application2D::on_attach() {
-
     auto texture_path_prefix = asset_root / "textures";
     m_chuck_texture = Honey::Texture2D::create(texture_path_prefix / "bung.png");
+/*
     m_missing_texture = Honey::Texture2D::create(texture_path_prefix / "missing.png");
     m_sprite_sheet01 = Honey::Texture2D::create(asset_root / "test_game" / "textures"/ "roguelikeSheet_transparent.png");
     m_sprite_sheet02 = Honey::Texture2D::create(asset_root / "test_game" / "textures"/ "colored-transparent.png");
@@ -53,7 +26,7 @@ void Application2D::on_attach() {
     m_player_sprite = Honey::SubTexture2D::create_from_coords(m_sprite_sheet02, {23, 7},{16, 16},{1, 1},{1, 1},{0, 17});
     m_map_width = s_map_width;
     m_map_height = strlen(s_map_tiles) / m_map_width;
-
+*/
     m_camera_controller.set_zoom_level(10.0f);
 }
 
@@ -90,18 +63,20 @@ void Application2D::on_update(Honey::Timestep ts) {
         Honey::Renderer2D::begin_scene(m_camera_controller.get_camera());
 
         static float rotation = 0.0f;
-        rotation += glm::radians(15.0f) * ts;
+        rotation += glm::radians(30.0f) * ts;
 
 
-        Honey::Renderer2D::draw_quad({0.0f, 0.0f}, {1.0f, 1.0f}, {0.2f, 0.2f, 0.8f, 1.0f});
+        Honey::Renderer2D::draw_rotated_quad({-0.5f, 0.0f}, {1.0f, 2.5f}, rotation * 2.0f, {0.2f, 0.2f, 0.8f, 1.0f});
+        Honey::Renderer2D::draw_rotated_quad({1.5f, 0.3f}, {1.0f, 0.5f}, rotation, {1.0f, 0.0f, 0.0f, 1.0f});
+        Honey::Renderer2D::draw_quad({3.0f, 3.0f, 0.0f}, {2.0f, 2.0f}, m_chuck_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
+        /*
         Honey::Renderer2D::draw_quad({2.0f, 2.0f}, {1.0f, 1.0f}, {0.8f, 0.2f, 0.3f, 1.0f});
-        Honey::Renderer2D::draw_quad({0.0f, 1.0f, 0.0f}, {0.5f, 0.5f}, m_chuck_texture, {1.0f, 0.5f, 0.5f, 1.0f}, 1.0f);
         Honey::Renderer2D::draw_quad({0.0f, -1.0f, 0.0f}, {1.5f, 1.5f}, m_chuck_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 2.0f);
 
         //Honey::Renderer2D::draw_rotated_quad({0.5f, 1.5f, 0.0f}, {3.0f, 3.0f}, rotation, m_chuck_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 2.0f);
         //Honey::Renderer2D::draw_rotated_quad({0.5f, -1.5f, 0.0f}, {3.0f, 3.0f}, 0.0f, m_chuck_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 2.0f);
         Honey::Renderer2D::draw_quad({0.0f, 0.0f, -0.1f}, {100.0f, 100.0f}, m_missing_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 1000.0f);
-
+        */
 
 /*
         Honey::Renderer2D::begin_scene(m_camera_controller.get_camera());
@@ -144,167 +119,75 @@ void Application2D::on_imgui_render() {
 
     ImGui::Begin("Renderer Debug Panel");
 
-    // Performance Section
-    if (ImGui::CollapsingHeader("Performance", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Text("Frame Rate: %d FPS", m_framerate);
-        ImGui::Text("Frame Time: %.3f ms", m_frame_time);
-        ImGui::Text("Smoothed FPS: %d", m_framerate_counter.get_smoothed_fps());
+        // Performance Section
+        if (ImGui::CollapsingHeader("Performance", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Text("Frame Rate: %d FPS", m_framerate);
+            ImGui::Text("Frame Time: %.3f ms", m_frame_time);
+            ImGui::Text("Smoothed FPS: %d", m_framerate_counter.get_smoothed_fps());
 
-        ImGui::Separator();
-        auto stats = Honey::Renderer2D::get_stats();
-        ImGui::Text("Draw Calls: %d", stats.draw_calls);
-        ImGui::Text("Quads: %d", stats.quad_count);
-        ImGui::Text("Vertices: %d", stats.get_total_vertex_count());
-        ImGui::Text("Indices: %d", stats.get_total_index_count());
+            ImGui::Separator();
+            auto stats = Honey::Renderer2D::get_stats();
+            ImGui::Text("Draw Calls: %d", stats.draw_calls);
+            ImGui::Text("Quads: %d", stats.quad_count);
+            ImGui::Text("Vertices: %d", stats.get_total_vertex_count());
+            ImGui::Text("Indices: %d", stats.get_total_index_count());
 
-        if (ImGui::Button("Reset Statistics")) {
-            Honey::Renderer2D::reset_stats();
-        }
-    }
-
-    // Renderer Settings Section
-    if (ImGui::CollapsingHeader("Renderer Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
-        static glm::vec4 clear_color = {0.1f, 0.1f, 0.1f, 1.0f};
-        if (ImGui::ColorEdit4("Clear Color", glm::value_ptr(clear_color))) {
-            m_clear_color = clear_color;
+            if (ImGui::Button("Reset Statistics")) {
+                Honey::Renderer2D::reset_stats();
+            }
         }
 
-        static bool wireframe_mode = false;
-        static bool depth_test = true;
-        static bool face_culling = true;
-        static bool blending = true;
+        // Renderer Settings Section
+        if (ImGui::CollapsingHeader("Renderer Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+            auto& renderer = Honey::get_settings().renderer;
 
-        if (ImGui::Checkbox("Wireframe Mode", &wireframe_mode)) {
-            Honey::RenderCommand::set_wireframe(wireframe_mode);
+            if (ImGui::ColorEdit4("Clear Color", glm::value_ptr(renderer.clear_color))) {
+                m_clear_color = renderer.clear_color;
+            }
+
+            if (ImGui::Checkbox("Wireframe Mode", &renderer.wireframe)) {
+                Honey::RenderCommand::set_wireframe(renderer.wireframe);
+            }
+
+            if (ImGui::Checkbox("Depth Test", &renderer.depth_test)) {
+                Honey::RenderCommand::set_depth_test(renderer.depth_test);
+            }
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Depth Write", &renderer.depth_write)) {
+                Honey::RenderCommand::set_depth_write(renderer.depth_write);
+            }
+
+            if (ImGui::Checkbox("Face Culling", &renderer.face_culling)) {
+                // RenderCommand::set_face_culling(renderer.face_culling);
+            }
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Blending", &renderer.blending)) {
+                Honey::RenderCommand::set_blend(renderer.blending);
+            }
+
+
         }
-        ImGui::SameLine();
-        if (ImGui::Checkbox("Depth Test", &depth_test)) {
-            Honey::RenderCommand::set_depth_test(depth_test);
+/*
+        // Debug Section
+        if (ImGui::CollapsingHeader("Debug")) {
+            static bool show_normals = false;
+            static bool show_bounding_boxes = false;
+            static bool show_grid = false;
+
+            ImGui::SameLine();
+            ImGui::Checkbox("Show Normals", &show_normals);
+
+            ImGui::Checkbox("Show Bounding Boxes", &show_bounding_boxes);
+            ImGui::SameLine();
+            ImGui::Checkbox("Show Grid", &show_grid);
+
+            ImGui::Separator();
+            ImGui::Text("Renderer Info");
+            ImGui::Text("API: OpenGL"); // You can make this dynamic
+            ImGui::Text("Version: 4.6"); // You can query this from OpenGL
         }
-
-        if (ImGui::Checkbox("Face Culling", &face_culling)) {
-            // Honey::RenderCommand::set_face_culling(face_culling);
-        }
-        ImGui::SameLine();
-        if (ImGui::Checkbox("Blending", &blending)) {
-            Honey::RenderCommand::set_blend(blending);
-        }
-    }
-
-    // Camera Control Section
-    if (ImGui::CollapsingHeader("Camera Control", ImGuiTreeNodeFlags_DefaultOpen)) {
-        glm::vec3 camera_pos = m_camera_controller.get_camera().get_position();
-        if (ImGui::DragFloat3("Position", glm::value_ptr(camera_pos), 0.1f)) {
-            m_camera_controller.get_camera().set_position(camera_pos);
-        }
-
-        float camera_rotation = m_camera_controller.get_camera().get_rotation();
-        if (ImGui::SliderFloat("Rotation", &camera_rotation, -180.0f, 180.0f)) {
-            m_camera_controller.get_camera().set_rotation(camera_rotation);
-        }
-
-        float zoom = m_camera_controller.get_zoom_level();
-        if (ImGui::SliderFloat("Zoom Level", &zoom, 0.1f, 10.0f)) {
-            m_camera_controller.set_zoom_level(zoom);
-        }
-
-        ImGui::Separator();
-        ImGui::Text("Projection Settings");
-
-        if (ImGui::Button("Reset Camera")) {
-            m_camera_controller.get_camera().set_position({0.0f, 0.0f, 0.0f});
-            m_camera_controller.get_camera().set_rotation(0.0f);
-            m_camera_controller.set_zoom_level(1.0f);
-        }
-    }
-
-    // Object Properties Section
-    if (ImGui::CollapsingHeader("Object Properties")) {
-        ImGui::Text("Texture Settings");
-
-        static float texture_tiling = 1.0f;
-        ImGui::SliderFloat("Texture Tiling", &texture_tiling, 0.1f, 10.0f);
-
-        static glm::vec4 texture_color = {1.0f, 1.0f, 1.0f, 1.0f};
-        ImGui::ColorEdit4("Texture Tint", glm::value_ptr(texture_color));
-
-        ImGui::Separator();
-        ImGui::Text("Test Object Transforms");
-
-        static glm::vec3 test_position = {0.0f, 0.0f, 0.0f};
-        static glm::vec2 test_scale = {1.0f, 1.0f};
-        static float test_rotation = 0.0f;
-
-        ImGui::DragFloat3("Test Position", glm::value_ptr(test_position), 0.1f);
-        ImGui::DragFloat2("Test Scale", glm::value_ptr(test_scale), 0.1f, 0.1f, 10.0f);
-        ImGui::SliderFloat("Test Rotation", &test_rotation, -180.0f, 180.0f);
-    }
-
-    // Lighting Section
-    if (ImGui::CollapsingHeader("Lighting")) {
-        static glm::vec3 light_direction = {-0.2f, -1.0f, -0.3f};
-        static glm::vec3 light_color = {1.0f, 1.0f, 1.0f};
-        static float light_intensity = 1.0f;
-        static glm::vec3 ambient_color = {0.2f, 0.2f, 0.2f};
-
-        ImGui::DragFloat3("Light Direction", glm::value_ptr(light_direction), 0.1f, -1.0f, 1.0f);
-        ImGui::ColorEdit3("Light Color", glm::value_ptr(light_color));
-        ImGui::SliderFloat("Light Intensity", &light_intensity, 0.0f, 5.0f);
-        ImGui::ColorEdit3("Ambient Color", glm::value_ptr(ambient_color));
-    }
-
-    // Post-Processing Section
-    if (ImGui::CollapsingHeader("Post-Processing")) {
-        static float gamma = 2.2f;
-        static float exposure = 1.0f;
-        static float contrast = 1.0f;
-        static float brightness = 0.0f;
-        static float saturation = 1.0f;
-
-        ImGui::SliderFloat("Gamma", &gamma, 0.1f, 5.0f);
-        ImGui::SliderFloat("Exposure", &exposure, 0.1f, 5.0f);
-        ImGui::SliderFloat("Contrast", &contrast, 0.0f, 3.0f);
-        ImGui::SliderFloat("Brightness", &brightness, -1.0f, 1.0f);
-        ImGui::SliderFloat("Saturation", &saturation, 0.0f, 3.0f);
-    }
-
-    // Debug Section
-    if (ImGui::CollapsingHeader("Debug")) {
-        static bool show_wireframe = false;
-        static bool show_normals = false;
-        static bool show_bounding_boxes = false;
-        static bool show_grid = false;
-
-        if (ImGui::Checkbox("Show Wireframe", &show_wireframe)) {
-            Honey::RenderCommand::set_wireframe(show_wireframe);
-            HN_CORE_INFO("Wireframe change triggered");
-        }
-        ImGui::SameLine();
-        ImGui::Checkbox("Show Normals", &show_normals);
-
-        ImGui::Checkbox("Show Bounding Boxes", &show_bounding_boxes);
-        ImGui::SameLine();
-        ImGui::Checkbox("Show Grid", &show_grid);
-
-        ImGui::Separator();
-        ImGui::Text("Renderer Info");
-        ImGui::Text("API: OpenGL"); // You can make this dynamic
-        ImGui::Text("Version: 4.6"); // You can query this from OpenGL
-    }
-
-    // Texture Manager Section
-    if (ImGui::CollapsingHeader("Texture Manager")) {
-        ImGui::Text("Loaded Textures:");
-        ImGui::BulletText("Chuck Texture: %s", m_chuck_texture ? "Loaded" : "Not Loaded");
-        ImGui::BulletText("Missing Texture: %s", m_missing_texture ? "Loaded" : "Not Loaded");
-        ImGui::BulletText("Transparent Texture: %s", m_sprite_sheet01 ? "Loaded" : "Not Loaded");
-
-        if (ImGui::Button("Reload Textures")) {
-            on_attach(); // Quick way to reload textures
-        }
-    }
-
-    ImGui::End();
+*/
+        ImGui::End();
 
 
 

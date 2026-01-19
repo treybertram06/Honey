@@ -11,6 +11,7 @@ namespace Honey {
 
         virtual void init() override;
         virtual void swap_buffers() override;
+        virtual void wait_idle() override {}
     private:
         GLFWwindow* m_window_handle;
     };

@@ -4,6 +4,7 @@
 
 #include "Honey/core/base.h"
 #include "Honey/events/event.h"
+#include "Honey/renderer/graphics_context.h"
 
 namespace Honey {
     struct WindowProps {
@@ -34,6 +35,7 @@ namespace Honey {
         virtual bool is_vsync() const = 0;
 
         virtual void* get_native_window() const = 0;
+        virtual GraphicsContext* get_context() const = 0;
 
         static Scope<Window> create(const WindowProps& props = WindowProps());
 

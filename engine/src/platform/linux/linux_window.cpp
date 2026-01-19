@@ -5,13 +5,15 @@
 #include "linux_window.h"
 
 #include "Honey.h"
-#include "glad/glad.h"
+//#include "glad/glad.h"
+#include "Honey/core/settings.h"
 
 #include "Honey/events/application_event.h"
 #include "Honey/events/key_event.h"
 #include "Honey/events/mouse_event.h"
 
 #include "platform/opengl/opengl_context.h"
+#include "platform/vulkan/vk_context.h"
 
 namespace Honey {
 
@@ -55,23 +57,46 @@ namespace Honey {
             s_glfw_initialized = true;
         }
 
-        glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 5);
-        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-        glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+        auto& renderer_settings = get_settings().renderer;
+        switch (renderer_settings.api) {
 
-        m_window = glfwCreateWindow((int)props.width, (int)props.height, m_data.title.c_str(), nullptr, nullptr);
-        HN_CORE_ASSERT(m_window, "GLFW window creation failed!");
+        case RendererAPI::API::opengl:
+            {
+                glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
+                glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+                glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 5);
+                glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+                glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
 
-        glfwMakeContextCurrent(m_window);
-        m_context = new OpenGLContext(m_window);
-        m_context->init();
-        // ^
+                m_window = glfwCreateWindow((int)props.width, (int)props.height, m_data.title.c_str(), nullptr, nullptr);
+                HN_CORE_ASSERT(m_window, "GLFW window creation failed!");
 
+                glfwMakeContextCurrent(m_window);
+                m_context = new OpenGLContext(m_window);
+                m_context->init();
+                m_data.context = m_context;
+                set_vsync(true);
+            }
+            break;
+        case RendererAPI::API::vulkan:
+            {
+                glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+
+                m_window = glfwCreateWindow((int)props.width, (int)props.height, m_data.title.c_str(), nullptr, nullptr);
+                HN_CORE_ASSERT(m_window, "GLFW window creation failed!");
+
+                m_context = new VulkanContext(m_window);
+                m_context->init();
+                m_data.context = m_context;
+                m_data.vsync = true;
+            }
+            break;
+
+        case RendererAPI::API::none: HN_CORE_ASSERT(false, "RendererAPI::None is currently not supported!");
+            break;
+        }
 
         glfwSetWindowUserPointer(m_window, &m_data);
-        set_vsync(true);
 
         // set glfw callbacks
         glfwSetWindowSizeCallback(m_window, [](GLFWwindow* window, int width, int height) {
@@ -81,7 +106,22 @@ namespace Honey {
 
             WindowResizeEvent event(width, height);
             data.event_callback(event);
+        });
 
+        glfwSetFramebufferSizeCallback(m_window, [](GLFWwindow* window, int width, int height) {
+            WindowData& data = *(WindowData*)glfwGetWindowUserPointer(window);
+
+            // Only Vulkan cares about framebuffer resize for swapchain recreation.
+            if (RendererAPI::get_api() == RendererAPI::API::vulkan) {
+                auto* ctx = dynamic_cast<VulkanContext*>(data.context);
+                if (ctx) {
+                    ctx->notify_framebuffer_resized();
+                }
+            }
+
+            // Keep emitting resize as well (some systems might depend on it)
+            WindowResizeEvent event(width, height);
+            data.event_callback(event);
         });
 
         glfwSetWindowCloseCallback(m_window, [](GLFWwindow* window) {
@@ -157,7 +197,16 @@ namespace Honey {
     void LinuxWindow::shutdown() {
         HN_PROFILE_FUNCTION();
 
-        glfwDestroyWindow(m_window);
+        if (m_context) {
+            delete m_context;
+            m_context = nullptr;
+            m_data.context = nullptr;
+        }
+
+        if (m_window) {
+            glfwDestroyWindow(m_window);
+            m_window = nullptr;
+        }
     }
 
     void LinuxWindow::on_update() {
@@ -171,9 +220,11 @@ namespace Honey {
         HN_PROFILE_FUNCTION();
 
         if (enabled) {
-            glfwSwapInterval(1);
+            //glfwSwapInterval(1);
+            m_data.vsync = enabled;
         } else {
-            glfwSwapInterval(0);
+            //glfwSwapInterval(0);
+            m_data.vsync = enabled;
         }
 
         m_data.vsync = enabled;

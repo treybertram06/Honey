@@ -1,12 +1,14 @@
 #include "hnpch.h"
 #include "renderer_2d.h"
 
+#include "renderer.h"
 #include "render_command.h"
 #include "vertex_array.h"
 #include "shader.h"
 #include "shader_cache.h"
 #include "texture.h"
 #include "shader_cache.h"
+#include "platform/vulkan/vk_renderer_api.h"
 
 static const std::filesystem::path asset_root = ASSET_ROOT;
 
@@ -113,25 +115,27 @@ namespace Honey {
         std::unique_ptr<ShaderCache> shader_cache;
     };
 
-    static Renderer2DData s_data;
+    static Renderer2DData* s_data = nullptr;
 
 
     static int resolve_texture_slot(const Ref<Texture2D>& tex) {
+        if (!s_data)
+            return 0;
         if (!tex)
             return 0; // white
 
         // Already bound this frame?
-        for (uint32_t i = 1; i < s_data.texture_slot_index; ++i)
-            if (s_data.texture_slots[i] && *s_data.texture_slots[i] == *tex)
+        for (uint32_t i = 1; i < s_data->texture_slot_index; ++i)
+            if (s_data->texture_slots[i] && *s_data->texture_slots[i] == *tex)
                 return (int)i;
 
         // Need a new slot
-        if (s_data.texture_slot_index >= s_data.max_texture_slots) {
+        if (s_data->texture_slot_index >= s_data->max_texture_slots) {
             HN_CORE_WARN("Texture slot limit exceeded – using white texture");
             return 0;
         }
-        uint32_t idx = s_data.texture_slot_index++;
-        s_data.texture_slots[idx] = tex;
+        uint32_t idx = s_data->texture_slot_index++;
+        s_data->texture_slots[idx] = tex;
         return (int)idx;
     }
 
@@ -139,24 +143,26 @@ namespace Honey {
     void Renderer2D::init(std::unique_ptr<ShaderCache> shader_cache) {
         HN_PROFILE_FUNCTION();
 
-        s_data.shader_cache = std::move(shader_cache);
+        if (!s_data)
+            s_data = new Renderer2DData();
+
+        s_data->shader_cache = std::move(shader_cache);
 
         ////////////////// QUADS //////////////////////////
-        s_data.quad_vertex_array = VertexArray::create();
+        s_data->quad_vertex_array = VertexArray::create();
 
-
-        s_data.s_quad_vertex_buffer = VertexBuffer::create(sizeof(s_static_quad));
-        s_data.s_quad_vertex_buffer->set_data(s_static_quad, sizeof(s_static_quad));
+        s_data->s_quad_vertex_buffer = VertexBuffer::create(sizeof(s_static_quad));
+        s_data->s_quad_vertex_buffer->set_data(s_static_quad, sizeof(s_static_quad));
         {
             BufferLayout layout = {
                 { ShaderDataType::Float2, "a_local_pos"  },  // loc 0
                 { ShaderDataType::Float2, "a_local_tex"  },  // loc 1
             };
-            s_data.s_quad_vertex_buffer->set_layout(layout);
-            s_data.quad_vertex_array->add_vertex_buffer(s_data.s_quad_vertex_buffer); // divisor 0 (default)
+            s_data->s_quad_vertex_buffer->set_layout(layout);
+            s_data->quad_vertex_array->add_vertex_buffer(s_data->s_quad_vertex_buffer);
         }
 
-        s_data.i_quad_vertex_buffer = VertexBuffer::create(Renderer2DData::max_quads * sizeof(QuadInstance));
+        s_data->i_quad_vertex_buffer = VertexBuffer::create(Renderer2DData::max_quads * sizeof(QuadInstance));
         {
             BufferLayout layout = {
                 { ShaderDataType::Float3, "i_center", false, true }, // loc 2
@@ -169,46 +175,51 @@ namespace Honey {
                 { ShaderDataType::Float2 , "i_tex_coord_max", false, true }, // loc 9
                 { ShaderDataType::Int, "i_entity_id", false, true} // loc 10
             };
-            s_data.i_quad_vertex_buffer->set_layout(layout);
-            s_data.quad_vertex_array->add_vertex_buffer(s_data.i_quad_vertex_buffer);
+            s_data->i_quad_vertex_buffer->set_layout(layout);
+            s_data->quad_vertex_array->add_vertex_buffer(s_data->i_quad_vertex_buffer);
         }
 
         uint32_t indices[6] = {0,1,2, 2,3,0};
-        s_data.quad_ibo = IndexBuffer::create(indices, 6);
-        s_data.quad_vertex_array->set_index_buffer(s_data.quad_ibo);
+        s_data->quad_ibo = IndexBuffer::create(indices, 6);
+        s_data->quad_vertex_array->set_index_buffer(s_data->quad_ibo);
 
-        s_data.quad_instances.reserve(Renderer2DData::max_quads);
-        s_data.quad_sorted_instances.reserve(Renderer2DData::max_quads);
+        s_data->quad_instances.reserve(Renderer2DData::max_quads);
+        s_data->quad_sorted_instances.reserve(Renderer2DData::max_quads);
 
-        s_data.max_texture_slots = RenderCommand::get_max_texture_slots();
-        s_data.texture_slots.resize(s_data.max_texture_slots);
+        s_data->max_texture_slots = RenderCommand::get_max_texture_slots();
+        s_data->texture_slots.resize(s_data->max_texture_slots);
 
-        s_data.white_texture = Texture2D::create(1,1);
+        s_data->white_texture = Texture2D::create(1,1);
         uint32_t white = 0xffffffff;
-        s_data.white_texture->set_data(&white, sizeof(uint32_t));
-        s_data.texture_slots[0] = s_data.white_texture;
+        s_data->white_texture->set_data(&white, sizeof(uint32_t));
+        s_data->texture_slots[0] = s_data->white_texture;
+
+        if (RendererAPI::get_api() == RendererAPI::API::vulkan) {
+            HN_CORE_INFO("Renderer2D::init() early return avoiding shader compilation");
+            return;
+        }
 
         auto shader_path = asset_root / "shaders" / "Renderer2D_Quad.glsl";
-        s_data.quad_shader = s_data.shader_cache->get_or_compile_shader(shader_path);
+        s_data->quad_shader = s_data->shader_cache->get_or_compile_shader(shader_path);
 
 
 
         ////////////////// CIRCLES //////////////////////////
-        s_data.circle_vertex_array = VertexArray::create();
+        s_data->circle_vertex_array = VertexArray::create();
 
 
-        s_data.s_circle_vertex_buffer = VertexBuffer::create(sizeof(s_static_quad));
-        s_data.s_circle_vertex_buffer->set_data(s_static_quad, sizeof(s_static_quad));
+        s_data->s_circle_vertex_buffer = VertexBuffer::create(sizeof(s_static_quad));
+        s_data->s_circle_vertex_buffer->set_data(s_static_quad, sizeof(s_static_quad));
         {
             BufferLayout layout = {
                 { ShaderDataType::Float2, "a_local_pos"  },  // loc 0
                 { ShaderDataType::Float2, "a_local_tex"  },  // loc 1
             };
-            s_data.s_circle_vertex_buffer->set_layout(layout);
-            s_data.circle_vertex_array->add_vertex_buffer(s_data.s_circle_vertex_buffer); // divisor 0 (default)
+            s_data->s_circle_vertex_buffer->set_layout(layout);
+            s_data->circle_vertex_array->add_vertex_buffer(s_data->s_circle_vertex_buffer); // divisor 0 (default)
         }
 
-        s_data.i_circle_vertex_buffer = VertexBuffer::create(Renderer2DData::max_quads * sizeof(CircleInstance));
+        s_data->i_circle_vertex_buffer = VertexBuffer::create(Renderer2DData::max_quads * sizeof(CircleInstance));
         {
             BufferLayout layout = {
                 { ShaderDataType::Float3, "i_center", false, true }, // loc 2
@@ -222,44 +233,44 @@ namespace Honey {
                 { ShaderDataType::Float2 , "i_tex_coord_max", false, true }, // loc 9
                 { ShaderDataType::Int, "i_entity_id", false, true} // loc 10
             };
-            s_data.i_circle_vertex_buffer->set_layout(layout);
-            s_data.circle_vertex_array->add_vertex_buffer(s_data.i_circle_vertex_buffer);
+            s_data->i_circle_vertex_buffer->set_layout(layout);
+            s_data->circle_vertex_array->add_vertex_buffer(s_data->i_circle_vertex_buffer);
         }
 
         //uint32_t indices[6] = {0,1,2, 2,3,0};
-        s_data.circle_ibo = IndexBuffer::create(indices, 6);
-        s_data.circle_vertex_array->set_index_buffer(s_data.circle_ibo);
+        s_data->circle_ibo = IndexBuffer::create(indices, 6);
+        s_data->circle_vertex_array->set_index_buffer(s_data->circle_ibo);
 
-        s_data.circle_instances.reserve(Renderer2DData::max_quads);
-        s_data.circle_sorted_instances.reserve(Renderer2DData::max_quads);
+        s_data->circle_instances.reserve(Renderer2DData::max_quads);
+        s_data->circle_sorted_instances.reserve(Renderer2DData::max_quads);
 
-        s_data.max_texture_slots = RenderCommand::get_max_texture_slots();
-        s_data.texture_slots.resize(s_data.max_texture_slots);
+        s_data->max_texture_slots = RenderCommand::get_max_texture_slots();
+        s_data->texture_slots.resize(s_data->max_texture_slots);
 
-        s_data.white_texture = Texture2D::create(1,1);
+        s_data->white_texture = Texture2D::create(1,1);
         //uint32_t white = 0xffffffff;
-        s_data.white_texture->set_data(&white, sizeof(uint32_t));
-        s_data.texture_slots[0] = s_data.white_texture;
+        s_data->white_texture->set_data(&white, sizeof(uint32_t));
+        s_data->texture_slots[0] = s_data->white_texture;
 
         auto circle_shader_path = asset_root / "shaders" / "Renderer2D_Circle.glsl";
-        s_data.circle_shader = s_data.shader_cache->get_or_compile_shader(circle_shader_path);
+        s_data->circle_shader = s_data->shader_cache->get_or_compile_shader(circle_shader_path);
 
         ////////////////// LINES //////////////////////////
-        s_data.line_vertex_array = VertexArray::create();
+        s_data->line_vertex_array = VertexArray::create();
 
 
-        s_data.s_line_vertex_buffer = VertexBuffer::create(sizeof(s_static_quad));
-        s_data.s_line_vertex_buffer->set_data(s_static_quad, sizeof(s_static_quad));
+        s_data->s_line_vertex_buffer = VertexBuffer::create(sizeof(s_static_quad));
+        s_data->s_line_vertex_buffer->set_data(s_static_quad, sizeof(s_static_quad));
         {
             BufferLayout layout = {
                 { ShaderDataType::Float2, "a_local_pos"  },  // loc 0
                 { ShaderDataType::Float2, "a_local_tex"  },  // loc 1
             };
-            s_data.s_line_vertex_buffer->set_layout(layout);
-            s_data.line_vertex_array->add_vertex_buffer(s_data.s_line_vertex_buffer); // divisor 0 (default)
+            s_data->s_line_vertex_buffer->set_layout(layout);
+            s_data->line_vertex_array->add_vertex_buffer(s_data->s_line_vertex_buffer); // divisor 0 (default)
         }
 
-        s_data.i_line_vertex_buffer = VertexBuffer::create(Renderer2DData::max_quads * sizeof(LineInstance));
+        s_data->i_line_vertex_buffer = VertexBuffer::create(Renderer2DData::max_quads * sizeof(LineInstance));
         {
             BufferLayout layout = {
                 { ShaderDataType::Float3, "i_center", false, true }, // loc 2
@@ -273,65 +284,101 @@ namespace Honey {
                 { ShaderDataType::Float2 , "i_tex_coord_max", false, true }, // loc 9
                 { ShaderDataType::Int, "i_entity_id", false, true} // loc 10
             };
-            s_data.i_line_vertex_buffer->set_layout(layout);
-            s_data.line_vertex_array->add_vertex_buffer(s_data.i_line_vertex_buffer);
+            s_data->i_line_vertex_buffer->set_layout(layout);
+            s_data->line_vertex_array->add_vertex_buffer(s_data->i_line_vertex_buffer);
         }
 
         //uint32_t indices[6] = {0,1,2, 2,3,0};
-        s_data.line_ibo = IndexBuffer::create(indices, 6);
-        s_data.line_vertex_array->set_index_buffer(s_data.line_ibo);
+        s_data->line_ibo = IndexBuffer::create(indices, 6);
+        s_data->line_vertex_array->set_index_buffer(s_data->line_ibo);
 
-        s_data.line_instances.reserve(Renderer2DData::max_quads);
-        s_data.line_sorted_instances.reserve(Renderer2DData::max_quads);
+        s_data->line_instances.reserve(Renderer2DData::max_quads);
+        s_data->line_sorted_instances.reserve(Renderer2DData::max_quads);
 
-        s_data.max_texture_slots = RenderCommand::get_max_texture_slots();
-        s_data.texture_slots.resize(s_data.max_texture_slots);
+        s_data->max_texture_slots = RenderCommand::get_max_texture_slots();
+        s_data->texture_slots.resize(s_data->max_texture_slots);
 
-        s_data.white_texture = Texture2D::create(1,1);
+        s_data->white_texture = Texture2D::create(1,1);
         //uint32_t white = 0xffffffff;
-        s_data.white_texture->set_data(&white, sizeof(uint32_t));
-        s_data.texture_slots[0] = s_data.white_texture;
+        s_data->white_texture->set_data(&white, sizeof(uint32_t));
+        s_data->texture_slots[0] = s_data->white_texture;
 
         auto line_shader_path = asset_root / "shaders" / "Renderer2D_Line.glsl";
-        s_data.line_shader = s_data.shader_cache->get_or_compile_shader(line_shader_path);
+        s_data->line_shader = s_data->shader_cache->get_or_compile_shader(line_shader_path);
 
 
 
 
 
-        s_data.camera_uniform_buffer = UniformBuffer::create(sizeof(Renderer2DData::CameraData), 0);
+        s_data->camera_uniform_buffer = UniformBuffer::create(sizeof(Renderer2DData::CameraData), 0);
 
 
-        s_data.quad_shader->bind();
-        s_data.circle_shader->bind();
-        s_data.line_shader->bind(); // Are these doing anything?
+        s_data->quad_shader->bind();
+        s_data->circle_shader->bind();
+        s_data->line_shader->bind(); // Are these doing anything?
         {
-            std::vector<int> samplers(s_data.max_texture_slots);
+            std::vector<int> samplers(s_data->max_texture_slots);
             std::iota(samplers.begin(), samplers.end(), 0);
-            s_data.quad_shader->    set_int_array("u_textures", samplers.data(), samplers.size());
-            s_data.circle_shader->  set_int_array("u_textures", samplers.data(), samplers.size());
-            s_data.line_shader->    set_int_array("u_textures", samplers.data(), samplers.size());
+            s_data->quad_shader->    set_int_array("u_textures", samplers.data(), samplers.size());
+            s_data->circle_shader->  set_int_array("u_textures", samplers.data(), samplers.size());
+            s_data->line_shader->    set_int_array("u_textures", samplers.data(), samplers.size());
         }
     }
 
     void Renderer2D::shutdown() {
-        s_data.shader_cache.reset();
+        if (!s_data)
+            return;
+
+        s_data->quad_vertex_array.reset();
+        s_data->s_quad_vertex_buffer.reset();
+        s_data->i_quad_vertex_buffer.reset();
+        s_data->quad_ibo.reset();
+
+        s_data->circle_vertex_array.reset();
+        s_data->s_circle_vertex_buffer.reset();
+        s_data->i_circle_vertex_buffer.reset();
+        s_data->circle_ibo.reset();
+
+        s_data->line_vertex_array.reset();
+        s_data->s_line_vertex_buffer.reset();
+        s_data->i_line_vertex_buffer.reset();
+        s_data->line_ibo.reset();
+
+        s_data->quad_shader.reset();
+        s_data->circle_shader.reset();
+        s_data->line_shader.reset();
+
+        s_data->camera_uniform_buffer.reset();
+
+        s_data->texture_slots.clear();
+        s_data->white_texture.reset();
+
+        s_data->shader_cache.reset();
+
+        delete s_data;
+        s_data = nullptr;
     }
 
 
     void Renderer2D::begin_scene(const OrthographicCamera& cam) {
         reset_stats();
 
-        RenderCommand::set_blend_for_attachment(1, false);
+        HN_CORE_ASSERT(s_data, "Renderer2D not initialized before calling begin_scene");
 
-        s_data.camera_buffer.view_projection = cam.get_view_projection_matrix();
-        s_data.camera_uniform_buffer->set_data(sizeof(Renderer2DData::CameraData), &s_data.camera_buffer);
+        if (Renderer::get_api() != RendererAPI::API::vulkan) {
+            RenderCommand::set_blend_for_attachment(1, false);
 
-        s_data.quad_instances.clear();
-        s_data.circle_instances.clear();
-        s_data.line_instances.clear();
+            s_data->camera_buffer.view_projection = cam.get_view_projection_matrix();
+            s_data->camera_uniform_buffer->set_data(sizeof(Renderer2DData::CameraData), &s_data->camera_buffer);
+        } else {
+            VulkanRendererAPI::submit_camera_view_projection(cam.get_view_projection_matrix());
+        }
 
-        s_data.texture_slot_index = 1; // keep white bound at 0
+        s_data->quad_instances.clear();
+        s_data->circle_instances.clear();
+        s_data->line_instances.clear();
+
+        s_data->texture_slot_index = 1; // keep white bound at 0
     }
 
     void Renderer2D::begin_scene(const Camera &camera, const glm::mat4& transform) {
@@ -339,14 +386,18 @@ namespace Honey {
 
         glm::mat4 view_proj = camera.get_projection_matrix() * glm::inverse(transform);
 
-        s_data.camera_buffer.view_projection = view_proj;
-        s_data.camera_uniform_buffer->set_data(sizeof(Renderer2DData::CameraData), &s_data.camera_buffer);
+        s_data->camera_buffer.view_projection = view_proj;
+        s_data->camera_uniform_buffer->set_data(sizeof(Renderer2DData::CameraData), &s_data->camera_buffer);
 
-        s_data.quad_instances.clear();
-        s_data.circle_instances.clear();
-        s_data.line_instances.clear();
+        if (Renderer::get_api() == RendererAPI::API::vulkan) {
+            VulkanRendererAPI::submit_camera_view_projection(view_proj);
+        }
 
-        s_data.texture_slot_index = 1; // keep white bound at 0
+        s_data->quad_instances.clear();
+        s_data->circle_instances.clear();
+        s_data->line_instances.clear();
+
+        s_data->texture_slot_index = 1; // keep white bound at 0
     }
 
     void Renderer2D::begin_scene(const EditorCamera& camera) {
@@ -354,14 +405,18 @@ namespace Honey {
 
         glm::mat4 view_proj = camera.get_view_projection_matrix();
 
-        s_data.camera_buffer.view_projection = view_proj;
-        s_data.camera_uniform_buffer->set_data(sizeof(Renderer2DData::CameraData), &s_data.camera_buffer);
+        s_data->camera_buffer.view_projection = view_proj;
+        s_data->camera_uniform_buffer->set_data(sizeof(Renderer2DData::CameraData), &s_data->camera_buffer);
 
-        s_data.quad_instances.clear();
-        s_data.circle_instances.clear();
-        s_data.line_instances.clear();
+        if (Renderer::get_api() == RendererAPI::API::vulkan) {
+            VulkanRendererAPI::submit_camera_view_projection(view_proj);
+        }
 
-        s_data.texture_slot_index = 1; // keep white bound at 0
+        s_data->quad_instances.clear();
+        s_data->circle_instances.clear();
+        s_data->line_instances.clear();
+
+        s_data->texture_slot_index = 1; // keep white bound at 0
     }
 
     void Renderer2D::end_scene() {
@@ -371,105 +426,140 @@ namespace Honey {
     }
 
     void Renderer2D::line_end_scene() {
-        if (s_data.line_instances.empty())
+        if (s_data->line_instances.empty())
             return;
 
-        s_data.line_shader->bind();
+        s_data->line_shader->bind();
         // Sort instances by Z coordinate (back to front for correct alpha blending)
-        s_data.line_sorted_instances = s_data.line_instances;
-        std::sort(s_data.line_sorted_instances.begin(), s_data.line_sorted_instances.end(),
+        s_data->line_sorted_instances = s_data->line_instances;
+        std::sort(s_data->line_sorted_instances.begin(), s_data->line_sorted_instances.end(),
             [](const LineInstance& a, const LineInstance& b) {
                 return a.center.z < b.center.z; // Higher Z values drawn first (back to front)
             });
 
         // Upload sorted instance data
-        size_t bytes = s_data.line_sorted_instances.size() * sizeof(LineInstance);
-        s_data.i_line_vertex_buffer->set_data(s_data.line_sorted_instances.data(), bytes);
+        size_t bytes = s_data->line_sorted_instances.size() * sizeof(LineInstance);
+        s_data->i_line_vertex_buffer->set_data(s_data->line_sorted_instances.data(), bytes);
 
         // Bind textures in the order we populated
-        for (uint32_t i = 0; i < s_data.texture_slot_index; ++i)
-            s_data.texture_slots[i]->bind(i);
+        for (uint32_t i = 0; i < s_data->texture_slot_index; ++i)
+            s_data->texture_slots[i]->bind(i);
 
         // Draw all lines in one go
-        s_data.line_vertex_array->bind();
-        RenderCommand::draw_indexed_instanced(s_data.line_vertex_array, 6, s_data.line_sorted_instances.size());
-        s_data.stats.draw_calls++;
+        s_data->line_vertex_array->bind();
+        RenderCommand::draw_indexed_instanced(s_data->line_vertex_array, 6, s_data->line_sorted_instances.size());
+        s_data->stats.draw_calls++;
     }
 
     void Renderer2D::circle_end_scene() {
-        if (s_data.circle_instances.empty())
+        if (s_data->circle_instances.empty())
             return;
 
-        s_data.circle_shader->bind();
+        s_data->circle_shader->bind();
         // Sort instances by Z coordinate (back to front for correct alpha blending)
-        s_data.circle_sorted_instances = s_data.circle_instances;
-        std::sort(s_data.circle_sorted_instances.begin(), s_data.circle_sorted_instances.end(),
+        s_data->circle_sorted_instances = s_data->circle_instances;
+        std::sort(s_data->circle_sorted_instances.begin(), s_data->circle_sorted_instances.end(),
             [](const CircleInstance& a, const CircleInstance& b) {
                 return a.center.z < b.center.z; // Higher Z values drawn first (back to front)
             });
 
         // Upload sorted instance data
-        size_t bytes = s_data.circle_sorted_instances.size() * sizeof(CircleInstance);
-        s_data.i_circle_vertex_buffer->set_data(s_data.circle_sorted_instances.data(), bytes);
+        size_t bytes = s_data->circle_sorted_instances.size() * sizeof(CircleInstance);
+        s_data->i_circle_vertex_buffer->set_data(s_data->circle_sorted_instances.data(), bytes);
 
         // Bind textures in the order we populated
-        for (uint32_t i = 0; i < s_data.texture_slot_index; ++i)
-            s_data.texture_slots[i]->bind(i);
+        for (uint32_t i = 0; i < s_data->texture_slot_index; ++i)
+            s_data->texture_slots[i]->bind(i);
 
         // Draw all circles in one go
-        s_data.circle_vertex_array->bind();
-        RenderCommand::draw_indexed_instanced(s_data.circle_vertex_array, 6, s_data.circle_sorted_instances.size());
-        s_data.stats.draw_calls++;
+        s_data->circle_vertex_array->bind();
+        RenderCommand::draw_indexed_instanced(s_data->circle_vertex_array, 6, s_data->circle_sorted_instances.size());
+        s_data->stats.draw_calls++;
     }
 
+    struct VulkanQuadInstancePacked {
+        glm::vec3 center;
+        glm::vec2 half_size;
+        float rotation;
+        glm::vec4 color;
+    }; // TEMP
+
     void Renderer2D::quad_end_scene() {
-        if (s_data.quad_instances.empty())
+        if (s_data->quad_instances.empty())
             return;
 
-        s_data.quad_shader->bind();
+        if (Renderer::get_api() == RendererAPI::API::vulkan) {
+            // Sort instances by Z coordinate (back to front for correct alpha blending)
+            s_data->quad_sorted_instances = s_data->quad_instances;
+            std::sort(s_data->quad_sorted_instances.begin(), s_data->quad_sorted_instances.end(),
+                [](const QuadInstance& a, const QuadInstance& b) {
+                    return a.center.z < b.center.z;
+                });
+
+            // Upload instance data
+            const size_t bytes = s_data->quad_sorted_instances.size() * sizeof(QuadInstance);
+            s_data->i_quad_vertex_buffer->set_data(s_data->quad_sorted_instances.data(), static_cast<uint32_t>(bytes));
+
+            // Submit bound textures list for Vulkan (slot 0..texture_slot_index-1)
+            std::array<void*, VulkanRendererAPI::k_max_texture_slots> vk_textures{};
+            const uint32_t count = std::min<uint32_t>(s_data->texture_slot_index, VulkanRendererAPI::k_max_texture_slots);
+            for (uint32_t i = 0; i < count; ++i) {
+                vk_textures[i] = s_data->texture_slots[i].get();
+            }
+            VulkanRendererAPI::submit_bound_textures(vk_textures, count);
+
+            s_data->quad_vertex_array->bind();
+            RenderCommand::draw_indexed_instanced(s_data->quad_vertex_array, 6, static_cast<uint32_t>(s_data->quad_sorted_instances.size()));
+            s_data->stats.draw_calls++;
+            return;
+        }
+
+
+
+        s_data->quad_shader->bind();
         // Sort instances by Z coordinate (back to front for correct alpha blending)
-        s_data.quad_sorted_instances = s_data.quad_instances;
-        std::sort(s_data.quad_sorted_instances.begin(), s_data.quad_sorted_instances.end(),
+        s_data->quad_sorted_instances = s_data->quad_instances;
+        std::sort(s_data->quad_sorted_instances.begin(), s_data->quad_sorted_instances.end(),
             [](const QuadInstance& a, const QuadInstance& b) {
                 return a.center.z < b.center.z; // Higher Z values drawn first (back to front)
             });
 
         // Upload sorted instance data
-        size_t bytes = s_data.quad_sorted_instances.size() * sizeof(QuadInstance);
-        s_data.i_quad_vertex_buffer->set_data(s_data.quad_sorted_instances.data(), bytes);
+        size_t bytes = s_data->quad_sorted_instances.size() * sizeof(QuadInstance);
+        s_data->i_quad_vertex_buffer->set_data(s_data->quad_sorted_instances.data(), bytes);
 
         // Bind textures in the order we populated
-        for (uint32_t i = 0; i < s_data.texture_slot_index; ++i)
-            s_data.texture_slots[i]->bind(i);
+        for (uint32_t i = 0; i < s_data->texture_slot_index; ++i)
+            s_data->texture_slots[i]->bind(i);
 
         // Draw all quads in one go
-        s_data.quad_vertex_array->bind();
-        RenderCommand::draw_indexed_instanced(s_data.quad_vertex_array, 6, s_data.quad_sorted_instances.size());
-        s_data.stats.draw_calls++;
+        s_data->quad_vertex_array->bind();
+        RenderCommand::draw_indexed_instanced(s_data->quad_vertex_array, 6, s_data->quad_sorted_instances.size());
+        s_data->stats.draw_calls++;
     }
 
 
 
     static void quad_flush_and_reset() {
         Renderer2D::quad_end_scene();
-        s_data.quad_instances.clear();
+        s_data->quad_instances.clear();
     }
 
     static void circle_flush_and_reset() {
         Renderer2D::circle_end_scene();
-        s_data.circle_instances.clear();
+        s_data->circle_instances.clear();
     }
 
     static void line_flush_and_reset() {
         Renderer2D::line_end_scene();
-        s_data.line_instances.clear();
+        s_data->line_instances.clear();
     }
 
 
     void Renderer2D::submit_quad(const glm::vec3& position, const glm::vec2& size, float rotation,
                                 const Ref<Texture2D>& texture, const Ref<SubTexture2D>& sub_texture,
                                 const glm::vec4& color, float tiling_factor, int entity_id) {
-        if (s_data.quad_instances.size() >= Renderer2DData::max_quads)
+        if (s_data->quad_instances.size() >= Renderer2DData::max_quads)
             quad_flush_and_reset();
 
 
@@ -494,14 +584,14 @@ namespace Honey {
             inst.tex_coord_max = {1.0f, 1.0f};
         }
 
-        s_data.quad_instances.push_back(inst);
-        ++s_data.stats.quad_count;
+        s_data->quad_instances.push_back(inst);
+        ++s_data->stats.quad_count;
     }
 
     void Renderer2D::submit_circle(const glm::vec3& position, const glm::vec2& size, float thickness,
                                 const Ref<Texture2D>& texture, const Ref<SubTexture2D>& sub_texture,
                                 const glm::vec4& color, float fade, int entity_id) {
-        if (s_data.circle_instances.size() >= Renderer2DData::max_quads)
+        if (s_data->circle_instances.size() >= Renderer2DData::max_quads)
             circle_flush_and_reset();
 
 
@@ -527,14 +617,14 @@ namespace Honey {
             inst.tex_coord_max = {1.0f, 1.0f};
         }
 
-        s_data.circle_instances.push_back(inst);
-        ++s_data.stats.quad_count;
+        s_data->circle_instances.push_back(inst);
+        ++s_data->stats.quad_count;
     }
 
     void Renderer2D::submit_line(const glm::vec3& position, const glm::vec2& size, float rotation,
                                 const Ref<Texture2D>& texture, const Ref<SubTexture2D>& sub_texture,
                                 const glm::vec4& color, float fade, int entity_id) {
-        if (s_data.line_instances.size() >= Renderer2DData::max_quads)
+        if (s_data->line_instances.size() >= Renderer2DData::max_quads)
             line_flush_and_reset();
 
 
@@ -560,8 +650,8 @@ namespace Honey {
             inst.tex_coord_max = {1.0f, 1.0f};
         }
 
-        s_data.line_instances.push_back(inst);
-        ++s_data.stats.quad_count;
+        s_data->line_instances.push_back(inst);
+        ++s_data->stats.quad_count;
     }
 
     void Renderer2D::decompose_transform(const glm::mat4& transform, glm::vec3& position,
@@ -815,7 +905,7 @@ namespace Honey {
     }
 
 
-    Renderer2D::Statistics Renderer2D::get_stats() { return s_data.stats; }
+    Renderer2D::Statistics Renderer2D::get_stats() { return s_data->stats; }
 
-    void Renderer2D::reset_stats() { memset(&s_data.stats, 0, sizeof(Statistics)); }
+    void Renderer2D::reset_stats() { memset(&s_data->stats, 0, sizeof(Statistics)); }
 } // namespace Honey

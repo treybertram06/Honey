@@ -163,6 +163,16 @@ add_library(engine STATIC
         src/Honey/renderer/texture_cache.h
         src/Honey/audio/audio_system.h
         src/Honey/audio/audio_system.cpp
+        src/platform/vulkan/vk_context.h
+        src/platform/vulkan/vk_context.cpp
+        src/platform/vulkan/vk_renderer_api.h
+        src/platform/vulkan/vk_renderer_api.cpp
+        src/platform/vulkan/vk_vertex_array.h
+        src/platform/vulkan/vk_vertex_array.cpp
+        src/platform/vulkan/vk_buffer.h
+        src/platform/vulkan/vk_buffer.cpp
+        src/platform/vulkan/vk_texture.h
+        src/platform/vulkan/vk_texture.cpp
 )
 
 # Apply MSVC runtime to engine itself
@@ -514,4 +524,25 @@ elseif(UNIX)
  target_link_libraries(engine PRIVATE ${GTK3_LIBRARIES})
  target_include_directories(engine PRIVATE ${GTK3_INCLUDE_DIRS})
  target_compile_options(engine PRIVATE ${GTK3_CFLAGS_OTHER})
+endif()
+
+# ------------------------------------------------------------------------------
+# Vulkan libs
+# ------------------------------------------------------------------------------
+
+if(APPLE)
+ # Help CMake find the Vulkan SDK (MoltenVK) if installed via the official SDK
+ if(DEFINED ENV{VULKAN_SDK})
+  list(APPEND CMAKE_PREFIX_PATH "$ENV{VULKAN_SDK}")
+ endif()
+
+elseif (UNIX AND NOT APPLE)
+ find_package(Vulkan REQUIRED)
+ target_link_libraries(engine PRIVATE Vulkan::Vulkan)
+
+endif()
+
+message(STATUS "Vulkan found: ${Vulkan_FOUND}")
+if(DEFINED ENV{VULKAN_SDK})
+ message(STATUS "Using Vulkan SDK: $ENV{VULKAN_SDK}")
 endif()

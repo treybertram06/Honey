@@ -6,7 +6,7 @@ namespace Honey {
 
     struct RendererSettings {
 
-        RendererAPI::API api = RendererAPI::API::opengl;
+        RendererAPI::API api = RendererAPI::API::vulkan;
 
         glm::vec4 clear_color = { 0.1f, 0.1f, 0.1f, 1.0f };
         bool wireframe = false;

@@ -4,6 +4,7 @@
 #include "texture_cache.h"
 #include "Honey/renderer/renderer.h"
 #include "platform/opengl/opengl_texture.h"
+#include "platform/vulkan/vk_texture.h"
 
 
 namespace Honey {
@@ -14,6 +15,7 @@ namespace Honey {
         switch (Renderer::get_api()) {
             case RendererAPI::API::none:     HN_CORE_ASSERT(false, "RendererAPI::none is not supported."); return nullptr;
             case RendererAPI::API::opengl:   return CreateRef<OpenGLTexture2D>(width, height);
+            case RendererAPI::API::vulkan:   return CreateRef<VulkanTexture2D>(width, height);
         }
 
         HN_CORE_ASSERT(false, "Unknown RendererAPI.");
@@ -31,6 +33,7 @@ namespace Honey {
         switch (Renderer::get_api()) {
             case RendererAPI::API::none:     HN_CORE_ASSERT(false, "RendererAPI::none is not supported."); return nullptr;
             case RendererAPI::API::opengl:   return s_texture_cache.add(path, CreateRef<OpenGLTexture2D>(path));
+            case RendererAPI::API::vulkan:   return s_texture_cache.add(path, CreateRef<VulkanTexture2D>(path));
         }
 
         HN_CORE_ASSERT(false, "Unknown RendererAPI.");

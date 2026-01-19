@@ -8,6 +8,8 @@
 #include "Honey/renderer/camera.h"
 #include <GLFW/glfw3.h>
 
+#include "settings.h"
+
 namespace Honey {
 
 #define BIND_EVENT_FN(x) std::bind(&x, this, std::placeholders::_1)
@@ -23,6 +25,10 @@ namespace Honey {
         HN_CORE_ASSERT(!s_instance, "Application already exists!");
         s_instance = this;
 
+        auto& renderer_settings = get_settings().renderer; // I'm not sure if this is the best place to do this, but I'm also not sure where else I could...
+        RendererAPI::set_api(renderer_settings.api);
+        RenderCommand::set_renderer_api(RendererAPI::create());
+
         m_window = Window::create(WindowProps(name, width, height));
 
         m_window->set_event_callback([this](auto && PH1) { on_event(std::forward<decltype(PH1)>(PH1)); });
@@ -30,8 +36,10 @@ namespace Honey {
 
         Renderer::init();
 
-        m_imgui_layer = new ImGuiLayer();
-        push_overlay(m_imgui_layer);
+        if (renderer_settings.api == RendererAPI::API::opengl) {
+            m_imgui_layer = new ImGuiLayer();
+            push_overlay(m_imgui_layer);
+        } // TEMP
 
         ScriptEngine::init();
 
@@ -44,6 +52,7 @@ namespace Honey {
         Renderer::shutdown();
         ScriptEngine::shutdown();
 
+        m_window.reset();
     }
 
     void Application::push_layer(Layer *layer) {
@@ -104,14 +113,17 @@ namespace Honey {
                     }
                 }
 
-                m_imgui_layer->begin();
-                {
-                    HN_PROFILE_SCOPE("LayerStack on_imgui_render");
-                    for (Layer* layer : m_layer_stack) {
-                        layer->on_imgui_render();
+                auto& renderer_settings = get_settings().renderer;
+                if (renderer_settings.api == RendererAPI::API::opengl) {
+                    m_imgui_layer->begin();
+                    {
+                        HN_PROFILE_SCOPE("LayerStack on_imgui_render");
+                        for (Layer* layer : m_layer_stack) {
+                            layer->on_imgui_render();
+                        }
                     }
+                    m_imgui_layer->end();
                 }
-                m_imgui_layer->end();
             }
 
             m_window->on_update();

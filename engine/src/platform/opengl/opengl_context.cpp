@@ -1,4 +1,4 @@
-//#include "hnpch.h"
+#include "hnpch.h"
 #include "platform/opengl/opengl_context.h"
 
 #include <GLFW/glfw3.h>

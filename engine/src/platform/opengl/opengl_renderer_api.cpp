@@ -3,6 +3,9 @@
 
 #include <glad/glad.h>
 
+#include "opengl_buffer.h"
+#include "opengl_vertex_array.h"
+
 namespace Honey {
     void OpenGLRendererAPI::init() {
         HN_PROFILE_FUNCTION();
@@ -86,23 +89,40 @@ namespace Honey {
     }
 
     void OpenGLRendererAPI::set_blend_for_attachment(uint32_t attachment, bool mode) {
-        #if !defined(HN_PLATFORM_APPLE)
+#if !defined(HN_PLATFORM_APPLE)
         if (mode)
             glEnablei(GL_BLEND, attachment);
         else
             glDisablei(GL_BLEND, attachment);
-        #else
+#else
         if (index == 0) {
             if (enabled)
                 glEnable(GL_BLEND);
             else
                 glDisable(GL_BLEND);
         }
-        #endif
+#endif
     }
 
+    Ref<VertexBuffer> OpenGLRendererAPI::create_vertex_buffer(uint32_t size) {
+        return CreateRef<OpenGLVertexBuffer>(size);
+    }
 
+    Ref<VertexBuffer> OpenGLRendererAPI::create_vertex_buffer(float* vertices, uint32_t size) {
+        return CreateRef<OpenGLVertexBuffer>(vertices, size);
+    }
 
+    Ref<IndexBuffer> OpenGLRendererAPI::create_index_buffer(uint32_t* indices, uint32_t size) {
+        return CreateRef<OpenGLIndexBuffer>(indices, size);
+    }
+
+    Ref<VertexArray> OpenGLRendererAPI::create_vertex_array() {
+        return CreateRef<OpenGLVertexArray>();
+    }
+
+    Ref<UniformBuffer> OpenGLRendererAPI::create_uniform_buffer(uint32_t size, uint32_t binding) {
+        return CreateRef<OpenGLUniformBuffer>(size, binding);
+    }
 }
 
 

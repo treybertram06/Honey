@@ -22,5 +22,11 @@ namespace Honey {
         virtual void set_blend(bool mode) override;
         virtual void set_blend_for_attachment(uint32_t attachment, bool mode) override;
 
+        virtual Ref<VertexBuffer> create_vertex_buffer(uint32_t size) override;
+        virtual Ref<VertexBuffer> create_vertex_buffer(float* vertices, uint32_t size) override;
+        virtual Ref<IndexBuffer> create_index_buffer(uint32_t* indices, uint32_t size) override;
+        virtual Ref<VertexArray> create_vertex_array() override;
+        virtual Ref<UniformBuffer> create_uniform_buffer(uint32_t size, uint32_t binding) override;
+
     };
 }

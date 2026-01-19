@@ -11,6 +11,10 @@ namespace Honey {
             s_renderer_api->init();
         }
 
+        inline static void shutdown() {
+            s_renderer_api.reset();
+        }
+
         inline static void set_viewport(uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
             s_renderer_api->set_viewport(x, y, width, height);
         }
@@ -56,7 +60,13 @@ namespace Honey {
             s_renderer_api->set_blend_for_attachment(attachment, mode);
         }
 
+        inline static void set_renderer_api(Scope<RendererAPI>&& api) {
+            s_renderer_api = std::move(api);
+        }
+
+        inline static Scope<RendererAPI>& get_renderer_api() { return s_renderer_api; }
+
     private:
-        static RendererAPI* s_renderer_api;
+        static Scope<RendererAPI> s_renderer_api;
     };
 }
