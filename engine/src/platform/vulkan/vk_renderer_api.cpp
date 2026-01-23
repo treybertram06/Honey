@@ -7,24 +7,39 @@
 
 namespace Honey {
 
-    struct VulkanDrawRequest {
-        Ref<VertexArray> va;
-        uint32_t index_count = 0;
-        uint32_t instance_count = 0;
-        bool valid = false;
-    };
+    static thread_local VulkanContext* s_recording_context = nullptr;
 
-    struct VulkanFrameState {
-        glm::mat4 view_projection{1.0f};
-        bool has_camera = false;
+    static VulkanContext::FramePacket& pkt() {
+        if (!s_recording_context) {
+            auto* base = Application::get().get_window().get_context();
+            auto* vk = dynamic_cast<VulkanContext*>(base);
+            HN_CORE_ASSERT(vk, "VulkanRendererAPI: no recording context and main window is not Vulkan");
+            s_recording_context = vk;
+        }
+        return s_recording_context->frame_packet();
+    }
 
-        std::array<void*, VulkanRendererAPI::k_max_texture_slots> textures{};
-        uint32_t texture_count = 0;
-        bool has_textures = false;
-    };
+    static void require_frame_begun() {
+        HN_CORE_ASSERT(pkt().frame_begun,
+            "VulkanRendererAPI: frame not begun. Call Renderer::begin_frame() before submitting any Vulkan render commands.");
+    }
 
-    static VulkanDrawRequest s_draw;
-    static VulkanFrameState s_frame;
+    static VulkanContext::FramePacket::Cmd& get_or_push_globals_cmd() {
+        require_frame_begun();
+
+        auto& p = pkt();
+        if (!p.cmds.empty() && p.cmds.back().type == VulkanContext::FramePacket::CmdType::BindGlobals)
+            return p.cmds.back();
+
+        VulkanContext::FramePacket::Cmd cmd{};
+        cmd.type = VulkanContext::FramePacket::CmdType::BindGlobals;
+        p.cmds.push_back(cmd);
+        return p.cmds.back();
+    }
+
+    void VulkanRendererAPI::set_recording_context(VulkanContext* ctx) {
+        s_recording_context = ctx;
+    }
 
     void VulkanRendererAPI::init() {
         HN_PROFILE_FUNCTION();
@@ -43,7 +58,8 @@ namespace Honey {
     }
 
     void VulkanRendererAPI::set_clear_color(const glm::vec4& color) {
-        s_clear_color = color;
+        require_frame_begun();
+        pkt().clearColor = color;
     }
 
     void VulkanRendererAPI::set_viewport(uint32_t, uint32_t, uint32_t, uint32_t) {
@@ -51,24 +67,35 @@ namespace Honey {
     }
 
     void VulkanRendererAPI::clear() {
-        s_clear_requested = true;
+        require_frame_begun();
+        // no-op for now
     }
 
     void VulkanRendererAPI::draw_indexed(const Ref<VertexArray>& vertex_array, uint32_t index_count) {
+        require_frame_begun();
         HN_CORE_ASSERT(vertex_array, "Vulkan draw_indexed: vertex_array is null");
-        s_draw.va = vertex_array;
-        s_draw.index_count = index_count;
-        s_draw.instance_count = 1;
-        s_draw.valid = true;
+
+        VulkanContext::FramePacket::Cmd cmd{};
+        cmd.type = VulkanContext::FramePacket::CmdType::DrawIndexed;
+        cmd.draw.va = vertex_array;
+        cmd.draw.indexCount = index_count;
+        cmd.draw.instanceCount = 1;
+
+        pkt().cmds.push_back(cmd);
     }
 
     void VulkanRendererAPI::draw_indexed_instanced(const Ref<VertexArray>& vertex_array, uint32_t index_count, uint32_t instance_count) {
+        require_frame_begun();
         HN_CORE_ASSERT(vertex_array, "Vulkan draw_indexed_instanced: vertex_array is null");
         HN_CORE_ASSERT(instance_count > 0, "Vulkan draw_indexed_instanced: instance_count must be > 0");
-        s_draw.va = vertex_array;
-        s_draw.index_count = index_count;
-        s_draw.instance_count = instance_count;
-        s_draw.valid = true;
+
+        VulkanContext::FramePacket::Cmd cmd{};
+        cmd.type = VulkanContext::FramePacket::CmdType::DrawIndexed;
+        cmd.draw.va = vertex_array;
+        cmd.draw.indexCount = index_count;
+        cmd.draw.instanceCount = instance_count;
+
+        pkt().cmds.push_back(cmd);
     }
 
     Ref<VertexBuffer> VulkanRendererAPI::create_vertex_buffer(uint32_t size) {
@@ -96,57 +123,63 @@ namespace Honey {
     }
 
     void VulkanRendererAPI::submit_camera_view_projection(const glm::mat4& view_projection) {
-        s_frame.view_projection = view_projection;
-        s_frame.has_camera = true;
+        auto& cmd = get_or_push_globals_cmd();
+        cmd.globals.viewProjection = view_projection;
+        cmd.globals.hasCamera = true;
     }
 
     bool VulkanRendererAPI::consume_camera_view_projection(glm::mat4& out_view_projection) {
-        if (!s_frame.has_camera)
+        auto& p = pkt();
+        if (!p.hasCamera)
             return false;
 
-        out_view_projection = s_frame.view_projection;
-        s_frame.has_camera = false;
+        out_view_projection = p.viewProjection;
+        p.hasCamera = false;
         return true;
     }
 
     bool VulkanRendererAPI::consume_draw_request(Ref<VertexArray>& out_va, uint32_t& out_index_count, uint32_t& out_instance_count) {
-        if (!s_draw.valid)
+        auto& p = pkt();
+        if (p.drawCursor >= p.draws.size())
             return false;
 
-        out_va = s_draw.va;
-        out_index_count = s_draw.index_count;
-        out_instance_count = s_draw.instance_count;
+        const auto& cmd = p.draws[p.drawCursor++];
 
-        s_draw = {};
+        out_va = cmd.va;
+        out_index_count = cmd.indexCount;
+        out_instance_count = cmd.instanceCount;
         return true;
     }
 
     glm::vec4 VulkanRendererAPI::consume_clear_color() {
-        return s_clear_color;
+        return pkt().clearColor;
     }
 
     bool VulkanRendererAPI::consume_clear_requested() {
-        bool was = s_clear_requested;
-        s_clear_requested = false;
+        auto& p = pkt();
+        bool was = p.clearRequested;
+        p.clearRequested = false;
         return was;
     }
 
     void VulkanRendererAPI::submit_bound_textures(const std::array<void*, k_max_texture_slots>& textures, uint32_t texture_count) {
-        s_frame.textures = textures;
-        s_frame.texture_count = texture_count;
-        s_frame.has_textures = true;
+        auto& cmd = get_or_push_globals_cmd();
+        cmd.globals.textures = textures;
+        cmd.globals.textureCount = texture_count;
+        cmd.globals.hasTextures = true;
     }
 
     bool VulkanRendererAPI::consume_bound_textures(std::array<void*, k_max_texture_slots>& out_textures, uint32_t& out_texture_count) {
-        if (!s_frame.has_textures)
+        auto& p = pkt();
+        if (!p.hasTextures)
             return false;
 
-        out_textures = s_frame.textures;
-        out_texture_count = s_frame.texture_count;
+        out_textures = p.textures;
+        out_texture_count = p.textureCount;
 
-        s_frame.has_textures = false;
-        s_frame.textures = {};
-        s_frame.texture_count = 0;
+        p.hasTextures = false;
+        p.textures = {};
+        p.textureCount = 0;
         return true;
     }
 

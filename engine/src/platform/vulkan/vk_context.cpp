@@ -13,6 +13,7 @@
 
 #include "vk_buffer.h"
 #include "vk_texture.h"
+#include "Honey/renderer/shader_cache.h"
 #include "platform/vulkan/vk_renderer_api.h"
 
 namespace Honey {
@@ -139,9 +140,10 @@ namespace Honey {
         return extent;
     }
 
-    VulkanContext::VulkanContext(GLFWwindow* window_handle)
-        : m_window_handle(window_handle) {
+    VulkanContext::VulkanContext(GLFWwindow* window_handle, VulkanBackend* backend)
+            : m_window_handle(window_handle), m_backend(backend) {
         HN_CORE_ASSERT(m_window_handle, "VulkanContext: window handle is null!");
+        HN_CORE_ASSERT(m_backend, "VulkanContext: backend is null!");
     }
 
     VulkanContext::~VulkanContext() {
@@ -350,11 +352,27 @@ namespace Honey {
 
         HN_CORE_INFO("VulkanContext::init");
 
-        create_instance();
+        HN_CORE_ASSERT(m_backend && m_backend->initialized(), "VulkanContext::init requires initialized VulkanBackend");
+
+        // Shared handles from backend
+        m_instance = m_backend->instance();
+        m_device = m_backend->device();
+        m_physical_device = m_backend->physical_device();
+
+        // Create per-window surface first, then lease queues (backend may create device on first surface).
         create_surface();
 
-        pick_physical_device();
-        create_logical_device();
+        m_queue_lease = m_backend->acquire_queue_lease(reinterpret_cast<VkSurfaceKHR>(m_surface));
+
+        // Refresh cached device handles after leasing (backend may have created the device).
+        m_instance = m_backend->instance();
+        m_device = m_backend->device();
+        m_physical_device = m_backend->physical_device();
+
+        m_graphics_queue_family = m_queue_lease.graphicsFamily;
+        m_present_queue_family = m_queue_lease.presentFamily;
+        m_graphics_queue = m_queue_lease.graphicsQueue;
+        m_present_queue = m_queue_lease.presentQueue;
 
         create_global_descriptor_resources();
 
@@ -375,6 +393,8 @@ namespace Honey {
     void VulkanContext::swap_buffers() {
         HN_PROFILE_FUNCTION();
         HN_CORE_ASSERT(m_initialized, "VulkanContext::swap_buffers called before init");
+
+        VulkanRendererAPI::set_recording_context(this);
 
         recreate_swapchain_if_needed();
 
@@ -399,15 +419,12 @@ namespace Honey {
         HN_CORE_ASSERT(acquire_res == VK_SUCCESS || acquire_res == VK_SUBOPTIMAL_KHR,
                        "vkAcquireNextImageKHR failed: {0}", vk_result_to_string(acquire_res));
 
-
-        // Wait for the specific swapchain image to become available (if it’s still in flight)
         HN_CORE_ASSERT(image_index < m_images_in_flight.size(), "Acquired image index out of bounds.");
         VkFence image_fence = reinterpret_cast<VkFence>(m_images_in_flight[image_index]);
         if (image_fence != VK_NULL_HANDLE) {
             vkWaitForFences(reinterpret_cast<VkDevice>(m_device), 1, &image_fence, VK_TRUE, UINT64_MAX);
         }
 
-        // Mark this image as now being in flight with the current frame fence
         m_images_in_flight[image_index] = reinterpret_cast<VkFence>(m_in_flight_fences[m_current_frame]);
 
         vkResetFences(reinterpret_cast<VkDevice>(m_device), 1, &in_flight);
@@ -431,12 +448,13 @@ namespace Honey {
         submit_info.signalSemaphoreCount = 1;
         submit_info.pSignalSemaphores = signal_semaphores;
 
-        VkResult submit_res = vkQueueSubmit(
-            reinterpret_cast<VkQueue>(m_graphics_queue),
-            1,
-            &submit_info,
-            in_flight
-        );
+        VkResult submit_res = VK_SUCCESS;
+        if (m_queue_lease.sharedGraphics && m_queue_lease.graphicsSubmitMutex) {
+            std::scoped_lock lk(*m_queue_lease.graphicsSubmitMutex);
+            submit_res = vkQueueSubmit(reinterpret_cast<VkQueue>(m_graphics_queue), 1, &submit_info, in_flight);
+        } else {
+            submit_res = vkQueueSubmit(reinterpret_cast<VkQueue>(m_graphics_queue), 1, &submit_info, in_flight);
+        }
         HN_CORE_ASSERT(submit_res == VK_SUCCESS, "vkQueueSubmit failed: {0}", vk_result_to_string(submit_res));
 
         VkSwapchainKHR swapchains[] = { reinterpret_cast<VkSwapchainKHR>(m_swapchain) };
@@ -449,7 +467,14 @@ namespace Honey {
         present_info.pSwapchains = swapchains;
         present_info.pImageIndices = &image_index;
 
-        VkResult present_res = vkQueuePresentKHR(reinterpret_cast<VkQueue>(m_present_queue), &present_info);
+        VkResult present_res = VK_SUCCESS;
+        if (m_queue_lease.sharedPresent && m_queue_lease.presentSubmitMutex) {
+            std::scoped_lock lk(*m_queue_lease.presentSubmitMutex);
+            present_res = vkQueuePresentKHR(reinterpret_cast<VkQueue>(m_present_queue), &present_info);
+        } else {
+            present_res = vkQueuePresentKHR(reinterpret_cast<VkQueue>(m_present_queue), &present_info);
+        }
+
         if (present_res == VK_ERROR_OUT_OF_DATE_KHR || present_res == VK_SUBOPTIMAL_KHR) {
             m_framebuffer_resized = true;
             recreate_swapchain_if_needed();
@@ -458,6 +483,7 @@ namespace Honey {
         }
 
         m_current_frame = (m_current_frame + 1) % k_max_frames_in_flight;
+        frame_packet().frame_begun = false;
     }
 
     void VulkanContext::wait_idle() {
@@ -522,146 +548,14 @@ namespace Honey {
         }
     }
 
-    bool VulkanContext::check_validation_layer_support() const {
-        uint32_t layer_count = 0;
-        vkEnumerateInstanceLayerProperties(&layer_count, nullptr);
-
-        std::vector<VkLayerProperties> available(layer_count);
-        vkEnumerateInstanceLayerProperties(&layer_count, available.data());
-
-        for (const char* requested : k_validation_layers) {
-            bool found = false;
-            for (const auto& layer : available) {
-                if (std::strcmp(requested, layer.layerName) == 0) {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found)
-                return false;
-        }
-        return true;
-    }
-
-    std::vector<const char*> VulkanContext::get_required_instance_extensions() const {
-        uint32_t glfw_extension_count = 0;
-        const char** glfw_extensions = glfwGetRequiredInstanceExtensions(&glfw_extension_count);
-        HN_CORE_ASSERT(glfw_extensions && glfw_extension_count > 0,
-                       "Failed to get required Vulkan instance extensions from GLFW");
-
-        std::vector<const char*> extensions(glfw_extensions, glfw_extensions + glfw_extension_count);
-
-        if (k_enable_validation) {
-            extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-        }
-
-        return extensions;
-    }
-
-    void VulkanContext::setup_debug_messenger() {
-        if (!k_enable_validation)
-            return;
-
-        VkDebugUtilsMessengerCreateInfoEXT ci{};
-        ci.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
-        ci.messageSeverity =
-            VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
-            VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
-        ci.messageType =
-            VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
-            VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
-            VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
-        ci.pfnUserCallback = vk_debug_callback;
-
-        VkDebugUtilsMessengerEXT messenger = VK_NULL_HANDLE;
-        VkResult res = create_debug_utils_messenger_ext(
-            reinterpret_cast<VkInstance>(m_instance),
-            &ci,
-            nullptr,
-            &messenger
-        );
-        HN_CORE_ASSERT(res == VK_SUCCESS, "Failed to create Vulkan debug messenger: {0}", vk_result_to_string(res));
-
-        m_debug_messenger = reinterpret_cast<VkDebugUtilsMessengerEXT>(messenger);
-        HN_CORE_INFO("Vulkan debug messenger created.");
-    }
-
-    void VulkanContext::destroy_debug_messenger() {
-        if (!m_debug_messenger || !m_instance)
-            return;
-
-        destroy_debug_utils_messenger_ext(
-            reinterpret_cast<VkInstance>(m_instance),
-            reinterpret_cast<VkDebugUtilsMessengerEXT>(m_debug_messenger),
-            nullptr
-        );
-        m_debug_messenger = nullptr;
-    }
-
-    void VulkanContext::create_instance() {
-        HN_PROFILE_FUNCTION();
-
-        HN_CORE_ASSERT(glfwVulkanSupported(), "GLFW reports Vulkan is not supported on this system!");
-
-        if (k_enable_validation) {
-            HN_CORE_ASSERT(check_validation_layer_support(),
-                           "Vulkan validation requested, but VK_LAYER_KHRONOS_validation is not available.");
-        }
-
-        std::vector<const char*> extensions = get_required_instance_extensions();
-
-        VkApplicationInfo app_info{};
-        app_info.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-        app_info.pApplicationName = "Honey_Editor";
-        app_info.applicationVersion = VK_MAKE_VERSION(0, 1, 0);
-        app_info.pEngineName = "Honey";
-        app_info.engineVersion = VK_MAKE_VERSION(0, 1, 0);
-        app_info.apiVersion = VK_API_VERSION_1_0;
-
-        VkInstanceCreateInfo create_info{};
-        create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-        create_info.pApplicationInfo = &app_info;
-        create_info.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
-        create_info.ppEnabledExtensionNames = extensions.data();
-
-        VkDebugUtilsMessengerCreateInfoEXT debug_ci{};
-        if (k_enable_validation) {
-            create_info.enabledLayerCount = static_cast<uint32_t>(k_validation_layers.size());
-            create_info.ppEnabledLayerNames = k_validation_layers.data();
-
-            debug_ci.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
-            debug_ci.messageSeverity =
-                VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
-                VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
-            debug_ci.messageType =
-                VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
-                VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
-                VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
-            debug_ci.pfnUserCallback = vk_debug_callback;
-
-            // This allows validation messages during vkCreateInstance/vkDestroyInstance too.
-            create_info.pNext = &debug_ci;
-        } else {
-            create_info.enabledLayerCount = 0;
-            create_info.pNext = nullptr;
-        }
-
-        VkInstance instance = VK_NULL_HANDLE;
-        VkResult res = vkCreateInstance(&create_info, nullptr, &instance);
-        HN_CORE_ASSERT(res == VK_SUCCESS, "vkCreateInstance failed: {0}", vk_result_to_string(res));
-
-        m_instance = reinterpret_cast<VkInstance>(instance);
-        HN_CORE_INFO("Vulkan instance created.");
-
-        setup_debug_messenger();
-    }
-
     void VulkanContext::create_surface() {
         HN_PROFILE_FUNCTION();
 
+        HN_CORE_ASSERT(m_backend && m_backend->instance(), "VulkanContext::create_surface called without initialized backend instance");
+
         VkSurfaceKHR surface = VK_NULL_HANDLE;
         VkResult res = glfwCreateWindowSurface(
-            reinterpret_cast<VkInstance>(m_instance),
+            m_backend->instance(),
             m_window_handle,
             nullptr,
             &surface
@@ -670,82 +564,6 @@ namespace Honey {
 
         m_surface = reinterpret_cast<VkSurfaceKHR>(surface);
         HN_CORE_INFO("Vulkan surface created.");
-    }
-
-    void VulkanContext::pick_physical_device() {
-        HN_PROFILE_FUNCTION();
-
-        uint32_t device_count = 0;
-        vkEnumeratePhysicalDevices(reinterpret_cast<VkInstance>(m_instance), &device_count, nullptr);
-        HN_CORE_ASSERT(device_count > 0, "No Vulkan physical devices found.");
-
-        std::vector<VkPhysicalDevice> devices(device_count);
-        vkEnumeratePhysicalDevices(reinterpret_cast<VkInstance>(m_instance), &device_count, devices.data());
-
-        for (auto dev : devices) {
-            QueueFamilyIndices q = find_queue_families(dev, reinterpret_cast<VkSurfaceKHR>(m_surface));
-            if (!q.complete())
-                continue;
-
-            SwapchainSupportDetails sc = query_swapchain_support(dev, reinterpret_cast<VkSurfaceKHR>(m_surface));
-            if (sc.formats.empty() || sc.present_modes.empty())
-                continue;
-
-            m_physical_device = reinterpret_cast<VkPhysicalDevice>(dev);
-            m_graphics_queue_family = q.graphics.value();
-            m_present_queue_family = q.present.value();
-            break;
-        }
-
-        HN_CORE_ASSERT(m_physical_device, "Failed to find a suitable Vulkan physical device.");
-        HN_CORE_INFO("Selected Vulkan physical device.");
-    }
-
-    void VulkanContext::create_logical_device() {
-        HN_PROFILE_FUNCTION();
-
-        std::set<uint32_t> unique_families = { m_graphics_queue_family, m_present_queue_family };
-
-        float priority = 1.0f;
-        std::vector<VkDeviceQueueCreateInfo> queue_infos;
-        queue_infos.reserve(unique_families.size());
-        for (uint32_t family : unique_families) {
-            VkDeviceQueueCreateInfo q{};
-            q.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-            q.queueFamilyIndex = family;
-            q.queueCount = 1;
-            q.pQueuePriorities = &priority;
-            queue_infos.push_back(q);
-        }
-
-        VkPhysicalDeviceFeatures features{};
-
-        const char* device_extensions[] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
-
-        VkDeviceCreateInfo create_info{};
-        create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-        create_info.queueCreateInfoCount = static_cast<uint32_t>(queue_infos.size());
-        create_info.pQueueCreateInfos = queue_infos.data();
-        create_info.pEnabledFeatures = &features;
-        create_info.enabledExtensionCount = 1;
-        create_info.ppEnabledExtensionNames = device_extensions;
-        create_info.enabledLayerCount = 0;
-
-        VkDevice device = VK_NULL_HANDLE;
-        VkResult res = vkCreateDevice(reinterpret_cast<VkPhysicalDevice>(m_physical_device), &create_info, nullptr, &device);
-        HN_CORE_ASSERT(res == VK_SUCCESS, "vkCreateDevice failed: {0}", vk_result_to_string(res));
-
-        m_device = reinterpret_cast<VkDevice>(device);
-
-        VkQueue graphics_queue = VK_NULL_HANDLE;
-        VkQueue present_queue = VK_NULL_HANDLE;
-        vkGetDeviceQueue(reinterpret_cast<VkDevice>(m_device), m_graphics_queue_family, 0, &graphics_queue);
-        vkGetDeviceQueue(reinterpret_cast<VkDevice>(m_device), m_present_queue_family, 0, &present_queue);
-
-        m_graphics_queue = reinterpret_cast<VkQueue>(graphics_queue);
-        m_present_queue = reinterpret_cast<VkQueue>(present_queue);
-
-        HN_CORE_INFO("Vulkan logical device created.");
     }
 
     void VulkanContext::create_swapchain() {
@@ -1021,8 +839,9 @@ namespace Honey {
     void VulkanContext::record_command_buffer(uint32_t image_index) {
         HN_PROFILE_FUNCTION();
 
-        VkCommandBuffer cmd = reinterpret_cast<VkCommandBuffer>(m_command_buffers[image_index]);
+        VulkanRendererAPI::set_recording_context(this);
 
+        VkCommandBuffer cmd = reinterpret_cast<VkCommandBuffer>(m_command_buffers[image_index]);
         vkResetCommandBuffer(cmd, 0);
 
         VkCommandBufferBeginInfo begin{};
@@ -1032,138 +851,168 @@ namespace Honey {
         VkResult res = vkBeginCommandBuffer(cmd, &begin);
         HN_CORE_ASSERT(res == VK_SUCCESS, "vkBeginCommandBuffer failed: {0}", vk_result_to_string(res));
 
-        glm::vec4 clear = VulkanRendererAPI::consume_clear_color();
-        VkClearValue clear_value{};
-        clear_value.color = { { clear.r, clear.g, clear.b, clear.a } };
+        auto& p = frame_packet();
 
-        VkRenderPassBeginInfo rp_begin{};
-        rp_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        rp_begin.renderPass = reinterpret_cast<VkRenderPass>(m_render_pass);
-        rp_begin.framebuffer = reinterpret_cast<VkFramebuffer>(m_swapchain_framebuffers[image_index]);
-        rp_begin.renderArea.offset = { 0, 0 };
-        rp_begin.renderArea.extent = { m_swapchain_extent_width, m_swapchain_extent_height };
-        rp_begin.clearValueCount = 1;
-        rp_begin.pClearValues = &clear_value;
+        const bool use_cmds = !p.cmds.empty();
+        bool render_pass_open = false;
 
-        vkCmdBeginRenderPass(cmd, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
+        auto bind_pipeline_and_dynamic = [&]() {
+            HN_CORE_ASSERT(m_pipeline_quad.valid(), "Vulkan pipeline is null (did create_graphics_pipeline run?)");
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, reinterpret_cast<VkPipeline>(m_pipeline_quad.pipeline()));
 
-        HN_CORE_ASSERT(m_pipeline, "Vulkan pipeline is null (did create_graphics_pipeline run?)");
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, reinterpret_cast<VkPipeline>(m_pipeline));
+            VkViewport viewport{};
+            viewport.x = 0.0f;
+            viewport.y = 0.0f;
+            viewport.width = static_cast<float>(m_swapchain_extent_width);
+            viewport.height = static_cast<float>(m_swapchain_extent_height);
+            viewport.minDepth = 0.0f;
+            viewport.maxDepth = 1.0f;
+            vkCmdSetViewport(cmd, 0, 1, &viewport);
 
-        VkViewport viewport{};
-        viewport.x = 0.0f;
-        viewport.y = 0.0f;
-        viewport.width = static_cast<float>(m_swapchain_extent_width);
-        viewport.height = static_cast<float>(m_swapchain_extent_height);
-        viewport.minDepth = 0.0f;
-        viewport.maxDepth = 1.0f;
-        vkCmdSetViewport(cmd, 0, 1, &viewport);
+            VkRect2D scissor{};
+            scissor.offset = { 0, 0 };
+            scissor.extent = { m_swapchain_extent_width, m_swapchain_extent_height };
+            vkCmdSetScissor(cmd, 0, 1, &scissor);
+        };
 
-        VkRect2D scissor{};
-        scissor.offset = { 0, 0 };
-        scissor.extent = { m_swapchain_extent_width, m_swapchain_extent_height };
-        vkCmdSetScissor(cmd, 0, 1, &scissor);
+        auto apply_globals = [&](const FramePacket::CmdBindGlobals& g) {
+            const uint32_t frame = m_current_frame;
+            VkDescriptorSet ds = reinterpret_cast<VkDescriptorSet>(m_global_descriptor_sets[frame]);
 
-        const uint32_t frame = m_current_frame;
-        VkDescriptorSet ds = reinterpret_cast<VkDescriptorSet>(m_global_descriptor_sets[frame]);
-
-        // Update camera UBO from per-frame state (submitted by Renderer2D)
-        if (m_camera_ubo_memories[frame] && m_camera_ubo_size == sizeof(glm::mat4)) {
-            glm::mat4 vp{1.0f};
-            if (VulkanRendererAPI::consume_camera_view_projection(vp)) {
+            // Camera UBO
+            if (g.hasCamera && m_camera_ubo_memories[frame] && m_camera_ubo_size == sizeof(glm::mat4)) {
                 void* mapped = nullptr;
                 VkResult mr = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
                                           reinterpret_cast<VkDeviceMemory>(m_camera_ubo_memories[frame]),
                                           0, m_camera_ubo_size, 0, &mapped);
                 HN_CORE_ASSERT(mr == VK_SUCCESS, "vkMapMemory camera ubo failed");
-                std::memcpy(mapped, &vp, sizeof(glm::mat4));
+                std::memcpy(mapped, &g.viewProjection, sizeof(glm::mat4));
                 vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
                               reinterpret_cast<VkDeviceMemory>(m_camera_ubo_memories[frame]));
             }
-        }
 
-        // Update texture descriptors for this frame (binding 1) if Renderer2D submitted a list.
-        std::array<void*, VulkanRendererAPI::k_max_texture_slots> submitted{};
-        uint32_t submitted_count = 0;
-        if (VulkanRendererAPI::consume_bound_textures(submitted, submitted_count)) {
-            HN_CORE_ASSERT(submitted_count > 0 && submitted[0], "Vulkan: expected texture slot 0 (white texture) to be present");
+            // Texture descriptors
+            if (g.hasTextures) {
+                HN_CORE_ASSERT(g.textureCount > 0 && g.textures[0], "Vulkan: expected texture slot 0 to be present");
 
-            // Fill all 32 slots; unused slots fallback to slot 0
-            VkDescriptorImageInfo infos[VulkanRendererAPI::k_max_texture_slots]{};
+                VkDescriptorImageInfo infos[VulkanRendererAPI::k_max_texture_slots]{};
 
-            auto* white_base = reinterpret_cast<Texture2D*>(submitted[0]);
-            auto* white_vk = dynamic_cast<VulkanTexture2D*>(white_base);
-            HN_CORE_ASSERT(white_vk, "Vulkan: slot 0 texture is not a VulkanTexture2D");
+                auto* white_base = reinterpret_cast<Texture2D*>(g.textures[0]);
+                auto* white_vk = dynamic_cast<VulkanTexture2D*>(white_base);
+                HN_CORE_ASSERT(white_vk, "Vulkan: slot 0 texture is not a VulkanTexture2D");
 
-            for (uint32_t i = 0; i < VulkanRendererAPI::k_max_texture_slots; ++i) {
-                void* raw = (i < submitted_count) ? submitted[i] : submitted[0];
-                auto* base = reinterpret_cast<Texture2D*>(raw);
-                auto* vktex = dynamic_cast<VulkanTexture2D*>(base);
-                if (!vktex) {
-                    vktex = white_vk;
+                for (uint32_t i = 0; i < VulkanRendererAPI::k_max_texture_slots; ++i) {
+                    void* raw = (i < g.textureCount) ? g.textures[i] : g.textures[0];
+                    auto* base = reinterpret_cast<Texture2D*>(raw);
+                    auto* vktex = dynamic_cast<VulkanTexture2D*>(base);
+                    if (!vktex) vktex = white_vk;
+
+                    infos[i].sampler = reinterpret_cast<VkSampler>(vktex->get_vk_sampler());
+                    infos[i].imageView = reinterpret_cast<VkImageView>(vktex->get_vk_image_view());
+                    infos[i].imageLayout = static_cast<VkImageLayout>(vktex->get_vk_image_layout());
                 }
 
-                infos[i].sampler = reinterpret_cast<VkSampler>(vktex->get_vk_sampler());
-                infos[i].imageView = reinterpret_cast<VkImageView>(vktex->get_vk_image_view());
-                infos[i].imageLayout = static_cast<VkImageLayout>(vktex->get_vk_image_layout());
+                VkWriteDescriptorSet write_tex{};
+                write_tex.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                write_tex.dstSet = ds;
+                write_tex.dstBinding = 1;
+                write_tex.dstArrayElement = 0;
+                write_tex.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                write_tex.descriptorCount = VulkanRendererAPI::k_max_texture_slots;
+                write_tex.pImageInfo = infos;
+
+                vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(m_device), 1, &write_tex, 0, nullptr);
             }
 
-            VkWriteDescriptorSet write_tex{};
-            write_tex.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            write_tex.dstSet = ds;
-            write_tex.dstBinding = 1;
-            write_tex.dstArrayElement = 0;
-            write_tex.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            write_tex.descriptorCount = VulkanRendererAPI::k_max_texture_slots;
-            write_tex.pImageInfo = infos;
+            vkCmdBindDescriptorSets(cmd,
+                                    VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    reinterpret_cast<VkPipelineLayout>(m_pipeline_quad.layout()),
+                                    0,
+                                    1,
+                                    &ds,
+                                    0,
+                                    nullptr);
+        };
 
-            vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(m_device), 1, &write_tex, 0, nullptr);
+        for (const auto& c : p.cmds) {
+            switch (c.type) {
+            case FramePacket::CmdType::BeginSwapchainPass: {
+                    VkClearValue clear_value{};
+                    clear_value.color = { { c.begin.clearColor.r, c.begin.clearColor.g, c.begin.clearColor.b, c.begin.clearColor.a } };
+
+                    VkRenderPassBeginInfo rp_begin{};
+                    rp_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+                    rp_begin.renderPass = reinterpret_cast<VkRenderPass>(m_render_pass);
+                    rp_begin.framebuffer = reinterpret_cast<VkFramebuffer>(m_swapchain_framebuffers[image_index]);
+                    rp_begin.renderArea.offset = { 0, 0 };
+                    rp_begin.renderArea.extent = { m_swapchain_extent_width, m_swapchain_extent_height };
+                    rp_begin.clearValueCount = 1;
+                    rp_begin.pClearValues = &clear_value;
+
+                    vkCmdBeginRenderPass(cmd, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
+                    render_pass_open = true;
+
+                    bind_pipeline_and_dynamic();
+                    break;
+            }
+            case FramePacket::CmdType::BindPipelineQuad2D: {
+                    // For now, the swapchain pass uses the quad2D pipeline.
+                    // Later: this becomes "bind pipeline handle".
+                    bind_pipeline_and_dynamic();
+                    break;
+            }
+            case FramePacket::CmdType::BindGlobals: {
+                    HN_CORE_ASSERT(render_pass_open, "BindGlobals must occur inside a render pass");
+                    apply_globals(c.globals);
+                    break;
+            }
+            case FramePacket::CmdType::DrawIndexed: {
+                    HN_CORE_ASSERT(render_pass_open, "DrawIndexed must occur inside a render pass");
+                    HN_CORE_ASSERT(c.draw.va, "DrawIndexed: VertexArray is null");
+
+                    const auto& vbs = c.draw.va->get_vertex_buffers();
+                    const auto& ib = c.draw.va->get_index_buffer();
+
+                    HN_CORE_ASSERT(vbs.size() >= 2, "Vulkan draw: expected 2 vertex buffers (static + instance)");
+                    HN_CORE_ASSERT(ib, "Vulkan draw: VertexArray has no index buffer");
+
+                    auto vk_vb0 = std::dynamic_pointer_cast<VulkanVertexBuffer>(vbs[0]);
+                    auto vk_vb1 = std::dynamic_pointer_cast<VulkanVertexBuffer>(vbs[1]);
+                    auto vk_ib = std::dynamic_pointer_cast<VulkanIndexBuffer>(ib);
+
+                    HN_CORE_ASSERT(vk_vb0 && vk_vb1, "Vulkan draw: expected VulkanVertexBuffer(s) in VertexArray");
+                    HN_CORE_ASSERT(vk_ib, "Vulkan draw: expected VulkanIndexBuffer in VertexArray");
+
+                    VkBuffer vbufs[] = {
+                        reinterpret_cast<VkBuffer>(vk_vb0->get_vk_buffer()),
+                        reinterpret_cast<VkBuffer>(vk_vb1->get_vk_buffer())
+                    };
+                    VkDeviceSize offsets[] = { 0, 0 };
+                    vkCmdBindVertexBuffers(cmd, 0, 2, vbufs, offsets);
+
+                    VkBuffer ibuf = reinterpret_cast<VkBuffer>(vk_ib->get_vk_buffer());
+                    vkCmdBindIndexBuffer(cmd, ibuf, 0, VK_INDEX_TYPE_UINT32);
+
+                    const uint32_t index_count = (c.draw.indexCount != 0) ? c.draw.indexCount : vk_ib->get_count();
+                    const uint32_t instance_count = (c.draw.instanceCount != 0) ? c.draw.instanceCount : 1;
+                    vkCmdDrawIndexed(cmd, index_count, instance_count, 0, 0, 0);
+                    break;
+            }
+            case FramePacket::CmdType::EndPass: {
+                    if (render_pass_open) {
+                        vkCmdEndRenderPass(cmd);
+                        render_pass_open = false;
+                    }
+                    break;
+            }
+            }
         }
 
-        vkCmdBindDescriptorSets(cmd,
-                                VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                reinterpret_cast<VkPipelineLayout>(m_pipeline_layout),
-                                0,
-                                1,
-                                &ds,
-                                0,
-                                nullptr);
-
-
-        Ref<VertexArray> va;
-        uint32_t requested_index_count = 0;
-        uint32_t requested_instance_count = 0;
-        if (VulkanRendererAPI::consume_draw_request(va, requested_index_count, requested_instance_count) && va) {
-
-            const auto& vbs = va->get_vertex_buffers();
-            const auto& ib = va->get_index_buffer();
-
-            HN_CORE_ASSERT(vbs.size() >= 2, "Vulkan draw: expected 2 vertex buffers (static + instance)");
-            HN_CORE_ASSERT(ib, "Vulkan draw: VertexArray has no index buffer");
-
-            auto vk_vb0 = std::dynamic_pointer_cast<VulkanVertexBuffer>(vbs[0]);
-            auto vk_vb1 = std::dynamic_pointer_cast<VulkanVertexBuffer>(vbs[1]);
-            auto vk_ib = std::dynamic_pointer_cast<VulkanIndexBuffer>(ib);
-
-            HN_CORE_ASSERT(vk_vb0 && vk_vb1, "Vulkan draw: expected VulkanVertexBuffer(s) in VertexArray");
-            HN_CORE_ASSERT(vk_ib, "Vulkan draw: expected VulkanIndexBuffer in VertexArray");
-
-            VkBuffer vbufs[] = {
-                reinterpret_cast<VkBuffer>(vk_vb0->get_vk_buffer()),
-                reinterpret_cast<VkBuffer>(vk_vb1->get_vk_buffer())
-            };
-            VkDeviceSize offsets[] = { 0, 0 };
-            vkCmdBindVertexBuffers(cmd, 0, 2, vbufs, offsets);
-
-            VkBuffer ibuf = reinterpret_cast<VkBuffer>(vk_ib->get_vk_buffer());
-            vkCmdBindIndexBuffer(cmd, ibuf, 0, VK_INDEX_TYPE_UINT32);
-
-            const uint32_t index_count = (requested_index_count != 0) ? requested_index_count : vk_ib->get_count();
-            const uint32_t instance_count = (requested_instance_count != 0) ? requested_instance_count : 1;
-            vkCmdDrawIndexed(cmd, index_count, instance_count, 0, 0, 0);
+        if (render_pass_open) {
+            vkCmdEndRenderPass(cmd);
+            render_pass_open = false;
         }
 
-        vkCmdEndRenderPass(cmd);
 
         res = vkEndCommandBuffer(cmd);
         HN_CORE_ASSERT(res == VK_SUCCESS, "vkEndCommandBuffer failed: {0}", vk_result_to_string(res));
@@ -1223,58 +1072,57 @@ namespace Honey {
     }
 
     void VulkanContext::destroy() {
-        if (!m_instance)
-            return;
+            HN_PROFILE_FUNCTION();
 
-        HN_PROFILE_FUNCTION();
+            if (m_device) {
+                vkDeviceWaitIdle(reinterpret_cast<VkDevice>(m_device));
 
-        if (m_device) {
-            vkDeviceWaitIdle(reinterpret_cast<VkDevice>(m_device));
-
-            for (uint32_t i = 0; i < m_image_available_semaphores.size(); i++) {
-                if (m_image_available_semaphores[i]) {
-                    vkDestroySemaphore(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkSemaphore>(m_image_available_semaphores[i]), nullptr);
+                for (uint32_t i = 0; i < m_image_available_semaphores.size(); i++) {
+                    if (m_image_available_semaphores[i]) {
+                        vkDestroySemaphore(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkSemaphore>(m_image_available_semaphores[i]), nullptr);
+                    }
+                    if (m_in_flight_fences[i]) {
+                        vkDestroyFence(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkFence>(m_in_flight_fences[i]), nullptr);
+                    }
                 }
-                if (m_in_flight_fences[i]) {
-                    vkDestroyFence(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkFence>(m_in_flight_fences[i]), nullptr);
+
+                for (uint32_t i = 0; i < m_render_finished_semaphores.size(); i++) {
+                    if (m_render_finished_semaphores[i]) {
+                        vkDestroySemaphore(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkSemaphore>(m_render_finished_semaphores[i]), nullptr);
+                    }
+                }
+
+                m_image_available_semaphores.clear();
+                m_render_finished_semaphores.clear();
+                m_in_flight_fences.clear();
+
+                cleanup_pipeline();
+                cleanup_swapchain();
+                cleanup_global_descriptor_resources();
+
+                if (m_command_pool) {
+                    vkDestroyCommandPool(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkCommandPool>(m_command_pool), nullptr);
+                    m_command_pool = nullptr;
                 }
             }
 
-            for (uint32_t i = 0; i < m_render_finished_semaphores.size(); i++) {
-                if (m_render_finished_semaphores[i]) {
-                    vkDestroySemaphore(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkSemaphore>(m_render_finished_semaphores[i]), nullptr);
-                }
+            if (m_surface && m_instance) {
+                vkDestroySurfaceKHR(reinterpret_cast<VkInstance>(m_instance), reinterpret_cast<VkSurfaceKHR>(m_surface), nullptr);
+                m_surface = nullptr;
             }
 
-            m_image_available_semaphores.clear();
-            m_render_finished_semaphores.clear();
-            m_in_flight_fences.clear();
-
-            cleanup_pipeline();
-            cleanup_swapchain();
-            cleanup_global_descriptor_resources();
-
-            if (m_command_pool) {
-                vkDestroyCommandPool(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkCommandPool>(m_command_pool), nullptr);
-                m_command_pool = nullptr;
+            if (m_backend) {
+                m_backend->release_queue_lease(m_queue_lease);
             }
+            m_queue_lease = {};
 
-            vkDestroyDevice(reinterpret_cast<VkDevice>(m_device), nullptr);
+            // DO NOT destroy VkDevice/VkInstance here: backend owns them.
             m_device = nullptr;
+            m_physical_device = nullptr;
+            m_instance = nullptr;
+
+            m_initialized = false;
         }
-
-        if (m_surface) {
-            vkDestroySurfaceKHR(reinterpret_cast<VkInstance>(m_instance), reinterpret_cast<VkSurfaceKHR>(m_surface), nullptr);
-            m_surface = nullptr;
-        }
-
-        destroy_debug_messenger();
-
-        vkDestroyInstance(reinterpret_cast<VkInstance>(m_instance), nullptr);
-        m_instance = nullptr;
-
-        m_initialized = false;
-    }
 
     std::string VulkanContext::shader_path(const char* filename) const {
         // User-specified runtime location:
@@ -1282,275 +1130,67 @@ namespace Honey {
         return (std::string("../../../assets/shaders/") + filename);
     }
 
-    static std::vector<uint32_t> read_spirv_u32_file(const std::string& path) {
-        std::ifstream file(path, std::ios::ate | std::ios::binary);
-        HN_CORE_ASSERT(file.is_open(), "Failed to open SPIR-V file: {0}", path);
-
-        const std::streamsize size = file.tellg();
-        HN_CORE_ASSERT(size > 0, "SPIR-V file empty: {0}", path);
-        HN_CORE_ASSERT((size % 4) == 0, "SPIR-V file size must be multiple of 4: {0}", path);
-
-        std::vector<uint32_t> data(static_cast<size_t>(size / 4));
-        file.seekg(0);
-        file.read(reinterpret_cast<char*>(data.data()), size);
-
-        HN_CORE_ASSERT(!data.empty(), "SPIR-V read produced empty buffer: {0}", path);
-        HN_CORE_INFO("Loaded SPIR-V: {0} ({1} bytes), magic=0x{2:X}",
-                     path, static_cast<uint64_t>(size), data[0]);
-
-        // SPIR-V magic number is 0x07230203
-        HN_CORE_ASSERT(data[0] == 0x07230203u, "Invalid SPIR-V magic for file: {0}", path);
-
-        return data;
-    }
-
-    VkShaderModule VulkanContext::create_shader_module_from_file(const std::string& path) {
-        auto code = read_spirv_u32_file(path);
-
-        VkShaderModuleCreateInfo ci{};
-        ci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-        ci.codeSize = code.size() * sizeof(uint32_t);
-        ci.pCode = code.data();
-
-        VkShaderModule module = VK_NULL_HANDLE;
-        VkResult res = vkCreateShaderModule(reinterpret_cast<VkDevice>(m_device), &ci, nullptr, &module);
-        HN_CORE_ASSERT(res == VK_SUCCESS, "vkCreateShaderModule failed for {0}", path);
-        return module;
-    }
-
     void VulkanContext::cleanup_pipeline() {
         if (!m_device)
             return;
 
-        if (m_pipeline) {
-            vkDestroyPipeline(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkPipeline>(m_pipeline), nullptr);
-            m_pipeline = nullptr;
-        }
-        if (m_pipeline_layout) {
-            vkDestroyPipelineLayout(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkPipelineLayout>(m_pipeline_layout), nullptr);
-            m_pipeline_layout = nullptr;
-        }
-        if (m_vert_module) {
-            vkDestroyShaderModule(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkShaderModule>(m_vert_module), nullptr);
-            m_vert_module = nullptr;
-        }
-        if (m_frag_module) {
-            vkDestroyShaderModule(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkShaderModule>(m_frag_module), nullptr);
-            m_frag_module = nullptr;
-        }
+        m_pipeline_quad.destroy(reinterpret_cast<VkDevice>(m_device));
     }
 
     void VulkanContext::create_graphics_pipeline() {
-        HN_PROFILE_FUNCTION();
+            HN_PROFILE_FUNCTION();
 
-        HN_CORE_ASSERT(m_device, "create_graphics_pipeline called without device");
-        HN_CORE_ASSERT(m_render_pass, "create_graphics_pipeline called without render pass");
+            HN_CORE_ASSERT(m_device, "create_graphics_pipeline called without device");
+            HN_CORE_ASSERT(m_render_pass, "create_graphics_pipeline called without render pass");
+            HN_CORE_ASSERT(m_global_set_layout, "create_graphics_pipeline called without global descriptor set layout");
 
-        cleanup_pipeline();
+            static ShaderCache cache; // uses default cache directory
+            const auto glsl = std::filesystem::path("../../../assets/shaders/Renderer2D_Quad.glsl");
+            const auto spirv = cache.get_or_compile_spirv_paths(glsl);
 
-        const std::string vert = shader_path("quad.vert.spv");
-        const std::string frag = shader_path("quad.frag.spv");
+            // Build a PipelineSpec for Renderer2D quads
+            PipelineSpec spec;
+            spec.shaderGLSLPath = glsl;
+            spec.topology = PrimitiveTopology::Triangles;
+            spec.cullMode = CullMode::None;
+            spec.frontFace = FrontFaceWinding::CounterClockwise;
+            spec.blend.enabled = false;             // enable later if needed
+            spec.depthStencil.depthTest = false;    // 2D: no depth
+            spec.depthStencil.depthWrite = false;
+            spec.passType = RenderPassType::Swapchain;
 
-        m_vert_module = create_shader_module_from_file(vert);
-        m_frag_module = create_shader_module_from_file(frag);
+            // Vertex bindings must match Renderer2D VA layout and shader locations
+            VertexInputBindingSpec static_binding;
+            static_binding.layout = BufferLayout {
+                { ShaderDataType::Float2, "a_local_pos"  },  // loc 0
+                { ShaderDataType::Float2, "a_local_tex"  }   // loc 1
+            };
 
-        VkPipelineShaderStageCreateInfo vert_stage{};
-        vert_stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        vert_stage.stage = VK_SHADER_STAGE_VERTEX_BIT;
-        vert_stage.module = reinterpret_cast<VkShaderModule>(m_vert_module);
-        vert_stage.pName = "main";
+            VertexInputBindingSpec instance_binding;
+            instance_binding.layout = BufferLayout {
+                { ShaderDataType::Float3, "i_center",       false, true }, // loc 2
+                { ShaderDataType::Float2, "i_half_size",    false, true }, // loc 3
+                { ShaderDataType::Float , "i_rotation",     false, true }, // loc 4
+                { ShaderDataType::Float4, "i_color",        false, true }, // loc 5
+                { ShaderDataType::Int,   "i_tex_index",     false, true }, // loc 6
+                { ShaderDataType::Float, "i_tiling",        false, true }, // loc 7
+                { ShaderDataType::Float2,"i_tex_coord_min", false, true }, // loc 8
+                { ShaderDataType::Float2,"i_tex_coord_max", false, true }, // loc 9
+                { ShaderDataType::Int,   "i_entity_id",     false, true }  // loc 10
+            };
 
-        VkPipelineShaderStageCreateInfo frag_stage{};
-        frag_stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        frag_stage.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-        frag_stage.module = reinterpret_cast<VkShaderModule>(m_frag_module);
-        frag_stage.pName = "main";
+            spec.vertexBindings.push_back(static_binding);
+            spec.vertexBindings.push_back(instance_binding);
 
-        VkPipelineShaderStageCreateInfo stages[] = { vert_stage, frag_stage };
-
-        // binding 0: static quad vertices
-        VkVertexInputBindingDescription binding0{};
-        binding0.binding = 0;
-        binding0.stride = sizeof(float) * 4; // vec2 pos + vec2 uv
-        binding0.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-
-        // binding 1: per-instance QuadInstance layout (MUST match Renderer2D::QuadInstance packing)
-        VkVertexInputBindingDescription binding1{};
-        binding1.binding = 1;
-        binding1.stride =
-            sizeof(float) * (3 + 2 + 1 + 4) + // center + half + rot + color
-            sizeof(int)   * (1 + 1) +         // tex_index + entity_id
-            sizeof(float) * (1) +             // tiling
-            sizeof(float) * (2 + 2);          // tex_coord_min/max
-        binding1.inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
-
-        VkVertexInputBindingDescription bindings[] = { binding0, binding1 };
-
-        // locations:
-        // 0: a_local_pos (vec2)
-        // 1: a_local_tex (vec2)
-        // 2: i_center (vec3)
-        // 3: i_half_size (vec2)
-        // 4: i_rotation (float)
-        // 5: i_color (vec4)
-        // 6: i_tex_index (int)
-        // 7: i_tiling (float)
-        // 8: i_tex_coord_min (vec2)
-        // 9: i_tex_coord_max (vec2)
-        // 10: i_entity_id (int)
-
-        VkVertexInputAttributeDescription attrs[11]{};
-
-        attrs[0].location = 0;
-        attrs[0].binding = 0;
-        attrs[0].format = VK_FORMAT_R32G32_SFLOAT;
-        attrs[0].offset = 0;
-
-        attrs[1].location = 1;
-        attrs[1].binding = 0;
-        attrs[1].format = VK_FORMAT_R32G32_SFLOAT;
-        attrs[1].offset = sizeof(float) * 2;
-
-        uint32_t off = 0;
-
-        attrs[2].location = 2;
-        attrs[2].binding = 1;
-        attrs[2].format = VK_FORMAT_R32G32B32_SFLOAT;
-        attrs[2].offset = off;
-        off += sizeof(float) * 3;
-
-        attrs[3].location = 3;
-        attrs[3].binding = 1;
-        attrs[3].format = VK_FORMAT_R32G32_SFLOAT;
-        attrs[3].offset = off;
-        off += sizeof(float) * 2;
-
-        attrs[4].location = 4;
-        attrs[4].binding = 1;
-        attrs[4].format = VK_FORMAT_R32_SFLOAT;
-        attrs[4].offset = off;
-        off += sizeof(float) * 1;
-
-        attrs[5].location = 5;
-        attrs[5].binding = 1;
-        attrs[5].format = VK_FORMAT_R32G32B32A32_SFLOAT;
-        attrs[5].offset = off;
-        off += sizeof(float) * 4;
-
-        attrs[6].location = 6;
-        attrs[6].binding = 1;
-        attrs[6].format = VK_FORMAT_R32_SINT;
-        attrs[6].offset = off;
-        off += sizeof(int) * 1;
-
-        attrs[7].location = 7;
-        attrs[7].binding = 1;
-        attrs[7].format = VK_FORMAT_R32_SFLOAT;
-        attrs[7].offset = off;
-        off += sizeof(float) * 1;
-
-        attrs[8].location = 8;
-        attrs[8].binding = 1;
-        attrs[8].format = VK_FORMAT_R32G32_SFLOAT;
-        attrs[8].offset = off;
-        off += sizeof(float) * 2;
-
-        attrs[9].location = 9;
-        attrs[9].binding = 1;
-        attrs[9].format = VK_FORMAT_R32G32_SFLOAT;
-        attrs[9].offset = off;
-        off += sizeof(float) * 2;
-
-        attrs[10].location = 10;
-        attrs[10].binding = 1;
-        attrs[10].format = VK_FORMAT_R32_SINT;
-        attrs[10].offset = off;
-
-        VkPipelineVertexInputStateCreateInfo vertex_input{};
-        vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-        vertex_input.vertexBindingDescriptionCount = 2;
-        vertex_input.pVertexBindingDescriptions = bindings;
-        vertex_input.vertexAttributeDescriptionCount = 11;
-        vertex_input.pVertexAttributeDescriptions = attrs;
-
-        VkPipelineInputAssemblyStateCreateInfo input_assembly{};
-        input_assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-        input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-        input_assembly.primitiveRestartEnable = VK_FALSE;
-
-        VkPipelineViewportStateCreateInfo viewport_state{};
-        viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-        viewport_state.viewportCount = 1;
-        viewport_state.scissorCount = 1;
-
-        VkDynamicState dyn_states[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
-        VkPipelineDynamicStateCreateInfo dynamic_state{};
-        dynamic_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-        dynamic_state.dynamicStateCount = 2;
-        dynamic_state.pDynamicStates = dyn_states;
-
-        VkPipelineRasterizationStateCreateInfo raster{};
-        raster.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-        raster.depthClampEnable = VK_FALSE;
-        raster.rasterizerDiscardEnable = VK_FALSE;
-        raster.polygonMode = VK_POLYGON_MODE_FILL;
-        raster.lineWidth = 1.0f;
-        raster.cullMode = VK_CULL_MODE_NONE;
-        raster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-        raster.depthBiasEnable = VK_FALSE;
-
-        VkPipelineMultisampleStateCreateInfo msaa{};
-        msaa.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-        msaa.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-        msaa.sampleShadingEnable = VK_FALSE;
-
-        VkPipelineColorBlendAttachmentState blend_att{};
-        blend_att.colorWriteMask =
-            VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-            VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-        blend_att.blendEnable = VK_FALSE;
-
-        VkPipelineColorBlendStateCreateInfo blend{};
-        blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-        blend.logicOpEnable = VK_FALSE;
-        blend.attachmentCount = 1;
-        blend.pAttachments = &blend_att;
-
-        VkPipelineLayoutCreateInfo layout_ci{};
-        layout_ci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-
-        VkDescriptorSetLayout set_layouts[] = { reinterpret_cast<VkDescriptorSetLayout>(m_global_set_layout) };
-        layout_ci.setLayoutCount = 1;
-        layout_ci.pSetLayouts = set_layouts;
-
-        VkPipelineLayout layout = VK_NULL_HANDLE;
-        VkResult layout_res = vkCreatePipelineLayout(reinterpret_cast<VkDevice>(m_device), &layout_ci, nullptr, &layout);
-        HN_CORE_ASSERT(layout_res == VK_SUCCESS, "vkCreatePipelineLayout failed");
-        m_pipeline_layout = reinterpret_cast<VkPipelineLayout>(layout);
-
-        VkGraphicsPipelineCreateInfo pipe{};
-        pipe.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-        pipe.stageCount = 2;
-        pipe.pStages = stages;
-        pipe.pVertexInputState = &vertex_input;
-        pipe.pInputAssemblyState = &input_assembly;
-        pipe.pViewportState = &viewport_state;
-        pipe.pRasterizationState = &raster;
-        pipe.pMultisampleState = &msaa;
-        pipe.pDepthStencilState = nullptr;
-        pipe.pColorBlendState = &blend;
-        pipe.pDynamicState = &dynamic_state;
-        pipe.layout = reinterpret_cast<VkPipelineLayout>(m_pipeline_layout);
-        pipe.renderPass = reinterpret_cast<VkRenderPass>(m_render_pass);
-        pipe.subpass = 0;
-
-        VkPipeline pipeline = VK_NULL_HANDLE;
-        VkResult pr = vkCreateGraphicsPipelines(reinterpret_cast<VkDevice>(m_device), VK_NULL_HANDLE, 1, &pipe, nullptr, &pipeline);
-        HN_CORE_ASSERT(pr == VK_SUCCESS, "vkCreateGraphicsPipelines failed");
-        m_pipeline = reinterpret_cast<VkPipeline>(pipeline);
-
-        HN_CORE_INFO("Vulkan pipeline created (quad-min shaders: {0}, {1})", vert, frag);
-    }
+            m_pipeline_quad.create(
+                reinterpret_cast<VkDevice>(m_device),
+                reinterpret_cast<VkRenderPass>(m_render_pass),
+                reinterpret_cast<VkDescriptorSetLayout>(m_global_set_layout),
+                spirv.vertex.string(),
+                spirv.fragment.string(),
+                spec
+            );
+        }
 
 
 

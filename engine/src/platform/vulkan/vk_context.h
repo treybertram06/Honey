@@ -1,6 +1,12 @@
 #pragma once
 
+#include "vk_backend.h"
+#include "vk_queue_lease.h"
 #include "Honey/renderer/graphics_context.h"
+#include "Honey/renderer/vertex_array.h"
+#include <glm/glm.hpp>
+
+#include "vk_pipeline.h"
 
 struct GLFWwindow;
 
@@ -29,7 +35,7 @@ typedef struct VkDescriptorSet_T* VkDescriptorSet;
 namespace Honey {
     class VulkanContext : public GraphicsContext {
     public:
-        VulkanContext(GLFWwindow* window_handle);
+        VulkanContext(GLFWwindow* window_handle, VulkanBackend* backend);
         ~VulkanContext();
 
         virtual void init() override;
@@ -45,17 +51,93 @@ namespace Honey {
         VkQueue get_graphics_queue() const { return m_graphics_queue; }
         VkCommandPool get_command_pool() const { return m_command_pool; }
 
+        struct FramePacket {
+            struct DrawCmd {
+                Ref<VertexArray> va;
+                uint32_t indexCount = 0;
+                uint32_t instanceCount = 1;
+            };
+
+            // Persistent-ish settings (can be overwritten by calls)
+            glm::vec4 clearColor{0.1f, 0.1f, 0.1f, 1.0f};
+
+            // One-shot per-frame flags/data
+            bool clearRequested = false;
+
+            glm::mat4 viewProjection{1.0f};
+            bool hasCamera = false;
+
+            std::array<void*, 32> textures{};
+            uint32_t textureCount = 0;
+            bool hasTextures = false;
+
+            std::vector<DrawCmd> draws;
+            size_t drawCursor = 0;
+
+            bool frame_begun = false;
+
+            enum class CmdType : uint8_t {
+                BeginSwapchainPass,
+                EndPass,
+                BindPipelineQuad2D,
+                BindGlobals,        // camera + textures for now
+                DrawIndexed
+            };
+
+            struct CmdBeginSwapchainPass {
+                glm::vec4 clearColor{0.1f, 0.1f, 0.1f, 1.0f};
+            };
+
+            struct CmdBindGlobals {
+                glm::mat4 viewProjection{1.0f};
+                bool hasCamera = false;
+
+                std::array<void*, 32> textures{};
+                uint32_t textureCount = 0;
+                bool hasTextures = false;
+            };
+
+            struct CmdDrawIndexed {
+                Ref<VertexArray> va;
+                uint32_t indexCount = 0;
+                uint32_t instanceCount = 1;
+            };
+
+            struct Cmd {
+                CmdType type{};
+                CmdBeginSwapchainPass begin{};
+                CmdBindGlobals globals{};
+                CmdDrawIndexed draw{};
+            };
+
+            std::vector<Cmd> cmds;
+
+            void begin_frame() {
+                // Keep old fields for now (will be removed once everything is migrated)
+                clearRequested = false;
+                hasCamera = false;
+                hasTextures = false;
+                textures = {};
+                textureCount = 0;
+                draws.clear();
+                drawCursor = 0;
+
+                cmds.clear();
+                frame_begun = true;
+
+                Cmd cmd{};
+                cmd.type = CmdType::BeginSwapchainPass;
+                cmd.begin.clearColor = clearColor;
+                cmds.push_back(cmd);
+            }
+        };
+
+        FramePacket& frame_packet() { return m_frame_packet; }
+        const FramePacket& frame_packet() const { return m_frame_packet; }
+
     private:
-        void create_instance();
+        // Per-window only:
         void create_surface();
-
-        bool check_validation_layer_support() const;
-        std::vector<const char*> get_required_instance_extensions() const;
-        void setup_debug_messenger();
-        void destroy_debug_messenger();
-
-        void pick_physical_device();
-        void create_logical_device();
 
         void create_swapchain();
         void create_image_views();
@@ -77,7 +159,6 @@ namespace Honey {
 
         void create_graphics_pipeline();
         void cleanup_pipeline();
-        VkShaderModule create_shader_module_from_file(const std::string& path);
         std::string shader_path(const char* filename) const;
 
         void create_global_descriptor_resources();
@@ -87,13 +168,14 @@ namespace Honey {
 
         GLFWwindow* m_window_handle = nullptr;
 
+        VulkanBackend* m_backend = nullptr;
+        VulkanQueueLease m_queue_lease{};
+
+        // Shared handles (owned by backend, cached here)
         VkInstance m_instance = nullptr;
-        VkSurfaceKHR m_surface = nullptr;
-
-        VkDebugUtilsMessengerEXT m_debug_messenger = nullptr;
-
         VkPhysicalDevice m_physical_device = nullptr;
         VkDevice m_device = nullptr;
+        VkSurfaceKHR m_surface = nullptr;
 
         uint32_t m_graphics_queue_family = UINT32_MAX;
         uint32_t m_present_queue_family = UINT32_MAX;
@@ -111,10 +193,7 @@ namespace Honey {
         VkRenderPass m_render_pass = nullptr;
         std::vector<VkFramebuffer> m_swapchain_framebuffers;
 
-        VkPipelineLayout m_pipeline_layout = nullptr;
-        VkPipeline m_pipeline = nullptr;
-        VkShaderModule m_vert_module = nullptr;
-        VkShaderModule m_frag_module = nullptr;
+        VulkanPipeline m_pipeline_quad;
 
         VkDescriptorSetLayout m_global_set_layout = nullptr;
         VkDescriptorPool m_descriptor_pool = nullptr;
@@ -132,6 +211,8 @@ namespace Honey {
         std::vector<VkFence> m_in_flight_fences;
 
         std::vector<VkFence> m_images_in_flight;
+
+        FramePacket m_frame_packet{};
 
         uint32_t m_current_frame = 0;
 

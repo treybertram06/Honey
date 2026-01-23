@@ -49,12 +49,20 @@ namespace Honey {
         HN_CORE_INFO("Creating window {0} ({1}, {2})", props.title, props.width, props.height);
 
         if (!s_glfw_initialized) {
-            //TODO: glfwTerminate on shutdown
-            int success = glfwInit();
-            HN_CORE_ASSERT(success, "Could not initialize GLFW!");
-            glfwSetErrorCallback(GLFW_error_callback);
+            auto& renderer_settings = get_settings().renderer;
 
-            s_glfw_initialized = true;
+            if (renderer_settings.api == RendererAPI::API::vulkan) {
+                // Application already called glfwInit() before creating the VulkanBackend.
+                // Mark it initialized so we don't call glfwInit() again.
+                glfwSetErrorCallback(GLFW_error_callback);
+                s_glfw_initialized = true;
+            } else {
+                // OpenGL path owns GLFW init here.
+                int success = glfwInit();
+                HN_CORE_ASSERT(success, "Could not initialize GLFW!");
+                glfwSetErrorCallback(GLFW_error_callback);
+                s_glfw_initialized = true;
+            }
         }
 
         auto& renderer_settings = get_settings().renderer;
@@ -85,7 +93,8 @@ namespace Honey {
                 m_window = glfwCreateWindow((int)props.width, (int)props.height, m_data.title.c_str(), nullptr, nullptr);
                 HN_CORE_ASSERT(m_window, "GLFW window creation failed!");
 
-                m_context = new VulkanContext(m_window);
+                auto& backend = Application::get().get_vulkan_backend();
+                m_context = new VulkanContext(m_window, &backend);
                 m_context->init();
                 m_data.context = m_context;
                 m_data.vsync = true;

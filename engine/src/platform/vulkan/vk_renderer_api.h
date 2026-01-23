@@ -5,6 +5,7 @@
 #include "vk_context.h"
 
 #include <glm/glm.hpp>
+#include <array>
 
 namespace Honey {
 
@@ -36,6 +37,8 @@ namespace Honey {
         Ref<UniformBuffer> create_uniform_buffer(uint32_t size, uint32_t binding) override;
 
         // Called by VulkanContext while recording the frame
+        static void set_recording_context(VulkanContext* ctx);
+
         static bool consume_draw_request(Ref<VertexArray>& out_va, uint32_t& out_index_count, uint32_t& out_instance_count);
         static glm::vec4 consume_clear_color();
         static bool consume_clear_requested();
@@ -48,11 +51,7 @@ namespace Honey {
         static void submit_bound_textures(const std::array<void*, k_max_texture_slots>& textures, uint32_t texture_count);
         static bool consume_bound_textures(std::array<void*, k_max_texture_slots>& out_textures, uint32_t& out_texture_count);
 
-
     private:
-        inline static glm::vec4 s_clear_color{0.1f, 0.1f, 0.1f, 1.0f};
-        inline static bool s_clear_requested = true;
-
         VkDevice m_device = nullptr;
         VkPhysicalDevice m_physical_device = nullptr;
     };

@@ -30,6 +30,10 @@ namespace Honey {
             return texture;
         }
 
+        void clear() {
+            m_texture_map.clear();
+        }
+
     private:
         std::unordered_map<std::string, Ref<Texture2D>> m_texture_map;
     };

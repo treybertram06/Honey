@@ -6,7 +6,7 @@
 #include <vulkan/vulkan.h>
 
 #include "Honey/core/engine.h"
-#include "platform/vulkan/vk_context.h"
+#include "platform/vulkan/vk_backend.h"
 
 #include "stb_image.h"
 
@@ -43,7 +43,7 @@ namespace Honey {
 
     VulkanTexture2D::~VulkanTexture2D() {
         HN_PROFILE_FUNCTION();
-        if (!m_device)
+        if (!m_backend || !m_backend->initialized() || !m_device)
             return;
 
         VkDevice dev = reinterpret_cast<VkDevice>(m_device);
@@ -65,7 +65,9 @@ namespace Honey {
             m_image_memory = nullptr;
         }
 
-        m_command_pool = nullptr;
+        m_backend = nullptr;
+        m_device = nullptr;
+        m_physical_device = nullptr;
     }
 
     bool VulkanTexture2D::operator==(const Texture& other) const {
@@ -99,16 +101,16 @@ namespace Honey {
     }
 
     void VulkanTexture2D::fetch_device_handles() {
-        auto* ctx = Application::get().get_window().get_context();
-        auto* vk = dynamic_cast<VulkanContext*>(ctx);
-        HN_CORE_ASSERT(vk, "VulkanTexture2D: Expected VulkanContext");
+        m_backend = &Application::get().get_vulkan_backend();
+        HN_CORE_ASSERT(m_backend && m_backend->initialized(), "VulkanTexture2D: VulkanBackend not initialized");
 
-        m_device = vk->get_device();
-        m_physical_device = vk->get_physical_device();
+        VkDevice dev = m_backend->device();
+        VkPhysicalDevice phys = m_backend->physical_device();
 
-        // Proper: use VulkanContext's actual graphics queue + family + command pool
-        m_graphics_queue = vk->get_graphics_queue();
-        m_command_pool = vk->get_command_pool();
+        HN_CORE_ASSERT(dev && phys, "VulkanTexture2D: Vulkan device not created yet (need a Vulkan window/surface first)");
+
+        m_device = reinterpret_cast<void*>(dev);
+        m_physical_device = reinterpret_cast<void*>(phys);
     }
 
     uint32_t VulkanTexture2D::find_memory_type(uint32_t type_filter, uint32_t props) {
@@ -251,118 +253,78 @@ namespace Honey {
         m_sampler = reinterpret_cast<void*>(sampler);
     }
 
-    void* VulkanTexture2D::begin_single_time_commands() {
-        VkCommandBufferAllocateInfo alloc{};
-        alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        alloc.commandPool = reinterpret_cast<VkCommandPool>(m_command_pool);
-        alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        alloc.commandBufferCount = 1;
-
-        VkCommandBuffer cmd = VK_NULL_HANDLE;
-        VkResult r = vkAllocateCommandBuffers(reinterpret_cast<VkDevice>(m_device), &alloc, &cmd);
-        HN_CORE_ASSERT(r == VK_SUCCESS, "vkAllocateCommandBuffers failed (texture)");
-
-        VkCommandBufferBeginInfo begin{};
-        begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-
-        r = vkBeginCommandBuffer(cmd, &begin);
-        HN_CORE_ASSERT(r == VK_SUCCESS, "vkBeginCommandBuffer failed (texture)");
-
-        return reinterpret_cast<void*>(cmd);
-    }
-
-    void VulkanTexture2D::end_single_time_commands(void* cmd_buffer) {
-        VkCommandBuffer cmd = reinterpret_cast<VkCommandBuffer>(cmd_buffer);
-        VkResult r = vkEndCommandBuffer(cmd);
-        HN_CORE_ASSERT(r == VK_SUCCESS, "vkEndCommandBuffer failed (texture)");
-
-        VkSubmitInfo submit{};
-        submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        submit.commandBufferCount = 1;
-        submit.pCommandBuffers = &cmd;
-
-        r = vkQueueSubmit(reinterpret_cast<VkQueue>(m_graphics_queue), 1, &submit, VK_NULL_HANDLE);
-        HN_CORE_ASSERT(r == VK_SUCCESS, "vkQueueSubmit failed (texture upload)");
-        vkQueueWaitIdle(reinterpret_cast<VkQueue>(m_graphics_queue));
-
-        vkFreeCommandBuffers(reinterpret_cast<VkDevice>(m_device),
-                             reinterpret_cast<VkCommandPool>(m_command_pool),
-                             1,
-                             &cmd);
-    }
-
     void VulkanTexture2D::transition_image_layout(uint32_t old_layout, uint32_t new_layout) {
-        VkCommandBuffer cmd = reinterpret_cast<VkCommandBuffer>(begin_single_time_commands());
+        HN_CORE_ASSERT(m_backend, "VulkanTexture2D::transition_image_layout: backend is null");
 
-        VkImageMemoryBarrier barrier{};
-        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        barrier.oldLayout = static_cast<VkImageLayout>(old_layout);
-        barrier.newLayout = static_cast<VkImageLayout>(new_layout);
-        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.image = reinterpret_cast<VkImage>(m_image);
-        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        barrier.subresourceRange.baseMipLevel = 0;
-        barrier.subresourceRange.levelCount = 1;
-        barrier.subresourceRange.baseArrayLayer = 0;
-        barrier.subresourceRange.layerCount = 1;
+        m_backend->immediate_submit([&](VkCommandBuffer cmd) {
+            VkImageMemoryBarrier barrier{};
+            barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barrier.oldLayout = static_cast<VkImageLayout>(old_layout);
+            barrier.newLayout = static_cast<VkImageLayout>(new_layout);
+            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.image = reinterpret_cast<VkImage>(m_image);
+            barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            barrier.subresourceRange.baseMipLevel = 0;
+            barrier.subresourceRange.levelCount = 1;
+            barrier.subresourceRange.baseArrayLayer = 0;
+            barrier.subresourceRange.layerCount = 1;
 
-        VkPipelineStageFlags src_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-        VkPipelineStageFlags dst_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+            VkPipelineStageFlags src_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+            VkPipelineStageFlags dst_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
 
-        if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED && new_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
-            barrier.srcAccessMask = 0;
-            barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            src_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-            dst_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-        } else if (old_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && new_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
-            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-            src_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-            dst_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-        } else if (old_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL && new_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
-            barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-            barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            src_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-            dst_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-        } else {
-            HN_CORE_ASSERT(false, "Unsupported image layout transition");
-        }
+            if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED && new_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+                barrier.srcAccessMask = 0;
+                barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                src_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+                dst_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+            } else if (old_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && new_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+                barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                src_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+                dst_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+            } else if (old_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL && new_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+                barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                src_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+                dst_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+            } else {
+                HN_CORE_ASSERT(false, "Unsupported image layout transition");
+            }
 
-        vkCmdPipelineBarrier(cmd,
-                             src_stage, dst_stage,
-                             0,
-                             0, nullptr,
-                             0, nullptr,
-                             1, &barrier);
+            vkCmdPipelineBarrier(cmd,
+                                 src_stage, dst_stage,
+                                 0,
+                                 0, nullptr,
+                                 0, nullptr,
+                                 1, &barrier);
+        });
 
-        end_single_time_commands(reinterpret_cast<void*>(cmd));
         m_current_layout = new_layout;
     }
 
     void VulkanTexture2D::copy_buffer_to_image(void* staging_buffer) {
-        VkCommandBuffer cmd = reinterpret_cast<VkCommandBuffer>(begin_single_time_commands());
+        HN_CORE_ASSERT(m_backend, "VulkanTexture2D::copy_buffer_to_image: backend is null");
 
-        VkBufferImageCopy region{};
-        region.bufferOffset = 0;
-        region.bufferRowLength = 0;
-        region.bufferImageHeight = 0;
-        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        region.imageSubresource.mipLevel = 0;
-        region.imageSubresource.baseArrayLayer = 0;
-        region.imageSubresource.layerCount = 1;
-        region.imageOffset = {0, 0, 0};
-        region.imageExtent = { m_width, m_height, 1 };
+        m_backend->immediate_submit([&](VkCommandBuffer cmd) {
+            VkBufferImageCopy region{};
+            region.bufferOffset = 0;
+            region.bufferRowLength = 0;
+            region.bufferImageHeight = 0;
+            region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            region.imageSubresource.mipLevel = 0;
+            region.imageSubresource.baseArrayLayer = 0;
+            region.imageSubresource.layerCount = 1;
+            region.imageOffset = {0, 0, 0};
+            region.imageExtent = { m_width, m_height, 1 };
 
-        vkCmdCopyBufferToImage(cmd,
-                               reinterpret_cast<VkBuffer>(staging_buffer),
-                               reinterpret_cast<VkImage>(m_image),
-                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                               1,
-                               &region);
-
-        end_single_time_commands(reinterpret_cast<void*>(cmd));
+            vkCmdCopyBufferToImage(cmd,
+                                   reinterpret_cast<VkBuffer>(staging_buffer),
+                                   reinterpret_cast<VkImage>(m_image),
+                                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                   1,
+                                   &region);
+        });
     }
 
     void VulkanTexture2D::init_from_pixels_rgba8(const void* rgba_pixels, uint32_t width, uint32_t height) {

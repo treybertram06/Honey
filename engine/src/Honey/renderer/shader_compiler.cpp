@@ -8,6 +8,8 @@
 #include <shaderc/shaderc.hpp>
 #include <glad/glad.h>
 
+#include "renderer.h"
+
 namespace Honey {
 
     inline int query_slots_clamped(int required = 16) {
@@ -24,7 +26,11 @@ ShaderCompiler::CompilationResult ShaderCompiler::compile_glsl_to_spirv(const st
         auto shader_sources = parse_shader_file(shader_path);
 
         if (shader_sources.vertex_source.empty() || shader_sources.fragment_source.empty()) {
-            result.error_message = "Failed to parse vertex or fragment shader from file: " + shader_path.string();
+            std::string empty_sources = "";
+            if (shader_sources.vertex_source.empty()) empty_sources += "vertex ";
+            if (shader_sources.fragment_source.empty()) empty_sources += "fragment ";
+
+            result.error_message = "Failed to parse vertex or fragment shader from file: " + shader_path.string() + ", empty source(s): " + empty_sources;
             return result;
         }
 
@@ -86,14 +92,20 @@ std::vector<uint32_t> ShaderCompiler::compile_single_stage(const std::string& so
     shaderc::Compiler compiler;
     shaderc::CompileOptions options;
 
-    // Explicitly set source language
-    options.SetSourceLanguage(shaderc_source_language_glsl);
-
-    // Target OpenGL environment since we feed SPIR-V to OpenGL via GL_ARB_gl_spirv
-    options.SetTargetEnvironment(shaderc_target_env_opengl, shaderc_env_version_opengl_4_5);
-
-    // Generate SPIR-V 1.3 which is compatible with GL 4.5 path
-    options.SetTargetSpirv(shaderc_spirv_version_1_3);
+        switch (Renderer::get_api()) {
+        case RendererAPI::API::opengl:
+            options.SetTargetEnvironment(shaderc_target_env_opengl, shaderc_env_version_opengl_4_5);
+            options.SetTargetSpirv(shaderc_spirv_version_1_3);
+            break;
+        case RendererAPI::API::vulkan:
+            options.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_0);
+            options.SetTargetSpirv(shaderc_spirv_version_1_0);
+            break;
+        default:
+            options.SetTargetEnvironment(shaderc_target_env_opengl, shaderc_env_version_opengl_4_5);
+            options.SetTargetSpirv(shaderc_spirv_version_1_3);
+            break;
+        }
 
     // Debug info in Debug builds, optimize in Release
 #ifdef BUILD_DEBUG
@@ -109,9 +121,13 @@ std::vector<uint32_t> ShaderCompiler::compile_single_stage(const std::string& so
     // Keep explicit bindings under our control
     options.SetAutoBindUniforms(false);
 
-        const int k_required = 16;
-        const int slots_to_use = query_slots_clamped(k_required);
+        //const int k_required = 16;
+        //const int slots_to_use = query_slots_clamped(k_required);
+        const int slots_to_use = 32;
         options.AddMacroDefinition("MAX_TEXTURE_SLOTS", std::to_string(slots_to_use));
+
+        if (Renderer::get_api() == RendererAPI::API::vulkan)
+            options.AddMacroDefinition("HN_VULKAN", "1");
 
     // Provide a basic includer which resolves from assets/shaders for both <> and "" includes
     class FSIncluder : public shaderc::CompileOptions::IncluderInterface {

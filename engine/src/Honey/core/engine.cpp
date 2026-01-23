@@ -29,6 +29,15 @@ namespace Honey {
         RendererAPI::set_api(renderer_settings.api);
         RenderCommand::set_renderer_api(RendererAPI::create());
 
+        if (renderer_settings.api == RendererAPI::API::vulkan) {
+            // VulkanBackend needs GLFW initialized for glfwVulkanSupported() and instance extensions.
+            int glfw_ok = glfwInit();
+            HN_CORE_ASSERT(glfw_ok, "Could not initialize GLFW!");
+
+            m_vulkan_backend = std::make_unique<VulkanBackend>();
+            m_vulkan_backend->init();
+        }
+
         m_window = Window::create(WindowProps(name, width, height));
 
         m_window->set_event_callback([this](auto && PH1) { on_event(std::forward<decltype(PH1)>(PH1)); });
@@ -49,10 +58,33 @@ namespace Honey {
     Application::~Application() {
         HN_PROFILE_FUNCTION();
 
+        if (RendererAPI::get_api() == RendererAPI::API::vulkan) {
+            auto* ctx = m_window ? m_window->get_context() : nullptr;
+            if (ctx) {
+                ctx->wait_idle();
+            }
+        }
+
         Renderer::shutdown();
         ScriptEngine::shutdown();
+        Texture2D::shutdown_cache();
 
         m_window.reset();
+
+        if (m_vulkan_backend) {
+            m_vulkan_backend->shutdown();
+            m_vulkan_backend.reset();
+        }
+    }
+
+    VulkanBackend& Application::get_vulkan_backend() {
+        HN_CORE_ASSERT(m_vulkan_backend, "get_vulkan_backend() called but Vulkan backend is not initialized");
+        return *m_vulkan_backend;
+    }
+
+    const VulkanBackend& Application::get_vulkan_backend() const {
+        HN_CORE_ASSERT(m_vulkan_backend, "get_vulkan_backend() const called but Vulkan backend is not initialized");
+        return *m_vulkan_backend;
     }
 
     void Application::push_layer(Layer *layer) {
@@ -105,6 +137,8 @@ namespace Honey {
             m_last_frame_time = time;
 
             if (!m_minimized) {
+                Renderer::begin_frame();
+
                 {
                     HN_PROFILE_SCOPE("LayerStack on_update_runtime");
 

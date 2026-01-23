@@ -173,6 +173,12 @@ add_library(engine STATIC
         src/platform/vulkan/vk_buffer.cpp
         src/platform/vulkan/vk_texture.h
         src/platform/vulkan/vk_texture.cpp
+        src/platform/vulkan/vk_queue_lease.h
+        src/platform/vulkan/vk_backend.h
+        src/platform/vulkan/vk_backend.cpp
+        src/Honey/renderer/pipeline_spec.h
+        src/platform/vulkan/vk_pipeline.h
+        src/platform/vulkan/vk_pipeline.cpp
 )
 
 # Apply MSVC runtime to engine itself

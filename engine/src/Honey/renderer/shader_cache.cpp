@@ -6,6 +6,8 @@
 #include <fstream>
 #include <sstream>
 
+#include "renderer.h"
+
 namespace {
     constexpr uint32_t kShaderCacheVersion = 1;
 
@@ -77,14 +79,18 @@ namespace Honey {
 
             // Load SPIR-V and create shader
             std::string shader_name = shader_path.stem().string();
-            asset.cached_shader = Shader::create_from_spirv_files(
-                asset.vertex_spirv_path,
-                asset.fragment_spirv_path
-            );
+            if (Renderer::get_api() == RendererAPI::API::opengl) {
+                asset.cached_shader = Shader::create_from_spirv_files(
+                    asset.vertex_spirv_path,
+                    asset.fragment_spirv_path
+                );
 
-            if (!asset.cached_shader) {
-                HN_CORE_ERROR("Failed to create shader from SPIR-V: {0}", shader_name);
-                return nullptr;
+                if (!asset.cached_shader) {
+                    HN_CORE_ERROR("Failed to create shader from SPIR-V: {0}", shader_name);
+                    return nullptr;
+                }
+            } else {
+                asset.cached_shader = nullptr;
             }
 
             m_shader_assets[shader_key] = std::move(asset);
@@ -94,6 +100,33 @@ namespace Honey {
             HN_CORE_ERROR("Shader compilation failed for {0}: {1}", shader_path.string(), e.what());
             return nullptr;
         }
+    }
+
+    ShaderCache::SpirvPaths ShaderCache::get_or_compile_spirv_paths(const std::filesystem::path& shader_path) {
+        std::string shader_key = shader_path.string();
+
+        // Ensure we have an asset entry and it is compiled
+        auto it = m_shader_assets.find(shader_key);
+        if (it == m_shader_assets.end() || needs_recompilation(it->second)) {
+            HN_CORE_INFO("Compiling shader (SPIR-V only): {0}", shader_path.string());
+            compile_shader_to_spirv(shader_path);
+
+            ShaderAsset asset;
+            asset.source_path = shader_path;
+            asset.vertex_spirv_path = get_spirv_cache_path(shader_path, "vert");
+            asset.fragment_spirv_path = get_spirv_cache_path(shader_path, "frag");
+            asset.last_modified = std::filesystem::last_write_time(shader_path);
+            asset.cached_shader = nullptr;
+
+            m_shader_assets[shader_key] = std::move(asset);
+            it = m_shader_assets.find(shader_key);
+        }
+
+        HN_CORE_ASSERT(it != m_shader_assets.end(), "ShaderCache: failed to create/find shader asset entry");
+        HN_CORE_ASSERT(std::filesystem::exists(it->second.vertex_spirv_path), "Missing cached vertex SPIR-V");
+        HN_CORE_ASSERT(std::filesystem::exists(it->second.fragment_spirv_path), "Missing cached fragment SPIR-V");
+
+        return { it->second.vertex_spirv_path, it->second.fragment_spirv_path };
     }
 
     bool ShaderCache::needs_recompilation(const ShaderAsset& asset) {
@@ -171,8 +204,20 @@ namespace Honey {
 
     std::filesystem::path ShaderCache::get_spirv_cache_path(const std::filesystem::path& shader_path, const std::string& stage) {
         std::string base = shader_path.stem().string();
+
         std::string contents = read_text_file(shader_path);
-        std::string hash = contents.empty() ? std::string("0") : fnv1a64_hex(contents);
+
+        // Include compile target in the hash so Vulkan/OpenGL don't collide.
+        std::string target_tag = "unknown";
+        switch (Renderer::get_api()) {
+        case RendererAPI::API::opengl: target_tag = "opengl"; break;
+        case RendererAPI::API::vulkan: target_tag = "vulkan"; break;
+        default: break;
+        }
+
+        std::string hash_input = target_tag + "\n" + contents;
+        std::string hash = hash_input.empty() ? std::string("0") : fnv1a64_hex(hash_input);
+
         std::string filename = base + ".v" + std::to_string(kShaderCacheVersion) + "." + hash + "." + stage + ".spv";
         return m_spirv_cache_dir / filename;
     }

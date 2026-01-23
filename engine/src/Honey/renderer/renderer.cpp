@@ -4,6 +4,7 @@
 #include "renderer_3d.h"
 #include "Honey/core/engine.h"
 #include "platform/opengl/opengl_shader.h"
+#include "platform/vulkan/vk_context.h"
 
 namespace Honey {
 
@@ -41,13 +42,6 @@ namespace Honey {
     void Renderer::shutdown() {
         HN_PROFILE_FUNCTION();
 
-        if (RendererAPI::get_api() == RendererAPI::API::vulkan) {
-            auto* ctx = Application::get().get_window().get_context();
-            if (ctx) {
-                ctx->wait_idle();
-            }
-        }
-
         switch (get_api()) {
         case RendererAPI::API::opengl:
             Renderer2D::shutdown();
@@ -65,11 +59,35 @@ namespace Honey {
             break;
         }
 
+        if (RendererAPI::get_api() == RendererAPI::API::vulkan) {
+            auto* ctx = Application::get().get_window().get_context();
+            if (ctx) {
+                ctx->wait_idle();
+            }
+        }
+
         RenderCommand::shutdown();
+
+        delete m_scene_data;
+        m_scene_data = nullptr;
+        m_shader_cache.reset();
     }
 
     void Renderer::on_window_resize(uint32_t width, uint32_t height) {
         RenderCommand::set_viewport(0, 0, width, height);
+    }
+
+    void Renderer::begin_frame() {
+        HN_PROFILE_FUNCTION();
+
+        if (get_api() != RendererAPI::API::vulkan)
+            return;
+
+        auto* base = Application::get().get_window().get_context();
+        auto* vk = dynamic_cast<VulkanContext*>(base);
+        HN_CORE_ASSERT(vk, "Renderer::begin_frame() expected VulkanContext when Vulkan is active");
+
+        vk->frame_packet().begin_frame();
     }
 
     void Renderer::begin_scene(OrthographicCamera& camera) {

@@ -189,18 +189,20 @@ namespace Honey {
         s_data->max_texture_slots = RenderCommand::get_max_texture_slots();
         s_data->texture_slots.resize(s_data->max_texture_slots);
 
-        s_data->white_texture = Texture2D::create(1,1);
-        uint32_t white = 0xffffffff;
-        s_data->white_texture->set_data(&white, sizeof(uint32_t));
-        s_data->texture_slots[0] = s_data->white_texture;
-
-        if (RendererAPI::get_api() == RendererAPI::API::vulkan) {
-            HN_CORE_INFO("Renderer2D::init() early return avoiding shader compilation");
-            return;
+        if (!s_data->white_texture) {
+            s_data->white_texture = Texture2D::create(1,1);
+            uint32_t white = 0xffffffff;
+            s_data->white_texture->set_data(&white, sizeof(uint32_t));
         }
+        s_data->texture_slots[0] = s_data->white_texture;
 
         auto shader_path = asset_root / "shaders" / "Renderer2D_Quad.glsl";
         s_data->quad_shader = s_data->shader_cache->get_or_compile_shader(shader_path);
+
+        if (RendererAPI::get_api() == RendererAPI::API::vulkan) {
+            HN_CORE_INFO("Renderer2D::init() early return avoiding lines and circles");
+            return;
+        }
 
 
 
@@ -247,10 +249,11 @@ namespace Honey {
         s_data->max_texture_slots = RenderCommand::get_max_texture_slots();
         s_data->texture_slots.resize(s_data->max_texture_slots);
 
-        s_data->white_texture = Texture2D::create(1,1);
-        //uint32_t white = 0xffffffff;
-        s_data->white_texture->set_data(&white, sizeof(uint32_t));
-        s_data->texture_slots[0] = s_data->white_texture;
+        if (!s_data->white_texture) {
+            s_data->white_texture = Texture2D::create(1,1);
+            uint32_t white = 0xffffffff;
+            s_data->white_texture->set_data(&white, sizeof(uint32_t));
+        }
 
         auto circle_shader_path = asset_root / "shaders" / "Renderer2D_Circle.glsl";
         s_data->circle_shader = s_data->shader_cache->get_or_compile_shader(circle_shader_path);
@@ -298,15 +301,14 @@ namespace Honey {
         s_data->max_texture_slots = RenderCommand::get_max_texture_slots();
         s_data->texture_slots.resize(s_data->max_texture_slots);
 
-        s_data->white_texture = Texture2D::create(1,1);
-        //uint32_t white = 0xffffffff;
-        s_data->white_texture->set_data(&white, sizeof(uint32_t));
-        s_data->texture_slots[0] = s_data->white_texture;
+        if (!s_data->white_texture) {
+            s_data->white_texture = Texture2D::create(1,1);
+            uint32_t white = 0xffffffff;
+            s_data->white_texture->set_data(&white, sizeof(uint32_t));
+        }
 
         auto line_shader_path = asset_root / "shaders" / "Renderer2D_Line.glsl";
         s_data->line_shader = s_data->shader_cache->get_or_compile_shader(line_shader_path);
-
-
 
 
 
@@ -350,7 +352,12 @@ namespace Honey {
 
         s_data->camera_uniform_buffer.reset();
 
+        for (auto& t : s_data->texture_slots)
+            t.reset();
         s_data->texture_slots.clear();
+        s_data->texture_slots.shrink_to_fit();
+        s_data->texture_slot_index = 1;
+
         s_data->white_texture.reset();
 
         s_data->shader_cache.reset();

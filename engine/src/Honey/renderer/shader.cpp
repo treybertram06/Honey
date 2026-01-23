@@ -14,6 +14,7 @@ namespace Honey {
         switch (Renderer::get_api()) {
             case RendererAPI::API::none:     HN_CORE_ASSERT(false, "RendererAPI::none is not supported."); return nullptr;
             case RendererAPI::API::opengl:   return std::make_shared<OpenGLShader>(path.generic_string());
+            case RendererAPI::API::vulkan:   return nullptr;
         }
 
         HN_CORE_ASSERT(false, "Unknown RendererAPI.");
@@ -24,6 +25,7 @@ namespace Honey {
         switch (Renderer::get_api()) {
             case RendererAPI::API::none:     HN_CORE_ASSERT(false, "RendererAPI::none is not supported."); return nullptr;
             case RendererAPI::API::opengl:   return std::make_shared<OpenGLShader>(name, vertex_src, fragment_src);
+            case RendererAPI::API::vulkan:   return nullptr;
         }
 
         HN_CORE_ASSERT(false, "Unknown RendererAPI.");
@@ -37,6 +39,7 @@ namespace Honey {
         switch (Renderer::get_api()) {
             case RendererAPI::API::none:   HN_CORE_ASSERT(false, "RendererAPI::none is not supported."); return nullptr;
             case RendererAPI::API::opengl: return std::make_shared<OpenGLShader>(name, vertex_spirv, fragment_spirv);
+            case RendererAPI::API::vulkan:   return nullptr;
         }
         HN_CORE_ASSERT(false, "Unknown RendererAPI.");
         return nullptr;

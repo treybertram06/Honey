@@ -16,6 +16,8 @@
 #include "Honey/renderer/vertex_array.h"
 #include "../renderer/camera.h"
 
+#include "platform/vulkan/vk_backend.h"
+
 namespace Honey {
 
     class HONEY_API Application
@@ -37,12 +39,19 @@ namespace Honey {
         inline static void quit() { m_running = false; }
 
         ImGuiLayer* get_imgui_layer() { return m_imgui_layer; }
+
+        VulkanBackend& get_vulkan_backend();
+        const VulkanBackend& get_vulkan_backend() const;
+
     private:
         bool on_window_close(WindowCloseEvent& e);
         bool on_window_resize(WindowResizeEvent& e);
 
         Scope<Window> m_window;
         ImGuiLayer* m_imgui_layer;
+
+        std::unique_ptr<VulkanBackend> m_vulkan_backend;
+
         static bool m_running;
         bool m_minimized = false;
         LayerStack m_layer_stack;
