@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+#include "imgui_impl_vulkan.h"
+
 namespace Honey {
 
     // -----------------------------
@@ -196,6 +198,7 @@ namespace Honey {
         if (device) {
             vkDeviceWaitIdle(device);
 
+            shutdown_imgui_resources();
             // Destroys fence/command pool used by immediate_submit()
             shutdown_upload_context();
 
@@ -253,6 +256,7 @@ namespace Honey {
 
             // Device now exists; create upload context once.
             init_upload_context();
+            init_imgui_resources();
         }
 
         // For every surface (including first), compute the best present family:
@@ -416,6 +420,133 @@ namespace Honey {
         if (!lease.sharedPresent && lease.presentQueueIndex != UINT32_MAX) {
             m_free_present_indices.push_back(lease.presentQueueIndex);
         }
+    }
+
+    VkCommandBuffer VulkanBackend::begin_single_time_commands() {
+            HN_CORE_ASSERT(m_device, "begin_single_time_commands requires valid device");
+            HN_CORE_ASSERT(m_upload_command_pool, "begin_single_time_commands requires upload command pool");
+
+            VkCommandBufferAllocateInfo alloc{};
+            alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+            alloc.commandPool = m_upload_command_pool;
+            alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            alloc.commandBufferCount = 1;
+
+            VkCommandBuffer cmd = VK_NULL_HANDLE;
+            VkResult r = vkAllocateCommandBuffers(m_device, &alloc, &cmd);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "vkAllocateCommandBuffers failed (begin_single_time_commands)");
+
+            VkCommandBufferBeginInfo begin{};
+            begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+            r = vkBeginCommandBuffer(cmd, &begin);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "vkBeginCommandBuffer failed (begin_single_time_commands)");
+
+            return cmd;
+        }
+
+        void VulkanBackend::end_single_time_commands(VkCommandBuffer cmd) {
+            HN_CORE_ASSERT(m_device, "end_single_time_commands requires valid device");
+            HN_CORE_ASSERT(m_upload_fence && m_upload_queue, "end_single_time_commands requires upload context");
+            HN_CORE_ASSERT(cmd, "end_single_time_commands called with null command buffer");
+
+            VkResult r = vkEndCommandBuffer(cmd);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "vkEndCommandBuffer failed (end_single_time_commands)");
+
+            vkResetFences(m_device, 1, &m_upload_fence);
+
+            VkSubmitInfo submit{};
+            submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+            submit.commandBufferCount = 1;
+            submit.pCommandBuffers = &cmd;
+
+            {
+                std::scoped_lock qlk(m_shared_graphics_mutex);
+                r = vkQueueSubmit(m_upload_queue, 1, &submit, m_upload_fence);
+            }
+            HN_CORE_ASSERT(r == VK_SUCCESS, "vkQueueSubmit failed (end_single_time_commands)");
+
+            r = vkWaitForFences(m_device, 1, &m_upload_fence, VK_TRUE, UINT64_MAX);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "vkWaitForFences failed (end_single_time_commands)");
+
+            vkFreeCommandBuffers(m_device, m_upload_command_pool, 1, &cmd);
+        }
+
+        void VulkanBackend::init_imgui_resources() {
+                    HN_PROFILE_FUNCTION();
+                    if (!m_device)
+                        return;
+
+                    // Make sure Dear ImGui's Vulkan backend knows how to call Vulkan functions.
+                    // We use vkGetInstanceProcAddr to resolve all required entry points.
+                    {
+                        const uint32_t api_version = VK_API_VERSION_1_3; // or ImGui_ImplVulkan_GetDefaultApiVersion()
+                        bool ok = ImGui_ImplVulkan_LoadFunctions(
+                            api_version,
+                            [](const char* name, void* user_data) -> PFN_vkVoidFunction {
+                                VkInstance instance = reinterpret_cast<VkInstance>(user_data);
+                                return vkGetInstanceProcAddr(instance, name);
+                            },
+                            reinterpret_cast<void*>(m_instance)
+                        );
+                        HN_CORE_ASSERT(ok, "ImGui_ImplVulkan_LoadFunctions failed");
+                    }
+
+                    // Descriptor pool for ImGui. This is straight from Dear ImGui examples (with minor tweaks).
+                    {
+                        VkDescriptorPoolSize pool_sizes[] = {
+                            { VK_DESCRIPTOR_TYPE_SAMPLER,                1000 },
+                            { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000 },
+                            { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,          1000 },
+                            { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,          1000 },
+                            { VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER,   1000 },
+                            { VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER,   1000 },
+                            { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,         1000 },
+                            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,         1000 },
+                            { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000 },
+                            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000 },
+                            { VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT,       1000 }
+                        };
+
+                        VkDescriptorPoolCreateInfo pool_info{};
+                        pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+                        pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+                        pool_info.maxSets = 1000 * (uint32_t)(sizeof(pool_sizes) / sizeof(pool_sizes[0]));
+                        pool_info.poolSizeCount = (uint32_t)(sizeof(pool_sizes) / sizeof(pool_sizes[0]));
+                        pool_info.pPoolSizes = pool_sizes;
+
+                        VkResult r = vkCreateDescriptorPool(m_device, &pool_info, nullptr, &m_imgui_descriptor_pool);
+                        HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateDescriptorPool failed for ImGui: {0}", vk_result_to_string(r));
+                    }
+
+                    // We no longer create a separate ImGui render pass or per‑frame ImGui command buffer here.
+                    // The main VulkanContext command buffer and swapchain render pass are used instead.
+                }
+
+            void VulkanBackend::shutdown_imgui_resources() {
+                if (!m_device)
+                    return;
+
+                // No ImGui‑specific command pool/buffer or render pass anymore.
+                if (m_imgui_descriptor_pool) {
+                    vkDestroyDescriptorPool(m_device, m_imgui_descriptor_pool, nullptr);
+                    m_imgui_descriptor_pool = VK_NULL_HANDLE;
+                }
+            }
+
+    void VulkanBackend::render_imgui_on_current_swapchain_image(VkCommandBuffer cmd,
+                                                                        VkImageView /*target_view*/,
+                                                                        VkExtent2D /*extent*/) {
+        HN_CORE_ASSERT(m_device, "render_imgui_on_current_swapchain_image: device is null");
+
+        ImDrawData* draw_data = ImGui::GetDrawData();
+        if (!draw_data || draw_data->CmdListsCount == 0)
+            return;
+
+        // Let Dear ImGui's Vulkan backend record draw calls into our command buffer.
+        // We pass VK_NULL_HANDLE as pipeline; the backend will use its internally created pipeline.
+        ImGui_ImplVulkan_RenderDrawData(draw_data, cmd, VK_NULL_HANDLE);
     }
 
     // -----------------------------

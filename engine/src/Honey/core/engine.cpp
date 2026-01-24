@@ -45,10 +45,8 @@ namespace Honey {
 
         Renderer::init();
 
-        if (renderer_settings.api == RendererAPI::API::opengl) {
-            m_imgui_layer = new ImGuiLayer();
-            push_overlay(m_imgui_layer);
-        } // TEMP
+        m_imgui_layer = new ImGuiLayer();
+        push_overlay(m_imgui_layer);
 
         ScriptEngine::init();
 
@@ -148,16 +146,14 @@ namespace Honey {
                 }
 
                 auto& renderer_settings = get_settings().renderer;
-                if (renderer_settings.api == RendererAPI::API::opengl) {
-                    m_imgui_layer->begin();
-                    {
-                        HN_PROFILE_SCOPE("LayerStack on_imgui_render");
-                        for (Layer* layer : m_layer_stack) {
-                            layer->on_imgui_render();
-                        }
-                    }
-                    m_imgui_layer->end();
+                m_imgui_layer->begin();
+                {
+                    HN_PROFILE_SCOPE("LayerStack on_imgui_render");
+                    for (Layer* layer : m_layer_stack) {
+                        layer->on_imgui_render();
                 }
+                }
+                m_imgui_layer->end();
             }
 
             m_window->on_update();

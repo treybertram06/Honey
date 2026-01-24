@@ -3,6 +3,7 @@
 #include "Honey/events/key_event.h"
 #include "Honey/events/mouse_event.h"
 #include "../core/layer.h"
+#include "Honey/renderer/renderer_api.h"
 
 namespace Honey {
 
@@ -38,9 +39,13 @@ namespace Honey {
 
 
     private:
+        void init_opengl_backend();
+        void init_vulkan_backend();
+
         bool m_block_events = true;
         float m_time = 0.0f;
         UITheme m_current_theme = UITheme::Monochrome;
+        RendererAPI::API m_api = RendererAPI::API::none;
 
 
     };

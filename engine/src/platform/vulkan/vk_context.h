@@ -50,6 +50,7 @@ namespace Honey {
         uint32_t get_graphics_queue_family() const { return m_graphics_queue_family; }
         VkQueue get_graphics_queue() const { return m_graphics_queue; }
         VkCommandPool get_command_pool() const { return m_command_pool; }
+        VkRenderPass get_render_pass() const { return m_render_pass; }
 
         struct FramePacket {
             struct DrawCmd {
@@ -135,6 +136,10 @@ namespace Honey {
         FramePacket& frame_packet() { return m_frame_packet; }
         const FramePacket& frame_packet() const { return m_frame_packet; }
 
+        uint32_t get_swapchain_image_format() const { return m_swapchain_image_format; }
+        uint32_t get_swapchain_extent_width()  const { return m_swapchain_extent_width; }
+        uint32_t get_swapchain_extent_height() const { return m_swapchain_extent_height; }
+
     private:
         // Per-window only:
         void create_surface();
@@ -183,8 +188,8 @@ namespace Honey {
         VkQueue m_present_queue = nullptr;
 
         VkSwapchainKHR m_swapchain = nullptr;
-        std::vector<VkImage> m_swapchain_images;
-        std::vector<VkImageView> m_swapchain_image_views;
+        std::vector<void*> m_swapchain_images;
+        std::vector<void*> m_swapchain_image_views;
 
         uint32_t m_swapchain_image_format = 0; // VkFormat stored as uint32_t to avoid vulkan.h in header
         uint32_t m_swapchain_extent_width = 0;

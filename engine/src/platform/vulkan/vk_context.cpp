@@ -11,6 +11,7 @@
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.h>
 
+#include "imgui.h"
 #include "vk_buffer.h"
 #include "vk_texture.h"
 #include "Honey/renderer/shader_cache.h"
@@ -999,20 +1000,46 @@ namespace Honey {
                     break;
             }
             case FramePacket::CmdType::EndPass: {
-                    if (render_pass_open) {
-                        vkCmdEndRenderPass(cmd);
-                        render_pass_open = false;
-                    }
-                    break;
-            }
-            }
-        }
+                        if (render_pass_open) {
+                            // Before ending the main swapchain pass, draw Dear ImGui on top.
+                            if (ImGui::GetDrawData() && ImGui::GetDrawData()->CmdListsCount > 0 && m_backend) {
+                                VkExtent2D imgui_extent{
+                                    m_swapchain_extent_width,
+                                    m_swapchain_extent_height
+                                };
+                                VkImageView imgui_target_view =
+                                    reinterpret_cast<VkImageView>(m_swapchain_image_views[image_index]);
 
-        if (render_pass_open) {
+                                m_backend->render_imgui_on_current_swapchain_image(cmd,
+                                                                                   imgui_target_view,
+                                                                                   imgui_extent);
+                            }
+
+                            vkCmdEndRenderPass(cmd);
+                            render_pass_open = false;
+                        }
+                        break;
+                }
+                }
+            }
+
+            if (render_pass_open) {
+                // Safety: if EndPass was never seen, still render ImGui once and close the pass.
+                if (ImGui::GetDrawData() && ImGui::GetDrawData()->CmdListsCount > 0 && m_backend) {
+                    VkExtent2D imgui_extent{
+                        m_swapchain_extent_width,
+                        m_swapchain_extent_height
+                    };
+                    VkImageView imgui_target_view =
+                        reinterpret_cast<VkImageView>(m_swapchain_image_views[image_index]);
+
+                    m_backend->render_imgui_on_current_swapchain_image(cmd,
+                                                                       imgui_target_view,
+                                                                       imgui_extent);
+                }
             vkCmdEndRenderPass(cmd);
             render_pass_open = false;
         }
-
 
         res = vkEndCommandBuffer(cmd);
         HN_CORE_ASSERT(res == VK_SUCCESS, "vkEndCommandBuffer failed: {0}", vk_result_to_string(res));

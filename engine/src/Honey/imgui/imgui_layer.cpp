@@ -4,6 +4,7 @@
 #include "imgui.h"
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_opengl3.h"
+#include "backends/imgui_impl_vulkan.h"
 
 #include "../core/engine.h"
 
@@ -12,6 +13,8 @@
 #include <glad/glad.h>
 
 #include <ImGuizmo.h>
+
+#include "platform/vulkan/vk_context.h"
 
 namespace Honey {
 
@@ -59,19 +62,90 @@ namespace Honey {
 
          set_theme(UITheme::HoneyAmber);
 
-         Application& app = Application::get();
-         GLFWwindow* window = static_cast<GLFWwindow*>(app.get_window().get_native_window());
-
-         ImGui_ImplGlfw_InitForOpenGL(window, true);
-         ImGui_ImplOpenGL3_Init("#version 410");
+         m_api = RendererAPI::get_api();
+         switch (m_api) {
+         case RendererAPI::API::opengl:
+             init_opengl_backend();
+             break;
+         case RendererAPI::API::vulkan:
+             init_vulkan_backend();
+             break;
+         default:
+             HN_CORE_ASSERT(false, "ImGuiLayer: unsupported renderer API for ImGui");
+             break;
+         }
 
      }
 
-    void ImGuiLayer::on_detach() {
-     	HN_PROFILE_FUNCTION();
+    void ImGuiLayer::init_opengl_backend() {
+        Application& app = Application::get();
+        GLFWwindow* window = static_cast<GLFWwindow*>(app.get_window().get_native_window());
 
-         ImGui_ImplOpenGL3_Shutdown();
-         ImGui_ImplGlfw_Shutdown();
+        ImGui_ImplGlfw_InitForOpenGL(window, true);
+        ImGui_ImplOpenGL3_Init("#version 410");
+    }
+
+    void ImGuiLayer::init_vulkan_backend() {
+                 Application& app = Application::get();
+                 GLFWwindow* window = static_cast<GLFWwindow*>(app.get_window().get_native_window());
+
+                 auto& vk_backend = app.get_vulkan_backend();
+
+                 ImGui_ImplGlfw_InitForVulkan(window, true);
+
+                 ImGui_ImplVulkan_InitInfo init_info{};
+                 init_info.Instance = vk_backend.get_instance();
+                 init_info.PhysicalDevice = vk_backend.get_physical_device();
+                 init_info.Device = vk_backend.get_device();
+                 init_info.QueueFamily = vk_backend.get_graphics_queue_family_index();
+                 init_info.Queue = vk_backend.get_graphics_queue();
+                 init_info.PipelineCache = VK_NULL_HANDLE;
+                 init_info.DescriptorPool = vk_backend.get_imgui_descriptor_pool();
+                 init_info.MinImageCount = vk_backend.get_min_image_count();
+                 init_info.ImageCount = vk_backend.get_image_count();
+                 init_info.Allocator = nullptr;
+                 init_info.CheckVkResultFn = [](VkResult err) {
+                     HN_CORE_ASSERT(err == VK_SUCCESS, "ImGui Vulkan backend error");
+                 };
+
+                 // We use the standard render-pass path (no dynamic rendering).
+                 init_info.UseDynamicRendering = false;
+
+                 {
+                     GraphicsContext* gc = app.get_window().get_context();
+                     auto* vk_ctx = dynamic_cast<Honey::VulkanContext*>(gc);
+                     HN_CORE_ASSERT(vk_ctx, "ImGuiLayer Vulkan: window context is not a VulkanContext");
+
+                     VkRenderPass render_pass = reinterpret_cast<VkRenderPass>(vk_ctx->get_render_pass());
+                     HN_CORE_ASSERT(render_pass, "ImGuiLayer Vulkan: swapchain render pass is null");
+
+                     ImGui_ImplVulkan_PipelineInfo& pi = init_info.PipelineInfoMain;
+                     memset(&pi, 0, sizeof(pi));
+                     pi.RenderPass = render_pass;
+                     pi.Subpass = 0;
+                     pi.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+                     pi.SwapChainImageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+                 }
+
+                 ImGui_ImplVulkan_Init(&init_info);
+             }
+
+    void ImGuiLayer::on_detach() {
+         HN_PROFILE_FUNCTION();
+
+         switch (m_api) {
+         case RendererAPI::API::opengl:
+             ImGui_ImplOpenGL3_Shutdown();
+             ImGui_ImplGlfw_Shutdown();
+             break;
+         case RendererAPI::API::vulkan:
+             ImGui_ImplVulkan_Shutdown();
+             ImGui_ImplGlfw_Shutdown();
+             break;
+         default:
+             break;
+         }
+
          ImGui::DestroyContext();
      }
 
@@ -103,8 +177,19 @@ namespace Honey {
          Application& app = Application::get();
          io.DisplaySize = ImVec2(app.get_window().get_width(), app.get_window().get_height());
 
-         ImGui_ImplOpenGL3_NewFrame();
-         ImGui_ImplGlfw_NewFrame();
+         switch (m_api) {
+         case RendererAPI::API::opengl:
+             ImGui_ImplOpenGL3_NewFrame();
+             ImGui_ImplGlfw_NewFrame();
+             break;
+         case RendererAPI::API::vulkan:
+             ImGui_ImplVulkan_NewFrame();
+             ImGui_ImplGlfw_NewFrame();
+             break;
+         default:
+             break;
+         }
+
          ImGui::NewFrame();
          ImGuizmo::BeginFrame();
     }
@@ -116,7 +201,18 @@ namespace Honey {
 
 
          ImGui::Render();
-         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+         switch (m_api) {
+         case RendererAPI::API::opengl:
+             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+             break;
+         case RendererAPI::API::vulkan: {
+                 // Vulkan backend handles this
+                 break;
+         }
+         default:
+             break;
+         }
 
          if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
              GLFWwindow* backup_current_context = glfwGetCurrentContext();

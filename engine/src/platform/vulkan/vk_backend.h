@@ -29,6 +29,21 @@ namespace Honey {
         VkPhysicalDevice physical_device() const { return m_physical_device; }
         VkDevice device() const { return m_device; }
 
+        VkInstance          get_instance() const          { return m_instance; }
+        VkPhysicalDevice    get_physical_device() const   { return m_physical_device; }
+        VkDevice            get_device() const            { return m_device; }
+        uint32_t            get_graphics_queue_family_index() const { return m_families.graphicsFamily; }
+        VkQueue             get_graphics_queue() const    { return !m_graphics_queues.empty() ? m_graphics_queues[0] : VK_NULL_HANDLE; }
+
+        VkDescriptorPool    get_imgui_descriptor_pool() const { return m_imgui_descriptor_pool; }
+
+        uint32_t            get_min_image_count() const  { return m_min_image_count; }
+        uint32_t            get_image_count() const      { return m_image_count; }
+
+
+        VkCommandBuffer     begin_single_time_commands();
+        void                end_single_time_commands(VkCommandBuffer cmd);
+
         // Acquire queues for a window/surface. If unique queues are not available, returns shared queues.
         VulkanQueueLease acquire_queue_lease(VkSurfaceKHR surface);
 
@@ -42,6 +57,8 @@ namespace Honey {
         // Thread-safe helper for one-off GPU work (uploads, layout transitions, etc.).
         // Serializes through an internal mutex and blocks until completion.
         void immediate_submit(const std::function<void(VkCommandBuffer)>& record);
+
+        void render_imgui_on_current_swapchain_image(VkCommandBuffer cmd, VkImageView target_view, VkExtent2D extent);
 
     private:
         struct QueueFamilyInfo {
@@ -68,6 +85,8 @@ namespace Honey {
         void init_upload_context();
         void shutdown_upload_context();
 
+        void init_imgui_resources();
+        void shutdown_imgui_resources();
     private:
         bool m_initialized = false;
 
@@ -97,6 +116,13 @@ namespace Honey {
         VkCommandPool m_upload_command_pool = VK_NULL_HANDLE;
         VkFence m_upload_fence = VK_NULL_HANDLE;
         VkQueue m_upload_queue = VK_NULL_HANDLE;
+
+        VkDescriptorPool m_imgui_descriptor_pool = VK_NULL_HANDLE;
+
+        // Placeholder image counts for ImGui. If you already know your swapchain
+        // image counts elsewhere, you can wire them in here.
+        uint32_t m_min_image_count = 2;
+        uint32_t m_image_count     = 2;
 
         static constexpr uint32_t k_desired_queues_per_family = 4;
     };
