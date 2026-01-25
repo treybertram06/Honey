@@ -2,6 +2,7 @@
 #include "vk_renderer_api.h"
 
 #include "vk_buffer.h"
+#include "vk_framebuffer.h"
 #include "vk_vertex_array.h"
 #include "Honey/core/engine.h"
 
@@ -120,6 +121,10 @@ namespace Honey {
     Ref<UniformBuffer> VulkanRendererAPI::create_uniform_buffer(uint32_t size, uint32_t binding) {
         HN_CORE_ASSERT(m_device && m_physical_device, "VulkanRendererAPI not initialized (device not available)");
         return CreateRef<VulkanUniformBuffer>(m_device, m_physical_device, size, binding);
+    }
+
+    Ref<Framebuffer> VulkanRendererAPI::create_framebuffer(const FramebufferSpecification& spec) {
+        return CreateRef<VulkanFramebuffer>(spec, &Application::get().get_vulkan_backend());
     }
 
     void VulkanRendererAPI::submit_camera_view_projection(const glm::mat4& view_projection) {

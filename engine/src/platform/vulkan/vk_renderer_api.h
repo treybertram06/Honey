@@ -35,6 +35,7 @@ namespace Honey {
         Ref<IndexBuffer> create_index_buffer(uint32_t* indices, uint32_t size) override;
         Ref<VertexArray> create_vertex_array() override;
         Ref<UniformBuffer> create_uniform_buffer(uint32_t size, uint32_t binding) override;
+        Ref<Framebuffer> create_framebuffer(const FramebufferSpecification& spec) override;
 
         // Called by VulkanContext while recording the frame
         static void set_recording_context(VulkanContext* ctx);

@@ -179,6 +179,8 @@ add_library(engine STATIC
         src/Honey/renderer/pipeline_spec.h
         src/platform/vulkan/vk_pipeline.h
         src/platform/vulkan/vk_pipeline.cpp
+        src/platform/vulkan/vk_framebuffer.h
+        src/platform/vulkan/vk_framebuffer.cpp
 )
 
 # Apply MSVC runtime to engine itself

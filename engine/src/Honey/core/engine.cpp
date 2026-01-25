@@ -117,12 +117,6 @@ namespace Honey {
 
     }
 
-
-
-
-
-
-
     void Application::run() {
         HN_PROFILE_FUNCTION();
 
@@ -151,9 +145,17 @@ namespace Honey {
                     HN_PROFILE_SCOPE("LayerStack on_imgui_render");
                     for (Layer* layer : m_layer_stack) {
                         layer->on_imgui_render();
-                }
+                    }
                 }
                 m_imgui_layer->end();
+
+                if (RendererAPI::get_api() == RendererAPI::API::vulkan) {
+                    // nullptr => main window / swapchain
+                    Renderer::set_render_target(nullptr);
+                    Renderer::begin_pass();
+                    // Any future direct window-space rendering would go here
+                    Renderer::end_pass();
+                }
             }
 
             m_window->on_update();

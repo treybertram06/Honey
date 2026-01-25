@@ -474,66 +474,93 @@ namespace Honey {
         }
 
         void VulkanBackend::init_imgui_resources() {
-                    HN_PROFILE_FUNCTION();
-                    if (!m_device)
-                        return;
+        HN_PROFILE_FUNCTION();
+        if (!m_device)
+            return;
 
-                    // Make sure Dear ImGui's Vulkan backend knows how to call Vulkan functions.
-                    // We use vkGetInstanceProcAddr to resolve all required entry points.
-                    {
-                        const uint32_t api_version = VK_API_VERSION_1_3; // or ImGui_ImplVulkan_GetDefaultApiVersion()
-                        bool ok = ImGui_ImplVulkan_LoadFunctions(
-                            api_version,
-                            [](const char* name, void* user_data) -> PFN_vkVoidFunction {
-                                VkInstance instance = reinterpret_cast<VkInstance>(user_data);
-                                return vkGetInstanceProcAddr(instance, name);
-                            },
-                            reinterpret_cast<void*>(m_instance)
-                        );
-                        HN_CORE_ASSERT(ok, "ImGui_ImplVulkan_LoadFunctions failed");
-                    }
+        // Make sure Dear ImGui's Vulkan backend knows how to call Vulkan functions.
+        // We use vkGetInstanceProcAddr to resolve all required entry points.
+        {
+            const uint32_t api_version = VK_API_VERSION_1_3; // or ImGui_ImplVulkan_GetDefaultApiVersion()
+            bool ok = ImGui_ImplVulkan_LoadFunctions(
+                api_version,
+                [](const char* name, void* user_data) -> PFN_vkVoidFunction {
+                    VkInstance instance = reinterpret_cast<VkInstance>(user_data);
+                    return vkGetInstanceProcAddr(instance, name);
+                },
+                reinterpret_cast<void*>(m_instance)
+            );
+            HN_CORE_ASSERT(ok, "ImGui_ImplVulkan_LoadFunctions failed");
+        }
 
-                    // Descriptor pool for ImGui. This is straight from Dear ImGui examples (with minor tweaks).
-                    {
-                        VkDescriptorPoolSize pool_sizes[] = {
-                            { VK_DESCRIPTOR_TYPE_SAMPLER,                1000 },
-                            { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000 },
-                            { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,          1000 },
-                            { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,          1000 },
-                            { VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER,   1000 },
-                            { VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER,   1000 },
-                            { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,         1000 },
-                            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,         1000 },
-                            { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000 },
-                            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000 },
-                            { VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT,       1000 }
-                        };
+        // Descriptor pool for ImGui. This is straight from Dear ImGui examples (with minor tweaks).
+        {
+            VkDescriptorPoolSize pool_sizes[] = {
+                { VK_DESCRIPTOR_TYPE_SAMPLER,                1000 },
+                { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000 },
+                { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,          1000 },
+                { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,          1000 },
+                { VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER,   1000 },
+                { VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER,   1000 },
+                { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,         1000 },
+                { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,         1000 },
+                { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000 },
+                { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000 },
+                { VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT,       1000 }
+            };
 
-                        VkDescriptorPoolCreateInfo pool_info{};
-                        pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-                        pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-                        pool_info.maxSets = 1000 * (uint32_t)(sizeof(pool_sizes) / sizeof(pool_sizes[0]));
-                        pool_info.poolSizeCount = (uint32_t)(sizeof(pool_sizes) / sizeof(pool_sizes[0]));
-                        pool_info.pPoolSizes = pool_sizes;
+            VkDescriptorPoolCreateInfo pool_info{};
+            pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+            pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+            pool_info.maxSets = 1000 * (uint32_t)(sizeof(pool_sizes) / sizeof(pool_sizes[0]));
+            pool_info.poolSizeCount = (uint32_t)(sizeof(pool_sizes) / sizeof(pool_sizes[0]));
+            pool_info.pPoolSizes = pool_sizes;
 
-                        VkResult r = vkCreateDescriptorPool(m_device, &pool_info, nullptr, &m_imgui_descriptor_pool);
-                        HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateDescriptorPool failed for ImGui: {0}", vk_result_to_string(r));
-                    }
+            VkResult r = vkCreateDescriptorPool(m_device, &pool_info, nullptr, &m_imgui_descriptor_pool);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateDescriptorPool failed for ImGui: {0}", vk_result_to_string(r));
+        }
 
-                    // We no longer create a separate ImGui render pass or per‑frame ImGui command buffer here.
-                    // The main VulkanContext command buffer and swapchain render pass are used instead.
-                }
+        {
+            VkSamplerCreateInfo si{};
+            si.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+            si.magFilter = VK_FILTER_LINEAR;
+            si.minFilter = VK_FILTER_LINEAR;
+            si.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            si.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            si.anisotropyEnable = VK_FALSE;
+            si.maxAnisotropy = 1.0f;
+            si.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+            si.unnormalizedCoordinates = VK_FALSE;
+            si.compareEnable = VK_FALSE;
+            si.compareOp = VK_COMPARE_OP_ALWAYS;
+            si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+            si.mipLodBias = 0.0f;
+            si.minLod = 0.0f;
+            si.maxLod = 0.0f;
 
-            void VulkanBackend::shutdown_imgui_resources() {
-                if (!m_device)
-                    return;
+            VkResult r = vkCreateSampler(m_device, &si, nullptr, &m_imgui_sampler);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateSampler failed for ImGui sampler: {0}", vk_result_to_string(r));
+        }
 
-                // No ImGui‑specific command pool/buffer or render pass anymore.
-                if (m_imgui_descriptor_pool) {
-                    vkDestroyDescriptorPool(m_device, m_imgui_descriptor_pool, nullptr);
-                    m_imgui_descriptor_pool = VK_NULL_HANDLE;
-                }
-            }
+        // We no longer create a separate ImGui render pass or per‑frame ImGui command buffer here.
+        // The main VulkanContext command buffer and swapchain render pass are used instead.
+    }
+
+    void VulkanBackend::shutdown_imgui_resources() {
+        if (!m_device)
+            return;
+
+        if (m_imgui_sampler) {
+            vkDestroySampler(m_device, m_imgui_sampler, nullptr);
+            m_imgui_sampler = VK_NULL_HANDLE;
+        }
+
+        if (m_imgui_descriptor_pool) {
+            vkDestroyDescriptorPool(m_device, m_imgui_descriptor_pool, nullptr);
+            m_imgui_descriptor_pool = VK_NULL_HANDLE;
+        }
+    }
 
     void VulkanBackend::render_imgui_on_current_swapchain_image(VkCommandBuffer cmd,
                                                                         VkImageView /*target_view*/,

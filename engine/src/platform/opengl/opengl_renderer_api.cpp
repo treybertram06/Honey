@@ -4,6 +4,7 @@
 #include <glad/glad.h>
 
 #include "opengl_buffer.h"
+#include "opengl_framebuffer.h"
 #include "opengl_vertex_array.h"
 
 namespace Honey {
@@ -122,6 +123,10 @@ namespace Honey {
 
     Ref<UniformBuffer> OpenGLRendererAPI::create_uniform_buffer(uint32_t size, uint32_t binding) {
         return CreateRef<OpenGLUniformBuffer>(size, binding);
+    }
+
+    Ref<Framebuffer> OpenGLRendererAPI::create_framebuffer(const FramebufferSpecification& spec) {
+        return CreateRef<OpenGLFramebuffer>(spec);
     }
 }
 

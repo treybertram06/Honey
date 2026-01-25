@@ -45,9 +45,9 @@ namespace Honey {
          //io.FontDefault = io.Fonts->AddFontFromFileTTF("../assets/fonts/JetBrains_Mono/static/JetBrainsMono-Regular.ttf", 18.0f);
 
          // TEMP WHILE IN APP2D
-         io.Fonts->AddFontFromFileTTF("../../../assets/fonts/JetBrains_Mono/static/JetBrainsMono-ExtraBold.ttf", 18.0f);
-         io.Fonts->AddFontFromFileTTF("../../../assets/fonts/JetBrains_Mono/static/JetBrainsMono-Bold.ttf", 18.0f);
-         io.FontDefault = io.Fonts->AddFontFromFileTTF("../../../assets/fonts/JetBrains_Mono/static/JetBrainsMono-Regular.ttf", 18.0f);
+         io.Fonts->AddFontFromFileTTF("../assets/fonts/JetBrains_Mono/static/JetBrainsMono-ExtraBold.ttf", 18.0f);
+         io.Fonts->AddFontFromFileTTF("../assets/fonts/JetBrains_Mono/static/JetBrainsMono-Bold.ttf", 18.0f);
+         io.FontDefault = io.Fonts->AddFontFromFileTTF("../assets/fonts/JetBrains_Mono/static/JetBrainsMono-Regular.ttf", 18.0f);
 
          //setup style
          ImGui::StyleColorsDark();

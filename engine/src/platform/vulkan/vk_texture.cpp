@@ -13,6 +13,8 @@
 #include <cstring>
 #include <vector>
 
+#include "imgui_impl_vulkan.h"
+
 namespace Honey {
 
     VulkanTexture2D::VulkanTexture2D(uint32_t width, uint32_t height)

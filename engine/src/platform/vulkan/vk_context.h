@@ -79,6 +79,7 @@ namespace Honey {
 
             enum class CmdType : uint8_t {
                 BeginSwapchainPass,
+                BeginOffscreenPass,
                 EndPass,
                 BindPipelineQuad2D,
                 BindGlobals,        // camera + textures for now
@@ -86,6 +87,12 @@ namespace Honey {
             };
 
             struct CmdBeginSwapchainPass {
+                glm::vec4 clearColor{0.1f, 0.1f, 0.1f, 1.0f};
+            };
+
+            // New: offscreen pass description
+            struct CmdBeginOffscreenPass {
+                class VulkanFramebuffer* framebuffer = nullptr;
                 glm::vec4 clearColor{0.1f, 0.1f, 0.1f, 1.0f};
             };
 
@@ -107,6 +114,7 @@ namespace Honey {
             struct Cmd {
                 CmdType type{};
                 CmdBeginSwapchainPass begin{};
+                CmdBeginOffscreenPass offscreen{};
                 CmdBindGlobals globals{};
                 CmdDrawIndexed draw{};
             };
@@ -126,10 +134,8 @@ namespace Honey {
                 cmds.clear();
                 frame_begun = true;
 
-                Cmd cmd{};
-                cmd.type = CmdType::BeginSwapchainPass;
-                cmd.begin.clearColor = clearColor;
-                cmds.push_back(cmd);
+                // NOTE: we no longer auto-begin a swapchain pass here.
+                // Pass boundaries are driven by Renderer::begin_pass / end_pass.
             }
         };
 

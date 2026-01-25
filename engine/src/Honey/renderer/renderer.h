@@ -16,6 +16,10 @@ namespace Honey {
 
         static void begin_frame();
 
+        static void set_render_target(const Ref<Framebuffer>& framebuffer);
+        static void begin_pass();
+        static void end_pass();
+
         static void begin_scene(OrthographicCamera& camera);
         static void end_scene();
 
@@ -31,6 +35,9 @@ namespace Honey {
         static SceneData* m_scene_data;
 
         static std::unique_ptr<ShaderCache> m_shader_cache;
+
+        static Ref<Framebuffer> s_current_target; // nullptr means default window / swapchain
+        static bool s_pass_open;
     };
 
 }

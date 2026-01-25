@@ -393,10 +393,10 @@ namespace Honey {
 
         glm::mat4 view_proj = camera.get_projection_matrix() * glm::inverse(transform);
 
-        s_data->camera_buffer.view_projection = view_proj;
-        s_data->camera_uniform_buffer->set_data(sizeof(Renderer2DData::CameraData), &s_data->camera_buffer);
-
-        if (Renderer::get_api() == RendererAPI::API::vulkan) {
+        if (Renderer::get_api() != RendererAPI::API::vulkan) {
+            s_data->camera_buffer.view_projection = view_proj;
+            s_data->camera_uniform_buffer->set_data(sizeof(Renderer2DData::CameraData), &s_data->camera_buffer);
+        } else {
             VulkanRendererAPI::submit_camera_view_projection(view_proj);
         }
 
@@ -412,10 +412,10 @@ namespace Honey {
 
         glm::mat4 view_proj = camera.get_view_projection_matrix();
 
-        s_data->camera_buffer.view_projection = view_proj;
-        s_data->camera_uniform_buffer->set_data(sizeof(Renderer2DData::CameraData), &s_data->camera_buffer);
-
-        if (Renderer::get_api() == RendererAPI::API::vulkan) {
+        if (Renderer::get_api() != RendererAPI::API::vulkan) {
+            s_data->camera_buffer.view_projection = view_proj;
+            s_data->camera_uniform_buffer->set_data(sizeof(Renderer2DData::CameraData), &s_data->camera_buffer);
+        } else {
             VulkanRendererAPI::submit_camera_view_projection(view_proj);
         }
 

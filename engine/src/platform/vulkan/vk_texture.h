@@ -5,9 +5,13 @@
 #include <string>
 #include <cstdint>
 
+#include <imgui.h>
+#include <vulkan/vulkan_core.h>
+
 namespace Honey {
 
     class VulkanBackend;
+    typedef struct VkDescriptorSet_T* VkDescriptorSet;
 
     class VulkanTexture2D : public Texture2D {
     public:
@@ -18,7 +22,9 @@ namespace Honey {
         uint32_t get_width() const override { return m_width; }
         uint32_t get_height() const override { return m_height; }
 
-        uint32_t get_renderer_id() const override { return 0; }
+        // Vulkan path does not expose a numeric "renderer id" (OpenGL only).
+        // Editor code will bypass this for Vulkan and use native handles instead.
+        inline uint32_t get_renderer_id() const override { return 0; }
 
         void set_data(void* data, uint32_t size) override;
         void bind(uint32_t /*slot*/) const override {} // Vulkan uses descriptor sets

@@ -3,17 +3,11 @@
 
 #include "Honey/renderer/renderer.h"
 #include "platform/opengl/opengl_framebuffer.h"
+#include "platform/vulkan/vk_framebuffer.h"
 
 namespace Honey {
 	Ref<Framebuffer> Framebuffer::create(const FramebufferSpecification &spec) {
-
-		switch (Renderer::get_api()) {
-			case RendererAPI::API::none: HN_CORE_ASSERT(false, "RendererAPI::none is not supported!"); return nullptr;
-			case RendererAPI::API::opengl: return CreateRef<OpenGLFramebuffer>(spec);
-		}
-
-		HN_CORE_ASSERT(false, "Unknown RendererAPI!");
-		return nullptr;
+		return RenderCommand::get_renderer_api()->create_framebuffer(spec);
 	}
 
 

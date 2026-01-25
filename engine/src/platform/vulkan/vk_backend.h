@@ -36,6 +36,7 @@ namespace Honey {
         VkQueue             get_graphics_queue() const    { return !m_graphics_queues.empty() ? m_graphics_queues[0] : VK_NULL_HANDLE; }
 
         VkDescriptorPool    get_imgui_descriptor_pool() const { return m_imgui_descriptor_pool; }
+        VkSampler get_imgui_sampler() const { return m_imgui_sampler; }
 
         uint32_t            get_min_image_count() const  { return m_min_image_count; }
         uint32_t            get_image_count() const      { return m_image_count; }
@@ -118,6 +119,7 @@ namespace Honey {
         VkQueue m_upload_queue = VK_NULL_HANDLE;
 
         VkDescriptorPool m_imgui_descriptor_pool = VK_NULL_HANDLE;
+        VkSampler m_imgui_sampler = VK_NULL_HANDLE;
 
         // Placeholder image counts for ImGui. If you already know your swapchain
         // image counts elsewhere, you can wire them in here.

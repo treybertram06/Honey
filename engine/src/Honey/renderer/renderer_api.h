@@ -1,7 +1,10 @@
 #pragma once
 
 #include <glm/glm.hpp>
+
+#include "framebuffer.h"
 #include "vertex_array.h"
+#include "platform/vulkan/vk_backend.h"
 
 namespace Honey {
 
@@ -37,6 +40,8 @@ namespace Honey {
         virtual Ref<IndexBuffer> create_index_buffer(uint32_t* indices, uint32_t size) = 0;
         virtual Ref<VertexArray> create_vertex_array() = 0;
         virtual Ref<UniformBuffer> create_uniform_buffer(uint32_t size, uint32_t binding) = 0;
+
+        virtual Ref<Framebuffer> create_framebuffer(const FramebufferSpecification &spec) = 0;
 
         inline static API get_api() { return s_api; }
         inline static void set_api(API api) { s_api = api; }
