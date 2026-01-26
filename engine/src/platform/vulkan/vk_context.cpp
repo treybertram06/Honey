@@ -15,34 +15,34 @@
 #include "imgui.h"
 #include "vk_buffer.h"
 #include "vk_texture.h"
+#include "Honey/core/settings.h"
 #include "Honey/renderer/shader_cache.h"
 #include "platform/vulkan/vk_renderer_api.h"
 
 namespace Honey {
-
     static const char* vk_result_to_string(VkResult res) {
         switch (res) {
-            case VK_SUCCESS: return "VK_SUCCESS";
-            case VK_NOT_READY: return "VK_NOT_READY";
-            case VK_TIMEOUT: return "VK_TIMEOUT";
-            case VK_EVENT_SET: return "VK_EVENT_SET";
-            case VK_EVENT_RESET: return "VK_EVENT_RESET";
-            case VK_INCOMPLETE: return "VK_INCOMPLETE";
-            case VK_ERROR_OUT_OF_HOST_MEMORY: return "VK_ERROR_OUT_OF_HOST_MEMORY";
-            case VK_ERROR_OUT_OF_DEVICE_MEMORY: return "VK_ERROR_OUT_OF_DEVICE_MEMORY";
-            case VK_ERROR_INITIALIZATION_FAILED: return "VK_ERROR_INITIALIZATION_FAILED";
-            case VK_ERROR_DEVICE_LOST: return "VK_ERROR_DEVICE_LOST";
-            case VK_ERROR_MEMORY_MAP_FAILED: return "VK_ERROR_MEMORY_MAP_FAILED";
-            case VK_ERROR_LAYER_NOT_PRESENT: return "VK_ERROR_LAYER_NOT_PRESENT";
-            case VK_ERROR_EXTENSION_NOT_PRESENT: return "VK_ERROR_EXTENSION_NOT_PRESENT";
-            case VK_ERROR_FEATURE_NOT_PRESENT: return "VK_ERROR_FEATURE_NOT_PRESENT";
-            case VK_ERROR_INCOMPATIBLE_DRIVER: return "VK_ERROR_INCOMPATIBLE_DRIVER";
-            case VK_ERROR_TOO_MANY_OBJECTS: return "VK_ERROR_TOO_MANY_OBJECTS";
-            case VK_ERROR_FORMAT_NOT_SUPPORTED: return "VK_ERROR_FORMAT_NOT_SUPPORTED";
-            case VK_ERROR_FRAGMENTED_POOL: return "VK_ERROR_FRAGMENTED_POOL";
-            case VK_ERROR_OUT_OF_DATE_KHR: return "VK_ERROR_OUT_OF_DATE_KHR";
-            case VK_SUBOPTIMAL_KHR: return "VK_SUBOPTIMAL_KHR";
-            default: return "VK_ERROR_<unknown>";
+        case VK_SUCCESS: return "VK_SUCCESS";
+        case VK_NOT_READY: return "VK_NOT_READY";
+        case VK_TIMEOUT: return "VK_TIMEOUT";
+        case VK_EVENT_SET: return "VK_EVENT_SET";
+        case VK_EVENT_RESET: return "VK_EVENT_RESET";
+        case VK_INCOMPLETE: return "VK_INCOMPLETE";
+        case VK_ERROR_OUT_OF_HOST_MEMORY: return "VK_ERROR_OUT_OF_HOST_MEMORY";
+        case VK_ERROR_OUT_OF_DEVICE_MEMORY: return "VK_ERROR_OUT_OF_DEVICE_MEMORY";
+        case VK_ERROR_INITIALIZATION_FAILED: return "VK_ERROR_INITIALIZATION_FAILED";
+        case VK_ERROR_DEVICE_LOST: return "VK_ERROR_DEVICE_LOST";
+        case VK_ERROR_MEMORY_MAP_FAILED: return "VK_ERROR_MEMORY_MAP_FAILED";
+        case VK_ERROR_LAYER_NOT_PRESENT: return "VK_ERROR_LAYER_NOT_PRESENT";
+        case VK_ERROR_EXTENSION_NOT_PRESENT: return "VK_ERROR_EXTENSION_NOT_PRESENT";
+        case VK_ERROR_FEATURE_NOT_PRESENT: return "VK_ERROR_FEATURE_NOT_PRESENT";
+        case VK_ERROR_INCOMPATIBLE_DRIVER: return "VK_ERROR_INCOMPATIBLE_DRIVER";
+        case VK_ERROR_TOO_MANY_OBJECTS: return "VK_ERROR_TOO_MANY_OBJECTS";
+        case VK_ERROR_FORMAT_NOT_SUPPORTED: return "VK_ERROR_FORMAT_NOT_SUPPORTED";
+        case VK_ERROR_FRAGMENTED_POOL: return "VK_ERROR_FRAGMENTED_POOL";
+        case VK_ERROR_OUT_OF_DATE_KHR: return "VK_ERROR_OUT_OF_DATE_KHR";
+        case VK_SUBOPTIMAL_KHR: return "VK_SUBOPTIMAL_KHR";
+        default: return "VK_ERROR_<unknown>";
         }
     }
 
@@ -505,7 +505,7 @@ namespace Honey {
         vkDeviceWaitIdle(reinterpret_cast<VkDevice>(m_device));
     }
 
-    #if defined(BUILD_DEBUG)
+#if defined(BUILD_DEBUG)
     static constexpr bool k_enable_validation = true;
 #else
     static constexpr bool k_enable_validation = false;
@@ -864,6 +864,8 @@ namespace Honey {
         VkResult res = vkBeginCommandBuffer(cmd, &begin);
         HN_CORE_ASSERT(res == VK_SUCCESS, "vkBeginCommandBuffer failed: {0}", vk_result_to_string(res));
 
+        //create_graphics_pipeline(); // Called every frame to ensure it updates when settings are changed
+
         auto& p = frame_packet();
 
         const bool use_cmds = !p.cmds.empty();
@@ -1153,57 +1155,57 @@ namespace Honey {
     }
 
     void VulkanContext::destroy() {
-            HN_PROFILE_FUNCTION();
+        HN_PROFILE_FUNCTION();
 
-            if (m_device) {
-                vkDeviceWaitIdle(reinterpret_cast<VkDevice>(m_device));
+        if (m_device) {
+            vkDeviceWaitIdle(reinterpret_cast<VkDevice>(m_device));
 
-                for (uint32_t i = 0; i < m_image_available_semaphores.size(); i++) {
-                    if (m_image_available_semaphores[i]) {
-                        vkDestroySemaphore(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkSemaphore>(m_image_available_semaphores[i]), nullptr);
-                    }
-                    if (m_in_flight_fences[i]) {
-                        vkDestroyFence(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkFence>(m_in_flight_fences[i]), nullptr);
-                    }
+            for (uint32_t i = 0; i < m_image_available_semaphores.size(); i++) {
+                if (m_image_available_semaphores[i]) {
+                    vkDestroySemaphore(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkSemaphore>(m_image_available_semaphores[i]), nullptr);
                 }
-
-                for (uint32_t i = 0; i < m_render_finished_semaphores.size(); i++) {
-                    if (m_render_finished_semaphores[i]) {
-                        vkDestroySemaphore(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkSemaphore>(m_render_finished_semaphores[i]), nullptr);
-                    }
-                }
-
-                m_image_available_semaphores.clear();
-                m_render_finished_semaphores.clear();
-                m_in_flight_fences.clear();
-
-                cleanup_pipeline();
-                cleanup_swapchain();
-                cleanup_global_descriptor_resources();
-
-                if (m_command_pool) {
-                    vkDestroyCommandPool(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkCommandPool>(m_command_pool), nullptr);
-                    m_command_pool = nullptr;
+                if (m_in_flight_fences[i]) {
+                    vkDestroyFence(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkFence>(m_in_flight_fences[i]), nullptr);
                 }
             }
 
-            if (m_surface && m_instance) {
-                vkDestroySurfaceKHR(reinterpret_cast<VkInstance>(m_instance), reinterpret_cast<VkSurfaceKHR>(m_surface), nullptr);
-                m_surface = nullptr;
+            for (uint32_t i = 0; i < m_render_finished_semaphores.size(); i++) {
+                if (m_render_finished_semaphores[i]) {
+                    vkDestroySemaphore(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkSemaphore>(m_render_finished_semaphores[i]), nullptr);
+                }
             }
 
-            if (m_backend) {
-                m_backend->release_queue_lease(m_queue_lease);
+            m_image_available_semaphores.clear();
+            m_render_finished_semaphores.clear();
+            m_in_flight_fences.clear();
+
+            cleanup_pipeline();
+            cleanup_swapchain();
+            cleanup_global_descriptor_resources();
+
+            if (m_command_pool) {
+                vkDestroyCommandPool(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkCommandPool>(m_command_pool), nullptr);
+                m_command_pool = nullptr;
             }
-            m_queue_lease = {};
-
-            // DO NOT destroy VkDevice/VkInstance here: backend owns them.
-            m_device = nullptr;
-            m_physical_device = nullptr;
-            m_instance = nullptr;
-
-            m_initialized = false;
         }
+
+        if (m_surface && m_instance) {
+            vkDestroySurfaceKHR(reinterpret_cast<VkInstance>(m_instance), reinterpret_cast<VkSurfaceKHR>(m_surface), nullptr);
+            m_surface = nullptr;
+        }
+
+        if (m_backend) {
+            m_backend->release_queue_lease(m_queue_lease);
+        }
+        m_queue_lease = {};
+
+        // DO NOT destroy VkDevice/VkInstance here: backend owns them.
+        m_device = nullptr;
+        m_physical_device = nullptr;
+        m_instance = nullptr;
+
+        m_initialized = false;
+    }
 
     std::string VulkanContext::shader_path(const char* filename) const {
         // User-specified runtime location:
@@ -1219,60 +1221,60 @@ namespace Honey {
     }
 
     void VulkanContext::create_graphics_pipeline() {
-            HN_PROFILE_FUNCTION();
+        HN_PROFILE_FUNCTION();
 
-            HN_CORE_ASSERT(m_device, "create_graphics_pipeline called without device");
-            HN_CORE_ASSERT(m_render_pass, "create_graphics_pipeline called without render pass");
-            HN_CORE_ASSERT(m_global_set_layout, "create_graphics_pipeline called without global descriptor set layout");
+        HN_CORE_ASSERT(m_device, "create_graphics_pipeline called without device");
+        HN_CORE_ASSERT(m_render_pass, "create_graphics_pipeline called without render pass");
+        HN_CORE_ASSERT(m_global_set_layout, "create_graphics_pipeline called without global descriptor set layout");
 
-            static ShaderCache cache; // uses default cache directory
-            const auto glsl = std::filesystem::path("../assets/shaders/Renderer2D_Quad.glsl");
-            const auto spirv = cache.get_or_compile_spirv_paths(glsl);
+        static ShaderCache cache; // uses default cache directory
+        const auto glsl = std::filesystem::path("../assets/shaders/Renderer2D_Quad.glsl");
+        const auto spirv = cache.get_or_compile_spirv_paths(glsl);
 
-            // Build a PipelineSpec for Renderer2D quads
-            PipelineSpec spec;
-            spec.shaderGLSLPath = glsl;
-            spec.topology = PrimitiveTopology::Triangles;
-            spec.cullMode = CullMode::None;
-            spec.frontFace = FrontFaceWinding::CounterClockwise;
-            spec.blend.enabled = false;             // enable later if needed
-            spec.depthStencil.depthTest = false;    // 2D: no depth
-            spec.depthStencil.depthWrite = false;
-            spec.passType = RenderPassType::Swapchain;
+        auto& rs = get_settings().renderer;
 
-            // Vertex bindings must match Renderer2D VA layout and shader locations
-            VertexInputBindingSpec static_binding;
-            static_binding.layout = BufferLayout {
-                { ShaderDataType::Float2, "a_local_pos"  },  // loc 0
-                { ShaderDataType::Float2, "a_local_tex"  }   // loc 1
-            };
+        // Build a PipelineSpec for Renderer2D quads
+        PipelineSpec spec;
+        spec.shaderGLSLPath = glsl;
+        spec.topology = PrimitiveTopology::Triangles;
+        spec.cullMode = CullMode::None;
+        spec.frontFace = FrontFaceWinding::CounterClockwise;
+        spec.blend.enabled = rs.blending;
+        spec.depthStencil.depthTest = rs.depth_test;    // 2D: no depth
+        spec.depthStencil.depthWrite = rs.depth_write;
+        spec.passType = RenderPassType::Swapchain;
+        spec.wireframe = rs.wireframe;
 
-            VertexInputBindingSpec instance_binding;
-            instance_binding.layout = BufferLayout {
-                { ShaderDataType::Float3, "i_center",       false, true }, // loc 2
-                { ShaderDataType::Float2, "i_half_size",    false, true }, // loc 3
-                { ShaderDataType::Float , "i_rotation",     false, true }, // loc 4
-                { ShaderDataType::Float4, "i_color",        false, true }, // loc 5
-                { ShaderDataType::Int,   "i_tex_index",     false, true }, // loc 6
-                { ShaderDataType::Float, "i_tiling",        false, true }, // loc 7
-                { ShaderDataType::Float2,"i_tex_coord_min", false, true }, // loc 8
-                { ShaderDataType::Float2,"i_tex_coord_max", false, true }, // loc 9
-                { ShaderDataType::Int,   "i_entity_id",     false, true }  // loc 10
-            };
+        // Vertex bindings must match Renderer2D VA layout and shader locations
+        VertexInputBindingSpec static_binding;
+        static_binding.layout = BufferLayout {
+                    { ShaderDataType::Float2, "a_local_pos"  },  // loc 0
+                    { ShaderDataType::Float2, "a_local_tex"  }   // loc 1
+        };
 
-            spec.vertexBindings.push_back(static_binding);
-            spec.vertexBindings.push_back(instance_binding);
+        VertexInputBindingSpec instance_binding;
+        instance_binding.layout = BufferLayout {
+                    { ShaderDataType::Float3, "i_center",       false, true }, // loc 2
+                    { ShaderDataType::Float2, "i_half_size",    false, true }, // loc 3
+                    { ShaderDataType::Float , "i_rotation",     false, true }, // loc 4
+                    { ShaderDataType::Float4, "i_color",        false, true }, // loc 5
+                    { ShaderDataType::Int,   "i_tex_index",     false, true }, // loc 6
+                    { ShaderDataType::Float, "i_tiling",        false, true }, // loc 7
+                    { ShaderDataType::Float2,"i_tex_coord_min", false, true }, // loc 8
+                    { ShaderDataType::Float2,"i_tex_coord_max", false, true }, // loc 9
+                    { ShaderDataType::Int,   "i_entity_id",     false, true }  // loc 10
+        };
 
-            m_pipeline_quad.create(
-                reinterpret_cast<VkDevice>(m_device),
-                reinterpret_cast<VkRenderPass>(m_render_pass),
-                reinterpret_cast<VkDescriptorSetLayout>(m_global_set_layout),
-                spirv.vertex.string(),
-                spirv.fragment.string(),
-                spec
-            );
-        }
+        spec.vertexBindings.push_back(static_binding);
+        spec.vertexBindings.push_back(instance_binding);
 
-
-
+        m_pipeline_quad.create(
+            reinterpret_cast<VkDevice>(m_device),
+            reinterpret_cast<VkRenderPass>(m_render_pass),
+            reinterpret_cast<VkDescriptorSetLayout>(m_global_set_layout),
+            spirv.vertex.string(),
+            spirv.fragment.string(),
+            spec
+        );
+    }
 } // namespace Honey

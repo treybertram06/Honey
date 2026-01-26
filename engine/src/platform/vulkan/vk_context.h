@@ -175,6 +175,9 @@ namespace Honey {
         void create_global_descriptor_resources();
         void cleanup_global_descriptor_resources();
 
+        PipelineSpec m_last_pipeline_spec{};
+        bool m_pipeline_dirty = true;
+
         static constexpr uint32_t k_max_frames_in_flight = 2;
 
         GLFWwindow* m_window_handle = nullptr;

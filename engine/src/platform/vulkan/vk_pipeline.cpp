@@ -11,7 +11,6 @@
 #include "Honey/renderer/pipeline_spec.h"
 
 namespace Honey {
-
     // Same mapping logic as we used in vk_pipeline_quad2d.cpp
     static VkFormat shader_data_type_to_vk_format(ShaderDataType type) {
         switch (type) {
@@ -211,7 +210,7 @@ namespace Honey {
         raster.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
         raster.depthClampEnable = VK_FALSE;
         raster.rasterizerDiscardEnable = VK_FALSE;
-        raster.polygonMode = VK_POLYGON_MODE_FILL;
+        raster.polygonMode = spec.wireframe ? VK_POLYGON_MODE_LINE : VK_POLYGON_MODE_FILL;
         raster.lineWidth = 1.0f;
 
         switch (spec.cullMode) {
@@ -293,5 +292,4 @@ namespace Honey {
         HN_CORE_ASSERT(pr == VK_SUCCESS, "vkCreateGraphicsPipelines failed");
         m_pipeline = pipeline;
     }
-
 } // namespace Honey
