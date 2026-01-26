@@ -23,6 +23,9 @@ namespace Honey {
 		virtual void clear_attachment_f32(uint32_t idx, float v) override;
 
 		virtual uint32_t get_color_attachment_renderer_id(uint32_t index = 0) const override { HN_CORE_ASSERT(index < m_color_attachments.size(), "Incorrect index."); return m_color_attachments[index]; }
+		virtual ImTextureID get_imgui_color_texture_id(uint32_t index = 0) const override {
+			return (ImTextureID)(void*)(intptr_t)get_color_attachment_renderer_id(index);
+		}
 
 		virtual const FramebufferSpecification& get_specification() const override { return m_specification; }
 

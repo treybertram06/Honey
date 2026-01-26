@@ -329,31 +329,66 @@ namespace Honey {
         });
     }
 
-    void VulkanTexture2D::init_from_pixels_rgba8(const void* rgba_pixels, uint32_t width, uint32_t height) {
-        HN_PROFILE_FUNCTION();
-        HN_CORE_ASSERT(rgba_pixels, "VulkanTexture2D: pixels null");
+        void VulkanTexture2D::init_from_pixels_rgba8(const void* rgba_pixels,
+                                                     uint32_t width,
+                                                     uint32_t height) {
+            HN_PROFILE_FUNCTION();
+            HN_CORE_ASSERT(rgba_pixels, "VulkanTexture2D: pixels null");
 
-        create_image(width, height);
-        create_image_view();
-        create_sampler();
+            create_image(width, height);
+            create_image_view();
+            create_sampler();
 
-        const uint32_t size = width * height * 4;
+            const uint32_t size = width * height * 4;
 
-        void* staging_buffer = nullptr;
-        void* staging_memory = nullptr;
-        create_staging_buffer(size, staging_buffer, staging_memory);
+            void* staging_buffer = nullptr;
+            void* staging_memory = nullptr;
+            create_staging_buffer(size, staging_buffer, staging_memory);
 
-        void* mapped = nullptr;
-        VkResult r = vkMapMemory(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkDeviceMemory>(staging_memory), 0, size, 0, &mapped);
-        HN_CORE_ASSERT(r == VK_SUCCESS, "vkMapMemory failed for staging buffer");
-        std::memcpy(mapped, rgba_pixels, size);
-        vkUnmapMemory(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkDeviceMemory>(staging_memory));
+            void* mapped = nullptr;
+            VkResult r = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
+                                     reinterpret_cast<VkDeviceMemory>(staging_memory),
+                                     0, size, 0, &mapped);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "vkMapMemory failed for staging buffer");
+            std::memcpy(mapped, rgba_pixels, size);
+            vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
+                          reinterpret_cast<VkDeviceMemory>(staging_memory));
 
-        transition_image_layout(VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-        copy_buffer_to_image(staging_buffer);
-        transition_image_layout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            transition_image_layout(VK_IMAGE_LAYOUT_UNDEFINED,
+                                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+            copy_buffer_to_image(staging_buffer);
+            transition_image_layout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
-        destroy_buffer(staging_buffer, staging_memory);
-    }
+            destroy_buffer(staging_buffer, staging_memory);
+
+            // Do NOT touch ImGui here. ImGui Vulkan backend may not be initialized yet.
+            // m_imgui_texture_id will be created lazily in ensure_imgui_texture_registered().
+        }
+
+        void VulkanTexture2D::ensure_imgui_texture_registered() {
+            if (m_imgui_texture_id != 0)
+                return; // already registered
+
+            // ImGui Vulkan backend MUST already be initialized at this point
+            VkSampler sampler = reinterpret_cast<VkSampler>(m_sampler);
+            VkImageView view  = reinterpret_cast<VkImageView>(m_image_view);
+            VkImageLayout layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+            VkDescriptorSet set = ImGui_ImplVulkan_AddTexture(
+                sampler,
+                view,
+                layout
+            );
+
+            m_imgui_texture_id = static_cast<ImTextureID>(
+                reinterpret_cast<uintptr_t>(set)
+            );
+        }
+
+        ImTextureID VulkanTexture2D::get_imgui_texture_id() {
+            ensure_imgui_texture_registered();
+            return m_imgui_texture_id;
+        }
 
 } // namespace Honey

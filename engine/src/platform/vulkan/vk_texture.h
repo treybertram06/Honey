@@ -35,6 +35,9 @@ namespace Honey {
         void* get_vk_sampler() const { return m_sampler; }
         uint32_t get_vk_image_layout() const { return m_current_layout; }
 
+        // Returns an ImGui texture id, registering with ImGui on first use.
+        ImTextureID get_imgui_texture_id() override;
+
     private:
         void fetch_device_handles();
         void init_from_pixels_rgba8(const void* rgba_pixels, uint32_t width, uint32_t height);
@@ -50,6 +53,8 @@ namespace Honey {
         void destroy_buffer(void*& buffer, void*& memory);
 
         uint32_t find_memory_type(uint32_t type_filter, uint32_t props);
+
+        void ensure_imgui_texture_registered();
 
     private:
         uint32_t m_width = 0;
@@ -67,6 +72,9 @@ namespace Honey {
         void* m_sampler = nullptr;
 
         uint32_t m_current_layout = 0;
+
+        ImTextureID m_imgui_texture_id = 0;
+
     };
 
 } // namespace Honey

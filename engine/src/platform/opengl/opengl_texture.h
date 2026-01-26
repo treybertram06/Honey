@@ -27,6 +27,11 @@ namespace Honey {
             return m_renderer_id == other_gl->m_renderer_id;
         }
 
+        ImTextureID get_imgui_texture_id() override {
+            // ImTextureID is ImU64; GL id is 32-bit. Widen it.
+            return static_cast<ImTextureID>(m_renderer_id);
+        }
+
     private:
         std::string m_path;
         uint32_t m_width, m_height;

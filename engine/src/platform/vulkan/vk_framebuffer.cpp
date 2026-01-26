@@ -111,38 +111,41 @@ namespace Honey {
     }
 
     void VulkanFramebuffer::destroy() {
-        if (!m_device)
-            return;
-
-        if (!m_imgui_texture_sets.empty()) {
-            for (VkDescriptorSet id : m_imgui_texture_sets) {
-                if (id)
-                    ImGui_ImplVulkan_RemoveTexture(id);
-            }
+        if (!m_backend || !m_backend->initialized() || !m_device) {
+            m_framebuffer = VK_NULL_HANDLE;
+            m_render_pass = VK_NULL_HANDLE;
+            m_color_attachments.clear();
+            m_depth_attachment = {};
             m_imgui_texture_sets.clear();
+            return;
         }
 
+        VkDevice device = m_device;
+
+        // ImGui descriptor sets: backend will free them when it destroys the pool.
+        m_imgui_texture_sets.clear();
+
         if (m_framebuffer) {
-            vkDestroyFramebuffer(m_device, m_framebuffer, nullptr);
+            vkDestroyFramebuffer(device, m_framebuffer, nullptr);
             m_framebuffer = VK_NULL_HANDLE;
         }
 
         if (m_render_pass) {
-            vkDestroyRenderPass(m_device, m_render_pass, nullptr);
+            vkDestroyRenderPass(device, m_render_pass, nullptr);
             m_render_pass = VK_NULL_HANDLE;
         }
 
         for (auto& att : m_color_attachments) {
-            if (att.view)   vkDestroyImageView(m_device, att.view, nullptr);
-            if (att.image)  vkDestroyImage(m_device, att.image, nullptr);
-            if (att.memory) vkFreeMemory(m_device, att.memory, nullptr);
+            if (att.view)   vkDestroyImageView(device, att.view, nullptr);
+            if (att.image)  vkDestroyImage(device, att.image, nullptr);
+            if (att.memory) vkFreeMemory(device, att.memory, nullptr);
             att = {};
         }
         m_color_attachments.clear();
 
-        if (m_depth_attachment.view)   vkDestroyImageView(m_device, m_depth_attachment.view, nullptr);
-        if (m_depth_attachment.image)  vkDestroyImage(m_device, m_depth_attachment.image, nullptr);
-        if (m_depth_attachment.memory) vkFreeMemory(m_device, m_depth_attachment.memory, nullptr);
+        if (m_depth_attachment.view)   vkDestroyImageView(device, m_depth_attachment.view, nullptr);
+        if (m_depth_attachment.image)  vkDestroyImage(device, m_depth_attachment.image, nullptr);
+        if (m_depth_attachment.memory) vkFreeMemory(device, m_depth_attachment.memory, nullptr);
         m_depth_attachment = {};
     }
 

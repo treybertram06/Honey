@@ -2,6 +2,7 @@
 
 #include "../core/base.h"
 #include <string>
+#include <imgui.h>
 
 namespace Honey {
 
@@ -19,6 +20,7 @@ namespace Honey {
 
         virtual bool operator==(const Texture& other) const = 0;
 
+        virtual ImTextureID get_imgui_texture_id() { return 0; }
     };
 
     class Texture2D : public Texture {

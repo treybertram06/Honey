@@ -181,6 +181,7 @@ add_library(engine STATIC
         src/platform/vulkan/vk_pipeline.cpp
         src/platform/vulkan/vk_framebuffer.h
         src/platform/vulkan/vk_framebuffer.cpp
+        src/Honey/imgui/imgui_utils.h
 )
 
 # Apply MSVC runtime to engine itself

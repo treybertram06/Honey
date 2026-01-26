@@ -30,7 +30,7 @@ namespace Honey {
         void clear_attachment_f32(uint32_t idx, float v) override;
 
         uint32_t get_color_attachment_renderer_id(uint32_t index = 0) const override;
-        ImTextureID get_imgui_color_texture_id(uint32_t index = 0) const;
+        ImTextureID get_imgui_color_texture_id(uint32_t index = 0) const override;
 
         const FramebufferSpecification& get_specification() const override { return m_spec; }
 

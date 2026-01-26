@@ -1,6 +1,8 @@
 #pragma once
 #include "platform/vulkan/vk_backend.h"
 
+#include <imgui.h>
+
 namespace Honey {
 
 	enum class FramebufferTextureFormat {
@@ -61,6 +63,7 @@ namespace Honey {
 
 
 		virtual uint32_t get_color_attachment_renderer_id(uint32_t index = 0) const = 0;
+		virtual ImTextureID get_imgui_color_texture_id(uint32_t index = 0) const = 0;
 
 		//virtual FramebufferSpecification& get_specification() = 0;
 		virtual const FramebufferSpecification& get_specification() const = 0;
