@@ -107,13 +107,24 @@ namespace Honey {
         return details;
     }
 
-    static VkSurfaceFormatKHR choose_surface_format(const std::vector<VkSurfaceFormatKHR>& formats) {
+    VkSurfaceFormatKHR choose_surface_format(const std::vector<VkSurfaceFormatKHR>& formats) {
+        // Prefer a linear UNORM format to avoid double-gamma / washed-out colors.
         for (const auto& f : formats) {
-            if (f.format == VK_FORMAT_B8G8R8A8_SRGB && f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+            if (f.format == VK_FORMAT_B8G8R8A8_UNORM &&
+                f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
                 return f;
+                }
         }
-        // Fallback
-        return formats.front();
+
+        for (const auto& f : formats) {
+            if (f.format == VK_FORMAT_R8G8B8A8_UNORM &&
+                f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+                return f;
+                }
+        }
+
+        // Fallback: just return the first available format.
+        return formats[0];
     }
 
     static VkPresentModeKHR choose_present_mode(const std::vector<VkPresentModeKHR>& modes) {
