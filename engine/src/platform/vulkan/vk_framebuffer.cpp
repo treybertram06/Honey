@@ -155,6 +155,9 @@ namespace Honey {
         HN_CORE_ASSERT(m_backend && m_backend->initialized(), "VulkanFramebuffer::invalidate: backend not initialized");
         HN_CORE_ASSERT(m_spec.width > 0 && m_spec.height > 0, "VulkanFramebuffer: width/height must be > 0");
 
+        if (m_device)
+            vkDeviceWaitIdle(m_device);
+
         destroy();
 
         m_device          = m_backend->get_device();
@@ -431,7 +434,7 @@ namespace Honey {
         invalidate();
     }
 
-    int VulkanFramebuffer::read_pixel(uint32_t attachment_index, int x, int y) {
+        int VulkanFramebuffer::read_pixel(uint32_t attachment_index, int x, int y) {
         HN_CORE_ASSERT(attachment_index < m_color_attachments.size(),
                        "VulkanFramebuffer::read_pixel: attachment index out of range");
         HN_CORE_ASSERT(m_backend && m_backend->initialized(),
@@ -445,9 +448,6 @@ namespace Honey {
             return 0;
         }
 
-        // Vulkan origin is top-left for framebuffers in this engine, but image data
-        // is addressed with (0,0) top-left as well in this setup, so we can use (x,y)
-        // directly. If you treat origin differently elsewhere, flip Y here.
         const uint32_t px = static_cast<uint32_t>(x);
         const uint32_t py = static_cast<uint32_t>(y);
 
@@ -461,8 +461,6 @@ namespace Honey {
         VkPhysicalDevice phys    = m_backend->get_physical_device();
 
         int result_value = 0;
-
-        // We'll read back a single 32-bit pixel
         const VkDeviceSize buffer_size = sizeof(uint32_t);
 
         // --- Create staging buffer ---
@@ -517,21 +515,22 @@ namespace Honey {
             range.baseArrayLayer = 0;
             range.layerCount     = 1;
 
-            // Transition image to TRANSFER_SRC_OPTIMAL for the copy
+            // Our editor FB leaves color attachments in SHADER_READ_ONLY_OPTIMAL
+            // after the render pass. Transition from that to TRANSFER_SRC_OPTIMAL.
             VkImageMemoryBarrier barrier_to_src{};
             barrier_to_src.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-            barrier_to_src.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            barrier_to_src.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             barrier_to_src.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
             barrier_to_src.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier_to_src.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier_to_src.image = src_image;
             barrier_to_src.subresourceRange = range;
-            barrier_to_src.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            barrier_to_src.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
             barrier_to_src.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
 
             vkCmdPipelineBarrier(
                 cmd,
-                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                 VK_PIPELINE_STAGE_TRANSFER_BIT,
                 0,
                 0, nullptr,
@@ -539,11 +538,10 @@ namespace Honey {
                 1, &barrier_to_src
             );
 
-            // Copy the single pixel at (px, py) into the staging buffer
             VkBufferImageCopy region{};
             region.bufferOffset = 0;
-            region.bufferRowLength   = 0; // tightly packed
-            region.bufferImageHeight = 0; // tightly packed
+            region.bufferRowLength   = 0;
+            region.bufferImageHeight = 0;
             region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
             region.imageSubresource.mipLevel = 0;
             region.imageSubresource.baseArrayLayer = 0;
@@ -560,22 +558,22 @@ namespace Honey {
                 &region
             );
 
-            // Transition back to COLOR_ATTACHMENT_OPTIMAL
+            // Transition back to SHADER_READ_ONLY_OPTIMAL so ImGui and later draws see the expected layout
             VkImageMemoryBarrier barrier_from_src{};
             barrier_from_src.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
             barrier_from_src.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-            barrier_from_src.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            barrier_from_src.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             barrier_from_src.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier_from_src.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier_from_src.image = src_image;
             barrier_from_src.subresourceRange = range;
             barrier_from_src.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-            barrier_from_src.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            barrier_from_src.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 
             vkCmdPipelineBarrier(
                 cmd,
                 VK_PIPELINE_STAGE_TRANSFER_BIT,
-                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                 0,
                 0, nullptr,
                 0, nullptr,
@@ -590,22 +588,16 @@ namespace Honey {
 
         uint32_t raw = 0;
         std::memcpy(&raw, mapped, sizeof(uint32_t));
-
         vkUnmapMemory(device, staging_memory);
 
-        // Interpret depending on attachment format
         if (is_integer) {
             result_value = static_cast<int32_t>(raw);
         } else {
             float as_float = 0.0f;
             std::memcpy(&as_float, &raw, sizeof(float));
-            // For non-integer attachments this is somewhat arbitrary.
-            // You can adapt this to your engine's expectations; for now,
-            // we cast to int for compatibility with the API.
             result_value = static_cast<int>(as_float);
         }
 
-        // --- Cleanup staging resources ---
         vkDestroyBuffer(device, staging_buffer, nullptr);
         vkFreeMemory(device, staging_memory, nullptr);
 

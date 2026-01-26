@@ -953,124 +953,164 @@ namespace Honey {
         for (const auto& c : p.cmds) {
             switch (c.type) {
             case FramePacket::CmdType::BeginSwapchainPass: {
-                VkClearValue clear_value{};
-                clear_value.color = { { c.begin.clearColor.r, c.begin.clearColor.g, c.begin.clearColor.b, c.begin.clearColor.a } };
+                    VkClearValue clear_value{};
+                    clear_value.color = { { c.begin.clearColor.r, c.begin.clearColor.g, c.begin.clearColor.b, c.begin.clearColor.a } };
 
-                VkRenderPassBeginInfo rp_begin{};
-                rp_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-                rp_begin.renderPass = reinterpret_cast<VkRenderPass>(m_render_pass);
-                rp_begin.framebuffer = reinterpret_cast<VkFramebuffer>(m_swapchain_framebuffers[image_index]);
-                rp_begin.renderArea.offset = { 0, 0 };
-                rp_begin.renderArea.extent = { m_swapchain_extent_width, m_swapchain_extent_height };
-                rp_begin.clearValueCount = 1;
-                rp_begin.pClearValues = &clear_value;
+                    VkRenderPassBeginInfo rp_begin{};
+                    rp_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+                    rp_begin.renderPass = reinterpret_cast<VkRenderPass>(m_render_pass);
+                    rp_begin.framebuffer = reinterpret_cast<VkFramebuffer>(m_swapchain_framebuffers[image_index]);
+                    rp_begin.renderArea.offset = { 0, 0 };
+                    rp_begin.renderArea.extent = { m_swapchain_extent_width, m_swapchain_extent_height };
+                    rp_begin.clearValueCount = 1;
+                    rp_begin.pClearValues = &clear_value;
 
-                vkCmdBeginRenderPass(cmd, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
-                render_pass_open = true;
-                in_swapchain_pass = true;
+                    vkCmdBeginRenderPass(cmd, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
+                    render_pass_open = true;
+                    in_swapchain_pass = true;
 
-                bind_pipeline_and_dynamic(m_swapchain_extent_width, m_swapchain_extent_height);
-                break;
+                    bind_pipeline_and_dynamic(m_swapchain_extent_width, m_swapchain_extent_height);
+                    break;
             }
             case FramePacket::CmdType::BeginOffscreenPass: {
-                auto* vk_fb = c.offscreen.framebuffer;
-                HN_CORE_ASSERT(vk_fb, "BeginOffscreenPass: framebuffer is null");
+                    auto* vk_fb = c.offscreen.framebuffer;
+                    HN_CORE_ASSERT(vk_fb, "BeginOffscreenPass: framebuffer is null");
 
-                VkRenderPass rp = reinterpret_cast<VkRenderPass>(vk_fb->get_render_pass());
-                VkFramebuffer fb = reinterpret_cast<VkFramebuffer>(vk_fb->get_framebuffer());
-                auto extent = vk_fb->get_extent();
+                    VkRenderPass rp = reinterpret_cast<VkRenderPass>(vk_fb->get_render_pass());
+                    VkFramebuffer fb = reinterpret_cast<VkFramebuffer>(vk_fb->get_framebuffer());
+                    auto extent = vk_fb->get_extent();
 
-                VkClearValue clear_values[2]{};
-                clear_values[0].color = { { c.offscreen.clearColor.r, c.offscreen.clearColor.g, c.offscreen.clearColor.b, c.offscreen.clearColor.a } };
-                clear_values[1].depthStencil = { 1.0f, 0 };
+                    // Query attachment layout from the framebuffer itself
+                    const uint32_t colorCount = vk_fb->get_color_attachment_count();
+                    const bool hasDepth = vk_fb->has_depth_attachment();
+                    const uint32_t totalAttachments = colorCount + (hasDepth ? 1u : 0u);
 
-                VkRenderPassBeginInfo rp_begin{};
-                rp_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-                rp_begin.renderPass = rp;
-                rp_begin.framebuffer = fb;
-                rp_begin.renderArea.offset = { 0, 0 };
-                rp_begin.renderArea.extent = { extent.width, extent.height };
-                rp_begin.clearValueCount = 2;
-                rp_begin.pClearValues = clear_values;
+                    std::vector<VkClearValue> clear_values(totalAttachments);
 
-                vkCmdBeginRenderPass(cmd, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
-                render_pass_open = true;
-                in_swapchain_pass = false;
+                    // Color attachments
+                    for (uint32_t i = 0; i < colorCount; ++i) {
+                        const auto fmt = vk_fb->get_color_attachment_format(i);
+                        VkClearValue& cv = clear_values[i];
 
-                bind_pipeline_and_dynamic(extent.width, extent.height);
-                break;
-            }
-            case FramePacket::CmdType::BindPipelineQuad2D: {
-                // For now, whichever pass is active uses the same quad pipeline.
-                if (render_pass_open) {
-                    uint32_t w = in_swapchain_pass ? m_swapchain_extent_width : 0;
-                    uint32_t h = in_swapchain_pass ? m_swapchain_extent_height : 0;
-                    // For offscreen, viewport/scissor were already set when the pass began.
-                    if (w && h)
-                        bind_pipeline_and_dynamic(w, h);
-                }
-                break;
-            }
-            case FramePacket::CmdType::BindGlobals: {
-                HN_CORE_ASSERT(render_pass_open, "BindGlobals must occur inside a render pass");
-                apply_globals(c.globals);
-                break;
-            }
-            case FramePacket::CmdType::DrawIndexed: {
-                HN_CORE_ASSERT(render_pass_open, "DrawIndexed must occur inside a render pass");
-                HN_CORE_ASSERT(c.draw.va, "DrawIndexed: VertexArray is null");
-
-                const auto& vbs = c.draw.va->get_vertex_buffers();
-                const auto& ib = c.draw.va->get_index_buffer();
-
-                HN_CORE_ASSERT(vbs.size() >= 2, "Vulkan draw: expected 2 vertex buffers (static + instance)");
-                HN_CORE_ASSERT(ib, "Vulkan draw: VertexArray has no index buffer");
-
-                auto vk_vb0 = std::dynamic_pointer_cast<VulkanVertexBuffer>(vbs[0]);
-                auto vk_vb1 = std::dynamic_pointer_cast<VulkanVertexBuffer>(vbs[1]);
-                auto vk_ib = std::dynamic_pointer_cast<VulkanIndexBuffer>(ib);
-
-                HN_CORE_ASSERT(vk_vb0 && vk_vb1, "Vulkan draw: expected VulkanVertexBuffer(s) in VertexArray");
-                HN_CORE_ASSERT(vk_ib, "Vulkan draw: expected VulkanIndexBuffer in VertexArray");
-
-                VkBuffer vbufs[] = {
-                    reinterpret_cast<VkBuffer>(vk_vb0->get_vk_buffer()),
-                    reinterpret_cast<VkBuffer>(vk_vb1->get_vk_buffer())
-                };
-                VkDeviceSize offsets[] = { 0, 0 };
-                vkCmdBindVertexBuffers(cmd, 0, 2, vbufs, offsets);
-
-                VkBuffer ibuf = reinterpret_cast<VkBuffer>(vk_ib->get_vk_buffer());
-                vkCmdBindIndexBuffer(cmd, ibuf, 0, VK_INDEX_TYPE_UINT32);
-
-                const uint32_t index_count = (c.draw.indexCount != 0) ? c.draw.indexCount : vk_ib->get_count();
-                const uint32_t instance_count = (c.draw.instanceCount != 0) ? c.draw.instanceCount : 1;
-                vkCmdDrawIndexed(cmd, index_count, instance_count, 0, 0, 0);
-                break;
-            }
-            case FramePacket::CmdType::EndPass: {
-                if (render_pass_open) {
-                    if (in_swapchain_pass) {
-                        // Before ending the main swapchain pass, draw Dear ImGui on top.
-                        if (ImGui::GetDrawData() && ImGui::GetDrawData()->CmdListsCount > 0 && m_backend) {
-                            VkExtent2D imgui_extent{
-                                m_swapchain_extent_width,
-                                m_swapchain_extent_height
-                            };
-                            VkImageView imgui_target_view =
-                                reinterpret_cast<VkImageView>(m_swapchain_image_views[image_index]);
-
-                            m_backend->render_imgui_on_current_swapchain_image(cmd,
-                                                                               imgui_target_view,
-                                                                               imgui_extent);
+                        if (i == 0) {
+                            // First color: scene color, use clearColor from the pass
+                            cv.color = { {
+                                c.offscreen.clearColor.r,
+                                c.offscreen.clearColor.g,
+                                c.offscreen.clearColor.b,
+                                c.offscreen.clearColor.a
+                            } };
+                        } else {
+                            // Other colors: format‑dependent. For RED_INTEGER, clear to -1 for picking.
+                            switch (fmt) {
+                            case FramebufferTextureFormat::RED_INTEGER:
+                                cv.color.int32[0] = -1;
+                                cv.color.int32[1] = -1;
+                                cv.color.int32[2] = -1;
+                                cv.color.int32[3] = -1;
+                                break;
+                            case FramebufferTextureFormat::RGBA8:
+                            default:
+                                cv.color = { { 0.0f, 0.0f, 0.0f, 1.0f } };
+                                break;
+                            }
                         }
                     }
 
-                    vkCmdEndRenderPass(cmd);
-                    render_pass_open = false;
+                    // Depth attachment, if present, is always after all colors
+                    if (hasDepth) {
+                        VkClearValue& dv = clear_values[colorCount];
+                        dv.depthStencil.depth = 1.0f;
+                        dv.depthStencil.stencil = 0;
+                    }
+
+                    VkRenderPassBeginInfo rp_begin{};
+                    rp_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+                    rp_begin.renderPass = rp;
+                    rp_begin.framebuffer = fb;
+                    rp_begin.renderArea.offset = { 0, 0 };
+                    rp_begin.renderArea.extent = { extent.width, extent.height };
+                    rp_begin.clearValueCount = totalAttachments;
+                    rp_begin.pClearValues = clear_values.data();
+
+                    vkCmdBeginRenderPass(cmd, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
+                    render_pass_open = true;
                     in_swapchain_pass = false;
-                }
-                break;
+
+                    bind_pipeline_and_dynamic(extent.width, extent.height);
+                    break;
+            }
+            case FramePacket::CmdType::BindPipelineQuad2D: {
+                    // For now, whichever pass is active uses the same quad pipeline.
+                    if (render_pass_open) {
+                        uint32_t w = in_swapchain_pass ? m_swapchain_extent_width : 0;
+                        uint32_t h = in_swapchain_pass ? m_swapchain_extent_height : 0;
+                        // For offscreen, viewport/scissor were already set when the pass began.
+                        if (w && h)
+                            bind_pipeline_and_dynamic(w, h);
+                    }
+                    break;
+            }
+            case FramePacket::CmdType::BindGlobals: {
+                    HN_CORE_ASSERT(render_pass_open, "BindGlobals must occur inside a render pass");
+                    apply_globals(c.globals);
+                    break;
+            }
+            case FramePacket::CmdType::DrawIndexed: {
+                    HN_CORE_ASSERT(render_pass_open, "DrawIndexed must occur inside a render pass");
+                    HN_CORE_ASSERT(c.draw.va, "DrawIndexed: VertexArray is null");
+
+                    const auto& vbs = c.draw.va->get_vertex_buffers();
+                    const auto& ib = c.draw.va->get_index_buffer();
+
+                    HN_CORE_ASSERT(vbs.size() >= 2, "Vulkan draw: expected 2 vertex buffers (static + instance)");
+                    HN_CORE_ASSERT(ib, "Vulkan draw: VertexArray has no index buffer");
+
+                    auto vk_vb0 = std::dynamic_pointer_cast<VulkanVertexBuffer>(vbs[0]);
+                    auto vk_vb1 = std::dynamic_pointer_cast<VulkanVertexBuffer>(vbs[1]);
+                    auto vk_ib = std::dynamic_pointer_cast<VulkanIndexBuffer>(ib);
+
+                    HN_CORE_ASSERT(vk_vb0 && vk_vb1, "Vulkan draw: expected VulkanVertexBuffer(s) in VertexArray");
+                    HN_CORE_ASSERT(vk_ib, "Vulkan draw: expected VulkanIndexBuffer in VertexArray");
+
+                    VkBuffer vbufs[] = {
+                        reinterpret_cast<VkBuffer>(vk_vb0->get_vk_buffer()),
+                        reinterpret_cast<VkBuffer>(vk_vb1->get_vk_buffer())
+                    };
+                    VkDeviceSize offsets[] = { 0, 0 };
+                    vkCmdBindVertexBuffers(cmd, 0, 2, vbufs, offsets);
+
+                    VkBuffer ibuf = reinterpret_cast<VkBuffer>(vk_ib->get_vk_buffer());
+                    vkCmdBindIndexBuffer(cmd, ibuf, 0, VK_INDEX_TYPE_UINT32);
+
+                    const uint32_t index_count = (c.draw.indexCount != 0) ? c.draw.indexCount : vk_ib->get_count();
+                    const uint32_t instance_count = (c.draw.instanceCount != 0) ? c.draw.instanceCount : 1;
+                    vkCmdDrawIndexed(cmd, index_count, instance_count, 0, 0, 0);
+                    break;
+            }
+            case FramePacket::CmdType::EndPass: {
+                    if (render_pass_open) {
+                        if (in_swapchain_pass) {
+                            // Before ending the main swapchain pass, draw Dear ImGui on top.
+                            if (ImGui::GetDrawData() && ImGui::GetDrawData()->CmdListsCount > 0 && m_backend) {
+                                VkExtent2D imgui_extent{
+                                    m_swapchain_extent_width,
+                                    m_swapchain_extent_height
+                                };
+                                VkImageView imgui_target_view =
+                                    reinterpret_cast<VkImageView>(m_swapchain_image_views[image_index]);
+
+                                m_backend->render_imgui_on_current_swapchain_image(cmd,
+                                                                                   imgui_target_view,
+                                                                                   imgui_extent);
+                            }
+                        }
+
+                        vkCmdEndRenderPass(cmd);
+                        render_pass_open = false;
+                        in_swapchain_pass = false;
+                    }
+                    break;
             }
             }
         }

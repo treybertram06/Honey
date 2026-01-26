@@ -41,6 +41,15 @@ namespace Honey {
         VkImageView    get_color_image_view(uint32_t index = 0) const;
         VkImage        get_color_image(uint32_t index = 0) const;
 
+        uint32_t get_color_attachment_count() const { return (uint32_t)m_color_attachments.size(); }
+        bool has_depth_attachment() const { return m_depth_spec.texture_format != FramebufferTextureFormat::None; }
+
+        FramebufferTextureFormat get_color_attachment_format(uint32_t index) const {
+            HN_CORE_ASSERT(index < m_color_specs.size(),
+                           "VulkanFramebuffer::get_color_attachment_format: index out of range");
+            return m_color_specs[index].texture_format;
+        }
+
     private:
         struct ImageAttachment {
             VkImage        image  = VK_NULL_HANDLE;
