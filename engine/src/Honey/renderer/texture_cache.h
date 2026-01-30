@@ -7,34 +7,21 @@ namespace Honey {
 
     class TextureCache {
     public:
-        bool contains(const std::string& path) const {
-            auto canonical_path = std::filesystem::canonical(path);
-
-            return m_texture_map.find(canonical_path) != m_texture_map.end();
+        // Static singleton accessor
+        static TextureCache& get() {
+            // Use the same instance as Texture2D::create()
+            extern TextureCache& texture_cache_instance();
+            return texture_cache_instance();
         }
 
-        Ref<Texture2D> get(const std::string& path) const {
-            auto canonical_path = std::filesystem::canonical(path);
-
-            auto it = m_texture_map.find(canonical_path);
-            if (it != m_texture_map.end()) {
-                return it->second;
-            }
-            return nullptr;
-        }
-
-        Ref<Texture2D> add(const std::string& path, const Ref<Texture2D>& texture) {
-            auto canonical_path = std::filesystem::canonical(path);
-
-            m_texture_map[canonical_path] = texture;
-            return texture;
-        }
-
-        void clear() {
-            m_texture_map.clear();
-        }
+        bool contains(const std::string& path) const;
+        Ref<Texture2D> get(const std::string& path) const;
+        Ref<Texture2D> add(const std::string& path, const Ref<Texture2D>& texture);
+        void clear();
+        void recreate_all_samplers();
 
     private:
         std::unordered_map<std::string, Ref<Texture2D>> m_texture_map;
     };
-}
+
+} // namespace Honey

@@ -24,10 +24,10 @@ namespace Honey {
         Clockwise,
     };
 
-    struct BlendState {
+    struct AttachmentBlendState {
         bool enabled = false;
         // You can expand later (src/dst factors, ops, separate alpha, etc.)
-        bool operator==(const BlendState& other) const {
+        bool operator==(const AttachmentBlendState& other) const {
             return enabled == other.enabled;
         }
     };
@@ -66,7 +66,7 @@ namespace Honey {
         CullMode          cullMode = CullMode::None;
         FrontFaceWinding  frontFace = FrontFaceWinding::CounterClockwise;
         bool              wireframe = false;
-        BlendState        blend;
+        std::vector<AttachmentBlendState> perColorAttachmentBlend;
         DepthStencilState depthStencil;
 
         RenderPassType    passType = RenderPassType::Swapchain;
@@ -80,7 +80,7 @@ namespace Honey {
                    cullMode   == other.cullMode   &&
                    frontFace  == other.frontFace  &&
                    wireframe  == other.wireframe  &&
-                   blend      == other.blend      &&
+                   perColorAttachmentBlend == other.perColorAttachmentBlend &&
                    depthStencil == other.depthStencil &&
                    passType   == other.passType;
         }

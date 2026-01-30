@@ -9,7 +9,7 @@
 
 namespace Honey {
 
-    static TextureCache& texture_cache_instance() {
+    TextureCache& texture_cache_instance() {
         // Intentionally leaked to avoid static destruction order issues (Vulkan device may be gone).
         static TextureCache* cache = new TextureCache();
         return *cache;

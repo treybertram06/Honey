@@ -872,14 +872,14 @@ namespace Honey {
         bool render_pass_open = false;
         bool in_swapchain_pass = false;
 
-        auto bind_pipeline_and_dynamic = [&](uint32_t width, uint32_t height) {
-            HN_CORE_ASSERT(m_pipeline_quad.valid(), "Vulkan pipeline is null (did create_graphics_pipeline run?)");
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, reinterpret_cast<VkPipeline>(m_pipeline_quad.pipeline()));
+        auto bind_pipeline_and_dynamic = [&](VkPipeline pipeline, uint32_t width, uint32_t height) {
+            HN_CORE_ASSERT(pipeline != VK_NULL_HANDLE, "Vulkan pipeline is null");
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
             VkViewport viewport{};
             viewport.x = 0.0f;
             viewport.y = 0.0f;
-            viewport.width = static_cast<float>(width);
+            viewport.width  = static_cast<float>(width);
             viewport.height = static_cast<float>(height);
             viewport.minDepth = 0.0f;
             viewport.maxDepth = 1.0f;
@@ -969,7 +969,10 @@ namespace Honey {
                     render_pass_open = true;
                     in_swapchain_pass = true;
 
-                    bind_pipeline_and_dynamic(m_swapchain_extent_width, m_swapchain_extent_height);
+                    bind_pipeline_and_dynamic(
+                        reinterpret_cast<VkPipeline>(m_pipeline_quad.pipeline()),
+                        m_swapchain_extent_width,
+                        m_swapchain_extent_height);
                     break;
             }
             case FramePacket::CmdType::BeginOffscreenPass: {
@@ -979,6 +982,79 @@ namespace Honey {
                     VkRenderPass rp = reinterpret_cast<VkRenderPass>(vk_fb->get_render_pass());
                     VkFramebuffer fb = reinterpret_cast<VkFramebuffer>(vk_fb->get_framebuffer());
                     auto extent = vk_fb->get_extent();
+
+                    // Lazily create offscreen quad pipeline compatible with this FB's render pass
+                    if (!m_pipeline_quad_fb.valid()) {
+                        static ShaderCache cache;
+                        const auto glsl = std::filesystem::path("../assets/shaders/Renderer2D_Quad.glsl");
+                        const auto spirv = cache.get_or_compile_spirv_paths(glsl);
+
+                        auto& rs = Settings::get().renderer; // <- Hip, new and cool
+
+                        PipelineSpec offspec;
+                        offspec.shaderGLSLPath = glsl;
+                        offspec.topology = PrimitiveTopology::Triangles;
+                        offspec.cullMode = CullMode::None;
+                        offspec.frontFace = FrontFaceWinding::CounterClockwise;
+                        offspec.depthStencil.depthTest  = rs.depth_test;
+                        offspec.depthStencil.depthWrite = rs.depth_write;
+                        offspec.passType = RenderPassType::Offscreen;
+                        offspec.wireframe = rs.wireframe;
+
+                        // Blend states per color attachment of vk_fb
+                        const uint32_t colorCount = vk_fb->get_color_attachment_count();
+                        offspec.perColorAttachmentBlend.clear();
+                        offspec.perColorAttachmentBlend.resize(colorCount);
+
+                        for (uint32_t i = 0; i < colorCount; ++i) {
+                            auto fmt = vk_fb->get_color_attachment_format(i);
+                            AttachmentBlendState ab{};
+                            switch (fmt) {
+                            case FramebufferTextureFormat::RGBA8:
+                                ab.enabled = rs.blending;
+                                break;
+                            case FramebufferTextureFormat::RED_INTEGER:
+                                ab.enabled = false; // must not blend integer attachment
+                                break;
+                            default:
+                                ab.enabled = false;
+                                break;
+                            }
+                            offspec.perColorAttachmentBlend[i] = ab;
+                        }
+
+                        // Same vertex bindings as swapchain pipeline
+                        VertexInputBindingSpec static_binding;
+                        static_binding.layout = BufferLayout{
+                                { ShaderDataType::Float2, "a_local_pos" },  // loc 0
+                                { ShaderDataType::Float2, "a_local_tex" }   // loc 1
+                        };
+
+                        VertexInputBindingSpec instance_binding;
+                        instance_binding.layout = BufferLayout{
+                                { ShaderDataType::Float3, "i_center",       false, true }, // loc 2
+                                { ShaderDataType::Float2, "i_half_size",    false, true }, // loc 3
+                                { ShaderDataType::Float , "i_rotation",     false, true }, // loc 4
+                                { ShaderDataType::Float4, "i_color",        false, true }, // loc 5
+                                { ShaderDataType::Int,   "i_tex_index",     false, true }, // loc 6
+                                { ShaderDataType::Float, "i_tiling",        false, true }, // loc 7
+                                { ShaderDataType::Float2,"i_tex_coord_min", false, true }, // loc 8
+                                { ShaderDataType::Float2,"i_tex_coord_max", false, true }, // loc 9
+                                { ShaderDataType::Int,   "i_entity_id",     false, true }  // loc 10
+                        };
+
+                        offspec.vertexBindings.push_back(static_binding);
+                        offspec.vertexBindings.push_back(instance_binding);
+
+                        m_pipeline_quad_fb.create(
+                            reinterpret_cast<VkDevice>(m_device),
+                            rp,
+                            reinterpret_cast<VkDescriptorSetLayout>(m_global_set_layout),
+                            spirv.vertex.string(),
+                            spirv.fragment.string(),
+                            offspec
+                        );
+                    }
 
                     // Query attachment layout from the framebuffer itself
                     const uint32_t colorCount = vk_fb->get_color_attachment_count();
@@ -1037,22 +1113,30 @@ namespace Honey {
                     render_pass_open = true;
                     in_swapchain_pass = false;
 
-                    bind_pipeline_and_dynamic(extent.width, extent.height);
+                    bind_pipeline_and_dynamic(
+                        reinterpret_cast<VkPipeline>(m_pipeline_quad_fb.pipeline()),
+                        extent.width,
+                        extent.height
+                    );
                     break;
             }
             case FramePacket::CmdType::BindPipelineQuad2D: {
-                    // For now, whichever pass is active uses the same quad pipeline.
                     if (render_pass_open) {
+                        VkPipeline pipeline =
+                            in_swapchain_pass
+                                ? reinterpret_cast<VkPipeline>(m_pipeline_quad.pipeline())
+                                : reinterpret_cast<VkPipeline>(m_pipeline_quad_fb.pipeline());
+
                         uint32_t w = in_swapchain_pass ? m_swapchain_extent_width : 0;
                         uint32_t h = in_swapchain_pass ? m_swapchain_extent_height : 0;
-                        // For offscreen, viewport/scissor were already set when the pass began.
                         if (w && h)
-                            bind_pipeline_and_dynamic(w, h);
+                            bind_pipeline_and_dynamic(pipeline, w, h);
                     }
                     break;
             }
             case FramePacket::CmdType::BindGlobals: {
                     HN_CORE_ASSERT(render_pass_open, "BindGlobals must occur inside a render pass");
+                    //HN_CORE_INFO("BindGlobals: textureCount = {}", c.globals.textureCount);
                     apply_globals(c.globals);
                     break;
             }
@@ -1258,6 +1342,7 @@ namespace Honey {
             return;
 
         m_pipeline_quad.destroy(reinterpret_cast<VkDevice>(m_device));
+        m_pipeline_quad_fb.destroy(reinterpret_cast<VkDevice>(m_device));
     }
 
     void VulkanContext::create_graphics_pipeline() {
@@ -1271,29 +1356,33 @@ namespace Honey {
         const auto glsl = std::filesystem::path("../assets/shaders/Renderer2D_Quad.glsl");
         const auto spirv = cache.get_or_compile_spirv_paths(glsl);
 
-        auto& rs = get_settings().renderer;
+        auto& rs = Settings::get().renderer;
 
-        // Build a PipelineSpec for Renderer2D quads
         PipelineSpec spec;
         spec.shaderGLSLPath = glsl;
         spec.topology = PrimitiveTopology::Triangles;
         spec.cullMode = CullMode::None;
         spec.frontFace = FrontFaceWinding::CounterClockwise;
-        spec.blend.enabled = rs.blending;
-        spec.depthStencil.depthTest = rs.depth_test;    // 2D: no depth
+        spec.depthStencil.depthTest  = rs.depth_test;
         spec.depthStencil.depthWrite = rs.depth_write;
         spec.passType = RenderPassType::Swapchain;
         spec.wireframe = rs.wireframe;
 
+        // Swapchain subpass has exactly 1 color attachment
+        spec.perColorAttachmentBlend.clear();
+        AttachmentBlendState colorBlend{};
+        colorBlend.enabled = rs.blending;
+        spec.perColorAttachmentBlend.push_back(colorBlend);
+
         // Vertex bindings must match Renderer2D VA layout and shader locations
         VertexInputBindingSpec static_binding;
-        static_binding.layout = BufferLayout {
-                    { ShaderDataType::Float2, "a_local_pos"  },  // loc 0
-                    { ShaderDataType::Float2, "a_local_tex"  }   // loc 1
+        static_binding.layout = BufferLayout{
+                    { ShaderDataType::Float2, "a_local_pos" },  // loc 0
+                    { ShaderDataType::Float2, "a_local_tex" }   // loc 1
         };
 
         VertexInputBindingSpec instance_binding;
-        instance_binding.layout = BufferLayout {
+        instance_binding.layout = BufferLayout{
                     { ShaderDataType::Float3, "i_center",       false, true }, // loc 2
                     { ShaderDataType::Float2, "i_half_size",    false, true }, // loc 3
                     { ShaderDataType::Float , "i_rotation",     false, true }, // loc 4
@@ -1308,6 +1397,7 @@ namespace Honey {
         spec.vertexBindings.push_back(static_binding);
         spec.vertexBindings.push_back(instance_binding);
 
+        // Swapchain pipeline
         m_pipeline_quad.create(
             reinterpret_cast<VkDevice>(m_device),
             reinterpret_cast<VkRenderPass>(m_render_pass),
@@ -1316,5 +1406,6 @@ namespace Honey {
             spirv.fragment.string(),
             spec
         );
+
     }
 } // namespace Honey

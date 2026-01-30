@@ -208,6 +208,7 @@ namespace Honey {
         std::vector<VkFramebuffer> m_swapchain_framebuffers;
 
         VulkanPipeline m_pipeline_quad;
+        VulkanPipeline m_pipeline_quad_fb;
 
         VkDescriptorSetLayout m_global_set_layout = nullptr;
         VkDescriptorPool m_descriptor_pool = nullptr;

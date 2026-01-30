@@ -233,32 +233,53 @@ namespace Honey {
 
         VkPipelineDepthStencilStateCreateInfo depth{};
         depth.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-        depth.depthTestEnable = spec.depthStencil.depthTest ? VK_TRUE : VK_FALSE;
+        depth.depthTestEnable  = spec.depthStencil.depthTest  ? VK_TRUE : VK_FALSE;
         depth.depthWriteEnable = spec.depthStencil.depthWrite ? VK_TRUE : VK_FALSE;
         depth.depthCompareOp = VK_COMPARE_OP_LESS;
         depth.depthBoundsTestEnable = VK_FALSE;
         depth.stencilTestEnable = VK_FALSE;
 
-        VkPipelineColorBlendAttachmentState blend_att{};
-        blend_att.colorWriteMask =
-            VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-            VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-        blend_att.blendEnable = spec.blend.enabled ? VK_TRUE : VK_FALSE;
+        // Per‑attachment color blend state
+        std::vector<VkPipelineColorBlendAttachmentState> blend_attachments;
+        blend_attachments.resize(std::max<size_t>(1, spec.perColorAttachmentBlend.size()));
 
-        if (spec.blend.enabled) {
-            blend_att.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-            blend_att.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-            blend_att.colorBlendOp = VK_BLEND_OP_ADD;
-            blend_att.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-            blend_att.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-            blend_att.alphaBlendOp = VK_BLEND_OP_ADD;
+        for (size_t i = 0; i < blend_attachments.size(); ++i) {
+            const bool enable =
+                (i < spec.perColorAttachmentBlend.size())
+                    ? spec.perColorAttachmentBlend[i].enabled
+                    : false;
+
+            auto& att = blend_attachments[i];
+            att.colorWriteMask =
+                VK_COLOR_COMPONENT_R_BIT |
+                VK_COLOR_COMPONENT_G_BIT |
+                VK_COLOR_COMPONENT_B_BIT |
+                VK_COLOR_COMPONENT_A_BIT;
+
+            att.blendEnable = enable ? VK_TRUE : VK_FALSE;
+
+            if (enable) {
+                att.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+                att.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+                att.colorBlendOp        = VK_BLEND_OP_ADD;
+                att.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+                att.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+                att.alphaBlendOp        = VK_BLEND_OP_ADD;
+            } else {
+                att.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+                att.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+                att.colorBlendOp        = VK_BLEND_OP_ADD;
+                att.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+                att.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+                att.alphaBlendOp        = VK_BLEND_OP_ADD;
+            }
         }
 
         VkPipelineColorBlendStateCreateInfo blend{};
         blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
         blend.logicOpEnable = VK_FALSE;
-        blend.attachmentCount = 1;
-        blend.pAttachments = &blend_att;
+        blend.attachmentCount = static_cast<uint32_t>(blend_attachments.size());
+        blend.pAttachments = blend_attachments.data();
 
         VkPipelineLayoutCreateInfo layout_ci{};
         layout_ci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -275,17 +296,17 @@ namespace Honey {
         pipe.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
         pipe.stageCount = 2;
         pipe.pStages = stages;
-        pipe.pVertexInputState = &vertex_input;
+        pipe.pVertexInputState   = &vertex_input;
         pipe.pInputAssemblyState = &input_assembly;
-        pipe.pViewportState = &viewport_state;
+        pipe.pViewportState      = &viewport_state;
         pipe.pRasterizationState = &raster;
-        pipe.pMultisampleState = &msaa;
-        pipe.pDepthStencilState = spec.depthStencil.depthTest ? &depth : nullptr;
-        pipe.pColorBlendState = &blend;
-        pipe.pDynamicState = &dynamic_state;
-        pipe.layout = (VkPipelineLayout)(m_layout);
+        pipe.pMultisampleState   = &msaa;
+        pipe.pDepthStencilState  = &depth;
+        pipe.pColorBlendState    = &blend;
+        pipe.pDynamicState       = &dynamic_state;
+        pipe.layout    = (VkPipelineLayout)(m_layout);
         pipe.renderPass = renderPass;
-        pipe.subpass = 0;
+        pipe.subpass   = 0;
 
         VkPipeline pipeline = VK_NULL_HANDLE;
         VkResult pr = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipe, nullptr, &pipeline);

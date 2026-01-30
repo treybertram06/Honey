@@ -49,7 +49,7 @@ namespace Honey {
         HN_CORE_INFO("Creating window {0} ({1}, {2})", props.title, props.width, props.height);
 
         if (!s_glfw_initialized) {
-            auto& renderer_settings = get_settings().renderer;
+            auto& renderer_settings = Settings::get().renderer;
 
             if (renderer_settings.api == RendererAPI::API::vulkan) {
                 // Application already called glfwInit() before creating the VulkanBackend.
@@ -65,7 +65,7 @@ namespace Honey {
             }
         }
 
-        auto& renderer_settings = get_settings().renderer;
+        auto& renderer_settings = Settings::get().renderer;
         switch (renderer_settings.api) {
 
         case RendererAPI::API::opengl:

@@ -38,6 +38,8 @@ namespace Honey {
         // Returns an ImGui texture id, registering with ImGui on first use.
         ImTextureID get_imgui_texture_id() override;
 
+        void refresh_sampler() override;
+
     private:
         void fetch_device_handles();
         void init_from_pixels_rgba8(const void* rgba_pixels, uint32_t width, uint32_t height);

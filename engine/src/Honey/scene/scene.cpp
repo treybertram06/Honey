@@ -332,7 +332,7 @@ namespace Honey {
         }
 
         //physics
-        auto& physics_settings = get_settings().physics;
+        auto& physics_settings = Settings::get().physics;
         if (physics_settings.enabled) {
             // Sync physics bodies with their transforms if needed
             for (auto e : m_registry.view<TransformComponent, Rigidbody2DComponent>()) {

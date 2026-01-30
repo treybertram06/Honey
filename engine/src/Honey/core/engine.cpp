@@ -25,7 +25,7 @@ namespace Honey {
         HN_CORE_ASSERT(!s_instance, "Application already exists!");
         s_instance = this;
 
-        auto& renderer_settings = get_settings().renderer; // I'm not sure if this is the best place to do this, but I'm also not sure where else I could...
+        auto& renderer_settings = Settings::get().renderer; // I'm not sure if this is the best place to do this, but I'm also not sure where else I could...
         RendererAPI::set_api(renderer_settings.api);
         RenderCommand::set_renderer_api(RendererAPI::create());
 
@@ -139,7 +139,7 @@ namespace Honey {
                     }
                 }
 
-                auto& renderer_settings = get_settings().renderer;
+                auto& renderer_settings = Settings::get().renderer;
                 m_imgui_layer->begin();
                 {
                     HN_PROFILE_SCOPE("LayerStack on_imgui_render");

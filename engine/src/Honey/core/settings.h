@@ -6,6 +6,12 @@ namespace Honey {
 
     struct RendererSettings {
 
+        enum class TextureFilter {
+            nearest = 0,
+            linear,
+            anisotropic,
+        };
+
         RendererAPI::API api = RendererAPI::API::vulkan;
 
         glm::vec4 clear_color = { 0.1f, 0.1f, 0.1f, 1.0f };
@@ -16,6 +22,8 @@ namespace Honey {
         bool blending = true;
         bool vsync = true;
         bool show_physics_debug_draw = false;
+
+        TextureFilter texture_filter = TextureFilter::nearest;
 
 
     };
@@ -31,5 +39,12 @@ namespace Honey {
         PhysicsSettings physics;
     };
 
-    EngineSettings& get_settings();
+    class Settings {
+    public:
+        static EngineSettings& get() {
+            static EngineSettings s_instance;
+            return s_instance;
+        }
+    };
+
 }

@@ -29,6 +29,7 @@ namespace Honey {
         static Ref<Texture2D> create(const std::string& path);
 
         static void shutdown_cache();
+        virtual void refresh_sampler() {}
     };
 
 }
