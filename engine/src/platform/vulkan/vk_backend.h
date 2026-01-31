@@ -61,6 +61,8 @@ namespace Honey {
 
         void render_imgui_on_current_swapchain_image(VkCommandBuffer cmd, VkImageView target_view, VkExtent2D extent);
 
+        float get_max_anisotropy() const { return m_max_anisotropy; }
+
     private:
         struct QueueFamilyInfo {
             uint32_t graphicsFamily = UINT32_MAX;
@@ -125,6 +127,8 @@ namespace Honey {
         // image counts elsewhere, you can wire them in here.
         uint32_t m_min_image_count = 2;
         uint32_t m_image_count     = 2;
+
+        float m_max_anisotropy = 1.0f;
 
         static constexpr uint32_t k_desired_queues_per_family = 4;
     };

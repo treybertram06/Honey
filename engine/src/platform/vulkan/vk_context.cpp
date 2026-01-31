@@ -17,6 +17,7 @@
 #include "vk_texture.h"
 #include "Honey/core/settings.h"
 #include "Honey/renderer/shader_cache.h"
+#include "Honey/renderer/texture_cache.h"
 #include "platform/vulkan/vk_renderer_api.h"
 
 namespace Honey {
@@ -1343,6 +1344,11 @@ namespace Honey {
 
         m_pipeline_quad.destroy(reinterpret_cast<VkDevice>(m_device));
         m_pipeline_quad_fb.destroy(reinterpret_cast<VkDevice>(m_device));
+    }
+
+    void VulkanContext::refresh_all_texture_samplers() {
+        wait_idle();
+        TextureCache::get().recreate_all_samplers();
     }
 
     void VulkanContext::create_graphics_pipeline() {

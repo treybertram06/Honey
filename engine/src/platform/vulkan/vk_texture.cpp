@@ -230,55 +230,57 @@ namespace Honey {
     }
 
  void VulkanTexture2D::create_sampler() {
+        VkSamplerCreateInfo si{};
+        si.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
 
-            VkSamplerCreateInfo si{};
-            si.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        auto& current_af = Settings::get().renderer.anisotropic_filtering_level;
 
-            // Defaults
-            si.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-            si.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-            si.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-            si.borderColor  = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-            si.unnormalizedCoordinates = VK_FALSE;
-            si.compareEnable = VK_FALSE;
-            si.compareOp     = VK_COMPARE_OP_ALWAYS;
-            si.mipLodBias    = 0.0f;
-            si.minLod        = 0.0f;
-            si.maxLod        = 0.0f;
-            si.anisotropyEnable = VK_FALSE;
-            si.maxAnisotropy    = 1.0f;
+        // Defaults
+        si.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        si.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        si.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        si.borderColor  = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+        si.unnormalizedCoordinates = VK_FALSE;
+        si.compareEnable = VK_FALSE;
+        si.compareOp     = VK_COMPARE_OP_ALWAYS;
+        si.mipLodBias    = 0.0f;
+        si.minLod        = 0.0f;
+        si.maxLod        = 0.0f;
+        si.anisotropyEnable = VK_FALSE;
+        si.maxAnisotropy    = current_af;
 
-            using TextureFilter = Honey::RendererSettings::TextureFilter;
-            TextureFilter filter = Settings::get().renderer.texture_filter;
+        using TextureFilter = Honey::RendererSettings::TextureFilter;
+        TextureFilter filter = Settings::get().renderer.texture_filter;
 
-            switch (filter) {
-            case TextureFilter::nearest:
-                si.magFilter  = VK_FILTER_NEAREST;
-                si.minFilter  = VK_FILTER_NEAREST;
-                si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-                break;
+        switch (filter) {
+        case TextureFilter::nearest:
+            si.magFilter  = VK_FILTER_NEAREST;
+            si.minFilter  = VK_FILTER_NEAREST;
+            si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+            break;
 
-            case TextureFilter::linear:
-                si.magFilter  = VK_FILTER_LINEAR;
-                si.minFilter  = VK_FILTER_LINEAR;
-                si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-                break;
+        case TextureFilter::linear:
+            si.magFilter  = VK_FILTER_LINEAR;
+            si.minFilter  = VK_FILTER_LINEAR;
+            si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+            break;
 
-            case TextureFilter::anisotropic:
-                si.magFilter  = VK_FILTER_LINEAR;
-                si.minFilter  = VK_FILTER_LINEAR;
-                si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-                si.anisotropyEnable = VK_TRUE;
-                si.maxAnisotropy    = 16.0f; // or query device limit
-                break;
-            }
-
-            VkSampler sampler = VK_NULL_HANDLE;
-            VkResult r = vkCreateSampler(reinterpret_cast<VkDevice>(m_device), &si, nullptr, &sampler);
-            HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateSampler failed");
-
-            m_sampler = reinterpret_cast<void*>(sampler);
+        case TextureFilter::anisotropic:
+            float current_af = Settings::get().renderer.anisotropic_filtering_level;
+            si.magFilter  = VK_FILTER_LINEAR;
+            si.minFilter  = VK_FILTER_LINEAR;
+            si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+            si.anisotropyEnable = VK_TRUE;
+            si.maxAnisotropy    = current_af;
+            break;
         }
+
+        VkSampler sampler = VK_NULL_HANDLE;
+        VkResult r = vkCreateSampler(reinterpret_cast<VkDevice>(m_device), &si, nullptr, &sampler);
+        HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateSampler failed");
+
+        m_sampler = reinterpret_cast<void*>(sampler);
+    }
 
     void VulkanTexture2D::transition_image_layout(uint32_t old_layout, uint32_t new_layout) {
         HN_CORE_ASSERT(m_backend, "VulkanTexture2D::transition_image_layout: backend is null");

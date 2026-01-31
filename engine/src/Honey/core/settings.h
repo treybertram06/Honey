@@ -22,6 +22,7 @@ namespace Honey {
         bool blending = true;
         bool vsync = true;
         bool show_physics_debug_draw = false;
+        float anisotropic_filtering_level = 16.0f; // This overrides what the actual maximum value is, but I don't care.
 
         TextureFilter texture_filter = TextureFilter::nearest;
 

@@ -146,6 +146,8 @@ namespace Honey {
         uint32_t get_swapchain_extent_width()  const { return m_swapchain_extent_width; }
         uint32_t get_swapchain_extent_height() const { return m_swapchain_extent_height; }
 
+        void refresh_all_texture_samplers() override;
+
     private:
         // Per-window only:
         void create_surface();

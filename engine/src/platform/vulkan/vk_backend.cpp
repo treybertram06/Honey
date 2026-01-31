@@ -774,8 +774,15 @@ namespace Honey {
             queue_infos.push_back(q1);
         }
 
+        VkPhysicalDeviceProperties device_props{};
+        vkGetPhysicalDeviceProperties(m_physical_device, &device_props);
+
         VkPhysicalDeviceFeatures features{};
         features.independentBlend = VK_TRUE;
+        features.samplerAnisotropy = VK_TRUE;
+        m_max_anisotropy = device_props.limits.maxSamplerAnisotropy;
+        HN_CORE_INFO("Max Anisotropy: {0}", m_max_anisotropy);
+
 
         const std::vector<const char*> device_extensions = {
             VK_KHR_SWAPCHAIN_EXTENSION_NAME
