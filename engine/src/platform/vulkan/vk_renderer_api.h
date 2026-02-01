@@ -24,11 +24,11 @@ namespace Honey {
         void draw_indexed(const Ref<VertexArray>&, uint32_t) override;
         void draw_indexed_instanced(const Ref<VertexArray>&, uint32_t, uint32_t) override;
 
-        void set_wireframe(bool) override {}
-        void set_depth_test(bool) override {}
-        void set_depth_write(bool) override {}
-        void set_blend(bool) override {}
-        void set_blend_for_attachment(uint32_t, bool) override {}
+        void set_wireframe(bool) override;
+        void set_depth_test(bool) override;
+        void set_depth_write(bool) override;
+        void set_blend(bool) override;
+        void set_blend_for_attachment(uint32_t, bool) override;
 
         Ref<VertexBuffer> create_vertex_buffer(uint32_t size) override;
         Ref<VertexBuffer> create_vertex_buffer(float* vertices, uint32_t size) override;

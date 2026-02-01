@@ -52,6 +52,8 @@ namespace Honey {
         VkCommandPool get_command_pool() const { return m_command_pool; }
         VkRenderPass get_render_pass() const { return m_render_pass; }
 
+        void mark_pipeline_dirty() { m_pipeline_dirty = true; }
+
         struct FramePacket {
             struct DrawCmd {
                 Ref<VertexArray> va;

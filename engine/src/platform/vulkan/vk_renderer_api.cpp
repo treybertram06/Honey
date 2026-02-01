@@ -10,6 +10,13 @@ namespace Honey {
 
     static thread_local VulkanContext* s_recording_context = nullptr;
 
+    static VulkanContext* get_vulkan_context() {
+        if (s_recording_context)
+            return s_recording_context;
+        auto* base = Application::get().get_window().get_context();
+        return dynamic_cast<VulkanContext*>(base);
+    }
+
     static VulkanContext::FramePacket& pkt() {
         if (!s_recording_context) {
             auto* base = Application::get().get_window().get_context();
@@ -97,6 +104,28 @@ namespace Honey {
         cmd.draw.instanceCount = instance_count;
 
         pkt().cmds.push_back(cmd);
+    }
+    void VulkanRendererAPI::set_wireframe(bool) {
+        if (auto* vk = get_vulkan_context())
+            vk->mark_pipeline_dirty();
+    }
+
+    void VulkanRendererAPI::set_depth_test(bool) {
+        if (auto* vk = get_vulkan_context())
+            vk->mark_pipeline_dirty();
+    }
+
+    void VulkanRendererAPI::set_depth_write(bool) {
+        if (auto* vk = get_vulkan_context())
+            vk->mark_pipeline_dirty();
+    }
+
+    void VulkanRendererAPI::set_blend(bool) {
+        if (auto* vk = get_vulkan_context())
+            vk->mark_pipeline_dirty();
+    }
+
+    void VulkanRendererAPI::set_blend_for_attachment(uint32_t, bool) {
     }
 
     Ref<VertexBuffer> VulkanRendererAPI::create_vertex_buffer(uint32_t size) {

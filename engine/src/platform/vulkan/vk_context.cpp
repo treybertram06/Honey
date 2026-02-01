@@ -434,6 +434,12 @@ namespace Honey {
 
         recreate_swapchain_if_needed();
 
+        if (m_pipeline_dirty) {
+            vkDeviceWaitIdle(reinterpret_cast<VkDevice>(m_device));
+            cleanup_pipeline();
+            create_graphics_pipeline();
+        }
+
         VkFence in_flight = reinterpret_cast<VkFence>(m_in_flight_fences[m_current_frame]);
         vkWaitForFences(reinterpret_cast<VkDevice>(m_device), 1, &in_flight, VK_TRUE, UINT64_MAX);
 
@@ -1520,6 +1526,9 @@ namespace Honey {
             spirv.fragment.string(),
             spec
         );
+
+        m_last_pipeline_spec = spec;
+        m_pipeline_dirty = false;
 
     }
 } // namespace Honey
