@@ -25,6 +25,9 @@ namespace Honey {
         HN_CORE_ASSERT(!s_instance, "Application already exists!");
         s_instance = this;
 
+        const std::filesystem::path asset_root = ASSET_ROOT;
+        Settings::load_from_file( asset_root / ".." / "config" / "settings.yaml" );
+
         auto& renderer_settings = Settings::get().renderer; // I'm not sure if this is the best place to do this, but I'm also not sure where else I could...
         RendererAPI::set_api(renderer_settings.api);
         RenderCommand::set_renderer_api(RendererAPI::create());
@@ -41,7 +44,7 @@ namespace Honey {
         m_window = Window::create(WindowProps(name, width, height));
 
         m_window->set_event_callback([this](auto && PH1) { on_event(std::forward<decltype(PH1)>(PH1)); });
-        m_window->set_vsync(false);
+        m_window->set_vsync(renderer_settings.vsync);
 
         Renderer::init();
 

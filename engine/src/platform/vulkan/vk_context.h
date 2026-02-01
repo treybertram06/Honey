@@ -53,6 +53,7 @@ namespace Honey {
         VkRenderPass get_render_pass() const { return m_render_pass; }
 
         void mark_pipeline_dirty() { m_pipeline_dirty = true; }
+        void request_swapchain_recreation() { m_framebuffer_resized = true; }
 
         struct FramePacket {
             struct DrawCmd {

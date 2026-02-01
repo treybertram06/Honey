@@ -131,11 +131,29 @@ namespace Honey {
     }
 
     static VkPresentModeKHR choose_present_mode(const std::vector<VkPresentModeKHR>& modes) {
-        // MAILBOX is triple-buffer-like, great if available. FIFO is guaranteed.
+        const auto& renderer = Settings::get().renderer;
+
+        // If vsync is ON: we want FIFO (always supported, tear-free).
+        if (renderer.vsync) {
+            for (auto m : modes) {
+                if (m == VK_PRESENT_MODE_FIFO_KHR)
+                    return m;
+            }
+            // FIFO is guaranteed by the spec, but keep a fallback just in case.
+            return VK_PRESENT_MODE_FIFO_KHR;
+        }
+
+        // If vsync is OFF: try MAILBOX (low-latency, tear-friendly) then IMMEDIATE.
         for (auto m : modes) {
             if (m == VK_PRESENT_MODE_MAILBOX_KHR)
                 return m;
         }
+        for (auto m : modes) {
+            if (m == VK_PRESENT_MODE_IMMEDIATE_KHR)
+                return m;
+        }
+
+        // As a last resort, fall back to FIFO (vsync on).
         return VK_PRESENT_MODE_FIFO_KHR;
     }
 

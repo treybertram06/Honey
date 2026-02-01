@@ -1,11 +1,59 @@
 #include "hnpch.h"
 #include "opengl_texture.h"
+#include "Honey/core/settings.h"
+
+#ifndef GL_TEXTURE_MAX_ANISOTROPY_EXT
+	#define GL_TEXTURE_MAX_ANISOTROPY_EXT 0x84FE
+#endif
+#ifndef GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT
+	#define GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT 0x84FF
+#endif
 
 #include "stb_image.h"
 
 #include <glad/glad.h>
 
 namespace Honey {
+
+	static void apply_filter_params(GLuint texture_id) {
+		const auto& renderer = Settings::get().renderer;
+
+		GLint min_filter = GL_NEAREST;
+		GLint mag_filter = GL_NEAREST;
+
+		switch (renderer.texture_filter) {
+		case RendererSettings::TextureFilter::nearest:
+			min_filter = GL_NEAREST_MIPMAP_NEAREST;
+			mag_filter = GL_NEAREST;
+			break;
+		case RendererSettings::TextureFilter::linear:
+			min_filter = GL_LINEAR_MIPMAP_LINEAR;
+			mag_filter = GL_LINEAR;
+			break;
+		case RendererSettings::TextureFilter::anisotropic:
+			min_filter = GL_LINEAR_MIPMAP_LINEAR;
+			mag_filter = GL_LINEAR;
+			break;
+		}
+
+		// DSA calls
+		glTextureParameteri(texture_id, GL_TEXTURE_MIN_FILTER, min_filter);
+		glTextureParameteri(texture_id, GL_TEXTURE_MAG_FILTER, mag_filter);
+
+		// Optional: set anisotropy if supported and requested
+		if (renderer.texture_filter == RendererSettings::TextureFilter::anisotropic) {
+			GLfloat max_supported = 1.0f;
+			glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &max_supported);
+
+			GLfloat desired = static_cast<GLfloat>(renderer.anisotropic_filtering_level);
+			GLfloat clamped = std::max(1.0f, std::min(desired, max_supported));
+
+			glTextureParameterf(texture_id, GL_TEXTURE_MAX_ANISOTROPY_EXT, clamped);
+		} else {
+			// Reset to 1.0f so "Nearest"/"Linear" behave as expected
+			glTextureParameterf(texture_id, GL_TEXTURE_MAX_ANISOTROPY_EXT, 1.0f);
+		}
+	}
 
     OpenGLTexture2D::OpenGLTexture2D(uint32_t width, uint32_t height)
         : m_width(width), m_height(height) {
@@ -23,8 +71,7 @@ namespace Honey {
         // Set texture parameters (DSA calls)
         //glTextureParameteri(m_renderer_id, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         //glTextureParameteri(m_renderer_id, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTextureParameteri(m_renderer_id, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTextureParameteri(m_renderer_id, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        apply_filter_params(m_renderer_id);
         glTextureParameteri(m_renderer_id, GL_TEXTURE_WRAP_S,     GL_REPEAT);
         glTextureParameteri(m_renderer_id, GL_TEXTURE_WRAP_T,     GL_REPEAT);
 
@@ -57,7 +104,7 @@ namespace Honey {
     	HN_PROFILE_FUNCTION();
 
         int width, height, channels;
-        //stbi_set_flip_vertically_on_load(true);
+        stbi_set_flip_vertically_on_load(true);
     	stbi_uc* data = nullptr;
 	    {
     		HN_PROFILE_SCOPE("OpenGLTexture2D::OpenGLTexture2D(const std::string& path) - stbi_load");
@@ -83,8 +130,7 @@ namespace Honey {
         // Set texture parameters (DSA calls)
     	//glTextureParameteri(m_renderer_id, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     	//glTextureParameteri(m_renderer_id, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    	glTextureParameteri(m_renderer_id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    	glTextureParameteri(m_renderer_id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    	apply_filter_params(m_renderer_id);
         glTextureParameteri(m_renderer_id, GL_TEXTURE_WRAP_S,     GL_REPEAT);
         glTextureParameteri(m_renderer_id, GL_TEXTURE_WRAP_T,     GL_REPEAT);
 
@@ -164,6 +210,10 @@ namespace Honey {
 #else
     #error "Unsupported platform for OpenGLTexture2D bind()"
 #endif
+    }
+
+    void OpenGLTexture2D::refresh_sampler() {
+	    apply_filter_params(m_renderer_id);
     }
 
 } // namespace Honey

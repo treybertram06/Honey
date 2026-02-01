@@ -201,8 +201,6 @@ namespace Honey {
 
     }
 
-
-
     void LinuxWindow::shutdown() {
         HN_PROFILE_FUNCTION();
 
@@ -228,12 +226,9 @@ namespace Honey {
     void LinuxWindow::set_vsync(bool enabled) {
         HN_PROFILE_FUNCTION();
 
-        if (enabled) {
-            //glfwSwapInterval(1);
-            m_data.vsync = enabled;
-        } else {
-            //glfwSwapInterval(0);
-            m_data.vsync = enabled;
+        if (RendererAPI::get_api() == RendererAPI::API::opengl) {
+            glfwMakeContextCurrent(m_window); // ensure context current
+            glfwSwapInterval(enabled ? 1 : 0);
         }
 
         m_data.vsync = enabled;

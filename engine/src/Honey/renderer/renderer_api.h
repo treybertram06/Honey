@@ -19,12 +19,23 @@ namespace Honey {
             vulkan
         };
 
+        static const char* to_string(API api) {
+            switch (api) {
+            case API::none:   return "None";
+            case API::opengl: return "OpenGL";
+            case API::vulkan: return "Vulkan";
+            }
+            return "Unknown";
+        }
+
         virtual void init() = 0;
         virtual void set_clear_color(const glm::vec4& color) = 0;
         virtual void set_viewport(uint32_t x, uint32_t y, uint32_t width, uint32_t height) = 0;
         virtual void clear() = 0;
 
         virtual uint32_t get_max_texture_slots() = 0;
+
+        virtual std::string get_vendor() = 0;
 
         virtual void draw_indexed(const Ref<VertexArray>& vertex_array, uint32_t index_count = 0) = 0;
         virtual void draw_indexed_instanced(const Ref<VertexArray>& vertex_array, uint32_t index_count, uint32_t instance_count) = 0;
@@ -34,6 +45,7 @@ namespace Honey {
         virtual void set_depth_write(bool mode) = 0;
         virtual void set_blend(bool mode) = 0;
         virtual void set_blend_for_attachment(uint32_t attachment, bool mode) = 0;
+        virtual void set_vsync(bool mode) = 0;
 
         virtual Ref<VertexBuffer> create_vertex_buffer(uint32_t size) = 0;
         virtual Ref<VertexBuffer> create_vertex_buffer(float* vertices, uint32_t size) = 0;

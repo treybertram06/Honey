@@ -32,6 +32,8 @@ namespace Honey {
             return static_cast<ImTextureID>(m_renderer_id);
         }
 
+        void refresh_sampler() override;
+
     private:
         std::string m_path;
         uint32_t m_width, m_height;

@@ -26,7 +26,6 @@ namespace Honey {
 
         TextureFilter texture_filter = TextureFilter::nearest;
 
-
     };
 
     struct PhysicsSettings {
@@ -46,6 +45,9 @@ namespace Honey {
             static EngineSettings s_instance;
             return s_instance;
         }
+
+        static bool load_from_file(const std::filesystem::path& filepath);
+        static bool save_to_file(const std::filesystem::path& filepath);
     };
 
 }

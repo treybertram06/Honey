@@ -30,6 +30,24 @@ namespace Honey {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     }
 
+    std::string OpenGLRendererAPI::get_vendor() {
+        const GLubyte* vendor   = glGetString(GL_VENDOR);
+        const GLubyte* renderer = glGetString(GL_RENDERER);
+
+        std::ostringstream ss;
+        if (vendor) {
+            ss << reinterpret_cast<const char*>(vendor);
+        } else {
+            ss << "Unknown Vendor";
+        }
+
+        if (renderer) {
+            ss << " - " << reinterpret_cast<const char*>(renderer);
+        }
+
+        return ss.str();
+    }
+
     uint32_t OpenGLRendererAPI::get_max_texture_slots() {
         int max_texture_units;
         glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &max_texture_units);
@@ -103,6 +121,11 @@ namespace Honey {
                 glDisable(GL_BLEND);
         }
 #endif
+    }
+
+    void OpenGLRendererAPI::set_vsync(bool mode) {
+        //glfwMakeContextCurrent(m_window); // ensure context current
+        glfwSwapInterval(mode ? 1 : 0);
     }
 
     Ref<VertexBuffer> OpenGLRendererAPI::create_vertex_buffer(uint32_t size) {

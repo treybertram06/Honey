@@ -801,7 +801,7 @@ namespace Honey {
         features.samplerAnisotropy = VK_TRUE;
         m_max_anisotropy = device_props.limits.maxSamplerAnisotropy;
         HN_CORE_INFO("Max Anisotropy: {0}", m_max_anisotropy);
-
+        features.fillModeNonSolid = VK_TRUE;
 
         const std::vector<const char*> device_extensions = {
             VK_KHR_SWAPCHAIN_EXTENSION_NAME

@@ -79,6 +79,20 @@ namespace Honey {
         // no-op for now
     }
 
+    std::string VulkanRendererAPI::get_vendor() {
+        if (!m_physical_device) {
+            HN_CORE_WARN("VulkanRendererAPI::get_vendor called before physical device was set");
+            return "Unknown (no device)";
+        }
+
+        VkPhysicalDeviceProperties props{};
+        vkGetPhysicalDeviceProperties(m_physical_device, &props);
+
+        // props.deviceName is a null-terminated C string.
+        // Example values: "NVIDIA GeForce RTX 3080", "AMD Radeon RX 6800", etc.
+        return std::string(props.deviceName ? props.deviceName : "Unknown");
+    }
+
     void VulkanRendererAPI::draw_indexed(const Ref<VertexArray>& vertex_array, uint32_t index_count) {
         require_frame_begun();
         HN_CORE_ASSERT(vertex_array, "Vulkan draw_indexed: vertex_array is null");
@@ -126,6 +140,11 @@ namespace Honey {
     }
 
     void VulkanRendererAPI::set_blend_for_attachment(uint32_t, bool) {
+    }
+
+    void VulkanRendererAPI::set_vsync(bool mode) {
+        if (auto* vk = get_vulkan_context())
+            vk->request_swapchain_recreation();
     }
 
     Ref<VertexBuffer> VulkanRendererAPI::create_vertex_buffer(uint32_t size) {

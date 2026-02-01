@@ -19,6 +19,8 @@ namespace Honey {
         void set_viewport(uint32_t x, uint32_t y, uint32_t width, uint32_t height) override;
         void clear() override;
 
+        std::string get_vendor() override;
+
         uint32_t get_max_texture_slots() override;
 
         void draw_indexed(const Ref<VertexArray>&, uint32_t) override;
@@ -29,6 +31,7 @@ namespace Honey {
         void set_depth_write(bool) override;
         void set_blend(bool) override;
         void set_blend_for_attachment(uint32_t, bool) override;
+        void set_vsync(bool mode) override;
 
         Ref<VertexBuffer> create_vertex_buffer(uint32_t size) override;
         Ref<VertexBuffer> create_vertex_buffer(float* vertices, uint32_t size) override;
