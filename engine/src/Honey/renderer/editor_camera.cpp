@@ -117,7 +117,16 @@ namespace Honey {
     }
 
     void EditorCamera::recalc_projection_matrix() {
-        m_projection_matrix = glm::perspective(glm::radians(m_fov), get_aspect_ratio(), m_near_clip, m_far_clip);
+        // Build a standard OpenGL-style perspective projection (Y up, z in [-1, 1]).
+        glm::mat4 gl_proj = glm::perspective(
+            glm::radians(m_fov),
+            get_aspect_ratio(),
+            m_near_clip,
+            m_far_clip
+        );
+
+        // Store GL-style projection; conversion to Vulkan clip space is done in the Vulkan renderer.
+        m_projection_matrix     = gl_proj;
         m_view_projection_matrix = m_projection_matrix * m_view_matrix;
     }
 

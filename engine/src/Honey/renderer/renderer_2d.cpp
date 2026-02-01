@@ -8,6 +8,7 @@
 #include "shader_cache.h"
 #include "texture.h"
 #include "shader_cache.h"
+#include "glm/gtx/string_cast.hpp"
 #include "platform/vulkan/vk_renderer_api.h"
 
 static const std::filesystem::path asset_root = ASSET_ROOT;
@@ -410,13 +411,19 @@ namespace Honey {
     void Renderer2D::begin_scene(const EditorCamera& camera) {
         reset_stats();
 
-        glm::mat4 view_proj = camera.get_view_projection_matrix();
+        glm::mat4 vp = camera.get_view_projection_matrix(); // EngineClip
+        //HN_CORE_INFO("Engine VP:\n{}", glm::to_string(vp));
 
         if (Renderer::get_api() != RendererAPI::API::vulkan) {
-            s_data->camera_buffer.view_projection = view_proj;
-            s_data->camera_uniform_buffer->set_data(sizeof(Renderer2DData::CameraData), &s_data->camera_buffer);
+            // OpenGL (or any future GL-style API) consumes EngineClip directly.
+            s_data->camera_buffer.view_projection = vp;
+            s_data->camera_uniform_buffer->set_data(
+                sizeof(Renderer2DData::CameraData),
+                &s_data->camera_buffer
+            );
         } else {
-            VulkanRendererAPI::submit_camera_view_projection(view_proj);
+            // Vulkan backend will convert EngineClip to VulkanClip.
+            VulkanRendererAPI::submit_camera_view_projection(vp);
         }
 
         s_data->quad_instances.clear();

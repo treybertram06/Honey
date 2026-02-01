@@ -57,7 +57,7 @@ namespace Honey {
     	HN_PROFILE_FUNCTION();
 
         int width, height, channels;
-        stbi_set_flip_vertically_on_load(true);
+        //stbi_set_flip_vertically_on_load(true);
     	stbi_uc* data = nullptr;
 	    {
     		HN_PROFILE_SCOPE("OpenGLTexture2D::OpenGLTexture2D(const std::string& path) - stbi_load");

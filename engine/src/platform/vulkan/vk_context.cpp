@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#define GLM_ENABLE_EXPERIMENTAL
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.h>
@@ -15,6 +16,7 @@
 #include "imgui.h"
 #include "vk_buffer.h"
 #include "vk_texture.h"
+#include "glm/gtx/string_cast.hpp"
 #include "Honey/core/settings.h"
 #include "Honey/renderer/shader_cache.h"
 #include "Honey/renderer/texture_cache.h"
@@ -947,12 +949,24 @@ namespace Honey {
 
                // Camera UBO
                if (g.hasCamera && m_camera_ubo_memories[frame] && m_camera_ubo_size == sizeof(glm::mat4)) {
+                   // g.viewProjection is in EngineClip (GL-style).
+                   glm::mat4 vp_engine = g.viewProjection;
+
+                   // Convert EngineClip -> VulkanClip (Y down, z in [0,1]).
+                   glm::mat4 correction(1.0f);
+                   correction[1][1] = -1.0f; // flip Y
+                   correction[2][2] = 0.5f;
+                   correction[3][2] = 0.5f;  // z' = 0.5*z + 0.5*w
+
+                   glm::mat4 vp_vulkan = correction * vp_engine;
+                   //HN_CORE_INFO("Vulkan VP:\n{}", glm::to_string(vp_vulkan));
+
                    void* mapped = nullptr;
                    VkResult mr = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
                                              reinterpret_cast<VkDeviceMemory>(m_camera_ubo_memories[frame]),
                                              0, m_camera_ubo_size, 0, &mapped);
                    HN_CORE_ASSERT(mr == VK_SUCCESS, "vkMapMemory camera ubo failed");
-                   std::memcpy(mapped, &g.viewProjection, sizeof(glm::mat4));
+                   std::memcpy(mapped, &vp_vulkan, sizeof(glm::mat4));
                    vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
                                  reinterpret_cast<VkDeviceMemory>(m_camera_ubo_memories[frame]));
                }
