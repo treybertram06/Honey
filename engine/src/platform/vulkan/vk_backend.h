@@ -13,6 +13,28 @@
 
 namespace Honey {
 
+    static void set_debug_name(VkDevice device, VkObjectType type, uint64_t handle, const char* name) {
+#if defined(BUILD_DEBUG)
+        if (!device || !name)
+            return;
+
+        auto fpSetName = reinterpret_cast<PFN_vkSetDebugUtilsObjectNameEXT>(
+            vkGetDeviceProcAddr(device, "vkSetDebugUtilsObjectNameEXT"));
+        if (!fpSetName)
+            return;
+
+        VkDebugUtilsObjectNameInfoEXT info{};
+        info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
+        info.objectType = type;
+        info.objectHandle = handle;
+        info.pObjectName = name;
+
+        fpSetName(device, &info);
+#else
+        (void)device; (void)type; (void)handle; (void)name;
+#endif
+    }
+
     class VulkanBackend {
     public:
         VulkanBackend() = default;
@@ -29,21 +51,25 @@ namespace Honey {
         VkPhysicalDevice physical_device() const { return m_physical_device; }
         VkDevice device() const { return m_device; }
 
-        VkInstance          get_instance() const          { return m_instance; }
-        VkPhysicalDevice    get_physical_device() const   { return m_physical_device; }
-        VkDevice            get_device() const            { return m_device; }
-        uint32_t            get_graphics_queue_family_index() const { return m_families.graphicsFamily; }
-        VkQueue             get_graphics_queue() const    { return !m_graphics_queues.empty() ? m_graphics_queues[0] : VK_NULL_HANDLE; }
+        VkInstance get_instance() const { return m_instance; }
+        VkPhysicalDevice get_physical_device() const { return m_physical_device; }
+        VkDevice get_device() const { return m_device; }
+        uint32_t get_graphics_queue_family_index() const { return m_families.graphicsFamily; }
+        VkQueue get_graphics_queue() const { return !m_graphics_queues.empty() ? m_graphics_queues[0] : VK_NULL_HANDLE; }
 
-        VkDescriptorPool    get_imgui_descriptor_pool() const { return m_imgui_descriptor_pool; }
+        VkDescriptorPool get_imgui_descriptor_pool() const { return m_imgui_descriptor_pool; }
         VkSampler get_imgui_sampler() const { return m_imgui_sampler; }
 
-        uint32_t            get_min_image_count() const  { return m_min_image_count; }
-        uint32_t            get_image_count() const      { return m_image_count; }
+        uint32_t get_min_image_count() const  { return m_min_image_count; }
+        uint32_t get_image_count() const      { return m_image_count; }
+
+        VkSampler get_sampler_nearest() const { return m_sampler_nearest; }
+        VkSampler get_sampler_linear() const { return m_sampler_linear; }
+        VkSampler get_sampler_anisotropic() const { return m_sampler_aniso; }
 
 
-        VkCommandBuffer     begin_single_time_commands();
-        void                end_single_time_commands(VkCommandBuffer cmd);
+        VkCommandBuffer begin_single_time_commands();
+        void end_single_time_commands(VkCommandBuffer cmd);
 
         // Acquire queues for a window/surface. If unique queues are not available, returns shared queues.
         VulkanQueueLease acquire_queue_lease(VkSurfaceKHR surface);
@@ -62,6 +88,8 @@ namespace Honey {
         void render_imgui_on_current_swapchain_image(VkCommandBuffer cmd, VkImageView target_view, VkExtent2D extent);
 
         float get_max_anisotropy() const { return m_max_anisotropy; }
+
+        bool imgui_initialized() const { return m_imgui_initialized; }
 
     private:
         struct QueueFamilyInfo {
@@ -126,11 +154,17 @@ namespace Honey {
         // Placeholder image counts for ImGui. If you already know your swapchain
         // image counts elsewhere, you can wire them in here.
         uint32_t m_min_image_count = 2;
-        uint32_t m_image_count     = 2;
+        uint32_t m_image_count = 2;
 
         float m_max_anisotropy = 1.0f;
 
+        VkSampler m_sampler_nearest = VK_NULL_HANDLE;
+        VkSampler m_sampler_linear = VK_NULL_HANDLE;
+        VkSampler m_sampler_aniso = VK_NULL_HANDLE;
+
         static constexpr uint32_t k_desired_queues_per_family = 4;
+
+        bool m_imgui_initialized = false;
     };
 
 } // namespace Honey

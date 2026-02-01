@@ -211,7 +211,7 @@ namespace Honey {
         return 0;
     }
 
-    void VulkanContext::create_global_descriptor_resources() {
+        void VulkanContext::create_global_descriptor_resources() {
         HN_PROFILE_FUNCTION();
         HN_CORE_ASSERT(m_device && m_physical_device, "create_global_descriptor_resources called without device");
 
@@ -223,18 +223,29 @@ namespace Honey {
         ubo_binding.descriptorCount = 1;
         ubo_binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
 
-        // binding 1 => texture sampler array (fragment)
+        // binding 1 => sampler (fragment)
+        VkDescriptorSetLayoutBinding sampler_binding{};
+        sampler_binding.binding = 1;
+        sampler_binding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+        sampler_binding.descriptorCount = 1;
+        sampler_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        // binding 2 => texture array (sampled images, fragment)
         VkDescriptorSetLayoutBinding tex_binding{};
-        tex_binding.binding = 1;
-        tex_binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        tex_binding.binding = 2;
+        tex_binding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
         tex_binding.descriptorCount = VulkanRendererAPI::k_max_texture_slots;
         tex_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-        VkDescriptorSetLayoutBinding bindings[] = { ubo_binding, tex_binding };
+        VkDescriptorSetLayoutBinding bindings[] = {
+            ubo_binding,
+            sampler_binding,
+            tex_binding
+        };
 
         VkDescriptorSetLayoutCreateInfo layout_ci{};
         layout_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        layout_ci.bindingCount = 2;
+        layout_ci.bindingCount = 3;
         layout_ci.pBindings = bindings;
 
         VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
@@ -243,17 +254,24 @@ namespace Honey {
         m_global_set_layout = reinterpret_cast<VkDescriptorSetLayout>(set_layout);
 
         // Descriptor pool sized for frames-in-flight:
-        VkDescriptorPoolSize pool_sizes[2]{};
+        VkDescriptorPoolSize pool_sizes[3]{};
+
+        // UBOs (binding 0)
         pool_sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         pool_sizes[0].descriptorCount = k_max_frames_in_flight;
 
-        pool_sizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        pool_sizes[1].descriptorCount = k_max_frames_in_flight * VulkanRendererAPI::k_max_texture_slots;
+        // Samplers (binding 1)
+        pool_sizes[1].type = VK_DESCRIPTOR_TYPE_SAMPLER;
+        pool_sizes[1].descriptorCount = k_max_frames_in_flight;
+
+        // Sampled images (binding 2)
+        pool_sizes[2].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        pool_sizes[2].descriptorCount = k_max_frames_in_flight * VulkanRendererAPI::k_max_texture_slots;
 
         VkDescriptorPoolCreateInfo pool_ci{};
         pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         pool_ci.maxSets = k_max_frames_in_flight;
-        pool_ci.poolSizeCount = 2;
+        pool_ci.poolSizeCount = 3;
         pool_ci.pPoolSizes = pool_sizes;
 
         VkDescriptorPool pool = VK_NULL_HANDLE;
@@ -298,9 +316,11 @@ namespace Honey {
             VkMemoryAllocateInfo ai{};
             ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
             ai.allocationSize = req.size;
-            ai.memoryTypeIndex = find_memory_type_local(reinterpret_cast<VkPhysicalDevice>(m_physical_device),
-                                                        req.memoryTypeBits,
-                                                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            ai.memoryTypeIndex = find_memory_type_local(
+                reinterpret_cast<VkPhysicalDevice>(m_physical_device),
+                req.memoryTypeBits,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+            );
 
             VkDeviceMemory mem = VK_NULL_HANDLE;
             r = vkAllocateMemory(reinterpret_cast<VkDevice>(m_device), &ai, nullptr, &mem);
@@ -312,7 +332,7 @@ namespace Honey {
             m_camera_ubos[frame] = reinterpret_cast<void*>(ubo);
             m_camera_ubo_memories[frame] = reinterpret_cast<void*>(mem);
 
-            // Write binding 0 (UBO) now; binding 1 (textures) will be updated per frame when Renderer2D submits them.
+            // Write binding 0 (UBO) now; bindings 1 & 2 will be updated later.
             VkDescriptorBufferInfo dbi{};
             dbi.buffer = ubo;
             dbi.offset = 0;
@@ -691,6 +711,23 @@ namespace Honey {
             HN_CORE_ASSERT(res == VK_SUCCESS, "vkCreateImageView failed: {0}", vk_result_to_string(res));
 
             m_swapchain_image_views[i] = reinterpret_cast<VkImageView>(image_view);
+
+            // Debug names
+            {
+                char imgName[64];
+                std::snprintf(imgName, sizeof(imgName), "SwapchainImage_%zu", i);
+                set_debug_name(reinterpret_cast<VkDevice>(m_device),
+                               VK_OBJECT_TYPE_IMAGE,
+                               reinterpret_cast<uint64_t>(m_swapchain_images[i]),
+                               imgName);
+
+                char viewName[64];
+                std::snprintf(viewName, sizeof(viewName), "SwapchainImageView_%zu", i);
+                set_debug_name(reinterpret_cast<VkDevice>(m_device),
+                               VK_OBJECT_TYPE_IMAGE_VIEW,
+                               reinterpret_cast<uint64_t>(image_view),
+                               viewName);
+            }
         }
     }
 
@@ -738,6 +775,11 @@ namespace Honey {
         HN_CORE_ASSERT(res == VK_SUCCESS, "vkCreateRenderPass failed: {0}", vk_result_to_string(res));
 
         m_render_pass = reinterpret_cast<VkRenderPass>(render_pass);
+
+        set_debug_name(reinterpret_cast<VkDevice>(m_device),
+                           VK_OBJECT_TYPE_RENDER_PASS,
+                           reinterpret_cast<uint64_t>(render_pass),
+                           "MainSwapchain_RenderPass");
     }
 
     void VulkanContext::create_framebuffers() {
@@ -762,6 +804,13 @@ namespace Honey {
             HN_CORE_ASSERT(res == VK_SUCCESS, "vkCreateFramebuffer failed: {0}", vk_result_to_string(res));
 
             m_swapchain_framebuffers[i] = reinterpret_cast<VkFramebuffer>(framebuffer);
+
+            char fbName[64];
+            std::snprintf(fbName, sizeof(fbName), "SwapchainFramebuffer_%zu", i);
+            set_debug_name(reinterpret_cast<VkDevice>(m_device),
+                           VK_OBJECT_TYPE_FRAMEBUFFER,
+                           reinterpret_cast<uint64_t>(framebuffer),
+                           fbName);
         }
     }
 
@@ -892,64 +941,108 @@ namespace Honey {
             vkCmdSetScissor(cmd, 0, 1, &scissor);
         };
 
-        auto apply_globals = [&](const FramePacket::CmdBindGlobals& g) {
-            const uint32_t frame = m_current_frame;
-            VkDescriptorSet ds = reinterpret_cast<VkDescriptorSet>(m_global_descriptor_sets[frame]);
+           auto apply_globals = [&](const FramePacket::CmdBindGlobals& g) {
+               const uint32_t frame = m_current_frame;
+               VkDescriptorSet ds = reinterpret_cast<VkDescriptorSet>(m_global_descriptor_sets[frame]);
 
-            // Camera UBO
-            if (g.hasCamera && m_camera_ubo_memories[frame] && m_camera_ubo_size == sizeof(glm::mat4)) {
-                void* mapped = nullptr;
-                VkResult mr = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
-                                          reinterpret_cast<VkDeviceMemory>(m_camera_ubo_memories[frame]),
-                                          0, m_camera_ubo_size, 0, &mapped);
-                HN_CORE_ASSERT(mr == VK_SUCCESS, "vkMapMemory camera ubo failed");
-                std::memcpy(mapped, &g.viewProjection, sizeof(glm::mat4));
-                vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
-                              reinterpret_cast<VkDeviceMemory>(m_camera_ubo_memories[frame]));
-            }
+               // Camera UBO
+               if (g.hasCamera && m_camera_ubo_memories[frame] && m_camera_ubo_size == sizeof(glm::mat4)) {
+                   void* mapped = nullptr;
+                   VkResult mr = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
+                                             reinterpret_cast<VkDeviceMemory>(m_camera_ubo_memories[frame]),
+                                             0, m_camera_ubo_size, 0, &mapped);
+                   HN_CORE_ASSERT(mr == VK_SUCCESS, "vkMapMemory camera ubo failed");
+                   std::memcpy(mapped, &g.viewProjection, sizeof(glm::mat4));
+                   vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
+                                 reinterpret_cast<VkDeviceMemory>(m_camera_ubo_memories[frame]));
+               }
 
-            // Texture descriptors
-            if (g.hasTextures) {
-                HN_CORE_ASSERT(g.textureCount > 0 && g.textures[0], "Vulkan: expected texture slot 0 to be present");
+               // Sampler + texture descriptors
+               if (g.hasTextures) {
+                   HN_CORE_ASSERT(g.textureCount > 0 && g.textures[0],
+                                  "Vulkan: expected texture slot 0 to be present");
 
-                VkDescriptorImageInfo infos[VulkanRendererAPI::k_max_texture_slots]{};
+                   auto* white_base = reinterpret_cast<Texture2D*>(g.textures[0]);
+                   auto* white_vk = dynamic_cast<VulkanTexture2D*>(white_base);
+                   HN_CORE_ASSERT(white_vk, "Vulkan: slot 0 texture is not a VulkanTexture2D");
 
-                auto* white_base = reinterpret_cast<Texture2D*>(g.textures[0]);
-                auto* white_vk = dynamic_cast<VulkanTexture2D*>(white_base);
-                HN_CORE_ASSERT(white_vk, "Vulkan: slot 0 texture is not a VulkanTexture2D");
+                   // --- Binding 1: sampler (single) ---
+                   VkSampler sampler_handle = VK_NULL_HANDLE;
 
-                for (uint32_t i = 0; i < VulkanRendererAPI::k_max_texture_slots; ++i) {
-                    void* raw = (i < g.textureCount) ? g.textures[i] : g.textures[0];
-                    auto* base = reinterpret_cast<Texture2D*>(raw);
-                    auto* vktex = dynamic_cast<VulkanTexture2D*>(base);
-                    if (!vktex) vktex = white_vk;
+                   // Choose sampler based on renderer settings
+                   auto& rs = Settings::get().renderer;
+                   switch (rs.texture_filter) {
+                   case RendererSettings::TextureFilter::nearest:
+                       // For now, just use a single global sampler. You can expand this
+                       // to keep 2–3 precreated samplers in the backend and switch here.
+                       sampler_handle = m_backend->get_sampler_nearest();
+                       break;
+                   case RendererSettings::TextureFilter::linear:
+                       sampler_handle = m_backend->get_sampler_linear();
+                       break;
+                   case RendererSettings::TextureFilter::anisotropic:
+                       sampler_handle = m_backend->get_sampler_anisotropic();
+                       break;
+                   }
 
-                    infos[i].sampler = reinterpret_cast<VkSampler>(vktex->get_vk_sampler());
-                    infos[i].imageView = reinterpret_cast<VkImageView>(vktex->get_vk_image_view());
-                    infos[i].imageLayout = static_cast<VkImageLayout>(vktex->get_vk_image_layout());
-                }
+                   if (!sampler_handle) {
+                       sampler_handle = m_backend->get_sampler_linear();
+                   }
 
-                VkWriteDescriptorSet write_tex{};
-                write_tex.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                write_tex.dstSet = ds;
-                write_tex.dstBinding = 1;
-                write_tex.dstArrayElement = 0;
-                write_tex.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-                write_tex.descriptorCount = VulkanRendererAPI::k_max_texture_slots;
-                write_tex.pImageInfo = infos;
+                   VkDescriptorImageInfo sampler_info{};
+                   sampler_info.sampler = sampler_handle;
+                   sampler_info.imageView = VK_NULL_HANDLE;
+                   sampler_info.imageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
-                vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(m_device), 1, &write_tex, 0, nullptr);
-            }
+                   VkWriteDescriptorSet write_sampler{};
+                   write_sampler.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                   write_sampler.dstSet = ds;
+                   write_sampler.dstBinding = 1; // sampler binding
+                   write_sampler.dstArrayElement = 0;
+                   write_sampler.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+                   write_sampler.descriptorCount = 1;
+                   write_sampler.pImageInfo = &sampler_info;
 
-            vkCmdBindDescriptorSets(cmd,
-                                    VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    reinterpret_cast<VkPipelineLayout>(m_pipeline_quad.layout()),
-                                    0,
-                                    1,
-                                    &ds,
-                                    0,
-                                    nullptr);
-        };
+                   // --- Binding 2: sampled image array ---
+                   VkDescriptorImageInfo infos[VulkanRendererAPI::k_max_texture_slots]{};
+
+                   for (uint32_t i = 0; i < VulkanRendererAPI::k_max_texture_slots; ++i) {
+                       void* raw = (i < g.textureCount) ? g.textures[i] : g.textures[0];
+                       auto* base = reinterpret_cast<Texture2D*>(raw);
+                       auto* vktex = dynamic_cast<VulkanTexture2D*>(base);
+                       if (!vktex) vktex = white_vk;
+
+                       infos[i].sampler = VK_NULL_HANDLE; // sampler is bound separately
+                       infos[i].imageView = reinterpret_cast<VkImageView>(vktex->get_vk_image_view());
+                       infos[i].imageLayout = static_cast<VkImageLayout>(vktex->get_vk_image_layout());
+                   }
+
+                   VkWriteDescriptorSet write_images{};
+                   write_images.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                   write_images.dstSet = ds;
+                   write_images.dstBinding = 2; // texture array binding
+                   write_images.dstArrayElement = 0;
+                   write_images.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+                   write_images.descriptorCount = VulkanRendererAPI::k_max_texture_slots;
+                   write_images.pImageInfo = infos;
+
+                   VkWriteDescriptorSet writes[] = { write_sampler, write_images };
+                   vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(m_device),
+                                          static_cast<uint32_t>(std::size(writes)),
+                                          writes,
+                                          0,
+                                          nullptr);
+               }
+
+               vkCmdBindDescriptorSets(cmd,
+                                       VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                       reinterpret_cast<VkPipelineLayout>(m_pipeline_quad.layout()),
+                                       0,
+                                       1,
+                                       &ds,
+                                       0,
+                                       nullptr);
+           };
 
         for (const auto& c : p.cmds) {
             switch (c.type) {
@@ -1282,6 +1375,8 @@ namespace Honey {
     void VulkanContext::destroy() {
         HN_PROFILE_FUNCTION();
 
+        HN_CORE_INFO("VulkanContext::destroy");
+
         if (m_device) {
             vkDeviceWaitIdle(reinterpret_cast<VkDevice>(m_device));
 
@@ -1347,8 +1442,7 @@ namespace Honey {
     }
 
     void VulkanContext::refresh_all_texture_samplers() {
-        wait_idle();
-        TextureCache::get().recreate_all_samplers();
+        // no-op now
     }
 
     void VulkanContext::create_graphics_pipeline() {

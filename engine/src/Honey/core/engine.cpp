@@ -56,16 +56,22 @@ namespace Honey {
     Application::~Application() {
         HN_PROFILE_FUNCTION();
 
+        HN_CORE_INFO("Application::~Application");
+
+
         if (RendererAPI::get_api() == RendererAPI::API::vulkan) {
             auto* ctx = m_window ? m_window->get_context() : nullptr;
-            if (ctx) {
-                ctx->wait_idle();
-            }
+            if (ctx) ctx->wait_idle();
         }
 
         Renderer::shutdown();
         ScriptEngine::shutdown();
         Texture2D::shutdown_cache();
+
+        for (Layer* layer : m_layer_stack) {
+            layer->on_detach();
+        }
+        m_layer_stack.clear();
 
         m_window.reset();
 

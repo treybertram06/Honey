@@ -2,6 +2,7 @@
 #include "renderer.h"
 #include "renderer_2d.h"
 #include "renderer_3d.h"
+#include "texture_cache.h"
 #include "Honey/core/engine.h"
 #include "platform/opengl/opengl_shader.h"
 #include "platform/vulkan/vk_context.h"
@@ -60,6 +61,8 @@ namespace Honey {
             HN_CORE_ASSERT(false, "RendererAPI::None is currently not supported!");
             break;
         }
+
+        TextureCache::get().clear();
 
         if (RendererAPI::get_api() == RendererAPI::API::vulkan) {
             auto* ctx = Application::get().get_window().get_context();

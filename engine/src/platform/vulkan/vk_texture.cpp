@@ -49,6 +49,15 @@ namespace Honey {
             return;
 
         VkDevice dev = reinterpret_cast<VkDevice>(m_device);
+        HN_CORE_ASSERT(dev == m_backend->device(),
+                           "VulkanTexture2D: device mismatch in destructor (backend was probably shut down earlier)");
+
+        if (m_imgui_texture_id != 0 && m_backend->imgui_initialized()) {
+            ImGui_ImplVulkan_RemoveTexture(
+                reinterpret_cast<VkDescriptorSet>(m_imgui_texture_id)
+            );
+            m_imgui_texture_id = 0;
+        }
 
         if (m_sampler) {
             vkDestroySampler(dev, reinterpret_cast<VkSampler>(m_sampler), nullptr);

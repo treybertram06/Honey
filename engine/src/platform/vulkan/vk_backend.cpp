@@ -187,6 +187,8 @@ namespace Honey {
     void VulkanBackend::shutdown() {
         if (!m_initialized) return;
 
+        HN_CORE_INFO("VulkanBackend::shutdown");
+
         m_initialized = false;
 
         VkDevice device = VK_NULL_HANDLE;
@@ -199,6 +201,20 @@ namespace Honey {
             vkDeviceWaitIdle(device);
 
             shutdown_imgui_resources();
+
+            if (m_sampler_nearest) {
+                vkDestroySampler(device, m_sampler_nearest, nullptr);
+                m_sampler_nearest = VK_NULL_HANDLE;
+            }
+            if (m_sampler_linear) {
+                vkDestroySampler(device, m_sampler_linear, nullptr);
+                m_sampler_linear = VK_NULL_HANDLE;
+            }
+            if (m_sampler_aniso) {
+                vkDestroySampler(device, m_sampler_aniso, nullptr);
+                m_sampler_aniso = VK_NULL_HANDLE;
+            }
+
             // Destroys fence/command pool used by immediate_submit()
             shutdown_upload_context();
 
@@ -545,10 +561,11 @@ namespace Honey {
 
         // We no longer create a separate ImGui render pass or per‑frame ImGui command buffer here.
         // The main VulkanContext command buffer and swapchain render pass are used instead.
+        m_imgui_initialized = true;
     }
 
     void VulkanBackend::shutdown_imgui_resources() {
-        if (!m_device)
+        if (!m_device || !m_imgui_initialized)
             return;
 
         if (m_imgui_sampler) {
@@ -560,6 +577,8 @@ namespace Honey {
             vkDestroyDescriptorPool(m_device, m_imgui_descriptor_pool, nullptr);
             m_imgui_descriptor_pool = VK_NULL_HANDLE;
         }
+
+        m_imgui_initialized = false;
     }
 
     void VulkanBackend::render_imgui_on_current_swapchain_image(VkCommandBuffer cmd,
@@ -835,6 +854,51 @@ namespace Honey {
 
         HN_CORE_INFO("Vulkan logical device created. Graphics queues: {0}, Present queues: {1}",
                      (uint32_t)m_graphics_queues.size(), (uint32_t)m_present_queues.size());
-    }
+
+        {
+                VkSamplerCreateInfo si{};
+                si.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+                si.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+                si.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+                si.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+                si.borderColor  = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+                si.unnormalizedCoordinates = VK_FALSE;
+                si.compareEnable = VK_FALSE;
+                si.compareOp     = VK_COMPARE_OP_ALWAYS;
+                si.mipLodBias    = 0.0f;
+                si.minLod        = 0.0f;
+                si.maxLod        = 0.0f;
+
+                // Nearest
+                si.magFilter  = VK_FILTER_NEAREST;
+                si.minFilter  = VK_FILTER_NEAREST;
+                si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+                si.anisotropyEnable = VK_FALSE;
+                si.maxAnisotropy    = 1.0f;
+
+                res = vkCreateSampler(m_device, &si, nullptr, &m_sampler_nearest);
+                HN_CORE_ASSERT(res == VK_SUCCESS, "vkCreateSampler failed for m_sampler_nearest: {0}", vk_result_to_string(res));
+
+                // Linear
+                si.magFilter  = VK_FILTER_LINEAR;
+                si.minFilter  = VK_FILTER_LINEAR;
+                si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+                si.anisotropyEnable = VK_FALSE;
+                si.maxAnisotropy    = 1.0f;
+
+                res = vkCreateSampler(m_device, &si, nullptr, &m_sampler_linear);
+                HN_CORE_ASSERT(res == VK_SUCCESS, "vkCreateSampler failed for m_sampler_linear: {0}", vk_result_to_string(res));
+
+                // Anisotropic (linear filtering + anisotropy)
+                si.magFilter  = VK_FILTER_LINEAR;
+                si.minFilter  = VK_FILTER_LINEAR;
+                si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+                si.anisotropyEnable = VK_TRUE;
+                si.maxAnisotropy    = std::max(1.0f, m_max_anisotropy);
+
+                res = vkCreateSampler(m_device, &si, nullptr, &m_sampler_aniso);
+                HN_CORE_ASSERT(res == VK_SUCCESS, "vkCreateSampler failed for m_sampler_aniso: {0}", vk_result_to_string(res));
+            }
+        }
 
 } // namespace Honey

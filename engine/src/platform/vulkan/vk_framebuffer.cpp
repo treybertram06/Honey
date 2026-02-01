@@ -121,6 +121,8 @@ namespace Honey {
         }
 
         VkDevice device = m_device;
+        HN_CORE_ASSERT(device == m_backend->get_device(),
+                                   "VulkanFramebuffer::destroy: device mismatch (backend was probably shut down earlier)");
 
         // ImGui descriptor sets: backend will free them when it destroys the pool.
         m_imgui_texture_sets.clear();
@@ -201,6 +203,15 @@ namespace Honey {
                 VkResult r = vkCreateImage(m_device, &img, nullptr, &out.image);
                 HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanFramebuffer: vkCreateImage (color) failed: {0}", vk_result_to_string(r));
 
+                {
+                    char name[64];
+                    std::snprintf(name, sizeof(name), "EditorFB_ColorImage_%zu", i);
+                    set_debug_name(m_device,
+                                   VK_OBJECT_TYPE_IMAGE,
+                                   reinterpret_cast<uint64_t>(out.image),
+                                   name);
+                }
+
                 VkMemoryRequirements req{};
                 vkGetImageMemoryRequirements(m_device, out.image, &req);
 
@@ -232,6 +243,15 @@ namespace Honey {
 
                 r = vkCreateImageView(m_device, &view, nullptr, &out.view);
                 HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanFramebuffer: vkCreateImageView (color) failed: {0}", vk_result_to_string(r));
+
+                {
+                    char name[64];
+                    std::snprintf(name, sizeof(name), "EditorFB_ColorView_%zu", i);
+                    set_debug_name(m_device,
+                                   VK_OBJECT_TYPE_IMAGE_VIEW,
+                                   reinterpret_cast<uint64_t>(out.view),
+                                   name);
+                }
 
                 {
                     VkSampler sampler = m_backend->get_imgui_sampler();
@@ -270,6 +290,11 @@ namespace Honey {
 
             VkResult r = vkCreateImage(m_device, &img, nullptr, &m_depth_attachment.image);
             HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanFramebuffer: vkCreateImage (depth) failed: {0}", vk_result_to_string(r));
+
+            set_debug_name(m_device,
+               VK_OBJECT_TYPE_IMAGE,
+               reinterpret_cast<uint64_t>(m_depth_attachment.image),
+               "EditorFB_DepthImage");
 
             VkMemoryRequirements req{};
             vkGetImageMemoryRequirements(m_device, m_depth_attachment.image, &req);
@@ -382,6 +407,11 @@ namespace Honey {
         VkResult r = vkCreateRenderPass(m_device, &rp, nullptr, &m_render_pass);
         HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanFramebuffer: vkCreateRenderPass failed: {0}", vk_result_to_string(r));
 
+        set_debug_name(m_device,
+               VK_OBJECT_TYPE_RENDER_PASS,
+               reinterpret_cast<uint64_t>(m_render_pass),
+               "EditorFB_RenderPass");
+
         // --- Create framebuffer ---
 
         std::vector<VkImageView> views;
@@ -403,6 +433,11 @@ namespace Honey {
 
         r = vkCreateFramebuffer(m_device, &fb, nullptr, &m_framebuffer);
         HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanFramebuffer: vkCreateFramebuffer failed: {0}", vk_result_to_string(r));
+
+        set_debug_name(m_device,
+               VK_OBJECT_TYPE_FRAMEBUFFER,
+               reinterpret_cast<uint64_t>(m_framebuffer),
+               "EditorFB_Framebuffer");
 
         // --- Transition images to usable layouts (optional for now) ---
 
