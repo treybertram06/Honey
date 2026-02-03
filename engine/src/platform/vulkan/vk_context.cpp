@@ -231,7 +231,7 @@ namespace Honey {
         return 0;
     }
 
-        void VulkanContext::create_global_descriptor_resources() {
+    void VulkanContext::create_global_descriptor_resources() {
         HN_PROFILE_FUNCTION();
         HN_CORE_ASSERT(m_device && m_physical_device, "create_global_descriptor_resources called without device");
 
@@ -447,6 +447,14 @@ namespace Honey {
     void VulkanContext::swap_buffers() {
         HN_PROFILE_FUNCTION();
         HN_CORE_ASSERT(m_initialized, "VulkanContext::swap_buffers called before init");
+        HN_CORE_ASSERT(!m_image_available_semaphores.empty(),
+                       "m_image_available_semaphores is empty (sync objects not created?)");
+        HN_CORE_ASSERT(m_current_frame < m_image_available_semaphores.size(),
+                       "m_current_frame out of range for m_image_available_semaphores");
+
+        // m_render_finished_semaphores are per-swapchain-image now, so we only check non-empty here.
+        HN_CORE_ASSERT(!m_render_finished_semaphores.empty(),
+                       "m_render_finished_semaphores is empty (swapchain not created?)");
 
         VulkanRendererAPI::set_recording_context(this);
 
@@ -458,7 +466,7 @@ namespace Honey {
             create_graphics_pipeline();
         }
 
-        VkFence in_flight = reinterpret_cast<VkFence>(m_in_flight_fences[m_current_frame]);
+        VkFence in_flight = m_in_flight_fences[m_current_frame];
         vkWaitForFences(reinterpret_cast<VkDevice>(m_device), 1, &in_flight, VK_TRUE, UINT64_MAX);
 
         uint32_t image_index = 0;
@@ -466,7 +474,7 @@ namespace Honey {
             reinterpret_cast<VkDevice>(m_device),
             reinterpret_cast<VkSwapchainKHR>(m_swapchain),
             UINT64_MAX,
-            reinterpret_cast<VkSemaphore>(m_image_available_semaphores[m_current_frame]),
+            m_image_available_semaphores[m_current_frame],
             VK_NULL_HANDLE,
             &image_index
         );
@@ -476,37 +484,38 @@ namespace Honey {
             recreate_swapchain_if_needed();
             return;
         }
+
         HN_CORE_ASSERT(acquire_res == VK_SUCCESS || acquire_res == VK_SUBOPTIMAL_KHR,
                        "vkAcquireNextImageKHR failed: {0}", vk_result_to_string(acquire_res));
 
-        HN_CORE_ASSERT(image_index < m_images_in_flight.size(), "Acquired image index out of bounds.");
-        VkFence image_fence = reinterpret_cast<VkFence>(m_images_in_flight[image_index]);
+        VkFence image_fence = m_images_in_flight[image_index];
         if (image_fence != VK_NULL_HANDLE) {
             vkWaitForFences(reinterpret_cast<VkDevice>(m_device), 1, &image_fence, VK_TRUE, UINT64_MAX);
         }
-
-        m_images_in_flight[image_index] = reinterpret_cast<VkFence>(m_in_flight_fences[m_current_frame]);
+        m_images_in_flight[image_index] = in_flight;
 
         vkResetFences(reinterpret_cast<VkDevice>(m_device), 1, &in_flight);
 
         record_command_buffer(image_index);
 
-        VkSemaphore wait_semaphores[] = { reinterpret_cast<VkSemaphore>(m_image_available_semaphores[m_current_frame]) };
+        VkSemaphore wait_semaphores[] = { m_image_available_semaphores[m_current_frame] };
         VkPipelineStageFlags wait_stages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
 
-        HN_CORE_ASSERT(image_index < m_render_finished_semaphores.size(), "renderFinished semaphore index out of bounds.");
-        VkSemaphore signal_semaphores[] = { reinterpret_cast<VkSemaphore>(m_render_finished_semaphores[image_index]) };
+        HN_CORE_ASSERT(image_index < m_render_finished_semaphores.size(),
+                       "image_index out of range for m_render_finished_semaphores");
+        VkSemaphore signal_semaphores[] = { m_render_finished_semaphores[image_index] };
+
+        VkCommandBuffer cmd = reinterpret_cast<VkCommandBuffer>(m_command_buffers[image_index]);
 
         VkSubmitInfo submit_info{};
-        submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        submit_info.waitSemaphoreCount = 1;
-        submit_info.pWaitSemaphores = wait_semaphores;
-        submit_info.pWaitDstStageMask = wait_stages;
-        submit_info.commandBufferCount = 1;
-        VkCommandBuffer cmd = reinterpret_cast<VkCommandBuffer>(m_command_buffers[image_index]);
-        submit_info.pCommandBuffers = &cmd;
+        submit_info.sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submit_info.waitSemaphoreCount   = 1;
+        submit_info.pWaitSemaphores      = wait_semaphores;
+        submit_info.pWaitDstStageMask    = wait_stages;
+        submit_info.commandBufferCount   = 1;
+        submit_info.pCommandBuffers      = &cmd;
         submit_info.signalSemaphoreCount = 1;
-        submit_info.pSignalSemaphores = signal_semaphores;
+        submit_info.pSignalSemaphores    = signal_semaphores;
 
         VkResult submit_res = VK_SUCCESS;
         if (m_queue_lease.sharedGraphics && m_queue_lease.graphicsSubmitMutex) {
@@ -520,12 +529,12 @@ namespace Honey {
         VkSwapchainKHR swapchains[] = { reinterpret_cast<VkSwapchainKHR>(m_swapchain) };
 
         VkPresentInfoKHR present_info{};
-        present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+        present_info.sType              = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
         present_info.waitSemaphoreCount = 1;
-        present_info.pWaitSemaphores = signal_semaphores;
-        present_info.swapchainCount = 1;
-        present_info.pSwapchains = swapchains;
-        present_info.pImageIndices = &image_index;
+        present_info.pWaitSemaphores    = signal_semaphores;
+        present_info.swapchainCount     = 1;
+        present_info.pSwapchains        = swapchains;
+        present_info.pImageIndices      = &image_index;
 
         VkResult present_res = VK_SUCCESS;
         if (m_queue_lease.sharedPresent && m_queue_lease.presentSubmitMutex) {
@@ -635,80 +644,94 @@ namespace Honey {
         );
 
         VkSurfaceFormatKHR surface_format = choose_surface_format(sc.formats);
-        VkPresentModeKHR present_mode = choose_present_mode(sc.present_modes);
-        VkExtent2D extent = choose_extent(m_window_handle, sc.capabilities);
+        VkPresentModeKHR   present_mode   = choose_present_mode(sc.present_modes);
+        VkExtent2D         extent         = choose_extent(m_window_handle, sc.capabilities);
 
         uint32_t image_count = sc.capabilities.minImageCount + 1;
-        if (sc.capabilities.maxImageCount > 0 && image_count > sc.capabilities.maxImageCount) {
+        if (sc.capabilities.maxImageCount > 0 && image_count > sc.capabilities.maxImageCount)
             image_count = sc.capabilities.maxImageCount;
-        }
 
         VkSwapchainKHR old_swapchain = reinterpret_cast<VkSwapchainKHR>(m_swapchain);
 
-        VkSwapchainCreateInfoKHR create_info{};
-        create_info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
-        create_info.surface = reinterpret_cast<VkSurfaceKHR>(m_surface);
-        create_info.minImageCount = image_count;
-        create_info.imageFormat = surface_format.format;
-        create_info.imageColorSpace = surface_format.colorSpace;
-        create_info.imageExtent = extent;
-        create_info.imageArrayLayers = 1;
-        create_info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        VkSwapchainCreateInfoKHR ci{};
+        ci.sType            = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+        ci.surface          = reinterpret_cast<VkSurfaceKHR>(m_surface);
+        ci.minImageCount    = image_count;
+        ci.imageFormat      = surface_format.format;
+        ci.imageColorSpace  = surface_format.colorSpace;
+        ci.imageExtent      = extent;
+        ci.imageArrayLayers = 1;
+        ci.imageUsage       = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
         uint32_t queue_family_indices[] = { m_graphics_queue_family, m_present_queue_family };
         if (m_graphics_queue_family != m_present_queue_family) {
-            create_info.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
-            create_info.queueFamilyIndexCount = 2;
-            create_info.pQueueFamilyIndices = queue_family_indices;
+            ci.imageSharingMode      = VK_SHARING_MODE_CONCURRENT;
+            ci.queueFamilyIndexCount = 2;
+            ci.pQueueFamilyIndices   = queue_family_indices;
         } else {
-            create_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            ci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
         }
 
-        create_info.preTransform = sc.capabilities.currentTransform;
-        create_info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-        create_info.presentMode = present_mode;
-        create_info.clipped = VK_TRUE;
-        create_info.oldSwapchain = old_swapchain;
+        ci.preTransform   = sc.capabilities.currentTransform;
+        ci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+        ci.presentMode    = present_mode;
+        ci.clipped        = VK_TRUE;
+        ci.oldSwapchain   = old_swapchain;
 
         VkSwapchainKHR swapchain = VK_NULL_HANDLE;
-        VkResult res = vkCreateSwapchainKHR(reinterpret_cast<VkDevice>(m_device), &create_info, nullptr, &swapchain);
-        HN_CORE_ASSERT(res == VK_SUCCESS, "vkCreateSwapchainKHR failed: {0}", vk_result_to_string(res));
+        VkResult res = vkCreateSwapchainKHR(
+            reinterpret_cast<VkDevice>(m_device),
+            &ci,
+            nullptr,
+            &swapchain
+        );
+        HN_CORE_ASSERT(res == VK_SUCCESS,
+                       "vkCreateSwapchainKHR failed: {0}", vk_result_to_string(res));
 
         m_swapchain = reinterpret_cast<VkSwapchainKHR>(swapchain);
 
-        // It's now safe to destroy the old swapchain handle if it existed.
         if (old_swapchain != VK_NULL_HANDLE) {
             vkDestroySwapchainKHR(reinterpret_cast<VkDevice>(m_device), old_swapchain, nullptr);
         }
 
         uint32_t actual_count = 0;
-        vkGetSwapchainImagesKHR(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkSwapchainKHR>(m_swapchain), &actual_count, nullptr);
+        vkGetSwapchainImagesKHR(reinterpret_cast<VkDevice>(m_device),
+                                reinterpret_cast<VkSwapchainKHR>(m_swapchain),
+                                &actual_count, nullptr);
         m_swapchain_images.resize(actual_count);
-        vkGetSwapchainImagesKHR(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkSwapchainKHR>(m_swapchain), &actual_count,
+        vkGetSwapchainImagesKHR(reinterpret_cast<VkDevice>(m_device),
+                                reinterpret_cast<VkSwapchainKHR>(m_swapchain),
+                                &actual_count,
                                 reinterpret_cast<VkImage*>(m_swapchain_images.data()));
 
-        m_swapchain_image_format = static_cast<uint32_t>(surface_format.format);
-        m_swapchain_extent_width = extent.width;
+        m_swapchain_image_format  = static_cast<uint32_t>(surface_format.format);
+        m_swapchain_extent_width  = extent.width;
         m_swapchain_extent_height = extent.height;
 
         m_images_in_flight.assign(m_swapchain_images.size(), VK_NULL_HANDLE);
         m_current_frame = 0;
 
-        // If per-image semaphores were cleared (swapchain recreation), recreate them here.
-        if (m_render_finished_semaphores.empty()) {
-            VkSemaphoreCreateInfo sem{};
-            sem.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-
-            m_render_finished_semaphores.resize(m_swapchain_images.size());
-            for (size_t i = 0; i < m_render_finished_semaphores.size(); i++) {
-                VkSemaphore render_done = VK_NULL_HANDLE;
-                VkResult r = vkCreateSemaphore(reinterpret_cast<VkDevice>(m_device), &sem, nullptr, &render_done);
-                HN_CORE_ASSERT(r == VK_SUCCESS, "Failed to create Vulkan per-image render-finished semaphore.");
-                m_render_finished_semaphores[i] = reinterpret_cast<VkSemaphore>(render_done);
+        // --- Per-swapchain-image "render finished" semaphores ---
+        for (VkSemaphore sem : m_render_finished_semaphores) {
+            if (sem) {
+                vkDestroySemaphore(reinterpret_cast<VkDevice>(m_device), sem, nullptr);
             }
         }
+        m_render_finished_semaphores.clear();
+        m_render_finished_semaphores.resize(m_swapchain_images.size());
 
-        HN_CORE_INFO("Swapchain created: {0} images, extent {1}x{2}", actual_count, extent.width, extent.height);
+        VkSemaphoreCreateInfo sem_ci{};
+        sem_ci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+        for (size_t i = 0; i < m_render_finished_semaphores.size(); ++i) {
+            VkSemaphore s = VK_NULL_HANDLE;
+            VkResult r = vkCreateSemaphore(reinterpret_cast<VkDevice>(m_device), &sem_ci, nullptr, &s);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "Failed to create per-image render-finished semaphore");
+            m_render_finished_semaphores[i] = s;
+        }
+
+        HN_CORE_INFO("Swapchain created: {0} images, extent {1}x{2}",
+                     actual_count, extent.width, extent.height);
     }
 
     void VulkanContext::create_image_views() {
@@ -888,40 +911,48 @@ namespace Honey {
     void VulkanContext::create_sync_objects() {
         HN_PROFILE_FUNCTION();
 
-        // Per-frame sync (frames in flight)
+        // Destroy old per-frame sync if recreate/init called twice
+        for (VkSemaphore sem : m_image_available_semaphores) {
+            if (sem) {
+                vkDestroySemaphore(reinterpret_cast<VkDevice>(m_device), sem, nullptr);
+            }
+        }
+        m_image_available_semaphores.clear();
+
+        // NOTE: m_render_finished_semaphores are per-SWAPCHAIN-image now.
+        // They are created in create_swapchain() and destroyed in cleanup_swapchain()/create_swapchain().
+
+        for (VkFence f : m_in_flight_fences) {
+            if (f) {
+                vkDestroyFence(reinterpret_cast<VkDevice>(m_device), f, nullptr);
+            }
+        }
+        m_in_flight_fences.clear();
+
         m_image_available_semaphores.resize(k_max_frames_in_flight);
         m_in_flight_fences.resize(k_max_frames_in_flight);
 
-        // Per-swapchain-image sync (solves swapchain semaphore reuse warnings)
-        HN_CORE_ASSERT(!m_swapchain_images.empty(), "create_sync_objects called before swapchain images exist.");
-        m_render_finished_semaphores.resize(m_swapchain_images.size());
+        VkSemaphoreCreateInfo sem_ci{};
+        sem_ci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 
-        VkSemaphoreCreateInfo sem{};
-        sem.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+        VkFenceCreateInfo fence_ci{};
+        fence_ci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        fence_ci.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
-        VkFenceCreateInfo fence{};
-        fence.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-        fence.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-
-        for (uint32_t i = 0; i < k_max_frames_in_flight; i++) {
+        for (uint32_t i = 0; i < k_max_frames_in_flight; ++i) {
             VkSemaphore image_avail = VK_NULL_HANDLE;
-            VkFence in_flight = VK_NULL_HANDLE;
+            VkFence fence = VK_NULL_HANDLE;
 
-            VkResult r1 = vkCreateSemaphore(reinterpret_cast<VkDevice>(m_device), &sem, nullptr, &image_avail);
-            VkResult r2 = vkCreateFence(reinterpret_cast<VkDevice>(m_device), &fence, nullptr, &in_flight);
+            VkResult r1 = vkCreateSemaphore(reinterpret_cast<VkDevice>(m_device),
+                                            &sem_ci, nullptr, &image_avail);
+            VkResult r2 = vkCreateFence(reinterpret_cast<VkDevice>(m_device),
+                                        &fence_ci, nullptr, &fence);
 
-            HN_CORE_ASSERT(r1 == VK_SUCCESS && r2 == VK_SUCCESS, "Failed to create Vulkan per-frame sync objects.");
+            HN_CORE_ASSERT(r1 == VK_SUCCESS && r2 == VK_SUCCESS,
+                           "Failed to create per-frame sync objects.");
 
-            m_image_available_semaphores[i] = reinterpret_cast<VkSemaphore>(image_avail);
-            m_in_flight_fences[i] = reinterpret_cast<VkFence>(in_flight);
-        }
-
-        for (size_t i = 0; i < m_render_finished_semaphores.size(); i++) {
-            VkSemaphore render_done = VK_NULL_HANDLE;
-            VkResult r = vkCreateSemaphore(reinterpret_cast<VkDevice>(m_device), &sem, nullptr, &render_done);
-            HN_CORE_ASSERT(r == VK_SUCCESS, "Failed to create Vulkan per-image render-finished semaphore.");
-
-            m_render_finished_semaphores[i] = reinterpret_cast<VkSemaphore>(render_done);
+            m_image_available_semaphores[i] = image_avail;
+            m_in_flight_fences[i] = fence;
         }
     }
 
@@ -967,120 +998,120 @@ namespace Honey {
             vkCmdSetScissor(cmd, 0, 1, &scissor);
         };
 
-           auto apply_globals = [&](const FramePacket::CmdBindGlobals& g) {
-               const uint32_t frame = m_current_frame;
-               VkDescriptorSet ds = reinterpret_cast<VkDescriptorSet>(m_global_descriptor_sets[frame]);
+        auto apply_globals = [&](const FramePacket::CmdBindGlobals& g) {
+            const uint32_t frame = m_current_frame;
+            VkDescriptorSet ds = reinterpret_cast<VkDescriptorSet>(m_global_descriptor_sets[frame]);
 
-               // Camera UBO
-               if (g.hasCamera && m_camera_ubo_memories[frame] && m_camera_ubo_size == sizeof(glm::mat4)) {
-                   // g.viewProjection is in EngineClip (GL-style).
-                   glm::mat4 vp_engine = g.viewProjection;
+            // Camera UBO
+            if (g.hasCamera && m_camera_ubo_memories[frame] && m_camera_ubo_size == sizeof(glm::mat4)) {
+                // g.viewProjection is in EngineClip (GL-style).
+                glm::mat4 vp_engine = g.viewProjection;
 
-                   // Convert EngineClip -> VulkanClip (Y down, z in [0,1]).
-                   glm::mat4 correction(1.0f);
-                   correction[1][1] = -1.0f; // flip Y
-                   correction[2][2] = 0.5f;
-                   correction[3][2] = 0.5f;  // z' = 0.5*z + 0.5*w
+                // Convert EngineClip -> VulkanClip (Y down, z in [0,1]).
+                glm::mat4 correction(1.0f);
+                correction[1][1] = -1.0f; // flip Y
+                correction[2][2] = 0.5f;
+                correction[3][2] = 0.5f;  // z' = 0.5*z + 0.5*w
 
-                   glm::mat4 vp_vulkan = correction * vp_engine;
-                   //HN_CORE_INFO("Vulkan VP:\n{}", glm::to_string(vp_vulkan));
+                glm::mat4 vp_vulkan = correction * vp_engine;
+                //HN_CORE_INFO("Vulkan VP:\n{}", glm::to_string(vp_vulkan));
 
-                   void* mapped = nullptr;
-                   VkResult mr = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
-                                             reinterpret_cast<VkDeviceMemory>(m_camera_ubo_memories[frame]),
-                                             0, m_camera_ubo_size, 0, &mapped);
-                   HN_CORE_ASSERT(mr == VK_SUCCESS, "vkMapMemory camera ubo failed");
-                   std::memcpy(mapped, &vp_vulkan, sizeof(glm::mat4));
-                   vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
-                                 reinterpret_cast<VkDeviceMemory>(m_camera_ubo_memories[frame]));
-               }
+                void* mapped = nullptr;
+                VkResult mr = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
+                                          reinterpret_cast<VkDeviceMemory>(m_camera_ubo_memories[frame]),
+                                          0, m_camera_ubo_size, 0, &mapped);
+                HN_CORE_ASSERT(mr == VK_SUCCESS, "vkMapMemory camera ubo failed");
+                std::memcpy(mapped, &vp_vulkan, sizeof(glm::mat4));
+                vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
+                              reinterpret_cast<VkDeviceMemory>(m_camera_ubo_memories[frame]));
+            }
 
-               // Sampler + texture descriptors
-               if (g.hasTextures) {
-                   HN_CORE_ASSERT(g.textureCount > 0 && g.textures[0],
-                                  "Vulkan: expected texture slot 0 to be present");
+            // Sampler + texture descriptors
+            if (g.hasTextures) {
+                HN_CORE_ASSERT(g.textureCount > 0 && g.textures[0],
+                               "Vulkan: expected texture slot 0 to be present");
 
-                   auto* white_base = reinterpret_cast<Texture2D*>(g.textures[0]);
-                   auto* white_vk = dynamic_cast<VulkanTexture2D*>(white_base);
-                   HN_CORE_ASSERT(white_vk, "Vulkan: slot 0 texture is not a VulkanTexture2D");
+                auto* white_base = reinterpret_cast<Texture2D*>(g.textures[0]);
+                auto* white_vk = dynamic_cast<VulkanTexture2D*>(white_base);
+                HN_CORE_ASSERT(white_vk, "Vulkan: slot 0 texture is not a VulkanTexture2D");
 
-                   // --- Binding 1: sampler (single) ---
-                   VkSampler sampler_handle = VK_NULL_HANDLE;
+                // --- Binding 1: sampler (single) ---
+                VkSampler sampler_handle = VK_NULL_HANDLE;
 
-                   // Choose sampler based on renderer settings
-                   auto& rs = Settings::get().renderer;
-                   switch (rs.texture_filter) {
-                   case RendererSettings::TextureFilter::nearest:
-                       // For now, just use a single global sampler. You can expand this
-                       // to keep 2–3 precreated samplers in the backend and switch here.
-                       sampler_handle = m_backend->get_sampler_nearest();
-                       break;
-                   case RendererSettings::TextureFilter::linear:
-                       sampler_handle = m_backend->get_sampler_linear();
-                       break;
-                   case RendererSettings::TextureFilter::anisotropic:
-                       sampler_handle = m_backend->get_sampler_anisotropic();
-                       break;
-                   }
+                // Choose sampler based on renderer settings
+                auto& rs = Settings::get().renderer;
+                switch (rs.texture_filter) {
+                case RendererSettings::TextureFilter::nearest:
+                    // For now, just use a single global sampler. You can expand this
+                    // to keep 2–3 precreated samplers in the backend and switch here.
+                    sampler_handle = m_backend->get_sampler_nearest();
+                    break;
+                case RendererSettings::TextureFilter::linear:
+                    sampler_handle = m_backend->get_sampler_linear();
+                    break;
+                case RendererSettings::TextureFilter::anisotropic:
+                    sampler_handle = m_backend->get_sampler_anisotropic();
+                    break;
+                }
 
-                   if (!sampler_handle) {
-                       sampler_handle = m_backend->get_sampler_linear();
-                   }
+                if (!sampler_handle) {
+                    sampler_handle = m_backend->get_sampler_linear();
+                }
 
-                   VkDescriptorImageInfo sampler_info{};
-                   sampler_info.sampler = sampler_handle;
-                   sampler_info.imageView = VK_NULL_HANDLE;
-                   sampler_info.imageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                VkDescriptorImageInfo sampler_info{};
+                sampler_info.sampler = sampler_handle;
+                sampler_info.imageView = VK_NULL_HANDLE;
+                sampler_info.imageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
-                   VkWriteDescriptorSet write_sampler{};
-                   write_sampler.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                   write_sampler.dstSet = ds;
-                   write_sampler.dstBinding = 1; // sampler binding
-                   write_sampler.dstArrayElement = 0;
-                   write_sampler.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
-                   write_sampler.descriptorCount = 1;
-                   write_sampler.pImageInfo = &sampler_info;
+                VkWriteDescriptorSet write_sampler{};
+                write_sampler.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                write_sampler.dstSet = ds;
+                write_sampler.dstBinding = 1; // sampler binding
+                write_sampler.dstArrayElement = 0;
+                write_sampler.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+                write_sampler.descriptorCount = 1;
+                write_sampler.pImageInfo = &sampler_info;
 
-                   // --- Binding 2: sampled image array ---
-                   VkDescriptorImageInfo infos[VulkanRendererAPI::k_max_texture_slots]{};
+                // --- Binding 2: sampled image array ---
+                VkDescriptorImageInfo infos[VulkanRendererAPI::k_max_texture_slots]{};
 
-                   for (uint32_t i = 0; i < VulkanRendererAPI::k_max_texture_slots; ++i) {
-                       void* raw = (i < g.textureCount) ? g.textures[i] : g.textures[0];
-                       auto* base = reinterpret_cast<Texture2D*>(raw);
-                       auto* vktex = dynamic_cast<VulkanTexture2D*>(base);
-                       if (!vktex) vktex = white_vk;
+                for (uint32_t i = 0; i < VulkanRendererAPI::k_max_texture_slots; ++i) {
+                    void* raw = (i < g.textureCount) ? g.textures[i] : g.textures[0];
+                    auto* base = reinterpret_cast<Texture2D*>(raw);
+                    auto* vktex = dynamic_cast<VulkanTexture2D*>(base);
+                    if (!vktex) vktex = white_vk;
 
-                       infos[i].sampler = VK_NULL_HANDLE; // sampler is bound separately
-                       infos[i].imageView = reinterpret_cast<VkImageView>(vktex->get_vk_image_view());
-                       infos[i].imageLayout = static_cast<VkImageLayout>(vktex->get_vk_image_layout());
-                   }
+                    infos[i].sampler = VK_NULL_HANDLE; // sampler is bound separately
+                    infos[i].imageView = reinterpret_cast<VkImageView>(vktex->get_vk_image_view());
+                    infos[i].imageLayout = static_cast<VkImageLayout>(vktex->get_vk_image_layout());
+                }
 
-                   VkWriteDescriptorSet write_images{};
-                   write_images.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                   write_images.dstSet = ds;
-                   write_images.dstBinding = 2; // texture array binding
-                   write_images.dstArrayElement = 0;
-                   write_images.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-                   write_images.descriptorCount = VulkanRendererAPI::k_max_texture_slots;
-                   write_images.pImageInfo = infos;
+                VkWriteDescriptorSet write_images{};
+                write_images.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                write_images.dstSet = ds;
+                write_images.dstBinding = 2; // texture array binding
+                write_images.dstArrayElement = 0;
+                write_images.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+                write_images.descriptorCount = VulkanRendererAPI::k_max_texture_slots;
+                write_images.pImageInfo = infos;
 
-                   VkWriteDescriptorSet writes[] = { write_sampler, write_images };
-                   vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(m_device),
-                                          static_cast<uint32_t>(std::size(writes)),
-                                          writes,
-                                          0,
-                                          nullptr);
-               }
-
-               vkCmdBindDescriptorSets(cmd,
-                                       VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                       reinterpret_cast<VkPipelineLayout>(m_pipeline_quad.layout()),
-                                       0,
-                                       1,
-                                       &ds,
+                VkWriteDescriptorSet writes[] = { write_sampler, write_images };
+                vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(m_device),
+                                       static_cast<uint32_t>(std::size(writes)),
+                                       writes,
                                        0,
                                        nullptr);
-           };
+            }
+
+            vkCmdBindDescriptorSets(cmd,
+                                    VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    reinterpret_cast<VkPipelineLayout>(m_pipeline_quad.layout()),
+                                    0,
+                                    1,
+                                    &ds,
+                                    0,
+                                    nullptr);
+        };
 
         for (const auto& c : p.cmds) {
             switch (c.type) {
@@ -1158,21 +1189,21 @@ namespace Honey {
                         // Same vertex bindings as swapchain pipeline
                         VertexInputBindingSpec static_binding;
                         static_binding.layout = BufferLayout{
-                                { ShaderDataType::Float2, "a_local_pos" },  // loc 0
-                                { ShaderDataType::Float2, "a_local_tex" }   // loc 1
+                                        { ShaderDataType::Float2, "a_local_pos" },  // loc 0
+                                        { ShaderDataType::Float2, "a_local_tex" }   // loc 1
                         };
 
                         VertexInputBindingSpec instance_binding;
                         instance_binding.layout = BufferLayout{
-                                { ShaderDataType::Float3, "i_center",       false, true }, // loc 2
-                                { ShaderDataType::Float2, "i_half_size",    false, true }, // loc 3
-                                { ShaderDataType::Float , "i_rotation",     false, true }, // loc 4
-                                { ShaderDataType::Float4, "i_color",        false, true }, // loc 5
-                                { ShaderDataType::Int,   "i_tex_index",     false, true }, // loc 6
-                                { ShaderDataType::Float, "i_tiling",        false, true }, // loc 7
-                                { ShaderDataType::Float2,"i_tex_coord_min", false, true }, // loc 8
-                                { ShaderDataType::Float2,"i_tex_coord_max", false, true }, // loc 9
-                                { ShaderDataType::Int,   "i_entity_id",     false, true }  // loc 10
+                                        { ShaderDataType::Float3, "i_center",       false, true }, // loc 2
+                                        { ShaderDataType::Float2, "i_half_size",    false, true }, // loc 3
+                                        { ShaderDataType::Float , "i_rotation",     false, true }, // loc 4
+                                        { ShaderDataType::Float4, "i_color",        false, true }, // loc 5
+                                        { ShaderDataType::Int,   "i_tex_index",     false, true }, // loc 6
+                                        { ShaderDataType::Float, "i_tiling",        false, true }, // loc 7
+                                        { ShaderDataType::Float2,"i_tex_coord_min", false, true }, // loc 8
+                                        { ShaderDataType::Float2,"i_tex_coord_max", false, true }, // loc 9
+                                        { ShaderDataType::Int,   "i_entity_id",     false, true }  // loc 10
                         };
 
                         offspec.vertexBindings.push_back(static_binding);
@@ -1367,14 +1398,15 @@ namespace Honey {
 
         m_images_in_flight.clear();
 
-        // Destroy per-swapchain-image semaphores (they are swapchain-size dependent)
-        for (auto sem : m_render_finished_semaphores) {
+        // Per-swapchain-image render-finished semaphores belong to the swapchain lifetime
+        for (VkSemaphore sem : m_render_finished_semaphores) {
             if (sem) {
-                vkDestroySemaphore(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkSemaphore>(sem), nullptr);
+                vkDestroySemaphore(reinterpret_cast<VkDevice>(m_device), sem, nullptr);
             }
         }
         m_render_finished_semaphores.clear();
 
+        // Free command buffers
         if (!m_command_buffers.empty() && m_command_pool) {
             vkFreeCommandBuffers(
                 reinterpret_cast<VkDevice>(m_device),
@@ -1385,26 +1417,46 @@ namespace Honey {
             m_command_buffers.clear();
         }
 
+        // Destroy framebuffers
         for (auto fb : m_swapchain_framebuffers) {
             if (fb) {
-                vkDestroyFramebuffer(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkFramebuffer>(fb), nullptr);
+                vkDestroyFramebuffer(
+                    reinterpret_cast<VkDevice>(m_device),
+                    reinterpret_cast<VkFramebuffer>(fb),
+                    nullptr
+                );
             }
         }
         m_swapchain_framebuffers.clear();
 
+        // Destroy render pass
         if (m_render_pass) {
-            vkDestroyRenderPass(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkRenderPass>(m_render_pass), nullptr);
+            vkDestroyRenderPass(
+                reinterpret_cast<VkDevice>(m_device),
+                reinterpret_cast<VkRenderPass>(m_render_pass),
+                nullptr
+            );
             m_render_pass = nullptr;
         }
 
+        // Destroy image views
         for (auto iv : m_swapchain_image_views) {
             if (iv) {
-                vkDestroyImageView(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkImageView>(iv), nullptr);
+                vkDestroyImageView(
+                    reinterpret_cast<VkDevice>(m_device),
+                    reinterpret_cast<VkImageView>(iv),
+                    nullptr
+                );
             }
         }
         m_swapchain_image_views.clear();
 
-        vkDestroySwapchainKHR(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkSwapchainKHR>(m_swapchain), nullptr);
+        // Destroy swapchain
+        vkDestroySwapchainKHR(
+            reinterpret_cast<VkDevice>(m_device),
+            reinterpret_cast<VkSwapchainKHR>(m_swapchain),
+            nullptr
+        );
         m_swapchain = nullptr;
 
         m_swapchain_images.clear();
@@ -1515,21 +1567,21 @@ namespace Honey {
         // Vertex bindings must match Renderer2D VA layout and shader locations
         VertexInputBindingSpec static_binding;
         static_binding.layout = BufferLayout{
-                    { ShaderDataType::Float2, "a_local_pos" },  // loc 0
-                    { ShaderDataType::Float2, "a_local_tex" }   // loc 1
+                            { ShaderDataType::Float2, "a_local_pos" },  // loc 0
+                            { ShaderDataType::Float2, "a_local_tex" }   // loc 1
         };
 
         VertexInputBindingSpec instance_binding;
         instance_binding.layout = BufferLayout{
-                    { ShaderDataType::Float3, "i_center",       false, true }, // loc 2
-                    { ShaderDataType::Float2, "i_half_size",    false, true }, // loc 3
-                    { ShaderDataType::Float , "i_rotation",     false, true }, // loc 4
-                    { ShaderDataType::Float4, "i_color",        false, true }, // loc 5
-                    { ShaderDataType::Int,   "i_tex_index",     false, true }, // loc 6
-                    { ShaderDataType::Float, "i_tiling",        false, true }, // loc 7
-                    { ShaderDataType::Float2,"i_tex_coord_min", false, true }, // loc 8
-                    { ShaderDataType::Float2,"i_tex_coord_max", false, true }, // loc 9
-                    { ShaderDataType::Int,   "i_entity_id",     false, true }  // loc 10
+                            { ShaderDataType::Float3, "i_center",       false, true }, // loc 2
+                            { ShaderDataType::Float2, "i_half_size",    false, true }, // loc 3
+                            { ShaderDataType::Float , "i_rotation",     false, true }, // loc 4
+                            { ShaderDataType::Float4, "i_color",        false, true }, // loc 5
+                            { ShaderDataType::Int,   "i_tex_index",     false, true }, // loc 6
+                            { ShaderDataType::Float, "i_tiling",        false, true }, // loc 7
+                            { ShaderDataType::Float2,"i_tex_coord_min", false, true }, // loc 8
+                            { ShaderDataType::Float2,"i_tex_coord_max", false, true }, // loc 9
+                            { ShaderDataType::Int,   "i_entity_id",     false, true }  // loc 10
         };
 
         spec.vertexBindings.push_back(static_binding);

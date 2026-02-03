@@ -191,4 +191,57 @@ namespace Honey {
         HN_CORE_INFO("Saved settings to {}", filepath.string());
         return true;
     }
+
+    bool Settings::write_renderer_api_to_file(const std::filesystem::path& filepath) {
+        // Load existing file if it exists
+        YAML::Node root;
+
+        if (std::filesystem::exists(filepath)) {
+            std::ifstream stream(filepath);
+            if (!stream.is_open()) {
+                HN_CORE_ERROR("Failed to open settings file for updating Renderer.API: {}", filepath.string());
+                return false;
+            }
+
+            std::stringstream ss;
+            ss << stream.rdbuf();
+
+            try {
+                root = YAML::Load(ss.str());
+            } catch (const YAML::ParserException& e) {
+                HN_CORE_ERROR("Failed to parse settings YAML while updating Renderer.API: {}", e.what());
+                return false;
+            }
+        } else {
+            // If file doesn't exist yet, start from an empty map
+            root = YAML::Node(YAML::NodeType::Map);
+        }
+
+        // Ensure "Renderer" node exists
+        YAML::Node renderer_node = root["Renderer"];
+        if (!renderer_node || !renderer_node.IsMap()) {
+            renderer_node = YAML::Node(YAML::NodeType::Map);
+        }
+
+        // Write only the API value from current Settings
+        const EngineSettings& s = get();
+        renderer_node["API"] = RendererAPI::to_string(s.renderer.api);
+
+        // Reattach the renderer node
+        root["Renderer"] = renderer_node;
+
+        // Write the updated YAML back to disk
+        std::filesystem::create_directories(filepath.parent_path());
+
+        std::ofstream out_stream(filepath);
+        if (!out_stream.is_open()) {
+            HN_CORE_ERROR("Failed to open settings file for writing Renderer.API: {}", filepath.string());
+            return false;
+        }
+
+        out_stream << root;
+        HN_CORE_INFO("Updated Renderer.API in settings file: {}", filepath.string());
+        return true;
+    }
 }
+

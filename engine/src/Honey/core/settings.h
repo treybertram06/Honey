@@ -48,6 +48,7 @@ namespace Honey {
 
         static bool load_from_file(const std::filesystem::path& filepath);
         static bool save_to_file(const std::filesystem::path& filepath);
+        static bool write_renderer_api_to_file(const std::filesystem::path& filepath);
     };
 
 }
