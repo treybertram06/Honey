@@ -1,6 +1,7 @@
 #include "hnpch.h"
 #include "vk_renderer_api.h"
 
+#include "Honey/renderer/pipeline.h"
 #include "vk_buffer.h"
 #include "vk_framebuffer.h"
 #include "vk_vertex_array.h"
@@ -32,17 +33,22 @@ namespace Honey {
             "VulkanRendererAPI: frame not begun. Call Renderer::begin_frame() before submitting any Vulkan render commands.");
     }
 
-    static VulkanContext::FramePacket::Cmd& get_or_push_globals_cmd() {
-        require_frame_begun();
+    static bool pkt_has_pending_globals(const VulkanContext::FramePacket& p) {
+        return p.hasCamera || p.hasTextures;
+    }
 
-        auto& p = pkt();
-        if (!p.cmds.empty() && p.cmds.back().type == VulkanContext::FramePacket::CmdType::BindGlobals)
-            return p.cmds.back();
-
+    static VulkanContext::FramePacket::Cmd make_bind_globals_cmd_from_pkt(const VulkanContext::FramePacket& p) {
         VulkanContext::FramePacket::Cmd cmd{};
         cmd.type = VulkanContext::FramePacket::CmdType::BindGlobals;
-        p.cmds.push_back(cmd);
-        return p.cmds.back();
+
+        cmd.globals.hasCamera = p.hasCamera;
+        cmd.globals.viewProjection = p.viewProjection;
+
+        cmd.globals.hasTextures = p.hasTextures;
+        cmd.globals.textures = p.textures;
+        cmd.globals.textureCount = p.textureCount;
+
+        return cmd;
     }
 
     void VulkanRendererAPI::set_recording_context(VulkanContext* ctx) {
@@ -63,6 +69,46 @@ namespace Honey {
 
     uint32_t VulkanRendererAPI::get_max_texture_slots() {
         return k_max_texture_slots;
+    }
+
+    void VulkanRendererAPI::bind_pipeline(const Ref<Pipeline>& pipeline) {
+        require_frame_begun();
+        HN_CORE_ASSERT(pipeline, "VulkanRendererAPI::bind_pipeline: pipeline is null");
+
+        auto& p = pkt();
+
+        VulkanContext::FramePacket::Cmd bind{};
+        bind.type = VulkanContext::FramePacket::CmdType::BindPipeline;
+        bind.bindPipeline.pipeline = reinterpret_cast<VkPipeline>(pipeline->get_native_pipeline());
+        bind.bindPipeline.layout   = reinterpret_cast<VkPipelineLayout>(pipeline->get_native_pipeline_layout());
+
+        HN_CORE_ASSERT(bind.bindPipeline.pipeline, "VulkanRendererAPI::bind_pipeline: native VkPipeline is null");
+        HN_CORE_ASSERT(bind.bindPipeline.layout, "VulkanRendererAPI::bind_pipeline: native VkPipelineLayout is null");
+
+        p.cmds.push_back(bind);
+
+        // If any old code already pushed BindGlobals earlier in the frame, it will now
+        // be incorrectly ordered. To avoid the assert, we conservatively "null out"
+        // any previously queued BindGlobals by clearing their payload.
+        // (After this migration, you can remove this loop.)
+        for (auto& c : p.cmds) {
+            if (c.type == VulkanContext::FramePacket::CmdType::BindGlobals) {
+                c.globals.hasCamera = false;
+                c.globals.hasTextures = false;
+                c.globals.textureCount = 0;
+                c.globals.textures = {};
+            }
+        }
+
+        // Defer->flush: emit BindGlobals immediately after binding pipeline (layout is now known)
+        if (pkt_has_pending_globals(p)) {
+            VulkanContext::FramePacket::Cmd globals = make_bind_globals_cmd_from_pkt(p);
+            p.cmds.push_back(globals);
+
+            // Keep the "latest globals" cached too; do NOT clear them here if other passes
+            // in the same frame may also need them. If you want "one-shot", clear here.
+            // p.hasCamera = false; p.hasTextures = false; ... (not doing that yet)
+        }
     }
 
     void VulkanRendererAPI::set_clear_color(const glm::vec4& color) {
@@ -176,11 +222,13 @@ namespace Honey {
     }
 
     void VulkanRendererAPI::submit_camera_view_projection(const glm::mat4& view_projection) {
-        auto& cmd = get_or_push_globals_cmd();
-        cmd.globals.viewProjection = view_projection;
-        cmd.globals.hasCamera = true;
+        require_frame_begun();
+        auto& p = pkt();
+        p.viewProjection = view_projection;
+        p.hasCamera = true;
     }
 
+    /*
     bool VulkanRendererAPI::consume_camera_view_projection(glm::mat4& out_view_projection) {
         auto& p = pkt();
         if (!p.hasCamera)
@@ -214,12 +262,14 @@ namespace Honey {
         p.clearRequested = false;
         return was;
     }
+    */
 
     void VulkanRendererAPI::submit_bound_textures(const std::array<void*, k_max_texture_slots>& textures, uint32_t texture_count) {
-        auto& cmd = get_or_push_globals_cmd();
-        cmd.globals.textures = textures;
-        cmd.globals.textureCount = texture_count;
-        cmd.globals.hasTextures = true;
+        require_frame_begun();
+        auto& p = pkt();
+        p.textures = textures;
+        p.textureCount = texture_count;
+        p.hasTextures = true;
     }
 
     bool VulkanRendererAPI::consume_bound_textures(std::array<void*, k_max_texture_slots>& out_textures, uint32_t& out_texture_count) {
@@ -234,6 +284,33 @@ namespace Honey {
         p.textures = {};
         p.textureCount = 0;
         return true;
+    }
+
+    VulkanRendererAPI::GlobalsState VulkanRendererAPI::get_globals_state() {
+        require_frame_begun();
+        const auto& p = pkt();
+
+        GlobalsState s{};
+        s.viewProjection = p.viewProjection;
+        s.hasCamera = p.hasCamera;
+
+        s.textures = p.textures;
+        s.textureCount = p.textureCount;
+        s.hasTextures = p.hasTextures;
+
+        return s;
+    }
+
+    void VulkanRendererAPI::set_globals_state(const GlobalsState& state) {
+        require_frame_begun();
+        auto& p = pkt();
+
+        p.viewProjection = state.viewProjection;
+        p.hasCamera = state.hasCamera;
+
+        p.textures = state.textures;
+        p.textureCount = state.textureCount;
+        p.hasTextures = state.hasTextures;
     }
 
 } // namespace Honey

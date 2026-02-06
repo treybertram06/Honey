@@ -466,6 +466,10 @@ namespace Honey {
             create_graphics_pipeline();
         }
 
+        m_last_bound_textures_valid[m_current_frame] = false;
+        m_last_bound_texture_count[m_current_frame] = 0;
+        m_last_bound_textures[m_current_frame] = {};
+
         VkFence in_flight = m_in_flight_fences[m_current_frame];
         vkWaitForFences(reinterpret_cast<VkDevice>(m_device), 1, &in_flight, VK_TRUE, UINT64_MAX);
 
@@ -971,16 +975,16 @@ namespace Honey {
         VkResult res = vkBeginCommandBuffer(cmd, &begin);
         HN_CORE_ASSERT(res == VK_SUCCESS, "vkBeginCommandBuffer failed: {0}", vk_result_to_string(res));
 
-        //create_graphics_pipeline(); // Called every frame to ensure it updates when settings are changed
-
         auto& p = frame_packet();
 
-        const bool use_cmds = !p.cmds.empty();
         bool render_pass_open = false;
-        bool in_swapchain_pass = false;
+        bool current_pass_is_swapchain = false;
+
 
         uint32_t current_pass_w = 0;
         uint32_t current_pass_h = 0;
+
+        VkPipelineLayout current_pipeline_layout = VK_NULL_HANDLE;
 
         auto bind_pipeline_and_dynamic = [&](VkPipeline pipeline, uint32_t width, uint32_t height) {
             HN_CORE_ASSERT(pipeline != VK_NULL_HANDLE, "Vulkan pipeline is null");
@@ -1036,76 +1040,72 @@ namespace Honey {
                 HN_CORE_ASSERT(g.textureCount > 0 && g.textures[0],
                                "Vulkan: expected texture slot 0 to be present");
 
-                auto* white_base = reinterpret_cast<Texture2D*>(g.textures[0]);
-                auto* white_vk = dynamic_cast<VulkanTexture2D*>(white_base);
-                HN_CORE_ASSERT(white_vk, "Vulkan: slot 0 texture is not a VulkanTexture2D");
-
-                // --- Binding 1: sampler (single) ---
-                VkSampler sampler_handle = VK_NULL_HANDLE;
-
-                // Choose sampler based on renderer settings
-                auto& rs = Settings::get().renderer;
-                switch (rs.texture_filter) {
-                case RendererSettings::TextureFilter::nearest:
-                    // For now, just use a single global sampler. You can expand this
-                    // to keep 2–3 precreated samplers in the backend and switch here.
-                    sampler_handle = m_backend->get_sampler_nearest();
-                    break;
-                case RendererSettings::TextureFilter::linear:
-                    sampler_handle = m_backend->get_sampler_linear();
-                    break;
-                case RendererSettings::TextureFilter::anisotropic:
-                    sampler_handle = m_backend->get_sampler_anisotropic();
-                    break;
+                bool textures_changed = true;
+                if (m_last_bound_textures_valid[frame] && m_last_bound_texture_count[frame] == g.textureCount) {
+                    textures_changed = false;
+                    for (uint32_t i = 0; i < g.textureCount; ++i) {
+                        if (m_last_bound_textures[frame][i] != g.textures[i]) {
+                            textures_changed = true;
+                            break;
+                        }
+                    }
                 }
 
-                if (!sampler_handle) {
-                    sampler_handle = m_backend->get_sampler_linear();
+                if (textures_changed) {
+                    auto* white_base = reinterpret_cast<Texture2D*>(g.textures[0]);
+                    auto* white_vk = dynamic_cast<VulkanTexture2D*>(white_base);
+                    HN_CORE_ASSERT(white_vk, "Vulkan: slot 0 texture is not a VulkanTexture2D");
+
+                    VkSampler sampler_handle = VK_NULL_HANDLE;
+                    auto& rs = Settings::get().renderer;
+                    switch (rs.texture_filter) {
+                    case RendererSettings::TextureFilter::nearest:      sampler_handle = m_backend->get_sampler_nearest(); break;
+                    case RendererSettings::TextureFilter::linear:       sampler_handle = m_backend->get_sampler_linear(); break;
+                    case RendererSettings::TextureFilter::anisotropic:  sampler_handle = m_backend->get_sampler_anisotropic(); break;
+                    }
+                    if (!sampler_handle) sampler_handle = m_backend->get_sampler_linear();
+
+                    VkDescriptorImageInfo sampler_info{};
+                    sampler_info.sampler = sampler_handle;
+
+                    VkWriteDescriptorSet write_sampler{};
+                    write_sampler.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                    write_sampler.dstSet = ds;
+                    write_sampler.dstBinding = 1;
+                    write_sampler.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+                    write_sampler.descriptorCount = 1;
+                    write_sampler.pImageInfo = &sampler_info;
+
+                    VkDescriptorImageInfo infos[VulkanRendererAPI::k_max_texture_slots]{};
+                    for (uint32_t i = 0; i < VulkanRendererAPI::k_max_texture_slots; ++i) {
+                        void* raw = (i < g.textureCount) ? g.textures[i] : g.textures[0];
+                        auto* base = reinterpret_cast<Texture2D*>(raw);
+                        auto* vktex = dynamic_cast<VulkanTexture2D*>(base);
+                        if (!vktex) vktex = white_vk;
+
+                        infos[i].imageView = reinterpret_cast<VkImageView>(vktex->get_vk_image_view());
+                        infos[i].imageLayout = static_cast<VkImageLayout>(vktex->get_vk_image_layout());
+                    }
+
+                    VkWriteDescriptorSet write_images{};
+                    write_images.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                    write_images.dstSet = ds;
+                    write_images.dstBinding = 2;
+                    write_images.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+                    write_images.descriptorCount = VulkanRendererAPI::k_max_texture_slots;
+                    write_images.pImageInfo = infos;
+
+                    VkWriteDescriptorSet writes[] = { write_sampler, write_images };
+                    vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(m_device),
+                                           static_cast<uint32_t>(std::size(writes)),
+                                           writes,
+                                           0,
+                                           nullptr);
+
+                    m_last_bound_textures[frame] = g.textures;
+                    m_last_bound_texture_count[frame] = g.textureCount;
+                    m_last_bound_textures_valid[frame] = true;
                 }
-
-                VkDescriptorImageInfo sampler_info{};
-                sampler_info.sampler = sampler_handle;
-                sampler_info.imageView = VK_NULL_HANDLE;
-                sampler_info.imageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-
-                VkWriteDescriptorSet write_sampler{};
-                write_sampler.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                write_sampler.dstSet = ds;
-                write_sampler.dstBinding = 1; // sampler binding
-                write_sampler.dstArrayElement = 0;
-                write_sampler.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
-                write_sampler.descriptorCount = 1;
-                write_sampler.pImageInfo = &sampler_info;
-
-                // --- Binding 2: sampled image array ---
-                VkDescriptorImageInfo infos[VulkanRendererAPI::k_max_texture_slots]{};
-
-                for (uint32_t i = 0; i < VulkanRendererAPI::k_max_texture_slots; ++i) {
-                    void* raw = (i < g.textureCount) ? g.textures[i] : g.textures[0];
-                    auto* base = reinterpret_cast<Texture2D*>(raw);
-                    auto* vktex = dynamic_cast<VulkanTexture2D*>(base);
-                    if (!vktex) vktex = white_vk;
-
-                    infos[i].sampler = VK_NULL_HANDLE; // sampler is bound separately
-                    infos[i].imageView = reinterpret_cast<VkImageView>(vktex->get_vk_image_view());
-                    infos[i].imageLayout = static_cast<VkImageLayout>(vktex->get_vk_image_layout());
-                }
-
-                VkWriteDescriptorSet write_images{};
-                write_images.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                write_images.dstSet = ds;
-                write_images.dstBinding = 2; // texture array binding
-                write_images.dstArrayElement = 0;
-                write_images.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-                write_images.descriptorCount = VulkanRendererAPI::k_max_texture_slots;
-                write_images.pImageInfo = infos;
-
-                VkWriteDescriptorSet writes[] = { write_sampler, write_images };
-                vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(m_device),
-                                       static_cast<uint32_t>(std::size(writes)),
-                                       writes,
-                                       0,
-                                       nullptr);
             }
 
             vkCmdBindDescriptorSets(cmd,
@@ -1135,15 +1135,12 @@ namespace Honey {
 
                     vkCmdBeginRenderPass(cmd, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
                     render_pass_open = true;
-                    in_swapchain_pass = true;
+                    current_pass_is_swapchain = true;
 
                     current_pass_w = m_swapchain_extent_width;
                     current_pass_h = m_swapchain_extent_height;
 
-                    bind_pipeline_and_dynamic(
-                        reinterpret_cast<VkPipeline>(m_pipeline_quad.pipeline()),
-                        current_pass_w,
-                        current_pass_h);
+                    current_pipeline_layout = VK_NULL_HANDLE; // must be set by BindPipeline
                     break;
             }
             case FramePacket::CmdType::BeginOffscreenPass: {
@@ -1153,86 +1150,6 @@ namespace Honey {
                     VkRenderPass rp = reinterpret_cast<VkRenderPass>(vk_fb->get_render_pass());
                     VkFramebuffer fb = reinterpret_cast<VkFramebuffer>(vk_fb->get_framebuffer());
                     auto extent = vk_fb->get_extent();
-
-                    static VkRenderPass s_last_offscreen_rp = VK_NULL_HANDLE;
-                    const bool need_recreate = (!m_pipeline_quad_fb.valid()) || (s_last_offscreen_rp != rp);
-
-                    if (need_recreate) {
-                        if (m_pipeline_quad_fb.valid()) {
-                            m_pipeline_quad_fb.destroy(reinterpret_cast<VkDevice>(m_device));
-                        }
-                        s_last_offscreen_rp = rp;
-
-                        static ShaderCache cache;
-                        const auto glsl = std::filesystem::path("../assets/shaders/Renderer2D_Quad.glsl");
-                        const auto spirv = cache.get_or_compile_spirv_paths(glsl);
-
-                        auto& rs = Settings::get().renderer; // <- Hip, new and cool
-
-                        PipelineSpec offspec;
-                        offspec.shaderGLSLPath = glsl;
-                        offspec.topology = PrimitiveTopology::Triangles;
-                        offspec.cullMode = CullMode::None;
-                        offspec.frontFace = FrontFaceWinding::CounterClockwise;
-                        offspec.depthStencil.depthTest  = rs.depth_test;
-                        offspec.depthStencil.depthWrite = rs.depth_write;
-                        offspec.passType = RenderPassType::Offscreen;
-                        offspec.wireframe = rs.wireframe;
-
-                        // Blend states per color attachment of vk_fb
-                        const uint32_t colorCount = vk_fb->get_color_attachment_count();
-                        offspec.perColorAttachmentBlend.clear();
-                        offspec.perColorAttachmentBlend.resize(colorCount);
-
-                        for (uint32_t i = 0; i < colorCount; ++i) {
-                            auto fmt = vk_fb->get_color_attachment_format(i);
-                            AttachmentBlendState ab{};
-                            switch (fmt) {
-                            case FramebufferTextureFormat::RGBA8:
-                                ab.enabled = rs.blending;
-                                break;
-                            case FramebufferTextureFormat::RED_INTEGER:
-                                ab.enabled = false; // must not blend integer attachment
-                                break;
-                            default:
-                                ab.enabled = false;
-                                break;
-                            }
-                            offspec.perColorAttachmentBlend[i] = ab;
-                        }
-
-                        // Same vertex bindings as swapchain pipeline
-                        VertexInputBindingSpec static_binding;
-                        static_binding.layout = BufferLayout{
-                                        { ShaderDataType::Float2, "a_local_pos" },  // loc 0
-                                        { ShaderDataType::Float2, "a_local_tex" }   // loc 1
-                        };
-
-                        VertexInputBindingSpec instance_binding;
-                        instance_binding.layout = BufferLayout{
-                                        { ShaderDataType::Float3, "i_center",       false, true }, // loc 2
-                                        { ShaderDataType::Float2, "i_half_size",    false, true }, // loc 3
-                                        { ShaderDataType::Float , "i_rotation",     false, true }, // loc 4
-                                        { ShaderDataType::Float4, "i_color",        false, true }, // loc 5
-                                        { ShaderDataType::Int,   "i_tex_index",     false, true }, // loc 6
-                                        { ShaderDataType::Float, "i_tiling",        false, true }, // loc 7
-                                        { ShaderDataType::Float2,"i_tex_coord_min", false, true }, // loc 8
-                                        { ShaderDataType::Float2,"i_tex_coord_max", false, true }, // loc 9
-                                        { ShaderDataType::Int,   "i_entity_id",     false, true }  // loc 10
-                        };
-
-                        offspec.vertexBindings.push_back(static_binding);
-                        offspec.vertexBindings.push_back(instance_binding);
-
-                        m_pipeline_quad_fb.create(
-                            reinterpret_cast<VkDevice>(m_device),
-                            rp,
-                            reinterpret_cast<VkDescriptorSetLayout>(m_global_set_layout),
-                            spirv.vertex.string(),
-                            spirv.fragment.string(),
-                            offspec
-                        );
-                    }
 
                     // Query attachment layout from the framebuffer itself
                     const uint32_t colorCount = vk_fb->get_color_attachment_count();
@@ -1289,42 +1206,33 @@ namespace Honey {
 
                     vkCmdBeginRenderPass(cmd, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
                     render_pass_open = true;
-                    in_swapchain_pass = false;
+                    current_pass_is_swapchain = false;
 
                     current_pass_w = extent.width;
                     current_pass_h = extent.height;
 
-                    bind_pipeline_and_dynamic(
-                        reinterpret_cast<VkPipeline>(m_pipeline_quad_fb.pipeline()),
-                        current_pass_w,
-                        current_pass_h
-                    );
+                    // The actual graphics pipeline is selected by a later CmdType::BindPipeline
+                    current_pipeline_layout = VK_NULL_HANDLE;
+
                     break;
             }
-            case FramePacket::CmdType::BindPipelineQuad2D: {
-                    if (render_pass_open) {
-                        VkPipeline pipeline =
-                            in_swapchain_pass
-                                ? reinterpret_cast<VkPipeline>(m_pipeline_quad.pipeline())
-                                : reinterpret_cast<VkPipeline>(m_pipeline_quad_fb.pipeline());
+            case FramePacket::CmdType::BindPipeline: {
+                    HN_CORE_ASSERT(render_pass_open, "BindPipeline must occur inside a render pass");
+                    HN_CORE_ASSERT(current_pass_w > 0 && current_pass_h > 0, "BindPipeline: current pass extent is zero");
 
-                        HN_CORE_ASSERT(current_pass_w > 0 && current_pass_h > 0,
-                                       "BindPipelineQuad2D: current pass extent is zero");
+                    const VkPipeline pipeline = c.bindPipeline.pipeline;
+                    const VkPipelineLayout layout = c.bindPipeline.layout;
 
-                        bind_pipeline_and_dynamic(pipeline, current_pass_w, current_pass_h);
-                    }
+                    bind_pipeline_and_dynamic(pipeline, current_pass_w, current_pass_h);
+                    current_pipeline_layout = layout;
                     break;
             }
             case FramePacket::CmdType::BindGlobals: {
                     HN_CORE_ASSERT(render_pass_open, "BindGlobals must occur inside a render pass");
+                    HN_CORE_ASSERT(current_pipeline_layout != VK_NULL_HANDLE,
+                                   "BindGlobals: no pipeline layout bound yet. Call bind_pipeline() before BindGlobals.");
 
-                    VkPipelineLayout activeLayout =
-                        in_swapchain_pass
-                            ? reinterpret_cast<VkPipelineLayout>(m_pipeline_quad.layout())
-                            : reinterpret_cast<VkPipelineLayout>(m_pipeline_quad_fb.layout());
-
-
-                    apply_globals(activeLayout, c.globals);
+                    apply_globals(current_pipeline_layout, c.globals);
                     break;
             }
             case FramePacket::CmdType::DrawIndexed: {
@@ -1361,7 +1269,7 @@ namespace Honey {
             }
             case FramePacket::CmdType::EndPass: {
                     if (render_pass_open) {
-                        if (in_swapchain_pass) {
+                        if (current_pass_is_swapchain) {
                             // Before ending the main swapchain pass, draw Dear ImGui on top.
                             if (ImGui::GetDrawData() && ImGui::GetDrawData()->CmdListsCount > 0 && m_backend) {
                                 VkExtent2D imgui_extent{
@@ -1379,7 +1287,8 @@ namespace Honey {
 
                         vkCmdEndRenderPass(cmd);
                         render_pass_open = false;
-                        in_swapchain_pass = false;
+                        current_pass_is_swapchain = false; // reset for safety
+                        current_pipeline_layout = VK_NULL_HANDLE;
                     }
                     break;
             }
@@ -1388,7 +1297,7 @@ namespace Honey {
 
         if (render_pass_open) {
             // Safety: if EndPass was never seen, close the pass.
-            if (in_swapchain_pass) {
+            if (current_pass_is_swapchain) {
                 if (ImGui::GetDrawData() && ImGui::GetDrawData()->CmdListsCount > 0 && m_backend) {
                     VkExtent2D imgui_extent{
                         m_swapchain_extent_width,
@@ -1405,7 +1314,7 @@ namespace Honey {
 
             vkCmdEndRenderPass(cmd);
             render_pass_open = false;
-            in_swapchain_pass = false;
+            current_pass_is_swapchain = false;
         }
 
         res = vkEndCommandBuffer(cmd);

@@ -20,4 +20,4 @@ namespace Honey {
         PipelineSpec m_spec;
     };
 
-}
+} // namespace Honey

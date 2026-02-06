@@ -1,6 +1,7 @@
 #include "hnpch.h"
 #include "renderer_2d.h"
 
+#include "pipeline.h"
 #include "renderer.h"
 #include "render_command.h"
 #include "vertex_array.h"
@@ -9,6 +10,8 @@
 #include "texture.h"
 #include "shader_cache.h"
 #include "glm/gtx/string_cast.hpp"
+#include "Honey/core/settings.h"
+#include "platform/vulkan/vk_framebuffer.h"
 #include "platform/vulkan/vk_renderer_api.h"
 
 static const std::filesystem::path asset_root = ASSET_ROOT;
@@ -115,6 +118,18 @@ namespace Honey {
         CameraData camera_buffer;
         Ref<UniformBuffer> camera_uniform_buffer;
 
+        struct VkPipelinePair {
+            void* renderPassNative = nullptr; // VkRenderPass
+            Ref<Pipeline> normal;
+            Ref<Pipeline> debugPick;
+        };
+
+        VkPipelinePair vk_offscreen_pipelines_quad{};
+        VkPipelinePair vk_offscreen_pipelines_circle{};
+        VkPipelinePair vk_offscreen_pipelines_line{};
+
+        std::vector<VulkanRendererAPI::GlobalsState> vk_globals_stack;
+
         std::unique_ptr<ShaderCache> shader_cache;
     };
 
@@ -142,6 +157,213 @@ namespace Honey {
         return (int)idx;
     }
 
+    static PipelineSpec build_vk_quad_pipeline_spec(const std::filesystem::path& shaderPath,
+                                                    bool blending_for_color0,
+                                                    bool include_id_attachment)
+    {
+        auto& rs = Settings::get().renderer;
+
+        PipelineSpec spec;
+        spec.shaderGLSLPath = shaderPath;
+        spec.topology = PrimitiveTopology::Triangles;
+        spec.cullMode = CullMode::None;
+        spec.frontFace = FrontFaceWinding::CounterClockwise;
+        spec.depthStencil.depthTest  = rs.depth_test;
+        spec.depthStencil.depthWrite = rs.depth_write;
+        spec.passType = RenderPassType::Offscreen;
+        spec.wireframe = rs.wireframe;
+
+        // Vertex bindings must match the VA layout (static + instance)
+        VertexInputBindingSpec static_binding;
+        static_binding.layout = s_data->s_quad_vertex_buffer->get_layout();
+
+        VertexInputBindingSpec instance_binding;
+        instance_binding.layout = s_data->i_quad_vertex_buffer->get_layout();
+
+        spec.vertexBindings.clear();
+        spec.vertexBindings.push_back(static_binding);
+        spec.vertexBindings.push_back(instance_binding);
+
+        // Blend states: attachment 0 is RGBA8; attachment 1 is integer ID (no blend)
+        spec.perColorAttachmentBlend.clear();
+        {
+            AttachmentBlendState b0{};
+            b0.enabled = blending_for_color0;
+            spec.perColorAttachmentBlend.push_back(b0);
+        }
+        if (include_id_attachment) {
+            AttachmentBlendState b1{};
+            b1.enabled = false;
+            spec.perColorAttachmentBlend.push_back(b1);
+        }
+
+        return spec;
+    }
+
+    static Ref<Pipeline> get_or_create_vk_offscreen_quad_pipeline(void* renderPassNative, bool debugPick)
+    {
+        HN_CORE_ASSERT(renderPassNative, "get_or_create_vk_offscreen_pipeline: renderPassNative is null");
+
+        // Recreate cached pipelines if render pass changed (framebuffer resized etc.)
+        if (s_data->vk_offscreen_pipelines_quad.renderPassNative != renderPassNative) {
+            s_data->vk_offscreen_pipelines_quad = {};
+            s_data->vk_offscreen_pipelines_quad.renderPassNative = renderPassNative;
+        }
+
+        auto& pair = s_data->vk_offscreen_pipelines_quad;
+
+        if (!debugPick) {
+            if (!pair.normal) {
+                PipelineSpec spec = build_vk_quad_pipeline_spec(
+                    asset_root / "shaders" / "Renderer2D_Quad.glsl",
+                    Settings::get().renderer.blending,
+                    true
+                );
+                pair.normal = Pipeline::create(spec, renderPassNative);
+            }
+            return pair.normal;
+        } else {
+            if (!pair.debugPick) {
+                PipelineSpec spec = build_vk_quad_pipeline_spec(
+                    asset_root / "shaders" / "Renderer2D_DebugPick.glsl",
+                    false, // debug pick is opaque, no need for blending
+                    true
+                );
+                pair.debugPick = Pipeline::create(spec, renderPassNative);
+            }
+            return pair.debugPick;
+        }
+    }
+
+    static PipelineSpec build_vk_circle_pipeline_spec(const std::filesystem::path& shaderPath,
+                                                    bool blending_for_color0,
+                                                    bool include_id_attachment)
+    {
+        auto& rs = Settings::get().renderer;
+
+        PipelineSpec spec;
+        spec.shaderGLSLPath = shaderPath;
+        spec.topology = PrimitiveTopology::Triangles;
+        spec.cullMode = CullMode::None;
+        spec.frontFace = FrontFaceWinding::CounterClockwise;
+        spec.depthStencil.depthTest  = rs.depth_test;
+        spec.depthStencil.depthWrite = rs.depth_write;
+        spec.passType = RenderPassType::Offscreen;
+        spec.wireframe = rs.wireframe;
+
+        // Vertex bindings must match the VA layout (static + instance)
+        VertexInputBindingSpec static_binding;
+        static_binding.layout = s_data->s_circle_vertex_buffer->get_layout();
+
+        VertexInputBindingSpec instance_binding;
+        instance_binding.layout = s_data->i_circle_vertex_buffer->get_layout();
+
+        spec.vertexBindings.clear();
+        spec.vertexBindings.push_back(static_binding);
+        spec.vertexBindings.push_back(instance_binding);
+
+        // Blend states: attachment 0 is RGBA8; attachment 1 is integer ID (no blend)
+        spec.perColorAttachmentBlend.clear();
+        {
+            AttachmentBlendState b0{};
+            b0.enabled = blending_for_color0;
+            spec.perColorAttachmentBlend.push_back(b0);
+        }
+        if (include_id_attachment) {
+            AttachmentBlendState b1{};
+            b1.enabled = false;
+            spec.perColorAttachmentBlend.push_back(b1);
+        }
+
+        return spec;
+    }
+
+    static Ref<Pipeline> get_or_create_vk_offscreen_circle_pipeline(void* renderPassNative)
+    {
+        HN_CORE_ASSERT(renderPassNative, "get_or_create_vk_offscreen_circle_pipeline: renderPassNative is null");
+
+        if (s_data->vk_offscreen_pipelines_circle.renderPassNative != renderPassNative) {
+            s_data->vk_offscreen_pipelines_circle = {};
+            s_data->vk_offscreen_pipelines_circle.renderPassNative = renderPassNative;
+        }
+
+        auto& pair = s_data->vk_offscreen_pipelines_circle;
+
+        if (!pair.normal) {
+            PipelineSpec spec = build_vk_circle_pipeline_spec(
+                asset_root / "shaders" / "Renderer2D_Circle.glsl",
+                Settings::get().renderer.blending,
+                true
+            );
+            pair.normal = Pipeline::create(spec, renderPassNative);
+        }
+
+        return pair.normal;
+    }
+
+    static PipelineSpec build_vk_line_pipeline_spec(const std::filesystem::path& shaderPath,
+                                                   bool blending_for_color0,
+                                                   bool include_id_attachment)
+    {
+        auto& rs = Settings::get().renderer;
+
+        PipelineSpec spec;
+        spec.shaderGLSLPath = shaderPath;
+        spec.topology = PrimitiveTopology::Triangles;
+        spec.cullMode = CullMode::None;
+        spec.frontFace = FrontFaceWinding::CounterClockwise;
+        spec.depthStencil.depthTest  = rs.depth_test;
+        spec.depthStencil.depthWrite = rs.depth_write;
+        spec.passType = RenderPassType::Offscreen;
+        spec.wireframe = rs.wireframe;
+
+        VertexInputBindingSpec static_binding;
+        static_binding.layout = s_data->s_line_vertex_buffer->get_layout();
+
+        VertexInputBindingSpec instance_binding;
+        instance_binding.layout = s_data->i_line_vertex_buffer->get_layout();
+
+        spec.vertexBindings.clear();
+        spec.vertexBindings.push_back(static_binding);
+        spec.vertexBindings.push_back(instance_binding);
+
+        spec.perColorAttachmentBlend.clear();
+        {
+            AttachmentBlendState b0{};
+            b0.enabled = blending_for_color0;
+            spec.perColorAttachmentBlend.push_back(b0);
+        }
+        if (include_id_attachment) {
+            AttachmentBlendState b1{};
+            b1.enabled = false;
+            spec.perColorAttachmentBlend.push_back(b1);
+        }
+
+        return spec;
+    }
+
+    static Ref<Pipeline> get_or_create_vk_offscreen_line_pipeline(void* renderPassNative)
+    {
+        HN_CORE_ASSERT(renderPassNative, "get_or_create_vk_offscreen_line_pipeline: renderPassNative is null");
+
+        if (s_data->vk_offscreen_pipelines_line.renderPassNative != renderPassNative) {
+            s_data->vk_offscreen_pipelines_line = {};
+            s_data->vk_offscreen_pipelines_line.renderPassNative = renderPassNative;
+        }
+
+        auto& pair = s_data->vk_offscreen_pipelines_line;
+
+        if (!pair.normal) {
+            PipelineSpec spec = build_vk_line_pipeline_spec(
+                asset_root / "shaders" / "Renderer2D_Line.glsl",
+                Settings::get().renderer.blending,
+                true
+            );
+            pair.normal = Pipeline::create(spec, renderPassNative);
+        }
+
+        return pair.normal;
+    }
 
     void Renderer2D::init(std::unique_ptr<ShaderCache> shader_cache) {
         HN_PROFILE_FUNCTION();
@@ -204,14 +426,6 @@ namespace Honey {
 
         auto debug_shader_path = asset_root / "shaders" / "Renderer2D_DebugPick.glsl";
         s_data->quad_shader_picking_debug = s_data->shader_cache->get_or_compile_shader(debug_shader_path);
-
-
-        if (RendererAPI::get_api() == RendererAPI::API::vulkan) {
-            HN_CORE_INFO("Renderer2D::init() early return avoiding lines and circles");
-            return;
-        }
-
-
 
         ////////////////// CIRCLES //////////////////////////
         s_data->circle_vertex_array = VertexArray::create();
@@ -318,6 +532,10 @@ namespace Honey {
         s_data->line_shader = s_data->shader_cache->get_or_compile_shader(line_shader_path);
 
 
+        if (RendererAPI::get_api() == RendererAPI::API::vulkan) {
+            HN_CORE_INFO("Renderer2D::init() early return hitting opengl specific shader binding.");
+            return;
+        }
 
         s_data->camera_uniform_buffer = UniformBuffer::create(sizeof(Renderer2DData::CameraData), 0);
 
@@ -385,6 +603,7 @@ namespace Honey {
             s_data->camera_buffer.view_projection = cam.get_view_projection_matrix();
             s_data->camera_uniform_buffer->set_data(sizeof(Renderer2DData::CameraData), &s_data->camera_buffer);
         } else {
+            s_data->vk_globals_stack.push_back(VulkanRendererAPI::get_globals_state());
             VulkanRendererAPI::submit_camera_view_projection(cam.get_view_projection_matrix());
         }
 
@@ -404,6 +623,7 @@ namespace Honey {
             s_data->camera_buffer.view_projection = view_proj;
             s_data->camera_uniform_buffer->set_data(sizeof(Renderer2DData::CameraData), &s_data->camera_buffer);
         } else {
+            s_data->vk_globals_stack.push_back(VulkanRendererAPI::get_globals_state());
             VulkanRendererAPI::submit_camera_view_projection(view_proj);
         }
 
@@ -428,6 +648,7 @@ namespace Honey {
                 &s_data->camera_buffer
             );
         } else {
+            s_data->vk_globals_stack.push_back(VulkanRendererAPI::get_globals_state());
             // Vulkan backend will convert EngineClip to VulkanClip.
             VulkanRendererAPI::submit_camera_view_projection(vp);
         }
@@ -443,29 +664,78 @@ namespace Honey {
         quad_end_scene();
         circle_end_scene();
         line_end_scene();
+
+        if (Renderer::get_api() == RendererAPI::API::vulkan) {
+            HN_CORE_ASSERT(!s_data->vk_globals_stack.empty(),
+                           "Renderer2D Vulkan globals stack underflow (end_scene without matching begin_scene)");
+            VulkanRendererAPI::set_globals_state(s_data->vk_globals_stack.back());
+            s_data->vk_globals_stack.pop_back();
+        }
     }
 
     void Renderer2D::line_end_scene() {
         if (s_data->line_instances.empty())
             return;
 
+        if (Renderer::get_api() == RendererAPI::API::vulkan) {
+            s_data->line_sorted_instances = s_data->line_instances;
+            std::sort(s_data->line_sorted_instances.begin(), s_data->line_sorted_instances.end(),
+                [](const LineInstance& a, const LineInstance& b) {
+                    return a.center.z < b.center.z;
+                });
+
+            const size_t bytes = s_data->line_sorted_instances.size() * sizeof(LineInstance);
+            s_data->i_line_vertex_buffer->set_data(
+                s_data->line_sorted_instances.data(),
+                static_cast<uint32_t>(bytes)
+            );
+
+            auto fb = Renderer::get_render_target();
+            auto* vk_fb = dynamic_cast<VulkanFramebuffer*>(fb.get());
+            HN_CORE_ASSERT(vk_fb, "Renderer2D Vulkan path expects current render target to be a VulkanFramebuffer");
+
+            void* rpNative = vk_fb->get_render_pass();
+            Ref<Pipeline> pipe = get_or_create_vk_offscreen_line_pipeline(rpNative);
+
+            if (s_data->texture_slot_index > 1) {
+                std::array<void*, VulkanRendererAPI::k_max_texture_slots> vk_textures{};
+                const uint32_t count = std::min<uint32_t>(
+                    s_data->texture_slot_index,
+                    VulkanRendererAPI::k_max_texture_slots
+                );
+                for (uint32_t i = 0; i < count; ++i) {
+                    vk_textures[i] = s_data->texture_slots[i].get();
+                }
+                VulkanRendererAPI::submit_bound_textures(vk_textures, count);
+            }
+
+            RenderCommand::bind_pipeline(pipe);
+
+            s_data->line_vertex_array->bind();
+            RenderCommand::draw_indexed_instanced(
+                s_data->line_vertex_array,
+                6,
+                static_cast<uint32_t>(s_data->line_sorted_instances.size())
+            );
+            s_data->stats.draw_calls++;
+            return;
+        }
+
+        // --- existing OpenGL path ---
         s_data->line_shader->bind();
-        // Sort instances by Z coordinate (back to front for correct alpha blending)
+
         s_data->line_sorted_instances = s_data->line_instances;
         std::sort(s_data->line_sorted_instances.begin(), s_data->line_sorted_instances.end(),
             [](const LineInstance& a, const LineInstance& b) {
-                return a.center.z < b.center.z; // Higher Z values drawn first (back to front)
+                return a.center.z < b.center.z;
             });
 
-        // Upload sorted instance data
         size_t bytes = s_data->line_sorted_instances.size() * sizeof(LineInstance);
         s_data->i_line_vertex_buffer->set_data(s_data->line_sorted_instances.data(), bytes);
 
-        // Bind textures in the order we populated
         for (uint32_t i = 0; i < s_data->texture_slot_index; ++i)
             s_data->texture_slots[i]->bind(i);
 
-        // Draw all lines in one go
         s_data->line_vertex_array->bind();
         RenderCommand::draw_indexed_instanced(s_data->line_vertex_array, 6, s_data->line_sorted_instances.size());
         s_data->stats.draw_calls++;
@@ -475,23 +745,67 @@ namespace Honey {
         if (s_data->circle_instances.empty())
             return;
 
+        if (Renderer::get_api() == RendererAPI::API::vulkan) {
+            // Sort instances by Z coordinate (back to front for correct alpha blending)
+            s_data->circle_sorted_instances = s_data->circle_instances;
+            std::sort(s_data->circle_sorted_instances.begin(), s_data->circle_sorted_instances.end(),
+                [](const CircleInstance& a, const CircleInstance& b) {
+                    return a.center.z < b.center.z;
+                });
+
+            // Upload sorted instance data
+            const size_t bytes = s_data->circle_sorted_instances.size() * sizeof(CircleInstance);
+            s_data->i_circle_vertex_buffer->set_data(
+                s_data->circle_sorted_instances.data(),
+                static_cast<uint32_t>(bytes)
+            );
+
+            auto fb = Renderer::get_render_target();
+            auto* vk_fb = dynamic_cast<VulkanFramebuffer*>(fb.get());
+            HN_CORE_ASSERT(vk_fb, "Renderer2D Vulkan path expects current render target to be a VulkanFramebuffer");
+
+            void* rpNative = vk_fb->get_render_pass();
+            Ref<Pipeline> pipe = get_or_create_vk_offscreen_circle_pipeline(rpNative);
+
+            if (s_data->texture_slot_index > 1) {
+                std::array<void*, VulkanRendererAPI::k_max_texture_slots> vk_textures{};
+                const uint32_t count = std::min<uint32_t>(
+                    s_data->texture_slot_index,
+                    VulkanRendererAPI::k_max_texture_slots
+                );
+                for (uint32_t i = 0; i < count; ++i) {
+                    vk_textures[i] = s_data->texture_slots[i].get();
+                }
+                VulkanRendererAPI::submit_bound_textures(vk_textures, count);
+            }
+
+            RenderCommand::bind_pipeline(pipe);
+
+            s_data->circle_vertex_array->bind();
+            RenderCommand::draw_indexed_instanced(
+                s_data->circle_vertex_array,
+                6,
+                static_cast<uint32_t>(s_data->circle_sorted_instances.size())
+            );
+            s_data->stats.draw_calls++;
+            return;
+        }
+
+        // --- existing OpenGL path ---
         s_data->circle_shader->bind();
-        // Sort instances by Z coordinate (back to front for correct alpha blending)
+
         s_data->circle_sorted_instances = s_data->circle_instances;
         std::sort(s_data->circle_sorted_instances.begin(), s_data->circle_sorted_instances.end(),
             [](const CircleInstance& a, const CircleInstance& b) {
-                return a.center.z < b.center.z; // Higher Z values drawn first (back to front)
+                return a.center.z < b.center.z;
             });
 
-        // Upload sorted instance data
         size_t bytes = s_data->circle_sorted_instances.size() * sizeof(CircleInstance);
         s_data->i_circle_vertex_buffer->set_data(s_data->circle_sorted_instances.data(), bytes);
 
-        // Bind textures in the order we populated
         for (uint32_t i = 0; i < s_data->texture_slot_index; ++i)
             s_data->texture_slots[i]->bind(i);
 
-        // Draw all circles in one go
         s_data->circle_vertex_array->bind();
         RenderCommand::draw_indexed_instanced(s_data->circle_vertex_array, 6, s_data->circle_sorted_instances.size());
         s_data->stats.draw_calls++;
@@ -518,18 +832,38 @@ namespace Honey {
 
             // Upload instance data
             const size_t bytes = s_data->quad_sorted_instances.size() * sizeof(QuadInstance);
-            s_data->i_quad_vertex_buffer->set_data(s_data->quad_sorted_instances.data(), static_cast<uint32_t>(bytes));
+            s_data->i_quad_vertex_buffer->set_data(
+                s_data->quad_sorted_instances.data(),
+                static_cast<uint32_t>(bytes)
+            );
 
-            // Submit bound textures list for Vulkan (slot 0..texture_slot_index-1)
-            std::array<void*, VulkanRendererAPI::k_max_texture_slots> vk_textures{};
-            const uint32_t count = std::min<uint32_t>(s_data->texture_slot_index, VulkanRendererAPI::k_max_texture_slots);
-            for (uint32_t i = 0; i < count; ++i) {
-                vk_textures[i] = s_data->texture_slots[i].get();
+            auto fb = Renderer::get_render_target();
+            auto* vk_fb = dynamic_cast<VulkanFramebuffer*>(fb.get());
+            HN_CORE_ASSERT(vk_fb, "Renderer2D Vulkan path expects current render target to be a VulkanFramebuffer");
+
+            void* rpNative = vk_fb->get_render_pass();
+            Ref<Pipeline> pipe = get_or_create_vk_offscreen_quad_pipeline(rpNative, s_data->debug_pick_enabled);
+
+            if (s_data->texture_slot_index > 1) {
+                std::array<void*, VulkanRendererAPI::k_max_texture_slots> vk_textures{};
+                const uint32_t count = std::min<uint32_t>(
+                    s_data->texture_slot_index,
+                    VulkanRendererAPI::k_max_texture_slots
+                );
+                for (uint32_t i = 0; i < count; ++i) {
+                    vk_textures[i] = s_data->texture_slots[i].get();
+                }
+                VulkanRendererAPI::submit_bound_textures(vk_textures, count);
             }
-            VulkanRendererAPI::submit_bound_textures(vk_textures, count);
+
+            RenderCommand::bind_pipeline(pipe);
 
             s_data->quad_vertex_array->bind();
-            RenderCommand::draw_indexed_instanced(s_data->quad_vertex_array, 6, static_cast<uint32_t>(s_data->quad_sorted_instances.size()));
+            RenderCommand::draw_indexed_instanced(
+                s_data->quad_vertex_array,
+                6,
+                static_cast<uint32_t>(s_data->quad_sorted_instances.size())
+            );
             s_data->stats.draw_calls++;
             return;
         }

@@ -23,6 +23,8 @@ namespace Honey {
 
         uint32_t get_max_texture_slots() override;
 
+        void bind_pipeline(const Ref<Pipeline>& pipeline) override;
+
         void draw_indexed(const Ref<VertexArray>&, uint32_t) override;
         void draw_indexed_instanced(const Ref<VertexArray>&, uint32_t, uint32_t) override;
 
@@ -54,6 +56,21 @@ namespace Honey {
 
         static void submit_bound_textures(const std::array<void*, k_max_texture_slots>& textures, uint32_t texture_count);
         static bool consume_bound_textures(std::array<void*, k_max_texture_slots>& out_textures, uint32_t& out_texture_count);
+
+        static void push_globals_state();
+        static void pop_globals_state();
+
+        struct GlobalsState {
+            glm::mat4 viewProjection{1.0f};
+            bool hasCamera = false;
+
+            std::array<void*, k_max_texture_slots> textures{};
+            uint32_t textureCount = 0;
+            bool hasTextures = false;
+        };
+
+        static GlobalsState get_globals_state();
+        static void set_globals_state(const GlobalsState& state);
 
     private:
         VkDevice m_device = nullptr;

@@ -8,6 +8,8 @@
 
 namespace Honey {
 
+    class Pipeline;
+
     class RendererAPI {
     public:
 
@@ -34,6 +36,8 @@ namespace Honey {
         virtual void clear() = 0;
 
         virtual uint32_t get_max_texture_slots() = 0;
+
+        virtual void bind_pipeline(const Ref<Pipeline>& pipeline) = 0;
 
         virtual std::string get_vendor() = 0;
 

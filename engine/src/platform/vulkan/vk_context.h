@@ -46,6 +46,7 @@ namespace Honey {
 
         VkDevice get_device() const { return m_device; }
         VkPhysicalDevice get_physical_device() const { return m_physical_device; }
+        VkDescriptorSetLayout get_global_set_layout() const { return m_global_set_layout; }
 
         uint32_t get_graphics_queue_family() const { return m_graphics_queue_family; }
         VkQueue get_graphics_queue() const { return m_graphics_queue; }
@@ -84,9 +85,15 @@ namespace Honey {
                 BeginSwapchainPass,
                 BeginOffscreenPass,
                 EndPass,
-                BindPipelineQuad2D,
+
+                BindPipeline,
                 BindGlobals,        // camera + textures for now
                 DrawIndexed
+            };
+
+            struct CmdBindPipeline {
+                VkPipeline pipeline = nullptr;
+                VkPipelineLayout layout = nullptr;
             };
 
             struct CmdBeginSwapchainPass {
@@ -118,6 +125,7 @@ namespace Honey {
                 CmdType type{};
                 CmdBeginSwapchainPass begin{};
                 CmdBeginOffscreenPass offscreen{};
+                CmdBindPipeline bindPipeline{};
                 CmdBindGlobals globals{};
                 CmdDrawIndexed draw{};
             };
@@ -222,6 +230,10 @@ namespace Honey {
         void* m_camera_ubos[k_max_frames_in_flight]{};        // VkBuffer
         void* m_camera_ubo_memories[k_max_frames_in_flight]{}; // VkDeviceMemory
         uint32_t m_camera_ubo_size = 0;
+
+        std::array<void*, 32> m_last_bound_textures[k_max_frames_in_flight]{};
+        uint32_t m_last_bound_texture_count[k_max_frames_in_flight]{};
+        bool m_last_bound_textures_valid[k_max_frames_in_flight]{};
 
         VkCommandPool m_command_pool = nullptr;
         std::vector<VkCommandBuffer> m_command_buffers;

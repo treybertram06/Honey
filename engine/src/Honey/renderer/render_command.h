@@ -4,6 +4,8 @@
 
 namespace Honey {
 
+    class Pipeline;
+
     class RenderCommand {
     public:
 
@@ -31,6 +33,9 @@ namespace Honey {
             return s_renderer_api->get_max_texture_slots();
         }
 
+        inline static void bind_pipeline(const Ref<Pipeline>& pipeline) {
+            return s_renderer_api->bind_pipeline(pipeline);
+        }
 
         inline static void draw_indexed(const Ref<VertexArray>& vertex_array, uint32_t index_count = 0) {
             s_renderer_api->draw_indexed(vertex_array, index_count);

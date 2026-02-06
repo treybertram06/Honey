@@ -184,7 +184,8 @@ add_library(engine STATIC
         src/Honey/renderer/texture_cache.cpp
         src/Honey/core/settings.cpp
         src/Honey/math/yaml_glm.h
-        src/Honey/renderer/Pipeline.h
+        src/Honey/renderer/pipeline.h
+        src/Honey/renderer/pipeline.cpp
 )
 
 # Apply MSVC runtime to engine itself

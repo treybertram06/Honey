@@ -17,6 +17,7 @@ namespace Honey {
         static void begin_frame();
 
         static void set_render_target(const Ref<Framebuffer>& framebuffer);
+        static Ref<Framebuffer> get_render_target() { return s_current_target; }
         static void begin_pass();
         static void end_pass();
 
