@@ -172,99 +172,99 @@ namespace Honey {
 
         // Colour attachments
         m_color_attachments.resize(m_color_specs.size());
-            m_imgui_texture_sets.clear();
-            m_imgui_texture_sets.resize(m_color_specs.size(), 0);
+        m_imgui_texture_sets.clear();
+        m_imgui_texture_sets.resize(m_color_specs.size(), 0);
 
-            for (size_t i = 0; i < m_color_specs.size(); ++i) {
-                const auto& spec = m_color_specs[i];
-                const VkFormat format = to_vk_format(spec.texture_format);
+        for (size_t i = 0; i < m_color_specs.size(); ++i) {
+            const auto& spec = m_color_specs[i];
+            const VkFormat format = to_vk_format(spec.texture_format);
 
-                VkImageCreateInfo img{};
-                img.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-                img.imageType = VK_IMAGE_TYPE_2D;
-                img.extent.width  = width;
-                img.extent.height = height;
-                img.extent.depth  = 1;
-                img.mipLevels = 1;
-                img.arrayLayers = 1;
-                img.format = format;
-                img.tiling = VK_IMAGE_TILING_OPTIMAL;
-                img.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-                img.usage =
-                    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-                    VK_IMAGE_USAGE_SAMPLED_BIT          |
-                    VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-                    VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-                img.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-                img.samples = (VkSampleCountFlagBits)m_samples;
+            VkImageCreateInfo img{};
+            img.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+            img.imageType = VK_IMAGE_TYPE_2D;
+            img.extent.width  = width;
+            img.extent.height = height;
+            img.extent.depth  = 1;
+            img.mipLevels = 1;
+            img.arrayLayers = 1;
+            img.format = format;
+            img.tiling = VK_IMAGE_TILING_OPTIMAL;
+            img.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            img.usage =
+                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                VK_IMAGE_USAGE_SAMPLED_BIT          |
+                VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            img.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            img.samples = (VkSampleCountFlagBits)m_samples;
 
-                auto& out = m_color_attachments[i];
+            auto& out = m_color_attachments[i];
 
-                VkResult r = vkCreateImage(m_device, &img, nullptr, &out.image);
-                HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanFramebuffer: vkCreateImage (color) failed: {0}", vk_result_to_string(r));
+            VkResult r = vkCreateImage(m_device, &img, nullptr, &out.image);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanFramebuffer: vkCreateImage (color) failed: {0}", vk_result_to_string(r));
 
-                {
-                    char name[64];
-                    std::snprintf(name, sizeof(name), "EditorFB_ColorImage_%zu", i);
-                    set_debug_name(m_device,
-                                   VK_OBJECT_TYPE_IMAGE,
-                                   reinterpret_cast<uint64_t>(out.image),
-                                   name);
-                }
-
-                VkMemoryRequirements req{};
-                vkGetImageMemoryRequirements(m_device, out.image, &req);
-
-                VkMemoryAllocateInfo ai{};
-                ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-                ai.allocationSize = req.size;
-                ai.memoryTypeIndex = find_memory_type(
-                    m_physical_device,
-                    req.memoryTypeBits,
-                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
-                );
-
-                r = vkAllocateMemory(m_device, &ai, nullptr, &out.memory);
-                HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanFramebuffer: vkAllocateMemory (color) failed: {0}", vk_result_to_string(r));
-
-                r = vkBindImageMemory(m_device, out.image, out.memory, 0);
-                HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanFramebuffer: vkBindImageMemory (color) failed: {0}", vk_result_to_string(r));
-
-                VkImageViewCreateInfo view{};
-                view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-                view.image = out.image;
-                view.viewType = VK_IMAGE_VIEW_TYPE_2D;
-                view.format = format;
-                view.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-                view.subresourceRange.baseMipLevel = 0;
-                view.subresourceRange.levelCount = 1;
-                view.subresourceRange.baseArrayLayer = 0;
-                view.subresourceRange.layerCount = 1;
-
-                r = vkCreateImageView(m_device, &view, nullptr, &out.view);
-                HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanFramebuffer: vkCreateImageView (color) failed: {0}", vk_result_to_string(r));
-
-                {
-                    char name[64];
-                    std::snprintf(name, sizeof(name), "EditorFB_ColorView_%zu", i);
-                    set_debug_name(m_device,
-                                   VK_OBJECT_TYPE_IMAGE_VIEW,
-                                   reinterpret_cast<uint64_t>(out.view),
-                                   name);
-                }
-
-                {
-                    VkSampler sampler = m_backend->get_imgui_sampler();
-                    // Must match ad.finalLayout above, because ImGui will sample in this layout.
-                    VkImageLayout layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-                    m_imgui_texture_sets[i] = ImGui_ImplVulkan_AddTexture(
-                        sampler,
-                        out.view,
-                        layout
-                    );
-                }
+            {
+                char name[64];
+                std::snprintf(name, sizeof(name), "EditorFB_ColorImage_%zu", i);
+                set_debug_name(m_device,
+                               VK_OBJECT_TYPE_IMAGE,
+                               reinterpret_cast<uint64_t>(out.image),
+                               name);
             }
+
+            VkMemoryRequirements req{};
+            vkGetImageMemoryRequirements(m_device, out.image, &req);
+
+            VkMemoryAllocateInfo ai{};
+            ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+            ai.allocationSize = req.size;
+            ai.memoryTypeIndex = find_memory_type(
+                m_physical_device,
+                req.memoryTypeBits,
+                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+            );
+
+            r = vkAllocateMemory(m_device, &ai, nullptr, &out.memory);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanFramebuffer: vkAllocateMemory (color) failed: {0}", vk_result_to_string(r));
+
+            r = vkBindImageMemory(m_device, out.image, out.memory, 0);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanFramebuffer: vkBindImageMemory (color) failed: {0}", vk_result_to_string(r));
+
+            VkImageViewCreateInfo view{};
+            view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            view.image = out.image;
+            view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            view.format = format;
+            view.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            view.subresourceRange.baseMipLevel = 0;
+            view.subresourceRange.levelCount = 1;
+            view.subresourceRange.baseArrayLayer = 0;
+            view.subresourceRange.layerCount = 1;
+
+            r = vkCreateImageView(m_device, &view, nullptr, &out.view);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanFramebuffer: vkCreateImageView (color) failed: {0}", vk_result_to_string(r));
+
+            {
+                char name[64];
+                std::snprintf(name, sizeof(name), "EditorFB_ColorView_%zu", i);
+                set_debug_name(m_device,
+                               VK_OBJECT_TYPE_IMAGE_VIEW,
+                               reinterpret_cast<uint64_t>(out.view),
+                               name);
+            }
+
+            {
+                VkSampler sampler = m_backend->get_imgui_sampler();
+                // Must match ad.finalLayout above, because ImGui will sample in this layout.
+                VkImageLayout layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+                m_imgui_texture_sets[i] = ImGui_ImplVulkan_AddTexture(
+                    sampler,
+                    out.view,
+                    layout
+                );
+            }
+        }
 
         // Depth attachment (optional)
         bool has_depth = (m_depth_spec.texture_format != FramebufferTextureFormat::None);
@@ -469,26 +469,27 @@ namespace Honey {
         invalidate();
     }
 
-        int VulkanFramebuffer::read_pixel(uint32_t attachment_index, int x, int y) {
+    int VulkanFramebuffer::read_pixel(uint32_t attachment_index, int x, int y) {
         HN_CORE_ASSERT(attachment_index < m_color_attachments.size(),
                        "VulkanFramebuffer::read_pixel: attachment index out of range");
         HN_CORE_ASSERT(m_backend && m_backend->initialized(),
                        "VulkanFramebuffer::read_pixel: backend not initialized");
+
+        const auto& tex_spec = m_color_specs[attachment_index];
+        const bool is_integer =
+            (tex_spec.texture_format == FramebufferTextureFormat::RED_INTEGER);
 
         // Clamp / ignore out-of-bounds reads
         if (x < 0 || y < 0 ||
             x >= static_cast<int>(m_spec.width) ||
             y >= static_cast<int>(m_spec.height))
         {
-            return 0;
+            // For picking, treat OOB as "no entity"
+            return is_integer ? -1 : 0;
         }
 
         const uint32_t px = static_cast<uint32_t>(x);
         const uint32_t py = static_cast<uint32_t>(y);
-
-        const auto& tex_spec = m_color_specs[attachment_index];
-        const bool is_integer =
-            (tex_spec.texture_format == FramebufferTextureFormat::RED_INTEGER);
 
         VkImage src_image = m_color_attachments[attachment_index].image;
 
@@ -541,6 +542,8 @@ namespace Honey {
         r = vkBindBufferMemory(device, staging_buffer, staging_memory, 0);
         HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanFramebuffer::read_pixel: vkBindBufferMemory failed");
 
+        const uint32_t py_vk = (m_spec.height - 1u) - py;
+
         // --- Record transfer commands via immediate_submit ---
         m_backend->immediate_submit([&](VkCommandBuffer cmd) {
             VkImageSubresourceRange range{};
@@ -550,8 +553,6 @@ namespace Honey {
             range.baseArrayLayer = 0;
             range.layerCount     = 1;
 
-            // Our editor FB leaves color attachments in SHADER_READ_ONLY_OPTIMAL
-            // after the render pass. Transition from that to TRANSFER_SRC_OPTIMAL.
             VkImageMemoryBarrier barrier_to_src{};
             barrier_to_src.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
             barrier_to_src.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -560,12 +561,12 @@ namespace Honey {
             barrier_to_src.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier_to_src.image = src_image;
             barrier_to_src.subresourceRange = range;
-            barrier_to_src.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            barrier_to_src.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
             barrier_to_src.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
 
             vkCmdPipelineBarrier(
                 cmd,
-                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                 VK_PIPELINE_STAGE_TRANSFER_BIT,
                 0,
                 0, nullptr,
@@ -581,7 +582,7 @@ namespace Honey {
             region.imageSubresource.mipLevel = 0;
             region.imageSubresource.baseArrayLayer = 0;
             region.imageSubresource.layerCount = 1;
-            region.imageOffset = { static_cast<int32_t>(px), static_cast<int32_t>(py), 0 };
+            region.imageOffset = { static_cast<int32_t>(px), static_cast<int32_t>(py_vk), 0 };
             region.imageExtent = { 1, 1, 1 };
 
             vkCmdCopyImageToBuffer(
@@ -593,7 +594,6 @@ namespace Honey {
                 &region
             );
 
-            // Transition back to SHADER_READ_ONLY_OPTIMAL so ImGui and later draws see the expected layout
             VkImageMemoryBarrier barrier_from_src{};
             barrier_from_src.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
             barrier_from_src.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
@@ -643,106 +643,106 @@ namespace Honey {
     void VulkanFramebuffer::clear_attachment_u32(uint32_t idx, uint32_t v)  { clear_attachment(idx, &v); }
     void VulkanFramebuffer::clear_attachment_f32(uint32_t idx, float v)     { clear_attachment(idx, &v); }
 
-         void VulkanFramebuffer::clear_attachment(uint32_t attachment_index, const void* value) {
-            HN_CORE_ASSERT(attachment_index < m_color_attachments.size(), "VulkanFramebuffer: clear_attachment index out of range");
-            HN_CORE_ASSERT(m_backend && m_backend->initialized(), "VulkanFramebuffer::clear_attachment: backend not initialized");
+    void VulkanFramebuffer::clear_attachment(uint32_t attachment_index, const void* value) {
+        HN_CORE_ASSERT(attachment_index < m_color_attachments.size(), "VulkanFramebuffer: clear_attachment index out of range");
+        HN_CORE_ASSERT(m_backend && m_backend->initialized(), "VulkanFramebuffer::clear_attachment: backend not initialized");
 
-            HN_CORE_ASSERT(attachment_index < m_color_specs.size(),
-                           "VulkanFramebuffer: clear_attachment specs/index mismatch");
+        HN_CORE_ASSERT(attachment_index < m_color_specs.size(),
+                       "VulkanFramebuffer: clear_attachment specs/index mismatch");
 
-            const auto fmt = m_color_specs[attachment_index].texture_format;
-            VkImage image   = m_color_attachments[attachment_index].image;
+        const auto fmt = m_color_specs[attachment_index].texture_format;
+        VkImage image   = m_color_attachments[attachment_index].image;
 
-            // For the editor FB path we don't have a render pass that ever transitions
-            // this image. So we do: UNDEFINED/SHADER_READ_ONLY_OPTIMAL -> TRANSFER_DST_OPTIMAL -> SHADER_READ_ONLY_OPTIMAL.
-            m_backend->immediate_submit([&](VkCommandBuffer cmd) {
-                VkImageSubresourceRange range{};
-                range.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
-                range.baseMipLevel   = 0;
-                range.levelCount     = 1;
-                range.baseArrayLayer = 0;
-                range.layerCount     = 1;
+        // For the editor FB path we don't have a render pass that ever transitions
+        // this image. So we do: UNDEFINED/SHADER_READ_ONLY_OPTIMAL -> TRANSFER_DST_OPTIMAL -> SHADER_READ_ONLY_OPTIMAL.
+        m_backend->immediate_submit([&](VkCommandBuffer cmd) {
+            VkImageSubresourceRange range{};
+            range.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+            range.baseMipLevel   = 0;
+            range.levelCount     = 1;
+            range.baseArrayLayer = 0;
+            range.layerCount     = 1;
 
-                // Transition to TRANSFER_DST_OPTIMAL from "don't care" (treat as UNDEFINED here)
-                VkImageMemoryBarrier to_clear{};
-                to_clear.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                to_clear.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-                to_clear.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-                to_clear.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                to_clear.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                to_clear.image = image;
-                to_clear.subresourceRange = range;
-                to_clear.srcAccessMask = 0;
-                to_clear.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            // Transition to TRANSFER_DST_OPTIMAL from "don't care" (treat as UNDEFINED here)
+            VkImageMemoryBarrier to_clear{};
+            to_clear.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            to_clear.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            to_clear.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            to_clear.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            to_clear.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            to_clear.image = image;
+            to_clear.subresourceRange = range;
+            to_clear.srcAccessMask = 0;
+            to_clear.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 
-                vkCmdPipelineBarrier(
-                    cmd,
-                    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                    VK_PIPELINE_STAGE_TRANSFER_BIT,
-                    0,
-                    0, nullptr,
-                    0, nullptr,
-                    1, &to_clear
-                );
+            vkCmdPipelineBarrier(
+                cmd,
+                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                VK_PIPELINE_STAGE_TRANSFER_BIT,
+                0,
+                0, nullptr,
+                0, nullptr,
+                1, &to_clear
+            );
 
-                VkClearColorValue clear_color{};
+            VkClearColorValue clear_color{};
 
-                switch (fmt) {
-                    case FramebufferTextureFormat::RED_INTEGER: {
-                        if (value)
-                            std::memcpy(&clear_color.uint32[0], value, sizeof(uint32_t));
-                        else
-                            clear_color.uint32[0] = 0;
-                        clear_color.uint32[1] = clear_color.uint32[0];
-                        clear_color.uint32[2] = clear_color.uint32[0];
-                        clear_color.uint32[3] = clear_color.uint32[0];
-                        break;
-                    }
-                    case FramebufferTextureFormat::RGBA8:
-                    default: {
-                        float v = 0.0f;
-                        if (value)
-                            v = *static_cast<const float*>(value);
-                        clear_color.float32[0] = v;
-                        clear_color.float32[1] = v;
-                        clear_color.float32[2] = v;
-                        clear_color.float32[3] = 1.0f;
-                        break;
-                    }
+            switch (fmt) {
+                case FramebufferTextureFormat::RED_INTEGER: {
+                    if (value)
+                        std::memcpy(&clear_color.uint32[0], value, sizeof(uint32_t));
+                    else
+                        clear_color.uint32[0] = 0;
+                    clear_color.uint32[1] = clear_color.uint32[0];
+                    clear_color.uint32[2] = clear_color.uint32[0];
+                    clear_color.uint32[3] = clear_color.uint32[0];
+                    break;
                 }
-
-                vkCmdClearColorImage(
-                    cmd,
-                    image,
-                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                    &clear_color,
-                    1,
-                    &range
-                );
-
-                // Transition to SHADER_READ_ONLY_OPTIMAL so ImGui can sample
-                VkImageMemoryBarrier to_sample{};
-                to_sample.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                to_sample.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-                to_sample.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                to_sample.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                to_sample.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                to_sample.image = image;
-                to_sample.subresourceRange = range;
-                to_sample.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-                to_sample.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-                vkCmdPipelineBarrier(
-                    cmd,
-                    VK_PIPELINE_STAGE_TRANSFER_BIT,
-                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                    0,
-                    0, nullptr,
-                    0, nullptr,
-                    1, &to_sample
-                );
-            });
+                case FramebufferTextureFormat::RGBA8:
+            default: {
+                float v = 0.0f;
+                if (value)
+                    v = *static_cast<const float*>(value);
+                clear_color.float32[0] = v;
+                clear_color.float32[1] = v;
+                clear_color.float32[2] = v;
+                clear_color.float32[3] = 1.0f;
+                break;
+            }
         }
+
+        vkCmdClearColorImage(
+            cmd,
+            image,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            &clear_color,
+            1,
+            &range
+        );
+
+        // Transition to SHADER_READ_ONLY_OPTIMAL so ImGui can sample
+        VkImageMemoryBarrier to_sample{};
+        to_sample.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        to_sample.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        to_sample.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        to_sample.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        to_sample.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        to_sample.image = image;
+        to_sample.subresourceRange = range;
+        to_sample.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        to_sample.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+        vkCmdPipelineBarrier(
+            cmd,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            0,
+            0, nullptr,
+            0, nullptr,
+            1, &to_sample
+        );
+    });
+    }
 
     uint32_t VulkanFramebuffer::get_color_attachment_renderer_id(uint32_t index) const {
         HN_CORE_ASSERT(index < m_color_attachments.size(),

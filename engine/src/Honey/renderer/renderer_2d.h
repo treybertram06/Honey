@@ -21,6 +21,8 @@ namespace Honey {
         static void circle_end_scene();
         static void line_end_scene();
 
+        static void set_debug_pick_enabled(bool enabled);
+
         // Position-based overloads
         static void draw_quad(const glm::vec2& position, const glm::vec2& size, const glm::vec4& color);
         static void draw_quad(const glm::vec3& position, const glm::vec2& size, const glm::vec4& color);

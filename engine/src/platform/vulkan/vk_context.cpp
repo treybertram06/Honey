@@ -979,6 +979,9 @@ namespace Honey {
         bool render_pass_open = false;
         bool in_swapchain_pass = false;
 
+        uint32_t current_pass_w = 0;
+        uint32_t current_pass_h = 0;
+
         auto bind_pipeline_and_dynamic = [&](VkPipeline pipeline, uint32_t width, uint32_t height) {
             HN_CORE_ASSERT(pipeline != VK_NULL_HANDLE, "Vulkan pipeline is null");
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
@@ -998,7 +1001,9 @@ namespace Honey {
             vkCmdSetScissor(cmd, 0, 1, &scissor);
         };
 
-        auto apply_globals = [&](const FramePacket::CmdBindGlobals& g) {
+        auto apply_globals = [&](VkPipelineLayout activeLayout, const FramePacket::CmdBindGlobals& g) {
+            HN_CORE_ASSERT(activeLayout != VK_NULL_HANDLE, "apply_globals: active pipeline layout is null");
+
             const uint32_t frame = m_current_frame;
             VkDescriptorSet ds = reinterpret_cast<VkDescriptorSet>(m_global_descriptor_sets[frame]);
 
@@ -1105,7 +1110,7 @@ namespace Honey {
 
             vkCmdBindDescriptorSets(cmd,
                                     VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    reinterpret_cast<VkPipelineLayout>(m_pipeline_quad.layout()),
+                                    activeLayout,
                                     0,
                                     1,
                                     &ds,
@@ -1132,10 +1137,13 @@ namespace Honey {
                     render_pass_open = true;
                     in_swapchain_pass = true;
 
+                    current_pass_w = m_swapchain_extent_width;
+                    current_pass_h = m_swapchain_extent_height;
+
                     bind_pipeline_and_dynamic(
                         reinterpret_cast<VkPipeline>(m_pipeline_quad.pipeline()),
-                        m_swapchain_extent_width,
-                        m_swapchain_extent_height);
+                        current_pass_w,
+                        current_pass_h);
                     break;
             }
             case FramePacket::CmdType::BeginOffscreenPass: {
@@ -1146,8 +1154,15 @@ namespace Honey {
                     VkFramebuffer fb = reinterpret_cast<VkFramebuffer>(vk_fb->get_framebuffer());
                     auto extent = vk_fb->get_extent();
 
-                    // Lazily create offscreen quad pipeline compatible with this FB's render pass
-                    if (!m_pipeline_quad_fb.valid()) {
+                    static VkRenderPass s_last_offscreen_rp = VK_NULL_HANDLE;
+                    const bool need_recreate = (!m_pipeline_quad_fb.valid()) || (s_last_offscreen_rp != rp);
+
+                    if (need_recreate) {
+                        if (m_pipeline_quad_fb.valid()) {
+                            m_pipeline_quad_fb.destroy(reinterpret_cast<VkDevice>(m_device));
+                        }
+                        s_last_offscreen_rp = rp;
+
                         static ShaderCache cache;
                         const auto glsl = std::filesystem::path("../assets/shaders/Renderer2D_Quad.glsl");
                         const auto spirv = cache.get_or_compile_spirv_paths(glsl);
@@ -1276,10 +1291,13 @@ namespace Honey {
                     render_pass_open = true;
                     in_swapchain_pass = false;
 
+                    current_pass_w = extent.width;
+                    current_pass_h = extent.height;
+
                     bind_pipeline_and_dynamic(
                         reinterpret_cast<VkPipeline>(m_pipeline_quad_fb.pipeline()),
-                        extent.width,
-                        extent.height
+                        current_pass_w,
+                        current_pass_h
                     );
                     break;
             }
@@ -1290,17 +1308,23 @@ namespace Honey {
                                 ? reinterpret_cast<VkPipeline>(m_pipeline_quad.pipeline())
                                 : reinterpret_cast<VkPipeline>(m_pipeline_quad_fb.pipeline());
 
-                        uint32_t w = in_swapchain_pass ? m_swapchain_extent_width : 0;
-                        uint32_t h = in_swapchain_pass ? m_swapchain_extent_height : 0;
-                        if (w && h)
-                            bind_pipeline_and_dynamic(pipeline, w, h);
+                        HN_CORE_ASSERT(current_pass_w > 0 && current_pass_h > 0,
+                                       "BindPipelineQuad2D: current pass extent is zero");
+
+                        bind_pipeline_and_dynamic(pipeline, current_pass_w, current_pass_h);
                     }
                     break;
             }
             case FramePacket::CmdType::BindGlobals: {
                     HN_CORE_ASSERT(render_pass_open, "BindGlobals must occur inside a render pass");
-                    //HN_CORE_INFO("BindGlobals: textureCount = {}", c.globals.textureCount);
-                    apply_globals(c.globals);
+
+                    VkPipelineLayout activeLayout =
+                        in_swapchain_pass
+                            ? reinterpret_cast<VkPipelineLayout>(m_pipeline_quad.layout())
+                            : reinterpret_cast<VkPipelineLayout>(m_pipeline_quad_fb.layout());
+
+
+                    apply_globals(activeLayout, c.globals);
                     break;
             }
             case FramePacket::CmdType::DrawIndexed: {

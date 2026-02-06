@@ -74,6 +74,8 @@ namespace Honey {
         Ref<VertexBuffer> i_quad_vertex_buffer; // maxQuads * QuadInstance
         Ref<IndexBuffer>  quad_ibo;         // 6 indices
         Ref<Shader>       quad_shader;
+        Ref<Shader>       quad_shader_picking_debug;
+        bool              debug_pick_enabled = false;
 
         std::vector<QuadInstance> quad_instances;
         std::vector<QuadInstance> quad_sorted_instances;
@@ -199,6 +201,10 @@ namespace Honey {
 
         auto shader_path = asset_root / "shaders" / "Renderer2D_Quad.glsl";
         s_data->quad_shader = s_data->shader_cache->get_or_compile_shader(shader_path);
+
+        auto debug_shader_path = asset_root / "shaders" / "Renderer2D_DebugPick.glsl";
+        s_data->quad_shader_picking_debug = s_data->shader_cache->get_or_compile_shader(debug_shader_path);
+
 
         if (RendererAPI::get_api() == RendererAPI::API::vulkan) {
             HN_CORE_INFO("Renderer2D::init() early return avoiding lines and circles");
@@ -552,7 +558,11 @@ namespace Honey {
         s_data->stats.draw_calls++;
     }
 
-
+    void Renderer2D::set_debug_pick_enabled(bool enabled) {
+        if (!s_data)
+            return;
+        s_data->debug_pick_enabled = enabled;
+    }
 
     static void quad_flush_and_reset() {
         Renderer2D::quad_end_scene();
