@@ -10,7 +10,7 @@
 namespace Honey {
     class Renderer2D {
     public:
-        static void init(std::unique_ptr<ShaderCache> shader_cache);
+        static void init();
         static void shutdown();
 
         static void begin_scene(const Camera& camera, const glm::mat4& transform);

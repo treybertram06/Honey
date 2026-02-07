@@ -24,6 +24,14 @@ namespace {
         std::ostringstream oss; oss << std::hex << h;
         return oss.str();
     }
+
+    static bool file_exists_nonempty(const std::filesystem::path& p) {
+        std::error_code ec;
+        if (!std::filesystem::exists(p, ec) || ec) return false;
+        auto sz = std::filesystem::file_size(p, ec);
+        if (ec) return false;
+        return sz > 0;
+    }
 }
 
 namespace Honey {
@@ -53,44 +61,62 @@ namespace Honey {
     Ref<Shader> ShaderCache::get_or_compile_shader(const std::filesystem::path& shader_path) {
         std::string shader_key = shader_path.string();
 
-        // Check if we have this shader cached
+        // If we have a valid in-memory cached shader, return it.
         auto it = m_shader_assets.find(shader_key);
         if (it != m_shader_assets.end()) {
             ShaderAsset& asset = it->second;
-
-            // Check if the cached shader is still valid
             if (!needs_recompilation(asset) && asset.cached_shader) {
                 return asset.cached_shader;
             }
         }
 
-        // Need to compile or recompile
+        // Disk-first: if the expected SPIR-V cache files exist, reuse them without compiling.
+        const auto vert_path = get_spirv_cache_path(shader_path, "vert");
+        const auto frag_path = get_spirv_cache_path(shader_path, "frag");
+
+        if (file_exists_nonempty(vert_path) && file_exists_nonempty(frag_path)) {
+            ShaderAsset asset;
+            asset.source_path = shader_path;
+            asset.vertex_spirv_path = vert_path;
+            asset.fragment_spirv_path = frag_path;
+
+            // Best-effort timestamp (not required for correctness anymore)
+            std::error_code ec;
+            asset.last_modified = std::filesystem::last_write_time(shader_path, ec);
+
+            if (Renderer::get_api() == RendererAPI::API::opengl) {
+                asset.cached_shader = Shader::create_from_spirv_files(vert_path, frag_path);
+                if (!asset.cached_shader) {
+                    HN_CORE_ERROR("Failed to create shader from cached SPIR-V: {0}", shader_path.string());
+                    return nullptr;
+                }
+            } else {
+                asset.cached_shader = nullptr; // Vulkan: shaders are used via pipeline creation
+            }
+
+            m_shader_assets[shader_key] = std::move(asset);
+            return m_shader_assets[shader_key].cached_shader;
+        }
+
+        // Fallback: compile (no usable cache entry on disk).
         HN_CORE_INFO("Compiling shader: {0}", shader_path.string());
 
         try {
             compile_shader_to_spirv(shader_path);
 
-            // Create or update asset entry
             ShaderAsset asset;
             asset.source_path = shader_path;
-            asset.vertex_spirv_path = get_spirv_cache_path(shader_path, "vert");
-            asset.fragment_spirv_path = get_spirv_cache_path(shader_path, "frag");
+            asset.vertex_spirv_path = vert_path;
+            asset.fragment_spirv_path = frag_path;
             asset.last_modified = std::filesystem::last_write_time(shader_path);
+            asset.cached_shader = nullptr;
 
-            // Load SPIR-V and create shader
-            std::string shader_name = shader_path.stem().string();
             if (Renderer::get_api() == RendererAPI::API::opengl) {
-                asset.cached_shader = Shader::create_from_spirv_files(
-                    asset.vertex_spirv_path,
-                    asset.fragment_spirv_path
-                );
-
+                asset.cached_shader = Shader::create_from_spirv_files(vert_path, frag_path);
                 if (!asset.cached_shader) {
-                    HN_CORE_ERROR("Failed to create shader from SPIR-V: {0}", shader_name);
+                    HN_CORE_ERROR("Failed to create shader from SPIR-V: {0}", shader_path.stem().string());
                     return nullptr;
                 }
-            } else {
-                asset.cached_shader = nullptr;
             }
 
             m_shader_assets[shader_key] = std::move(asset);
@@ -103,9 +129,15 @@ namespace Honey {
     }
 
     ShaderCache::SpirvPaths ShaderCache::get_or_compile_spirv_paths(const std::filesystem::path& shader_path) {
+        const auto vert_path = get_spirv_cache_path(shader_path, "vert");
+        const auto frag_path = get_spirv_cache_path(shader_path, "frag");
+
+        if (file_exists_nonempty(vert_path) && file_exists_nonempty(frag_path)) {
+            return { vert_path, frag_path };
+        }
+
         std::string shader_key = shader_path.string();
 
-        // Ensure we have an asset entry and it is compiled
         auto it = m_shader_assets.find(shader_key);
         if (it == m_shader_assets.end() || needs_recompilation(it->second)) {
             HN_CORE_INFO("Compiling shader (SPIR-V only): {0}", shader_path.string());
@@ -113,8 +145,8 @@ namespace Honey {
 
             ShaderAsset asset;
             asset.source_path = shader_path;
-            asset.vertex_spirv_path = get_spirv_cache_path(shader_path, "vert");
-            asset.fragment_spirv_path = get_spirv_cache_path(shader_path, "frag");
+            asset.vertex_spirv_path = vert_path;
+            asset.fragment_spirv_path = frag_path;
             asset.last_modified = std::filesystem::last_write_time(shader_path);
             asset.cached_shader = nullptr;
 

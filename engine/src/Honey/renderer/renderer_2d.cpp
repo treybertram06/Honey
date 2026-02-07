@@ -130,7 +130,7 @@ namespace Honey {
 
         std::vector<VulkanRendererAPI::GlobalsState> vk_globals_stack;
 
-        std::unique_ptr<ShaderCache> shader_cache;
+        Ref<ShaderCache> shader_cache;
     };
 
     static Renderer2DData* s_data = nullptr;
@@ -365,13 +365,13 @@ namespace Honey {
         return pair.normal;
     }
 
-    void Renderer2D::init(std::unique_ptr<ShaderCache> shader_cache) {
+    void Renderer2D::init() {
         HN_PROFILE_FUNCTION();
 
         if (!s_data)
             s_data = new Renderer2DData();
 
-        s_data->shader_cache = std::move(shader_cache);
+        s_data->shader_cache = Renderer::get_shader_cache();
 
         ////////////////// QUADS //////////////////////////
         s_data->quad_vertex_array = VertexArray::create();

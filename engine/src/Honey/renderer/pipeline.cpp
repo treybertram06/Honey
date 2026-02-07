@@ -1,6 +1,7 @@
 #include "hnpch.h"
 #include "pipeline.h"
 
+#include "renderer.h"
 #include "renderer_api.h"
 #include "shader_cache.h"
 #include "Honey/core/log.h"
@@ -29,8 +30,7 @@ namespace Honey {
                 HN_CORE_ASSERT(m_ctx, "VulkanPipelineWrapper: ctx is null");
                 m_spec = spec;
 
-                static ShaderCache cache;
-                const auto spirv = cache.get_or_compile_spirv_paths(spec.shaderGLSLPath);
+                const auto spirv = Renderer::get_shader_cache()->get_or_compile_spirv_paths(spec.shaderGLSLPath);
 
                 VkDevice device = reinterpret_cast<VkDevice>(m_ctx->get_device());
                 VkDescriptorSetLayout global_set_layout =

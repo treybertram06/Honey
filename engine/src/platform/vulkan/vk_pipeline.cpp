@@ -106,6 +106,7 @@ namespace Honey {
     }
 
     VkShaderModule VulkanPipeline::create_shader_module_from_file(VkDevice device, const std::string& path) {
+        HN_PROFILE_FUNCTION();
         auto code = read_spirv_u32_file(path);
 
         VkShaderModuleCreateInfo ci{};
@@ -120,8 +121,11 @@ namespace Honey {
     }
 
     void VulkanPipeline::destroy(VkDevice device) {
+        HN_PROFILE_FUNCTION();
         if (!device)
             return;
+
+        vkDeviceWaitIdle(device);
 
         if (m_pipeline) {
             vkDestroyPipeline(device, reinterpret_cast<VkPipeline>(m_pipeline), nullptr);

@@ -8,6 +8,7 @@
 namespace Honey {
 
     static uint32_t find_memory_type(VkPhysicalDevice phys, uint32_t type_filter, VkMemoryPropertyFlags props) {
+        HN_PROFILE_FUNCTION();
         VkPhysicalDeviceMemoryProperties mem_props{};
         vkGetPhysicalDeviceMemoryProperties(phys, &mem_props);
 
@@ -27,6 +28,7 @@ namespace Honey {
                               VkMemoryPropertyFlags props,
                               VkBuffer& out_buffer,
                               VkDeviceMemory& out_memory) {
+        HN_PROFILE_FUNCTION();
         VkBufferCreateInfo bi{};
         bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
         bi.size = size;
@@ -52,6 +54,7 @@ namespace Honey {
     }
 
     static void upload_to_buffer(VkDevice dev, VkDeviceMemory mem, const void* data, VkDeviceSize size) {
+        HN_PROFILE_FUNCTION();
         void* mapped = nullptr;
         VkResult r = vkMapMemory(dev, mem, 0, size, 0, &mapped);
         HN_CORE_ASSERT(r == VK_SUCCESS, "vkMapMemory failed");
@@ -87,6 +90,7 @@ namespace Honey {
     }
 
     void VulkanVertexBuffer::allocate(uint32_t size, const void* initial_data) {
+        HN_PROFILE_FUNCTION();
         m_size = size;
 
         VkBuffer buf = VK_NULL_HANDLE;
@@ -132,6 +136,7 @@ namespace Honey {
     }
 
     void VulkanIndexBuffer::allocate(uint32_t bytes, const void* initial_data) {
+        HN_PROFILE_FUNCTION();
         VkBuffer buf = VK_NULL_HANDLE;
         VkDeviceMemory mem = VK_NULL_HANDLE;
 
@@ -167,6 +172,7 @@ namespace Honey {
     }
 
     void VulkanUniformBuffer::allocate(uint32_t size) {
+        HN_PROFILE_FUNCTION();
         m_size = size;
 
         VkBuffer buf = VK_NULL_HANDLE;

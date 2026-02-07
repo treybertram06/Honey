@@ -11,34 +11,33 @@
 #include "imgui_impl_vulkan.h"
 
 namespace Honey {
-
     // -----------------------------
     // Local helpers
     // -----------------------------
 
     static const char* vk_result_to_string(VkResult res) {
         switch (res) {
-            case VK_SUCCESS: return "VK_SUCCESS";
-            case VK_NOT_READY: return "VK_NOT_READY";
-            case VK_TIMEOUT: return "VK_TIMEOUT";
-            case VK_EVENT_SET: return "VK_EVENT_SET";
-            case VK_EVENT_RESET: return "VK_EVENT_RESET";
-            case VK_INCOMPLETE: return "VK_INCOMPLETE";
-            case VK_ERROR_OUT_OF_HOST_MEMORY: return "VK_ERROR_OUT_OF_HOST_MEMORY";
-            case VK_ERROR_OUT_OF_DEVICE_MEMORY: return "VK_ERROR_OUT_OF_DEVICE_MEMORY";
-            case VK_ERROR_INITIALIZATION_FAILED: return "VK_ERROR_INITIALIZATION_FAILED";
-            case VK_ERROR_DEVICE_LOST: return "VK_ERROR_DEVICE_LOST";
-            case VK_ERROR_MEMORY_MAP_FAILED: return "VK_ERROR_MEMORY_MAP_FAILED";
-            case VK_ERROR_LAYER_NOT_PRESENT: return "VK_ERROR_LAYER_NOT_PRESENT";
-            case VK_ERROR_EXTENSION_NOT_PRESENT: return "VK_ERROR_EXTENSION_NOT_PRESENT";
-            case VK_ERROR_FEATURE_NOT_PRESENT: return "VK_ERROR_FEATURE_NOT_PRESENT";
-            case VK_ERROR_INCOMPATIBLE_DRIVER: return "VK_ERROR_INCOMPATIBLE_DRIVER";
-            case VK_ERROR_TOO_MANY_OBJECTS: return "VK_ERROR_TOO_MANY_OBJECTS";
-            case VK_ERROR_FORMAT_NOT_SUPPORTED: return "VK_ERROR_FORMAT_NOT_SUPPORTED";
-            case VK_ERROR_FRAGMENTED_POOL: return "VK_ERROR_FRAGMENTED_POOL";
-            case VK_ERROR_OUT_OF_DATE_KHR: return "VK_ERROR_OUT_OF_DATE_KHR";
-            case VK_SUBOPTIMAL_KHR: return "VK_SUBOPTIMAL_KHR";
-            default: return "VK_ERROR_<unknown>";
+        case VK_SUCCESS: return "VK_SUCCESS";
+        case VK_NOT_READY: return "VK_NOT_READY";
+        case VK_TIMEOUT: return "VK_TIMEOUT";
+        case VK_EVENT_SET: return "VK_EVENT_SET";
+        case VK_EVENT_RESET: return "VK_EVENT_RESET";
+        case VK_INCOMPLETE: return "VK_INCOMPLETE";
+        case VK_ERROR_OUT_OF_HOST_MEMORY: return "VK_ERROR_OUT_OF_HOST_MEMORY";
+        case VK_ERROR_OUT_OF_DEVICE_MEMORY: return "VK_ERROR_OUT_OF_DEVICE_MEMORY";
+        case VK_ERROR_INITIALIZATION_FAILED: return "VK_ERROR_INITIALIZATION_FAILED";
+        case VK_ERROR_DEVICE_LOST: return "VK_ERROR_DEVICE_LOST";
+        case VK_ERROR_MEMORY_MAP_FAILED: return "VK_ERROR_MEMORY_MAP_FAILED";
+        case VK_ERROR_LAYER_NOT_PRESENT: return "VK_ERROR_LAYER_NOT_PRESENT";
+        case VK_ERROR_EXTENSION_NOT_PRESENT: return "VK_ERROR_EXTENSION_NOT_PRESENT";
+        case VK_ERROR_FEATURE_NOT_PRESENT: return "VK_ERROR_FEATURE_NOT_PRESENT";
+        case VK_ERROR_INCOMPATIBLE_DRIVER: return "VK_ERROR_INCOMPATIBLE_DRIVER";
+        case VK_ERROR_TOO_MANY_OBJECTS: return "VK_ERROR_TOO_MANY_OBJECTS";
+        case VK_ERROR_FORMAT_NOT_SUPPORTED: return "VK_ERROR_FORMAT_NOT_SUPPORTED";
+        case VK_ERROR_FRAGMENTED_POOL: return "VK_ERROR_FRAGMENTED_POOL";
+        case VK_ERROR_OUT_OF_DATE_KHR: return "VK_ERROR_OUT_OF_DATE_KHR";
+        case VK_SUBOPTIMAL_KHR: return "VK_SUBOPTIMAL_KHR";
+        default: return "VK_ERROR_<unknown>";
         }
     }
 
@@ -172,6 +171,7 @@ namespace Honey {
     }
 
     void VulkanBackend::init() {
+        HN_PROFILE_FUNCTION();
         if (m_initialized) return;
 
         HN_CORE_INFO("VulkanBackend::init");
@@ -185,6 +185,7 @@ namespace Honey {
     }
 
     void VulkanBackend::shutdown() {
+        HN_PROFILE_FUNCTION();
         if (!m_initialized) return;
 
         HN_CORE_INFO("VulkanBackend::shutdown");
@@ -252,6 +253,7 @@ namespace Honey {
     }
 
     VulkanQueueLease VulkanBackend::acquire_queue_lease(VkSurfaceKHR surface) {
+        HN_PROFILE_FUNCTION();
         HN_CORE_ASSERT(m_initialized, "VulkanBackend not initialized");
         HN_CORE_ASSERT(surface, "acquire_queue_lease: surface is null");
 
@@ -360,6 +362,7 @@ namespace Honey {
     }
 
     void VulkanBackend::shutdown_upload_context() {
+        HN_PROFILE_FUNCTION();
         if (!m_device)
             return;
 
@@ -378,6 +381,7 @@ namespace Honey {
     }
 
     void VulkanBackend::immediate_submit(const std::function<void(VkCommandBuffer)>& record) {
+        HN_PROFILE_FUNCTION();
         HN_CORE_ASSERT(m_device, "immediate_submit requires a valid VkDevice");
         HN_CORE_ASSERT(m_upload_command_pool && m_upload_fence && m_upload_queue,
                        "immediate_submit called before upload context was initialized");
@@ -428,6 +432,7 @@ namespace Honey {
     }
 
     void VulkanBackend::release_queue_lease(const VulkanQueueLease& lease) {
+        HN_PROFILE_FUNCTION();
         std::scoped_lock lock(m_pool_mutex);
 
         if (!lease.sharedGraphics && lease.graphicsQueueIndex != UINT32_MAX) {
@@ -439,57 +444,59 @@ namespace Honey {
     }
 
     VkCommandBuffer VulkanBackend::begin_single_time_commands() {
-            HN_CORE_ASSERT(m_device, "begin_single_time_commands requires valid device");
-            HN_CORE_ASSERT(m_upload_command_pool, "begin_single_time_commands requires upload command pool");
+        HN_PROFILE_FUNCTION();
+        HN_CORE_ASSERT(m_device, "begin_single_time_commands requires valid device");
+        HN_CORE_ASSERT(m_upload_command_pool, "begin_single_time_commands requires upload command pool");
 
-            VkCommandBufferAllocateInfo alloc{};
-            alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-            alloc.commandPool = m_upload_command_pool;
-            alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-            alloc.commandBufferCount = 1;
+        VkCommandBufferAllocateInfo alloc{};
+        alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        alloc.commandPool = m_upload_command_pool;
+        alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        alloc.commandBufferCount = 1;
 
-            VkCommandBuffer cmd = VK_NULL_HANDLE;
-            VkResult r = vkAllocateCommandBuffers(m_device, &alloc, &cmd);
-            HN_CORE_ASSERT(r == VK_SUCCESS, "vkAllocateCommandBuffers failed (begin_single_time_commands)");
+        VkCommandBuffer cmd = VK_NULL_HANDLE;
+        VkResult r = vkAllocateCommandBuffers(m_device, &alloc, &cmd);
+        HN_CORE_ASSERT(r == VK_SUCCESS, "vkAllocateCommandBuffers failed (begin_single_time_commands)");
 
-            VkCommandBufferBeginInfo begin{};
-            begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-            begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        VkCommandBufferBeginInfo begin{};
+        begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 
-            r = vkBeginCommandBuffer(cmd, &begin);
-            HN_CORE_ASSERT(r == VK_SUCCESS, "vkBeginCommandBuffer failed (begin_single_time_commands)");
+        r = vkBeginCommandBuffer(cmd, &begin);
+        HN_CORE_ASSERT(r == VK_SUCCESS, "vkBeginCommandBuffer failed (begin_single_time_commands)");
 
-            return cmd;
+        return cmd;
+    }
+
+    void VulkanBackend::end_single_time_commands(VkCommandBuffer cmd) {
+        HN_PROFILE_FUNCTION();
+        HN_CORE_ASSERT(m_device, "end_single_time_commands requires valid device");
+        HN_CORE_ASSERT(m_upload_fence && m_upload_queue, "end_single_time_commands requires upload context");
+        HN_CORE_ASSERT(cmd, "end_single_time_commands called with null command buffer");
+
+        VkResult r = vkEndCommandBuffer(cmd);
+        HN_CORE_ASSERT(r == VK_SUCCESS, "vkEndCommandBuffer failed (end_single_time_commands)");
+
+        vkResetFences(m_device, 1, &m_upload_fence);
+
+        VkSubmitInfo submit{};
+        submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submit.commandBufferCount = 1;
+        submit.pCommandBuffers = &cmd;
+
+        {
+            std::scoped_lock qlk(m_shared_graphics_mutex);
+            r = vkQueueSubmit(m_upload_queue, 1, &submit, m_upload_fence);
         }
+        HN_CORE_ASSERT(r == VK_SUCCESS, "vkQueueSubmit failed (end_single_time_commands)");
 
-        void VulkanBackend::end_single_time_commands(VkCommandBuffer cmd) {
-            HN_CORE_ASSERT(m_device, "end_single_time_commands requires valid device");
-            HN_CORE_ASSERT(m_upload_fence && m_upload_queue, "end_single_time_commands requires upload context");
-            HN_CORE_ASSERT(cmd, "end_single_time_commands called with null command buffer");
+        r = vkWaitForFences(m_device, 1, &m_upload_fence, VK_TRUE, UINT64_MAX);
+        HN_CORE_ASSERT(r == VK_SUCCESS, "vkWaitForFences failed (end_single_time_commands)");
 
-            VkResult r = vkEndCommandBuffer(cmd);
-            HN_CORE_ASSERT(r == VK_SUCCESS, "vkEndCommandBuffer failed (end_single_time_commands)");
+        vkFreeCommandBuffers(m_device, m_upload_command_pool, 1, &cmd);
+    }
 
-            vkResetFences(m_device, 1, &m_upload_fence);
-
-            VkSubmitInfo submit{};
-            submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-            submit.commandBufferCount = 1;
-            submit.pCommandBuffers = &cmd;
-
-            {
-                std::scoped_lock qlk(m_shared_graphics_mutex);
-                r = vkQueueSubmit(m_upload_queue, 1, &submit, m_upload_fence);
-            }
-            HN_CORE_ASSERT(r == VK_SUCCESS, "vkQueueSubmit failed (end_single_time_commands)");
-
-            r = vkWaitForFences(m_device, 1, &m_upload_fence, VK_TRUE, UINT64_MAX);
-            HN_CORE_ASSERT(r == VK_SUCCESS, "vkWaitForFences failed (end_single_time_commands)");
-
-            vkFreeCommandBuffers(m_device, m_upload_command_pool, 1, &cmd);
-        }
-
-        void VulkanBackend::init_imgui_resources() {
+    void VulkanBackend::init_imgui_resources() {
         HN_PROFILE_FUNCTION();
         if (!m_device)
             return;
@@ -565,6 +572,7 @@ namespace Honey {
     }
 
     void VulkanBackend::shutdown_imgui_resources() {
+        HN_PROFILE_FUNCTION();
         if (!m_device || !m_imgui_initialized)
             return;
 
@@ -584,6 +592,7 @@ namespace Honey {
     void VulkanBackend::render_imgui_on_current_swapchain_image(VkCommandBuffer cmd,
                                                                         VkImageView /*target_view*/,
                                                                         VkExtent2D /*extent*/) {
+        HN_PROFILE_FUNCTION();
         HN_CORE_ASSERT(m_device, "render_imgui_on_current_swapchain_image: device is null");
 
         ImDrawData* draw_data = ImGui::GetDrawData();
@@ -655,6 +664,7 @@ namespace Honey {
     }
 
     void VulkanBackend::setup_debug_messenger() {
+        HN_PROFILE_FUNCTION();
         if (!k_enable_validation)
             return;
 
@@ -680,6 +690,7 @@ namespace Honey {
     }
 
     void VulkanBackend::destroy_debug_messenger() {
+        HN_PROFILE_FUNCTION();
         if (!m_debug_messenger || !m_instance)
             return;
 
@@ -723,6 +734,7 @@ namespace Honey {
     }
 
     VulkanBackend::QueueFamilyInfo VulkanBackend::find_queue_families(VkPhysicalDevice device, VkSurfaceKHR surface) {
+        HN_PROFILE_FUNCTION();
         QueueFamilyInfo info{};
         info.graphicsFamily = UINT32_MAX;
         info.presentFamily  = UINT32_MAX;
@@ -856,49 +868,48 @@ namespace Honey {
                      (uint32_t)m_graphics_queues.size(), (uint32_t)m_present_queues.size());
 
         {
-                VkSamplerCreateInfo si{};
-                si.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-                si.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-                si.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-                si.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-                si.borderColor  = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-                si.unnormalizedCoordinates = VK_FALSE;
-                si.compareEnable = VK_FALSE;
-                si.compareOp     = VK_COMPARE_OP_ALWAYS;
-                si.mipLodBias    = 0.0f;
-                si.minLod        = 0.0f;
-                si.maxLod        = 0.0f;
+            VkSamplerCreateInfo si{};
+            si.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+            si.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+            si.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+            si.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+            si.borderColor  = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+            si.unnormalizedCoordinates = VK_FALSE;
+            si.compareEnable = VK_FALSE;
+            si.compareOp     = VK_COMPARE_OP_ALWAYS;
+            si.mipLodBias    = 0.0f;
+            si.minLod        = 0.0f;
+            si.maxLod        = 0.0f;
 
-                // Nearest
-                si.magFilter  = VK_FILTER_NEAREST;
-                si.minFilter  = VK_FILTER_NEAREST;
-                si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-                si.anisotropyEnable = VK_FALSE;
-                si.maxAnisotropy    = 1.0f;
+            // Nearest
+            si.magFilter  = VK_FILTER_NEAREST;
+            si.minFilter  = VK_FILTER_NEAREST;
+            si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+            si.anisotropyEnable = VK_FALSE;
+            si.maxAnisotropy    = 1.0f;
 
-                res = vkCreateSampler(m_device, &si, nullptr, &m_sampler_nearest);
-                HN_CORE_ASSERT(res == VK_SUCCESS, "vkCreateSampler failed for m_sampler_nearest: {0}", vk_result_to_string(res));
+            res = vkCreateSampler(m_device, &si, nullptr, &m_sampler_nearest);
+            HN_CORE_ASSERT(res == VK_SUCCESS, "vkCreateSampler failed for m_sampler_nearest: {0}", vk_result_to_string(res));
 
-                // Linear
-                si.magFilter  = VK_FILTER_LINEAR;
-                si.minFilter  = VK_FILTER_LINEAR;
-                si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-                si.anisotropyEnable = VK_FALSE;
-                si.maxAnisotropy    = 1.0f;
+            // Linear
+            si.magFilter  = VK_FILTER_LINEAR;
+            si.minFilter  = VK_FILTER_LINEAR;
+            si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+            si.anisotropyEnable = VK_FALSE;
+            si.maxAnisotropy    = 1.0f;
 
-                res = vkCreateSampler(m_device, &si, nullptr, &m_sampler_linear);
-                HN_CORE_ASSERT(res == VK_SUCCESS, "vkCreateSampler failed for m_sampler_linear: {0}", vk_result_to_string(res));
+            res = vkCreateSampler(m_device, &si, nullptr, &m_sampler_linear);
+            HN_CORE_ASSERT(res == VK_SUCCESS, "vkCreateSampler failed for m_sampler_linear: {0}", vk_result_to_string(res));
 
-                // Anisotropic (linear filtering + anisotropy)
-                si.magFilter  = VK_FILTER_LINEAR;
-                si.minFilter  = VK_FILTER_LINEAR;
-                si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-                si.anisotropyEnable = VK_TRUE;
-                si.maxAnisotropy    = std::max(1.0f, m_max_anisotropy);
+            // Anisotropic (linear filtering + anisotropy)
+            si.magFilter  = VK_FILTER_LINEAR;
+            si.minFilter  = VK_FILTER_LINEAR;
+            si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+            si.anisotropyEnable = VK_TRUE;
+            si.maxAnisotropy    = std::max(1.0f, m_max_anisotropy);
 
-                res = vkCreateSampler(m_device, &si, nullptr, &m_sampler_aniso);
-                HN_CORE_ASSERT(res == VK_SUCCESS, "vkCreateSampler failed for m_sampler_aniso: {0}", vk_result_to_string(res));
-            }
+            res = vkCreateSampler(m_device, &si, nullptr, &m_sampler_aniso);
+            HN_CORE_ASSERT(res == VK_SUCCESS, "vkCreateSampler failed for m_sampler_aniso: {0}", vk_result_to_string(res));
         }
-
-} // namespace Honey
+    }
+}

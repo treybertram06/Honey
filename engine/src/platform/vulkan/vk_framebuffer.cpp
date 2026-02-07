@@ -90,6 +90,7 @@ namespace Honey {
         : m_spec(spec)
         , m_backend(backend)
     {
+        HN_PROFILE_FUNCTION();
         HN_CORE_ASSERT(m_backend, "VulkanFramebuffer: backend is null");
         m_device         = m_backend->get_device();
         m_physical_device = m_backend->get_physical_device();
@@ -111,6 +112,7 @@ namespace Honey {
     }
 
     void VulkanFramebuffer::destroy() {
+        HN_PROFILE_FUNCTION();
         if (!m_backend || !m_backend->initialized() || !m_device) {
             m_framebuffer = VK_NULL_HANDLE;
             m_render_pass = VK_NULL_HANDLE;
@@ -470,6 +472,7 @@ namespace Honey {
     }
 
     int VulkanFramebuffer::read_pixel(uint32_t attachment_index, int x, int y) {
+        HN_PROFILE_FUNCTION();
         HN_CORE_ASSERT(attachment_index < m_color_attachments.size(),
                        "VulkanFramebuffer::read_pixel: attachment index out of range");
         HN_CORE_ASSERT(m_backend && m_backend->initialized(),
@@ -644,6 +647,7 @@ namespace Honey {
     void VulkanFramebuffer::clear_attachment_f32(uint32_t idx, float v)     { clear_attachment(idx, &v); }
 
     void VulkanFramebuffer::clear_attachment(uint32_t attachment_index, const void* value) {
+        HN_PROFILE_FUNCTION();
         HN_CORE_ASSERT(attachment_index < m_color_attachments.size(), "VulkanFramebuffer: clear_attachment index out of range");
         HN_CORE_ASSERT(m_backend && m_backend->initialized(), "VulkanFramebuffer::clear_attachment: backend not initialized");
 

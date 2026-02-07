@@ -10,6 +10,7 @@ namespace Honey {
     class Renderer {
     public:
 
+        static Ref<ShaderCache> get_shader_cache();
         static void init();
         static void shutdown();
         static void on_window_resize(uint32_t width, uint32_t height);
@@ -35,7 +36,7 @@ namespace Honey {
 
         static SceneData* m_scene_data;
 
-        static std::unique_ptr<ShaderCache> m_shader_cache;
+        static Ref<ShaderCache> m_shader_cache;
 
         static Ref<Framebuffer> s_current_target; // nullptr means default window / swapchain
         static bool s_pass_open;

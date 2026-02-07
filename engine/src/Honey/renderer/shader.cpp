@@ -70,8 +70,7 @@ namespace Honey {
 
     Ref<Shader> Shader::create_with_auto_compile(const std::filesystem::path& glsl_path)
     {
-        static ShaderCache cache; // default cache directory
-        return cache.get_or_compile_shader(glsl_path);
+        return Renderer::get_shader_cache()->get_or_compile_shader(glsl_path);
     }
 
     void ShaderLibrary::add(const std::string& name, const Ref<Shader>& shader) {

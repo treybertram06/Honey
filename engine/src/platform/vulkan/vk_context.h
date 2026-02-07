@@ -53,7 +53,7 @@ namespace Honey {
         VkCommandPool get_command_pool() const { return m_command_pool; }
         VkRenderPass get_render_pass() const { return m_render_pass; }
 
-        void mark_pipeline_dirty() { m_pipeline_dirty = true; }
+        void mark_pipeline_dirty() { /* m_pipeline_dirty = true; */ } // Pipelines are owned by renderer2d now
         void request_swapchain_recreation() { m_framebuffer_resized = true; }
 
         struct FramePacket {
@@ -181,15 +181,15 @@ namespace Honey {
 
         void destroy();
 
-        void create_graphics_pipeline();
-        void cleanup_pipeline();
-        std::string shader_path(const char* filename) const;
+        //void create_graphics_pipeline();
+        //void cleanup_pipeline();
+        //std::string shader_path(const char* filename) const;
 
         void create_global_descriptor_resources();
         void cleanup_global_descriptor_resources();
 
-        PipelineSpec m_last_pipeline_spec{};
-        bool m_pipeline_dirty = true;
+        //PipelineSpec m_last_pipeline_spec{};
+        //bool m_pipeline_dirty = true;
 
         static constexpr uint32_t k_max_frames_in_flight = 2;
 
@@ -220,8 +220,8 @@ namespace Honey {
         VkRenderPass m_render_pass = nullptr;
         std::vector<VkFramebuffer> m_swapchain_framebuffers;
 
-        VulkanPipeline m_pipeline_quad;
-        VulkanPipeline m_pipeline_quad_fb;
+        //VulkanPipeline m_pipeline_quad;
+        //VulkanPipeline m_pipeline_quad_fb;
 
         VkDescriptorSetLayout m_global_set_layout = nullptr;
         VkDescriptorPool m_descriptor_pool = nullptr;

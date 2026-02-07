@@ -11,26 +11,30 @@
 namespace Honey {
 
     Renderer::SceneData* Renderer::m_scene_data = new Renderer::SceneData;
-    std::unique_ptr<ShaderCache> Renderer::m_shader_cache = nullptr;
+    Ref<ShaderCache> Renderer::m_shader_cache = nullptr;
     Ref<Framebuffer> Renderer::s_current_target = nullptr;
     bool Renderer::s_pass_open = false;
+
+    Ref<ShaderCache> Renderer::get_shader_cache() {
+        HN_CORE_ASSERT(m_shader_cache, "Renderer::shader_cache() called before Renderer::init()");
+        return m_shader_cache;
+    }
 
     void Renderer::init() {
         HN_PROFILE_FUNCTION();
 
-        auto cache_dir = std::filesystem::current_path() / "assets" / "cache" / "shaders";
-        m_shader_cache = std::make_unique<ShaderCache>(cache_dir);
+        m_shader_cache = CreateRef<ShaderCache>();
 
         RenderCommand::init();
 
         switch (get_api()) {
         case RendererAPI::API::opengl:
-            Renderer2D::init(std::move(m_shader_cache));
+            Renderer2D::init();
             //Renderer3D::init();
             break;
 
         case RendererAPI::API::vulkan:
-            Renderer2D::init(std::move(m_shader_cache));
+            Renderer2D::init();
             //HN_CORE_INFO("Renderer::init - Vulkan selected (skipping Renderer2D/3D init for now).");
             break;
 

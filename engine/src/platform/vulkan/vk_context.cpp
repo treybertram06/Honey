@@ -62,6 +62,7 @@ namespace Honey {
         std::vector<VkPresentModeKHR> present_modes;
     };
 
+    /*
     static QueueFamilyIndices find_queue_families(VkPhysicalDevice device, VkSurfaceKHR surface) {
         QueueFamilyIndices indices;
 
@@ -87,8 +88,10 @@ namespace Honey {
 
         return indices;
     }
+    */
 
     static SwapchainSupportDetails query_swapchain_support(VkPhysicalDevice device, VkSurfaceKHR surface) {
+        HN_PROFILE_FUNCTION();
         SwapchainSupportDetails details;
 
         vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &details.capabilities);
@@ -199,6 +202,7 @@ namespace Honey {
     }
 
     void VulkanContext::recreate_swapchain_if_needed() {
+        HN_PROFILE_FUNCTION();
         if (!m_framebuffer_resized)
             return;
 
@@ -211,7 +215,6 @@ namespace Honey {
         create_swapchain();
         create_image_views();
         create_render_pass();
-        create_graphics_pipeline();
         create_framebuffers();
         create_command_buffers();
 
@@ -372,6 +375,7 @@ namespace Honey {
     }
 
     void VulkanContext::cleanup_global_descriptor_resources() {
+        HN_PROFILE_FUNCTION();
         if (!m_device) return;
 
         for (uint32_t frame = 0; frame < k_max_frames_in_flight; ++frame) {
@@ -433,7 +437,7 @@ namespace Honey {
         create_swapchain();
         create_image_views();
         create_render_pass();
-        create_graphics_pipeline();
+        //create_graphics_pipeline();
         create_framebuffers();
 
         create_command_pool();
@@ -459,12 +463,6 @@ namespace Honey {
         VulkanRendererAPI::set_recording_context(this);
 
         recreate_swapchain_if_needed();
-
-        if (m_pipeline_dirty) {
-            vkDeviceWaitIdle(reinterpret_cast<VkDevice>(m_device));
-            cleanup_pipeline();
-            create_graphics_pipeline();
-        }
 
         m_last_bound_textures_valid[m_current_frame] = false;
         m_last_bound_texture_count[m_current_frame] = 0;
@@ -594,6 +592,7 @@ namespace Honey {
         return VK_FALSE;
     }
 
+    /*
     static VkResult create_debug_utils_messenger_ext(
         VkInstance instance,
         const VkDebugUtilsMessengerCreateInfoEXT* create_info,
@@ -620,6 +619,7 @@ namespace Honey {
             fn(instance, messenger, allocator);
         }
     }
+    */
 
     void VulkanContext::create_surface() {
         HN_PROFILE_FUNCTION();
@@ -1325,16 +1325,16 @@ namespace Honey {
         if (!m_device || !m_swapchain)
             return;
 
-        vkDeviceWaitIdle(reinterpret_cast<VkDevice>(m_device));
+        vkDeviceWaitIdle(m_device);
 
-        cleanup_pipeline();
+        //cleanup_pipeline();
 
         m_images_in_flight.clear();
 
         // Per-swapchain-image render-finished semaphores belong to the swapchain lifetime
         for (VkSemaphore sem : m_render_finished_semaphores) {
             if (sem) {
-                vkDestroySemaphore(reinterpret_cast<VkDevice>(m_device), sem, nullptr);
+                vkDestroySemaphore(m_device, sem, nullptr);
             }
         }
         m_render_finished_semaphores.clear();
@@ -1342,10 +1342,10 @@ namespace Honey {
         // Free command buffers
         if (!m_command_buffers.empty() && m_command_pool) {
             vkFreeCommandBuffers(
-                reinterpret_cast<VkDevice>(m_device),
-                reinterpret_cast<VkCommandPool>(m_command_pool),
+                m_device,
+                m_command_pool,
                 static_cast<uint32_t>(m_command_buffers.size()),
-                reinterpret_cast<VkCommandBuffer*>(m_command_buffers.data())
+                m_command_buffers.data()
             );
             m_command_buffers.clear();
         }
@@ -1354,8 +1354,8 @@ namespace Honey {
         for (auto fb : m_swapchain_framebuffers) {
             if (fb) {
                 vkDestroyFramebuffer(
-                    reinterpret_cast<VkDevice>(m_device),
-                    reinterpret_cast<VkFramebuffer>(fb),
+                    m_device,
+                    fb,
                     nullptr
                 );
             }
@@ -1365,8 +1365,8 @@ namespace Honey {
         // Destroy render pass
         if (m_render_pass) {
             vkDestroyRenderPass(
-                reinterpret_cast<VkDevice>(m_device),
-                reinterpret_cast<VkRenderPass>(m_render_pass),
+                m_device,
+                m_render_pass,
                 nullptr
             );
             m_render_pass = nullptr;
@@ -1376,7 +1376,7 @@ namespace Honey {
         for (auto iv : m_swapchain_image_views) {
             if (iv) {
                 vkDestroyImageView(
-                    reinterpret_cast<VkDevice>(m_device),
+                    m_device,
                     reinterpret_cast<VkImageView>(iv),
                     nullptr
                 );
@@ -1386,8 +1386,8 @@ namespace Honey {
 
         // Destroy swapchain
         vkDestroySwapchainKHR(
-            reinterpret_cast<VkDevice>(m_device),
-            reinterpret_cast<VkSwapchainKHR>(m_swapchain),
+            m_device,
+            m_swapchain,
             nullptr
         );
         m_swapchain = nullptr;
@@ -1422,12 +1422,12 @@ namespace Honey {
             m_render_finished_semaphores.clear();
             m_in_flight_fences.clear();
 
-            cleanup_pipeline();
+            //cleanup_pipeline();
             cleanup_swapchain();
             cleanup_global_descriptor_resources();
 
             if (m_command_pool) {
-                vkDestroyCommandPool(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkCommandPool>(m_command_pool), nullptr);
+                vkDestroyCommandPool(m_device, m_command_pool, nullptr);
                 m_command_pool = nullptr;
             }
         }
@@ -1450,88 +1450,7 @@ namespace Honey {
         m_initialized = false;
     }
 
-    std::string VulkanContext::shader_path(const char* filename) const {
-        // User-specified runtime location:
-        // assets folder can be found at ../../../assets/shaders
-        return (std::string("../../../assets/shaders/") + filename);
-    }
-
-    void VulkanContext::cleanup_pipeline() {
-        if (!m_device)
-            return;
-
-        m_pipeline_quad.destroy(reinterpret_cast<VkDevice>(m_device));
-        m_pipeline_quad_fb.destroy(reinterpret_cast<VkDevice>(m_device));
-    }
-
     void VulkanContext::refresh_all_texture_samplers() {
         // no-op now
     }
-
-    void VulkanContext::create_graphics_pipeline() {
-        HN_PROFILE_FUNCTION();
-
-        HN_CORE_ASSERT(m_device, "create_graphics_pipeline called without device");
-        HN_CORE_ASSERT(m_render_pass, "create_graphics_pipeline called without render pass");
-        HN_CORE_ASSERT(m_global_set_layout, "create_graphics_pipeline called without global descriptor set layout");
-
-        static ShaderCache cache; // uses default cache directory
-        const auto glsl = std::filesystem::path("../assets/shaders/Renderer2D_Quad.glsl");
-        const auto spirv = cache.get_or_compile_spirv_paths(glsl);
-
-        auto& rs = Settings::get().renderer;
-
-        PipelineSpec spec;
-        spec.shaderGLSLPath = glsl;
-        spec.topology = PrimitiveTopology::Triangles;
-        spec.cullMode = CullMode::None;
-        spec.frontFace = FrontFaceWinding::CounterClockwise;
-        spec.depthStencil.depthTest  = rs.depth_test;
-        spec.depthStencil.depthWrite = rs.depth_write;
-        spec.passType = RenderPassType::Swapchain;
-        spec.wireframe = rs.wireframe;
-
-        // Swapchain subpass has exactly 1 color attachment
-        spec.perColorAttachmentBlend.clear();
-        AttachmentBlendState colorBlend{};
-        colorBlend.enabled = rs.blending;
-        spec.perColorAttachmentBlend.push_back(colorBlend);
-
-        // Vertex bindings must match Renderer2D VA layout and shader locations
-        VertexInputBindingSpec static_binding;
-        static_binding.layout = BufferLayout{
-                            { ShaderDataType::Float2, "a_local_pos" },  // loc 0
-                            { ShaderDataType::Float2, "a_local_tex" }   // loc 1
-        };
-
-        VertexInputBindingSpec instance_binding;
-        instance_binding.layout = BufferLayout{
-                            { ShaderDataType::Float3, "i_center",       false, true }, // loc 2
-                            { ShaderDataType::Float2, "i_half_size",    false, true }, // loc 3
-                            { ShaderDataType::Float , "i_rotation",     false, true }, // loc 4
-                            { ShaderDataType::Float4, "i_color",        false, true }, // loc 5
-                            { ShaderDataType::Int,   "i_tex_index",     false, true }, // loc 6
-                            { ShaderDataType::Float, "i_tiling",        false, true }, // loc 7
-                            { ShaderDataType::Float2,"i_tex_coord_min", false, true }, // loc 8
-                            { ShaderDataType::Float2,"i_tex_coord_max", false, true }, // loc 9
-                            { ShaderDataType::Int,   "i_entity_id",     false, true }  // loc 10
-        };
-
-        spec.vertexBindings.push_back(static_binding);
-        spec.vertexBindings.push_back(instance_binding);
-
-        // Swapchain pipeline
-        m_pipeline_quad.create(
-            reinterpret_cast<VkDevice>(m_device),
-            reinterpret_cast<VkRenderPass>(m_render_pass),
-            reinterpret_cast<VkDescriptorSetLayout>(m_global_set_layout),
-            spirv.vertex.string(),
-            spirv.fragment.string(),
-            spec
-        );
-
-        m_last_pipeline_spec = spec;
-        m_pipeline_dirty = false;
-
-    }
-} // namespace Honey
+}
