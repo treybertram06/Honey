@@ -6,6 +6,7 @@
 #include "Honey/core/timestep.h"
 #include "Honey/core/uuid.h"
 #include "Honey/renderer/editor_camera.h"
+#include "Honey/core/log.h"
 #include <box2d/id.h>
 
 namespace Honey {
@@ -77,6 +78,10 @@ namespace Honey {
             m_scene_state.clear();
         }
 
+        void mark_dirty() { ++m_change_version; }
+        void clear_dirty() { m_change_version = 0; }
+        uint64_t get_change_version() const { return m_change_version; }
+
 
     private:
         static Scene* s_active_scene;
@@ -86,6 +91,8 @@ namespace Honey {
         b2WorldId m_world = b2_nullWorldId;
 
         //Entity entity_from_body(b2BodyId body);
+
+        uint64_t m_change_version = 0;
 
         friend class Entity;
         friend class SceneSerializer;

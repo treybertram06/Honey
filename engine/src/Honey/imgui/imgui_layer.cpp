@@ -40,11 +40,6 @@ namespace Honey {
          //io.ConfigFlags |= ImGuiConfigFlags_ViewportsNoTaskBarIcons;
          //io.ConfigFlags |= ImGuiConfigFlags_ViewPortsNoMerge;
 
-         //io.Fonts->AddFontFromFileTTF("../assets/fonts/JetBrains_Mono/static/JetBrainsMono-Bold.ttf", 18.0f);
-         //io.Fonts->AddFontFromFileTTF("../assets/fonts/JetBrains_Mono/static/JetBrainsMono-ExtraBold.ttf", 18.0f);
-         //io.FontDefault = io.Fonts->AddFontFromFileTTF("../assets/fonts/JetBrains_Mono/static/JetBrainsMono-Regular.ttf", 18.0f);
-
-         // TEMP WHILE IN APP2D
          io.Fonts->AddFontFromFileTTF("../assets/fonts/JetBrains_Mono/static/JetBrainsMono-ExtraBold.ttf", 18.0f);
          io.Fonts->AddFontFromFileTTF("../assets/fonts/JetBrains_Mono/static/JetBrainsMono-Bold.ttf", 18.0f);
          io.FontDefault = io.Fonts->AddFontFromFileTTF("../assets/fonts/JetBrains_Mono/static/JetBrainsMono-Regular.ttf", 18.0f);
@@ -234,6 +229,8 @@ namespace Honey {
          ImGuiStyle& style = ImGui::GetStyle();
          ImVec4* colors = style.Colors;
 
+         m_accent_palette = UIAccentPalette{};
+
          switch (theme) {
              case UITheme::Monochrome:
                  colors[ImGuiCol_WindowBg] = ImVec4(0.1f, 0.105f, 0.11f, 1.0f);
@@ -265,7 +262,13 @@ namespace Honey {
                  colors[ImGuiCol_TitleBg] = ImVec4(0.15f, 0.1505f, 0.151f, 1.0f);
                  colors[ImGuiCol_TitleBgActive] = ImVec4(0.15f, 0.1505f, 0.151f, 1.0f);
                  colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.15f, 0.1505f, 0.151f, 1.0f);
-                 break;
+
+                // Accents for Monochrome: slightly desaturated
+                m_accent_palette.info    = ImVec4(0.55f, 0.70f, 0.95f, 1.00f);
+                m_accent_palette.success = ImVec4(0.55f, 0.90f, 0.65f, 1.00f);
+                m_accent_palette.warning = ImVec4(0.95f, 0.80f, 0.45f, 1.00f);
+                m_accent_palette.error   = ImVec4(0.95f, 0.55f, 0.55f, 1.00f);
+                break;
 
              case UITheme::HoneyAmber:
                  colors[ImGuiCol_WindowBg] = ImVec4(0.08f, 0.06f, 0.04f, 1.0f);
@@ -298,7 +301,13 @@ namespace Honey {
                  colors[ImGuiCol_TitleBg] = ImVec4(0.20f, 0.14f, 0.08f, 1.0f);
                  colors[ImGuiCol_TitleBgActive] = ImVec4(0.20f, 0.14f, 0.08f, 1.0f);
                  colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.20f, 0.14f, 0.08f, 1.0f);
-                 break;
+
+                // Accents for HoneyAmber: warm highlights
+                m_accent_palette.info    = ImVec4(0.95f, 0.75f, 0.35f, 1.00f); // "honey" as info accent
+                m_accent_palette.success = ImVec4(0.35f, 0.85f, 0.45f, 1.00f);
+                m_accent_palette.warning = ImVec4(1.00f, 0.70f, 0.20f, 1.00f);
+                m_accent_palette.error   = ImVec4(0.95f, 0.35f, 0.25f, 1.00f);
+                break;
 
              case UITheme::ForestGreen:
                  colors[ImGuiCol_WindowBg] = ImVec4(0.05f, 0.07f, 0.05f, 1.0f);
@@ -330,7 +339,12 @@ namespace Honey {
                  colors[ImGuiCol_TitleBg] = ImVec4(0.12f, 0.16f, 0.10f, 1.0f);
                  colors[ImGuiCol_TitleBgActive] = ImVec4(0.12f, 0.16f, 0.10f, 1.0f);
                  colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.12f, 0.16f, 0.10f, 1.0f);
-                 break;
+
+                m_accent_palette.info    = ImVec4(0.55f, 0.80f, 1.00f, 1.00f);
+                m_accent_palette.success = ImVec4(0.45f, 0.90f, 0.55f, 1.00f);
+                m_accent_palette.warning = ImVec4(1.00f, 0.85f, 0.25f, 1.00f);
+                m_accent_palette.error   = ImVec4(1.00f, 0.35f, 0.30f, 1.00f);
+                break;
 
              case UITheme::CaramelCream:
                  colors[ImGuiCol_WindowBg] = ImVec4(0.12f, 0.10f, 0.08f, 1.0f);
@@ -362,7 +376,12 @@ namespace Honey {
                  colors[ImGuiCol_TitleBg] = ImVec4(0.24f, 0.18f, 0.13f, 1.0f);
                  colors[ImGuiCol_TitleBgActive] = ImVec4(0.24f, 0.18f, 0.13f, 1.0f);
                  colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.24f, 0.18f, 0.13f, 1.0f);
-                 break;
+
+                m_accent_palette.info    = ImVec4(0.90f, 0.75f, 0.45f, 1.00f);
+                m_accent_palette.success = ImVec4(0.35f, 0.85f, 0.50f, 1.00f);
+                m_accent_palette.warning = ImVec4(1.00f, 0.80f, 0.25f, 1.00f);
+                m_accent_palette.error   = ImVec4(0.95f, 0.35f, 0.25f, 1.00f);
+                break;
 
              case UITheme::MaltAndHops:
                  colors[ImGuiCol_WindowBg] = ImVec4(0.06f, 0.08f, 0.06f, 1.0f);
@@ -394,7 +413,12 @@ namespace Honey {
                  colors[ImGuiCol_TitleBg] = ImVec4(0.16f, 0.12f, 0.10f, 1.0f);
                  colors[ImGuiCol_TitleBgActive] = ImVec4(0.16f, 0.12f, 0.10f, 1.0f);
                  colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.16f, 0.12f, 0.10f, 1.0f);
-                 break;
+
+                m_accent_palette.info    = ImVec4(0.65f, 0.80f, 1.00f, 1.00f);
+                m_accent_palette.success = ImVec4(0.65f, 0.85f, 0.45f, 1.00f);
+                m_accent_palette.warning = ImVec4(1.00f, 0.80f, 0.25f, 1.00f);
+                m_accent_palette.error   = ImVec4(1.00f, 0.35f, 0.30f, 1.00f);
+                break;
 
              case UITheme::Copper:
                  colors[ImGuiCol_WindowBg] = ImVec4(0.07f, 0.05f, 0.04f, 1.0f);
@@ -426,7 +450,12 @@ namespace Honey {
                  colors[ImGuiCol_TitleBg] = ImVec4(0.20f, 0.12f, 0.08f, 1.0f);
                  colors[ImGuiCol_TitleBgActive] = ImVec4(0.20f, 0.12f, 0.08f, 1.0f);
                  colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.20f, 0.12f, 0.08f, 1.0f);
-                 break;
+
+                m_accent_palette.info    = ImVec4(0.95f, 0.60f, 0.30f, 1.00f);
+                m_accent_palette.success = ImVec4(0.35f, 0.85f, 0.45f, 1.00f);
+                m_accent_palette.warning = ImVec4(1.00f, 0.75f, 0.20f, 1.00f);
+                m_accent_palette.error   = ImVec4(1.00f, 0.30f, 0.25f, 1.00f);
+                break;
 
              case UITheme::AudreysTheme:
                  colors[ImGuiCol_WindowBg] = ImVec4(0.18f, 0.12f, 0.14f, 1.0f);
@@ -458,9 +487,12 @@ namespace Honey {
                  colors[ImGuiCol_TitleBg] = ImVec4(0.32f, 0.24f, 0.26f, 1.0f);
                  colors[ImGuiCol_TitleBgActive] = ImVec4(0.32f, 0.24f, 0.26f, 1.0f);
                  colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.32f, 0.24f, 0.26f, 1.0f);
-                 break;
 
-
+                m_accent_palette.info    = ImVec4(0.90f, 0.68f, 0.75f, 1.00f);
+                m_accent_palette.success = ImVec4(0.55f, 0.90f, 0.70f, 1.00f);
+                m_accent_palette.warning = ImVec4(1.00f, 0.80f, 0.35f, 1.00f);
+                m_accent_palette.error   = ImVec4(1.00f, 0.40f, 0.45f, 1.00f);
+                break;
 
          }
 

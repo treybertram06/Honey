@@ -62,6 +62,7 @@ namespace Honey {
         entity.add_component<TransformComponent>();
         entity.add_component<TagComponent>(name.empty() ? "Entity" : name);
 
+        mark_dirty();
         return entity;
     }
 
@@ -99,6 +100,7 @@ namespace Honey {
         release_audio_for_entity(entity);
 
         m_registry.destroy(entity);
+        mark_dirty();
     }
 
     Entity Scene::create_child_for(Entity parent, const std::string& name) {
