@@ -135,8 +135,15 @@ namespace Honey {
 
         glfwSetWindowCloseCallback(m_window, [](GLFWwindow* window) {
             WindowData& data = *(WindowData*)glfwGetWindowUserPointer(window);
+
+            glfwSetWindowShouldClose(window, GLFW_FALSE);
+
             WindowCloseEvent event;
             data.event_callback(event);
+
+            if (!event.handled()) {
+                glfwSetWindowShouldClose(window, GLFW_TRUE);
+            }
         });
 
         glfwSetKeyCallback(m_window, [](GLFWwindow* window, int key, int scancode, int action, int mods) {
@@ -236,6 +243,12 @@ namespace Honey {
 
     bool LinuxWindow::is_vsync() const {
         return m_data.vsync;
+    }
+
+    void LinuxWindow::request_close() {
+        if (!m_window)
+            return;
+        glfwSetWindowShouldClose(m_window, GLFW_TRUE);
     }
 
 }

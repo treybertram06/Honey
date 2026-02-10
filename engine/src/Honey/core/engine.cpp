@@ -113,16 +113,19 @@ namespace Honey {
     void Application::on_event(Event& e) {
         HN_PROFILE_FUNCTION();
 
-        EventDispatcher dispatcher(e);
-
-        dispatcher.dispatch<WindowCloseEvent>(BIND_EVENT_FN(Application::on_window_close));
-        dispatcher.dispatch<WindowResizeEvent>(BIND_EVENT_FN(Application::on_window_resize));
-
         for (auto it = m_layer_stack.rbegin(); it != m_layer_stack.rend(); ++it) {
             if (e.handled())
                 break;
             (*it)->on_event(e);
         }
+
+        if (e.handled())
+            return;
+
+        EventDispatcher dispatcher(e);
+
+        dispatcher.dispatch<WindowCloseEvent>(BIND_EVENT_FN(Application::on_window_close));
+        dispatcher.dispatch<WindowResizeEvent>(BIND_EVENT_FN(Application::on_window_resize));
 
     }
 
@@ -172,6 +175,9 @@ namespace Honey {
     }
 
     bool Application::on_window_close(WindowCloseEvent &e) {
+        if (e.handled())
+            return true;
+
         m_running = false;
         return true;
     }

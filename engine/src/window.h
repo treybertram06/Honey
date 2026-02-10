@@ -37,6 +37,8 @@ namespace Honey {
         virtual void* get_native_window() const = 0;
         virtual GraphicsContext* get_context() const = 0;
 
+        virtual void request_close() = 0;
+
         static Scope<Window> create(const WindowProps& props = WindowProps());
 
     };

@@ -25,6 +25,8 @@ namespace Honey {
         inline virtual void* get_native_window() const override { return m_window; }
         inline virtual GraphicsContext* get_context() const override { return m_context; }
 
+        inline virtual void request_close() override;
+
     private:
         virtual void init(const WindowProps& props);
         virtual void shutdown();
