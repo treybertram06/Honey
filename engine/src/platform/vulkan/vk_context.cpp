@@ -62,34 +62,6 @@ namespace Honey {
         std::vector<VkPresentModeKHR> present_modes;
     };
 
-    /*
-    static QueueFamilyIndices find_queue_families(VkPhysicalDevice device, VkSurfaceKHR surface) {
-        QueueFamilyIndices indices;
-
-        uint32_t queue_family_count = 0;
-        vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_family_count, nullptr);
-        std::vector<VkQueueFamilyProperties> families(queue_family_count);
-        vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_family_count, families.data());
-
-        for (uint32_t i = 0; i < queue_family_count; i++) {
-            if (families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-                indices.graphics = i;
-            }
-
-            VkBool32 present_support = VK_FALSE;
-            vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &present_support);
-            if (present_support) {
-                indices.present = i;
-            }
-
-            if (indices.complete())
-                break;
-        }
-
-        return indices;
-    }
-    */
-
     static SwapchainSupportDetails query_swapchain_support(VkPhysicalDevice device, VkSurfaceKHR surface) {
         HN_PROFILE_FUNCTION();
         SwapchainSupportDetails details;
@@ -1229,10 +1201,16 @@ namespace Honey {
             }
             case FramePacket::CmdType::BindGlobals: {
                     HN_CORE_ASSERT(render_pass_open, "BindGlobals must occur inside a render pass");
-                    HN_CORE_ASSERT(current_pipeline_layout != VK_NULL_HANDLE,
-                                   "BindGlobals: no pipeline layout bound yet. Call bind_pipeline() before BindGlobals.");
+                    HN_CORE_ASSERT(current_pipeline_layout != VK_NULL_HANDLE, "BindGlobals: no pipeline layout bound yet. Call bind_pipeline() before BindGlobals.");
 
                     apply_globals(current_pipeline_layout, c.globals);
+                    break;
+            }
+            case FramePacket::CmdType::PushConstantsMat4: {
+                    HN_CORE_ASSERT(render_pass_open, "PushConstantsMat4 must occur inside a render pass");
+                    HN_CORE_ASSERT(current_pipeline_layout != VK_NULL_HANDLE, "PushConstantsMat4: no pipeline layout bound yet. Call bind_pipeline() before PushConstantsMat4.");
+
+                    vkCmdPushConstants(cmd, current_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &c.pushMat4.value);
                     break;
             }
             case FramePacket::CmdType::DrawIndexed: {
@@ -1242,22 +1220,31 @@ namespace Honey {
                     const auto& vbs = c.draw.va->get_vertex_buffers();
                     const auto& ib = c.draw.va->get_index_buffer();
 
-                    HN_CORE_ASSERT(vbs.size() >= 2, "Vulkan draw: expected 2 vertex buffers (static + instance)");
+                    HN_CORE_ASSERT(!vbs.empty(), "Vulkan draw: VertexArray has no vertex buffers");
                     HN_CORE_ASSERT(ib, "Vulkan draw: VertexArray has no index buffer");
 
-                    auto vk_vb0 = std::dynamic_pointer_cast<VulkanVertexBuffer>(vbs[0]);
-                    auto vk_vb1 = std::dynamic_pointer_cast<VulkanVertexBuffer>(vbs[1]);
+                    std::vector<VkBuffer> vbufs;
+                    std::vector<VkDeviceSize> offsets;
+                    vbufs.reserve(vbs.size());
+                    offsets.reserve(vbs.size());
+
+                    for (const auto& vb_ref : vbs) {
+                        auto vk_vb = std::dynamic_pointer_cast<VulkanVertexBuffer>(vb_ref);
+                        HN_CORE_ASSERT(vk_vb, "Vulkan draw: expected VulkanVertexBuffer in VertexArray");
+                        vbufs.push_back(reinterpret_cast<VkBuffer>(vk_vb->get_vk_buffer()));
+                        offsets.push_back(0);
+                    }
+
+                    vkCmdBindVertexBuffers(
+                        cmd,
+                        0,
+                        static_cast<uint32_t>(vbufs.size()),
+                        vbufs.data(),
+                        offsets.data()
+                    );
+
                     auto vk_ib = std::dynamic_pointer_cast<VulkanIndexBuffer>(ib);
-
-                    HN_CORE_ASSERT(vk_vb0 && vk_vb1, "Vulkan draw: expected VulkanVertexBuffer(s) in VertexArray");
                     HN_CORE_ASSERT(vk_ib, "Vulkan draw: expected VulkanIndexBuffer in VertexArray");
-
-                    VkBuffer vbufs[] = {
-                        reinterpret_cast<VkBuffer>(vk_vb0->get_vk_buffer()),
-                        reinterpret_cast<VkBuffer>(vk_vb1->get_vk_buffer())
-                    };
-                    VkDeviceSize offsets[] = { 0, 0 };
-                    vkCmdBindVertexBuffers(cmd, 0, 2, vbufs, offsets);
 
                     VkBuffer ibuf = reinterpret_cast<VkBuffer>(vk_ib->get_vk_buffer());
                     vkCmdBindIndexBuffer(cmd, ibuf, 0, VK_INDEX_TYPE_UINT32);

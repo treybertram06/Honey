@@ -9,6 +9,8 @@
 
 #include <glm/glm.hpp>
 
+#include "editor_camera.h"
+
 namespace Honey {
 
 	class Renderer3D {
@@ -17,6 +19,7 @@ namespace Honey {
 		static void shutdown();
 
 		static void begin_scene(const PerspectiveCamera& camera);
+		static void begin_scene(const EditorCamera& camera);
 		static void end_scene();
 
 		// Basic 3D primitives
@@ -26,7 +29,7 @@ namespace Honey {
 		static void draw_sphere(const glm::vec3& position, float radius, const glm::vec4& color = glm::vec4(1.0f));
 
 		// Generic mesh rendering
-		static void draw_mesh(const Ref<VertexArray>& vertex_array, const glm::mat4& transform, const Ref<Shader>& shader);
+		static void draw_mesh(const Ref<VertexArray>& vertex_array, const glm::mat4& transform);
 
 		// Statistics
 		struct Statistics {

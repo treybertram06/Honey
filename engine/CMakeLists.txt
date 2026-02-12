@@ -454,6 +454,11 @@ target_include_directories(soloud PUBLIC
         ${SOLOUD_DIR}/include
 )
 
+
+# tinygltf (header only)
+add_subdirectory(vendor/tinygltf)
+target_link_libraries(engine PRIVATE tinygltf)
+
 if (UNIX AND NOT APPLE)
    target_compile_definitions(soloud PUBLIC WITH_MINIAUDIO)
 else ()

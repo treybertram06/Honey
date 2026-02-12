@@ -1,14 +1,15 @@
 #include "hnpch.h"
 #include "vk_pipeline.h"
+#include "Honey/renderer/buffer.h"
+#include "Honey/renderer/pipeline_spec.h"
 
 #include <fstream>
 #include <vector>
+#include <glm/glm.hpp>
 
 #define GLFW_INCLUDE_VULKAN
 #include <vulkan/vulkan.h>
 
-#include "Honey/renderer/buffer.h"
-#include "Honey/renderer/pipeline_spec.h"
 
 namespace Honey {
     // Same mapping logic as we used in vk_pipeline_quad2d.cpp
@@ -290,6 +291,14 @@ namespace Honey {
         VkDescriptorSetLayout set_layouts[] = { globalSetLayout };
         layout_ci.setLayoutCount = 1;
         layout_ci.pSetLayouts = set_layouts;
+
+        VkPushConstantRange pc_range{};
+        pc_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        pc_range.offset = 0;
+        pc_range.size = sizeof(glm::mat4);
+
+        layout_ci.pushConstantRangeCount = 1;
+        layout_ci.pPushConstantRanges = &pc_range;
 
         VkPipelineLayout layout = VK_NULL_HANDLE;
         VkResult layout_res = vkCreatePipelineLayout(device, &layout_ci, nullptr, &layout);

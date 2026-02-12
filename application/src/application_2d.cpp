@@ -23,6 +23,30 @@ namespace Honey {
         uint32_t w = win.get_width();
         uint32_t h = win.get_height();
         m_camera = EditorCamera(w/h, 45.0f, 0.1f, 1000.0f);
+
+        // --- Minimal 3D test triangle (Vulkan path) ---
+        {
+            m_test_vao_3d = VertexArray::create();
+
+            TestVertex3D verts[3] = {
+                { { -0.5f, -0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f } },
+                { {  0.5f, -0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 1.0f, 0.0f } },
+                { {  0.0f,  0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 0.5f, 1.0f } },
+            };
+
+            Ref<VertexBuffer> vb = VertexBuffer::create((uint32_t)sizeof(verts));
+            vb->set_data(verts, (uint32_t)sizeof(verts));
+            vb->set_layout({
+                { ShaderDataType::Float3, "a_position" },
+                { ShaderDataType::Float3, "a_normal"   },
+                { ShaderDataType::Float2, "a_uv"       },
+            });
+            m_test_vao_3d->add_vertex_buffer(vb);
+
+            uint32_t indices[3] = { 0, 1, 2 };
+            Ref<IndexBuffer> ib = IndexBuffer::create(indices, 3);
+            m_test_vao_3d->set_index_buffer(ib);
+        }
     }
 
     void Application2D::on_detach() {
@@ -46,7 +70,9 @@ namespace Honey {
             m_framerate = m_framerate_counter.get_smoothed_fps();
         }
 
-        {
+        bool three_dee = true;
+
+         if (!three_dee) {
             HN_PROFILE_SCOPE("Application2D::renderer_clear / begin pass");
             // render
             Renderer::set_render_target(nullptr);
@@ -54,62 +80,33 @@ namespace Honey {
 
             RenderCommand::set_clear_color(m_clear_color);
             RenderCommand::clear();
-        }
 
-        {
-            HN_PROFILE_SCOPE("Application2D::renderer_draw");
             Renderer2D::begin_scene(m_camera);
 
-            static float rotation = 0.0f;
-            rotation += glm::radians(30.0f) * ts;
-
-
-            //Renderer2D::draw_rotated_quad({-0.5f, 0.0f}, {1.0f, 2.5f}, rotation * 2.0f, {0.2f, 0.2f, 0.8f, 1.0f});
-            //Renderer2D::draw_rotated_quad({1.5f, 0.3f}, {1.0f, 0.5f}, rotation, {1.0f, 0.0f, 0.0f, 1.0f});
             Renderer2D::draw_quad({3.0f, 3.0f, 1.0f}, {2.0f, 2.0f}, m_chuck_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
             Renderer2D::draw_quad(glm::vec2(0, 0), glm::vec2(1, 1), glm::vec4(1, 0, 0, 1));
-            /*
-            Renderer2D::draw_quad({2.0f, 2.0f}, {1.0f, 1.0f}, {0.8f, 0.2f, 0.3f, 1.0f});
-            Renderer2D::draw_quad({0.0f, -1.0f, 0.0f}, {1.5f, 1.5f}, m_chuck_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 2.0f);
-
-            //Renderer2D::draw_rotated_quad({0.5f, 1.5f, 0.0f}, {3.0f, 3.0f}, rotation, m_chuck_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 2.0f);
-            //Renderer2D::draw_rotated_quad({0.5f, -1.5f, 0.0f}, {3.0f, 3.0f}, 0.0f, m_chuck_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 2.0f);
-            Renderer2D::draw_quad({0.0f, 0.0f, -0.1f}, {100.0f, 100.0f}, m_missing_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 1000.0f);
-            */
-
-            /*
-                    Renderer2D::begin_scene(m_camera_controller.get_camera());
-
-                    //Renderer2D::draw_quad({0.0f, 0.0f, 0.0f}, {96.8f, 52.6f}, m_sprite_sheet, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
-                    for (uint32_t y = 0; y < m_map_height; y++) {
-                        for (uint32_t x = 0; x < m_map_width; x++) {
-                            char tile_type = s_map_tiles[x + y * m_map_width];
-                            if (s_texture_map.find(tile_type) != s_texture_map.end()) {
-                                auto texture = s_texture_map[tile_type];
-                                Renderer2D::draw_quad({(float)x - (m_map_width / 2), (float)y - (m_map_height / 2), 0.0f}, {1.0f, 1.0f}, texture, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
-                            } else {
-                                auto texture = m_missing_texture;
-                                Renderer2D::draw_quad({(float)x - (m_map_width / 2), (float)y - (m_map_height / 2), 0.0f}, {1.0f, 1.0f}, texture, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
-                            }
-                        }
-                    }
-                    */
-
-            //Renderer2D::draw_quad({-0.5f, -0.5f, 0.0f}, {1.0f, 1.0f}, m_bush_sprite, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
-            //Renderer2D::draw_quad({1.5f, 1.5f, 0.0f}, {1.0f, 1.0f}, m_water_sprite, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
-
-
-
-            /*
-            for (int x = 0; x < 1000; x++) {
-                for (int y = 0; y < 1000; y++) {
-                    Renderer2D::draw_quad({x*0.11f, y*0.11f, 0.0f}, {0.1f, 0.1f}, m_chuck_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 2.0f);
-                }
-            }
-            */
 
             Renderer2D::quad_end_scene();
             Renderer::end_pass();
+        }
+
+        if (three_dee) {
+            HN_PROFILE_SCOPE("Application2D::draw 3d")
+
+            Renderer::set_render_target(nullptr);
+            Renderer::begin_pass();
+
+            RenderCommand::set_clear_color(m_clear_color);
+            RenderCommand::clear();
+
+            Renderer3D::begin_scene(m_camera);
+
+            Renderer3D::draw_mesh(m_test_vao_3d, glm::mat4(1.0f));
+
+            Renderer3D::end_scene();
+
+            Renderer::end_pass();
+
         }
 
     }

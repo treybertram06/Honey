@@ -228,48 +228,22 @@ namespace Honey {
         p.hasCamera = true;
     }
 
-    /*
-    bool VulkanRendererAPI::consume_camera_view_projection(glm::mat4& out_view_projection) {
-        auto& p = pkt();
-        if (!p.hasCamera)
-            return false;
-
-        out_view_projection = p.viewProjection;
-        p.hasCamera = false;
-        return true;
-    }
-
-    bool VulkanRendererAPI::consume_draw_request(Ref<VertexArray>& out_va, uint32_t& out_index_count, uint32_t& out_instance_count) {
-        auto& p = pkt();
-        if (p.drawCursor >= p.draws.size())
-            return false;
-
-        const auto& cmd = p.draws[p.drawCursor++];
-
-        out_va = cmd.va;
-        out_index_count = cmd.indexCount;
-        out_instance_count = cmd.instanceCount;
-        return true;
-    }
-
-    glm::vec4 VulkanRendererAPI::consume_clear_color() {
-        return pkt().clearColor;
-    }
-
-    bool VulkanRendererAPI::consume_clear_requested() {
-        auto& p = pkt();
-        bool was = p.clearRequested;
-        p.clearRequested = false;
-        return was;
-    }
-    */
-
     void VulkanRendererAPI::submit_bound_textures(const std::array<void*, k_max_texture_slots>& textures, uint32_t texture_count) {
         require_frame_begun();
         auto& p = pkt();
         p.textures = textures;
         p.textureCount = texture_count;
         p.hasTextures = true;
+    }
+
+    void VulkanRendererAPI::submit_push_constants_mat4(const glm::mat4& value) {
+        require_frame_begun();
+
+        VulkanContext::FramePacket::Cmd cmd{};
+        cmd.type = VulkanContext::FramePacket::CmdType::PushConstantsMat4;
+        cmd.pushMat4.value = value;
+
+        pkt().cmds.push_back(cmd);
     }
 
     bool VulkanRendererAPI::consume_bound_textures(std::array<void*, k_max_texture_slots>& out_textures, uint32_t& out_texture_count) {

@@ -45,12 +45,10 @@ namespace Honey {
         // Called by VulkanContext while recording the frame
         static void set_recording_context(VulkanContext* ctx);
 
-        static bool consume_draw_request(Ref<VertexArray>& out_va, uint32_t& out_index_count, uint32_t& out_instance_count);
-        static glm::vec4 consume_clear_color();
-        static bool consume_clear_requested();
-
         static void submit_camera_view_projection(const glm::mat4& view_projection);
         static bool consume_camera_view_projection(glm::mat4& out_view_projection);
+
+        static void submit_push_constants_mat4(const glm::mat4& value);
 
         static constexpr uint32_t k_max_texture_slots = 32;
 

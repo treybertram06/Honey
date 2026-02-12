@@ -88,6 +88,7 @@ namespace Honey {
 
                 BindPipeline,
                 BindGlobals,        // camera + textures for now
+                PushConstantsMat4,
                 DrawIndexed
             };
 
@@ -115,6 +116,10 @@ namespace Honey {
                 bool hasTextures = false;
             };
 
+            struct CmdPushConstantsMat4 {
+                glm::mat4 value{1.0f};
+            };
+
             struct CmdDrawIndexed {
                 Ref<VertexArray> va;
                 uint32_t indexCount = 0;
@@ -127,6 +132,7 @@ namespace Honey {
                 CmdBeginOffscreenPass offscreen{};
                 CmdBindPipeline bindPipeline{};
                 CmdBindGlobals globals{};
+                CmdPushConstantsMat4 pushMat4{};
                 CmdDrawIndexed draw{};
             };
 

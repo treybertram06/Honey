@@ -31,5 +31,15 @@ namespace Honey {
         float m_frame_time = 0.0f;
 
 
+
+        struct TestVertex3D {
+            glm::vec3 position;
+            glm::vec3 normal;
+            glm::vec2 uv;
+        };
+
+        Ref<VertexArray> m_test_vao_3d;
+
+
     };
 }
