@@ -30,11 +30,12 @@ namespace Honey {
         switch (get_api()) {
         case RendererAPI::API::opengl:
             Renderer2D::init();
-            //Renderer3D::init();
+            Renderer3D::init();
             break;
 
         case RendererAPI::API::vulkan:
             Renderer2D::init();
+            Renderer3D::init();
             //HN_CORE_INFO("Renderer::init - Vulkan selected (skipping Renderer2D/3D init for now).");
             break;
 
@@ -52,11 +53,12 @@ namespace Honey {
         switch (get_api()) {
         case RendererAPI::API::opengl:
             Renderer2D::shutdown();
-            //Renderer3D::init();
+            Renderer3D::init();
             break;
 
         case RendererAPI::API::vulkan:
             Renderer2D::shutdown();
+            Renderer3D::shutdown();
             //HN_CORE_INFO("Renderer::init - Vulkan selected (skipping Renderer2D/3D init for now).");
             break;
 

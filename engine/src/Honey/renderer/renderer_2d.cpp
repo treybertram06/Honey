@@ -10,6 +10,7 @@
 #include "texture.h"
 #include "shader_cache.h"
 #include "glm/gtx/string_cast.hpp"
+#include "Honey/core/engine.h"
 #include "Honey/core/settings.h"
 #include "platform/vulkan/vk_framebuffer.h"
 #include "platform/vulkan/vk_renderer_api.h"
@@ -233,6 +234,28 @@ namespace Honey {
             }
             return pair.debugPick;
         }
+    }
+
+    static Ref<Pipeline> get_or_create_vk_quad_pipeline(void* renderPassNative) {
+        HN_CORE_ASSERT(renderPassNative, "get_or_create_vk_pipeline: renderPassNative is null");
+
+        // Recreate cached pipelines if render pass changed (framebuffer resized etc.)
+        if (s_data->vk_offscreen_pipelines_quad.renderPassNative != renderPassNative) {
+            s_data->vk_offscreen_pipelines_quad = {};
+            s_data->vk_offscreen_pipelines_quad.renderPassNative = renderPassNative;
+        }
+
+        auto& pair = s_data->vk_offscreen_pipelines_quad;
+
+        if (!pair.normal) {
+            PipelineSpec spec = build_vk_quad_pipeline_spec(
+                asset_root / "shaders" / "Renderer2D_QuadNoPick.glsl",
+                Settings::get().renderer.blending,
+                false
+            );
+            pair.normal = Pipeline::create(spec, renderPassNative);
+        }
+        return pair.normal;
     }
 
     static PipelineSpec build_vk_circle_pipeline_spec(const std::filesystem::path& shaderPath,
@@ -811,13 +834,6 @@ namespace Honey {
         s_data->stats.draw_calls++;
     }
 
-    struct VulkanQuadInstancePacked {
-        glm::vec3 center;
-        glm::vec2 half_size;
-        float rotation;
-        glm::vec4 color;
-    }; // TEMP
-
     void Renderer2D::quad_end_scene() {
         if (s_data->quad_instances.empty())
             return;
@@ -838,13 +854,23 @@ namespace Honey {
             );
 
             auto fb = Renderer::get_render_target();
-            auto* vk_fb = dynamic_cast<VulkanFramebuffer*>(fb.get());
-            HN_CORE_ASSERT(vk_fb, "Renderer2D Vulkan path expects current render target to be a VulkanFramebuffer");
+            Ref<Pipeline> pipe;
+            if (fb != nullptr) {
+                auto* vk_fb = dynamic_cast<VulkanFramebuffer*>(fb.get());
+                HN_CORE_ASSERT(vk_fb, "Renderer2D Vulkan path expects current render target to be a VulkanFramebuffer");
 
-            void* rpNative = vk_fb->get_render_pass();
-            Ref<Pipeline> pipe = get_or_create_vk_offscreen_quad_pipeline(rpNative, s_data->debug_pick_enabled);
+                void* rpNative = vk_fb->get_render_pass();
+                pipe = get_or_create_vk_offscreen_quad_pipeline(rpNative, s_data->debug_pick_enabled);
+            } else {
+                auto* base = Application::get().get_window().get_context();
+                auto* vkCtx = dynamic_cast<Honey::VulkanContext*>(base);
+                HN_CORE_ASSERT(vkCtx, "Expected VulkanContext when Vulkan API is active");
 
-            if (s_data->texture_slot_index > 1) {
+                void* rpNative = vkCtx->get_render_pass();
+                pipe = get_or_create_vk_quad_pipeline(rpNative);
+            }
+
+            /*if (s_data->texture_slot_index > 1)*/ {
                 std::array<void*, VulkanRendererAPI::k_max_texture_slots> vk_textures{};
                 const uint32_t count = std::min<uint32_t>(
                     s_data->texture_slot_index,

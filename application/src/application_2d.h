@@ -3,37 +3,33 @@
 
 #include "../../engine/src/Honey/debug/instrumentor.h"
 
-class Application2D : public Honey::Layer {
+namespace Honey {
+    class Application2D : public Layer {
 
-public:
-    Application2D();
-    virtual ~Application2D() = default;
+    public:
+        Application2D();
+        virtual ~Application2D() = default;
 
-    virtual void on_attach() override;
-    virtual void on_detach() override;
+        virtual void on_attach() override;
+        virtual void on_detach() override;
 
-    void on_update(Honey::Timestep ts) override;
-    virtual void on_imgui_render() override;
-    void on_event(Honey::Event &event) override;
+        void on_update(Timestep ts) override;
+        virtual void on_imgui_render() override;
+        void on_event(Event &event) override;
 
-private:
-    Honey::OrthographicCameraController m_camera_controller;
+    private:
+        EditorCamera m_camera;
 
-    Honey::Ref<Honey::Texture2D> m_chuck_texture;
-    /* temp
-    Honey::Ref<Honey::VertexArray> m_square_vertex_array;
-    Honey::Ref<Honey::Shader> m_shader;
-    Honey::Ref<Honey::Texture2D> m_missing_texture;
-    Honey::Ref<Honey::Texture2D> m_chuck_texture, m_sprite_sheet01, m_sprite_sheet02;
-    Honey::Ref<Honey::SubTexture2D> m_bush_sprite, m_grass_sprite, m_player_sprite, m_water_sprite;
-*/
+        Ref<Texture2D> m_chuck_texture;
 
-    glm::vec4 m_clear_color = { 0.1f, 0.1f, 0.1f, 1.0f };
-    glm::vec3 m_square_position;
+        glm::vec4 m_clear_color = { 0.1f, 0.1f, 0.1f, 1.0f };
+        glm::vec2 m_viewport_size = { 1280.0f, 720.0f };
+        glm::vec3 m_square_position;
 
-    Honey::FramerateCounter m_framerate_counter;
-    int m_framerate = 0;
-    float m_frame_time = 0.0f;
+        FramerateCounter m_framerate_counter;
+        int m_framerate = 0;
+        float m_frame_time = 0.0f;
 
 
-};
+    };
+}

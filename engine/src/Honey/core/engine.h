@@ -20,7 +20,7 @@
 
 namespace Honey {
 
-    class HONEY_API Application
+    class Application
     {
     public:
         Application(const std::string& name = "Honey Application", int width = 1280, int height = 720);
@@ -57,10 +57,7 @@ namespace Honey {
         LayerStack m_layer_stack;
         float m_last_frame_time = 0.0f;
 
-
         static Application* s_instance;
-
-
     };
 
     // To be defined in CLIENT

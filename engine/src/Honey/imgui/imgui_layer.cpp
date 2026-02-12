@@ -16,6 +16,8 @@
 
 #include "platform/vulkan/vk_context.h"
 
+static const std::filesystem::path asset_root = ASSET_ROOT;
+
 namespace Honey {
 
      ImGuiLayer::ImGuiLayer() : Layer("ImGuiLayer") {
@@ -40,9 +42,9 @@ namespace Honey {
          //io.ConfigFlags |= ImGuiConfigFlags_ViewportsNoTaskBarIcons;
          //io.ConfigFlags |= ImGuiConfigFlags_ViewPortsNoMerge;
 
-         io.Fonts->AddFontFromFileTTF("../assets/fonts/JetBrains_Mono/static/JetBrainsMono-ExtraBold.ttf", 18.0f);
-         io.Fonts->AddFontFromFileTTF("../assets/fonts/JetBrains_Mono/static/JetBrainsMono-Bold.ttf", 18.0f);
-         io.FontDefault = io.Fonts->AddFontFromFileTTF("../assets/fonts/JetBrains_Mono/static/JetBrainsMono-Regular.ttf", 18.0f);
+         io.Fonts->AddFontFromFileTTF((asset_root / "fonts/JetBrains_Mono/static/JetBrainsMono-ExtraBold.ttf").c_str(), 18.0f);
+         io.Fonts->AddFontFromFileTTF((asset_root / "fonts/JetBrains_Mono/static/JetBrainsMono-Bold.ttf").c_str(), 18.0f);
+         io.FontDefault = io.Fonts->AddFontFromFileTTF((asset_root / "fonts/JetBrains_Mono/static/JetBrainsMono-Regular.ttf").c_str(), 18.0f);
 
          //setup style
          ImGui::StyleColorsDark();

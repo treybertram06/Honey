@@ -45,12 +45,12 @@ void Application3D::on_update(Honey::Timestep ts) {
 
     {
         HN_PROFILE_SCOPE("Application3D::renderer_draw");
-        Honey::Renderer3D::begin_scene(m_camera_controller.get_camera());
+        //Honey::Renderer3D::begin_scene(m_camera_controller.get_camera());
 
         //Honey::ScopedTimer timer("Renderer3D::draw_quad");
-        Honey::Renderer3D::draw_cube({0.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 0.5f, 0.2f, 1.0f});
-        Honey::Renderer3D::draw_cube({2.0f, 1.0f, 0.0f}, {0.5f, 2.0f, 0.5f}, {0.2f, 0.8f, 0.3f, 1.0f});
-        Honey::Renderer3D::draw_cube({0.0f, 0.0f, 0.0f}, {100.0f, 0.1f, 100.0f}, {0.8f, 0.8f, 0.8f, 1.0f});
+        //Honey::Renderer3D::draw_cube({0.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 0.5f, 0.2f, 1.0f});
+        //Honey::Renderer3D::draw_cube({2.0f, 1.0f, 0.0f}, {0.5f, 2.0f, 0.5f}, {0.2f, 0.8f, 0.3f, 1.0f});
+        //Honey::Renderer3D::draw_cube({0.0f, 0.0f, 0.0f}, {100.0f, 0.1f, 100.0f}, {0.8f, 0.8f, 0.8f, 1.0f});
 
 
         //Honey::Renderer3D::draw_quad({-1.0f, -0.33f, 0.0f}, {2.0f, 2.0f}, m_transparent_texture);
@@ -68,7 +68,7 @@ void Application3D::on_update(Honey::Timestep ts) {
         //add Sprites to the Batch
         //draw_batch();
 
-        Honey::Renderer3D::end_scene();
+        //Honey::Renderer3D::end_scene();
     }
 
 }

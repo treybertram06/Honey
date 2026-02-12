@@ -51,3 +51,6 @@
 [submodule "engine/vendor/lua"]
 	path = engine/vendor/lua
 	url = https://github.com/treybertram06/lua
+[submodule "engine/vendor/tinygltf"]
+	path = engine/vendor/tinygltf
+	url = https://github.com/syoyo/tinygltf.git
