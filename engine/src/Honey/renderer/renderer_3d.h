@@ -10,6 +10,7 @@
 #include <glm/glm.hpp>
 
 #include "editor_camera.h"
+#include "material.h"
 
 namespace Honey {
 
@@ -30,19 +31,46 @@ namespace Honey {
 
 		// Generic mesh rendering
 		static void draw_mesh(const Ref<VertexArray>& vertex_array, const glm::mat4& transform);
+		static void draw_mesh(const Ref<VertexArray>& vertex_array, const Ref<Material>& material, const glm::mat4& transform);
+
 
 		// Statistics
 		struct Statistics {
 			uint32_t draw_calls = 0;
-			uint32_t vertex_count = 0;
-			uint32_t index_count = 0;
+
+			// Mesh submission stats
+			uint32_t mesh_submissions = 0;     // times draw_mesh() was called
+			uint32_t unique_meshes = 0;        // unique VertexArray objects referenced this frame
+
+			// Geometry stats (submitted)
+			uint64_t vertex_count = 0;         // estimated (see impl notes)
+			uint64_t index_count = 0;          // sum of used index counts
+			uint64_t triangle_count = 0;       // derived from index_count (tri list)
+
+			// State churn stats (helps diagnose CPU bottlenecks)
+			uint32_t pipeline_binds = 0;
+			uint32_t push_constant_updates = 0;
 		};
 		static Statistics get_stats();
 		static void reset_stats();
 
+		struct BatchValue {
+			Ref<VertexArray> va;
+			Ref<Material> material;
+			std::vector<glm::mat4> transforms;
+		};
+
+		struct BatchKey {
+			const VertexArray* va = nullptr;
+			const Material* mat = nullptr;
+
+			bool operator==(const BatchKey& o) const { return va == o.va && mat == o.mat; }
+		};
+
 	private:
 		static void create_cube_geometry();
 		static void create_sphere_geometry();
+
 	};
 
 }

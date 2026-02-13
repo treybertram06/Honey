@@ -5,7 +5,7 @@
 #include "hnpch.h"
 #include "Honey/core/settings.h"
 #include "Honey/renderer/texture_cache.h"
-
+#include "Honey/utils/gltf_loader.h"
 
 namespace Honey {
     static const std::filesystem::path asset_root = ASSET_ROOT;
@@ -22,37 +22,16 @@ namespace Honey {
         auto& win = Application::get().get_window();
         uint32_t w = win.get_width();
         uint32_t h = win.get_height();
-        m_camera = EditorCamera(w/h, 45.0f, 0.1f, 1000.0f);
+        m_camera = EditorCamera(w/h, 45.0f, 0.1f, 10000.0f);
 
-        // --- Minimal 3D test quad (Vulkan path) ---
-        {
-            m_test_vao_3d = VertexArray::create();
+        //m_test_mesh = load_gltf_mesh(asset_root / "models" / "Box" / "glTF" / "Box.gltf");
+        m_test_mesh = load_gltf_mesh(asset_root / "models" / "2CylinderEngine" / "glTF" / "2CylinderEngine.gltf");
+        //m_test_mesh = load_gltf_mesh(asset_root / "models" / "Sponza" / "glTF" / "Sponza.gltf");
 
-            TestVertex3D verts[4] = {
-                { { -0.5f, -0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f } }, // bottom left
-                { {  0.5f, -0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 1.0f, 0.0f } }, // bottom right
-                { {  0.5f,  0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 1.0f, 1.0f } }, // top right
-                { { -0.5f,  0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 0.0f, 1.0f } }, // top left
-            };
-
-            Ref<VertexBuffer> vb = VertexBuffer::create((uint32_t)sizeof(verts));
-            vb->set_data(verts, (uint32_t)sizeof(verts));
-            vb->set_layout({
-                { ShaderDataType::Float3, "a_position" },
-                { ShaderDataType::Float3, "a_normal"   },
-                { ShaderDataType::Float2, "a_uv"       },
-            });
-            m_test_vao_3d->add_vertex_buffer(vb);
-
-            // two triangles
-            uint16_t indices[6] = {
-                0, 1, 2,   // first triangle
-                2, 3, 0    // second triangle
-            };
-
-            Ref<IndexBuffer> ib = IndexBuffer::create(indices, 6);
-            m_test_vao_3d->set_index_buffer(ib);
+        if (!m_test_mesh) {
+            HN_CORE_ERROR("Failed to load mesh!");
         }
+
     }
 
     void Application2D::on_detach() {
@@ -89,9 +68,19 @@ namespace Honey {
 
             Renderer2D::begin_scene(m_camera);
 
-            Renderer2D::draw_quad({3.0f, 3.0f, 1.0f}, {2.0f, 2.0f}, m_chuck_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f);
-            Renderer2D::draw_quad(glm::vec2(0, 0), glm::vec2(1, 1), glm::vec4(1, 0, 0, 1));
-
+             const int grid_x = 315;
+             const int grid_y = 315;
+             const float spacing = 1.1f;
+             glm::vec2 origin = {
+                 -(grid_x - 1) * spacing * 0.5f,
+                 -(grid_y - 1) * spacing * 0.5f
+             };
+             for (int y = 0; y < grid_y; ++y) {
+                 for (int x = 0; x < grid_x; ++x) {
+                     glm::vec2 pos = origin + glm::vec2(x * spacing, y * spacing);
+                     Renderer2D::draw_quad(pos, glm::vec2(1.0f, 1.0f), glm::vec4(1, 0, 0, 1));
+                 }
+             }
             Renderer2D::quad_end_scene();
             Renderer::end_pass();
         }
@@ -107,8 +96,13 @@ namespace Honey {
 
             Renderer3D::begin_scene(m_camera);
 
-            Renderer3D::draw_mesh(m_test_vao_3d, glm::mat4(1.0f));
+            //glm::mat4 transform = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -1.0f));
+            glm::mat4 transform = glm::mat4(1.0f);
 
+            if (m_test_mesh) {
+                for (auto& sub_mesh : m_test_mesh->get_submeshes())
+                    Renderer3D::draw_mesh(sub_mesh.vao, sub_mesh.material, transform * sub_mesh.transform);
+            }
             Renderer3D::end_scene();
 
             Renderer::end_pass();
@@ -139,14 +133,36 @@ namespace Honey {
             ImGui::Text("Smoothed FPS: %d", m_framerate_counter.get_smoothed_fps());
 
             ImGui::Separator();
-            auto stats = Renderer2D::get_stats();
-            ImGui::Text("Draw Calls: %d", stats.draw_calls);
-            ImGui::Text("Quads: %d", stats.quad_count);
-            ImGui::Text("Vertices: %d", stats.get_total_vertex_count());
-            ImGui::Text("Indices: %d", stats.get_total_index_count());
+            ImGui::Text("2D Stats: ");
+            auto stats_2d = Renderer2D::get_stats();
+            ImGui::Text("Draw Calls: %d", stats_2d.draw_calls);
+            ImGui::Text("Quads: %d", stats_2d.quad_count);
+            ImGui::Text("Vertices: %d", stats_2d.get_total_vertex_count());
+            ImGui::Text("Indices: %d", stats_2d.get_total_index_count());
 
-            if (ImGui::Button("Reset Statistics")) {
+            if (ImGui::Button("Reset 2D Statistics")) {
                 Renderer2D::reset_stats();
+            }
+
+            ImGui::Separator();
+
+            ImGui::Text("3D Stats:");
+            auto stats_3d = Renderer3D::get_stats();
+            ImGui::Text("Draw Calls: %u", stats_3d.draw_calls);
+            ImGui::Text("Mesh Submissions: %u", stats_3d.mesh_submissions);
+            ImGui::Text("Unique Meshes: %u", stats_3d.unique_meshes);
+
+            ImGui::Separator();
+            ImGui::Text("Triangles: %llu", static_cast<unsigned long long>(stats_3d.triangle_count));
+            ImGui::Text("Indices: %llu", static_cast<unsigned long long>(stats_3d.index_count));
+            ImGui::Text("Vertices (est.): %llu", static_cast<unsigned long long>(stats_3d.vertex_count));
+
+            ImGui::Separator();
+            ImGui::Text("Pipeline Binds: %u", stats_3d.pipeline_binds);
+            ImGui::Text("Push Constant Updates: %u", stats_3d.push_constant_updates);
+
+            if (ImGui::Button("Reset 3D Statistics")) {
+                Renderer3D::reset_stats();
             }
         }
 

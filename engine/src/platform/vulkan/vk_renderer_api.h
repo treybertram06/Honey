@@ -27,6 +27,13 @@ namespace Honey {
 
         void draw_indexed(const Ref<VertexArray>&, uint32_t) override;
         void draw_indexed_instanced(const Ref<VertexArray>&, uint32_t, uint32_t) override;
+        static void submit_instanced_draw(
+            const Ref<VertexArray>& vertex_array,
+            const Ref<VertexBuffer>& instance_vb,
+            uint32_t index_count,
+            uint32_t instance_count,
+            uint32_t instance_byte_offset = 0
+        );
 
         void set_wireframe(bool) override;
         void set_depth_test(bool) override;
@@ -51,6 +58,7 @@ namespace Honey {
         static bool consume_camera_view_projection(glm::mat4& out_view_projection);
 
         static void submit_push_constants_mat4(const glm::mat4& value);
+        static void submit_push_constants(const void* data, uint32_t size, uint32_t offset = 0, VkShaderStageFlags stageFlags = VK_SHADER_STAGE_ALL);
 
         static constexpr uint32_t k_max_texture_slots = 32;
 

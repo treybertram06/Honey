@@ -32,8 +32,9 @@ namespace Honey {
         void* pipeline() const { return m_pipeline; }
         void* layout() const { return m_layout; }
 
-        // Known push constant size for our v1 3D path (mat4)
-        static constexpr uint32_t k_push_constant_mat4_size = 64;
+        // Engine contract: we allow pushing arbitrary data up to 128 bytes.
+        // Vulkan guarantees at least 128 bytes via VkPhysicalDeviceLimits::maxPushConstantsSize.
+        static constexpr uint32_t k_push_constant_max_size = 128;
 
     private:
         static VkShaderModule create_shader_module_from_file(VkDevice device, const std::string& path);

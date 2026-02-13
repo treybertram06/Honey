@@ -61,6 +61,8 @@ namespace Honey {
                 Ref<VertexArray> va;
                 uint32_t indexCount = 0;
                 uint32_t instanceCount = 1;
+                Ref<VertexBuffer> instanceVB;
+                uint32_t instanceByteOffset = 0;
             };
 
             // Persistent-ish settings (can be overwritten by calls)
@@ -89,6 +91,7 @@ namespace Honey {
                 BindPipeline,
                 BindGlobals,        // camera + textures for now
                 PushConstantsMat4,
+                PushConstants,
                 DrawIndexed
             };
 
@@ -120,10 +123,19 @@ namespace Honey {
                 glm::mat4 value{1.0f};
             };
 
+            struct CmdPushConstants {
+                std::array<std::byte, 128> bytes{}; // 128 is spec minimum
+                uint32_t size = 0;
+                uint32_t offset = 0;
+                VkShaderStageFlags stageFlags = VK_SHADER_STAGE_ALL;
+            };
+
             struct CmdDrawIndexed {
                 Ref<VertexArray> va;
                 uint32_t indexCount = 0;
                 uint32_t instanceCount = 1;
+                Ref<VertexBuffer> instanceVB;
+                uint32_t instanceByteOffset = 0;
             };
 
             struct Cmd {
@@ -133,6 +145,7 @@ namespace Honey {
                 CmdBindPipeline bindPipeline{};
                 CmdBindGlobals globals{};
                 CmdPushConstantsMat4 pushMat4{};
+                CmdPushConstants push{};
                 CmdDrawIndexed draw{};
             };
 
@@ -187,15 +200,8 @@ namespace Honey {
 
         void destroy();
 
-        //void create_graphics_pipeline();
-        //void cleanup_pipeline();
-        //std::string shader_path(const char* filename) const;
-
         void create_global_descriptor_resources();
         void cleanup_global_descriptor_resources();
-
-        //PipelineSpec m_last_pipeline_spec{};
-        //bool m_pipeline_dirty = true;
 
         static constexpr uint32_t k_max_frames_in_flight = 2;
 
@@ -230,9 +236,6 @@ namespace Honey {
         std::vector<VkImage> m_swapchain_depth_images;
         std::vector<VkDeviceMemory> m_swapchain_depth_memories;
         std::vector<VkImageView> m_swapchain_depth_image_views;
-
-        //VulkanPipeline m_pipeline_quad;
-        //VulkanPipeline m_pipeline_quad_fb;
 
         VkDescriptorSetLayout m_global_set_layout = nullptr;
         VkDescriptorPool m_descriptor_pool = nullptr;

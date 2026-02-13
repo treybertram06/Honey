@@ -2,6 +2,7 @@
 #include <Honey.h>
 
 #include "../../engine/src/Honey/debug/instrumentor.h"
+#include "Honey/renderer/mesh.h"
 
 namespace Honey {
     class Application2D : public Layer {
@@ -38,7 +39,7 @@ namespace Honey {
             glm::vec2 uv;
         };
 
-        Ref<VertexArray> m_test_vao_3d;
+        Ref<Mesh> m_test_mesh;
 
 
     };

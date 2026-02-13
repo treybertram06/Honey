@@ -162,167 +162,170 @@ namespace Honey {
         return extent;
     }
 
-            static VkFormat find_supported_format(
-            VkPhysicalDevice physicalDevice,
-            const std::vector<VkFormat>& candidates,
-            VkImageTiling tiling,
-            VkFormatFeatureFlags features)
-        {
-            for (VkFormat format : candidates) {
-                VkFormatProperties props{};
-                vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &props);
+    static VkFormat find_supported_format(
+    VkPhysicalDevice physicalDevice,
+    const std::vector<VkFormat>& candidates,
+    VkImageTiling tiling,
+    VkFormatFeatureFlags features)
+    {
+        for (VkFormat format : candidates) {
+            VkFormatProperties props{};
+            vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &props);
 
-                if (tiling == VK_IMAGE_TILING_LINEAR &&
-                    (props.linearTilingFeatures & features) == features) {
-                    return format;
+            if (tiling == VK_IMAGE_TILING_LINEAR &&
+                (props.linearTilingFeatures & features) == features) {
+                return format;
                 }
 
-                if (tiling == VK_IMAGE_TILING_OPTIMAL &&
-                    (props.optimalTilingFeatures & features) == features) {
-                    return format;
+            if (tiling == VK_IMAGE_TILING_OPTIMAL &&
+                (props.optimalTilingFeatures & features) == features) {
+                return format;
                 }
-            }
-
-            return VK_FORMAT_UNDEFINED;
         }
 
-        static VkFormat choose_depth_format(VkPhysicalDevice physicalDevice)
-        {
-            // Prefer 32-bit float depth if available.
-            const std::vector<VkFormat> candidates = {
-                VK_FORMAT_D32_SFLOAT,
-                VK_FORMAT_D32_SFLOAT_S8_UINT,
-                VK_FORMAT_D24_UNORM_S8_UINT,
-            };
+        return VK_FORMAT_UNDEFINED;
+    }
 
-            VkFormat fmt = find_supported_format(
-                physicalDevice,
-                candidates,
-                VK_IMAGE_TILING_OPTIMAL,
-                VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT
+    static VkFormat choose_depth_format(VkPhysicalDevice physicalDevice)
+    {
+        // Prefer 32-bit float depth if available.
+        const std::vector<VkFormat> candidates = {
+            VK_FORMAT_D32_SFLOAT,
+            VK_FORMAT_D32_SFLOAT_S8_UINT,
+            VK_FORMAT_D24_UNORM_S8_UINT,
+        };
+
+        VkFormat fmt = find_supported_format(
+            physicalDevice,
+            candidates,
+            VK_IMAGE_TILING_OPTIMAL,
+            VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT
+        );
+
+        HN_CORE_ASSERT(fmt != VK_FORMAT_UNDEFINED, "Failed to find a supported depth format");
+        return fmt;
+    }
+
+    static bool has_stencil_component(VkFormat format)
+    {
+        return format == VK_FORMAT_D32_SFLOAT_S8_UINT ||
+               format == VK_FORMAT_D24_UNORM_S8_UINT;
+    }
+
+    static void create_image(
+        VkDevice device,
+        VkPhysicalDevice physicalDevice,
+        uint32_t width,
+        uint32_t height,
+        VkFormat format,
+        VkImageTiling tiling,
+        VkImageUsageFlags usage,
+        VkMemoryPropertyFlags properties,
+        VkImage& outImage,
+        VkDeviceMemory& outMemory)
+    {
+        HN_PROFILE_FUNCTION();
+
+        VkImageCreateInfo imageInfo{};
+        imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        imageInfo.imageType = VK_IMAGE_TYPE_2D;
+        imageInfo.extent.width = width;
+        imageInfo.extent.height = height;
+        imageInfo.extent.depth = 1;
+        imageInfo.mipLevels = 1;
+        imageInfo.arrayLayers = 1;
+        imageInfo.format = format;
+        imageInfo.tiling = tiling;
+        imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        imageInfo.usage = usage;
+        imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+        imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        VkResult r = vkCreateImage(device, &imageInfo, nullptr, &outImage);
+        HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateImage failed for depth image");
+
+        VkMemoryRequirements memReq{};
+        vkGetImageMemoryRequirements(device, outImage, &memReq);
+
+        VkMemoryAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = memReq.size;
+        allocInfo.memoryTypeIndex = find_memory_type_local(physicalDevice, memReq.memoryTypeBits, properties);
+
+        r = vkAllocateMemory(device, &allocInfo, nullptr, &outMemory);
+        HN_CORE_ASSERT(r == VK_SUCCESS, "vkAllocateMemory failed for depth image");
+
+        r = vkBindImageMemory(device, outImage, outMemory, 0);
+        HN_CORE_ASSERT(r == VK_SUCCESS, "vkBindImageMemory failed for depth image");
+    }
+
+    static VkImageView create_image_view(
+        VkDevice device,
+        VkImage image,
+        VkFormat format,
+        VkImageAspectFlags aspectFlags)
+    {
+        VkImageViewCreateInfo viewInfo{};
+        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        viewInfo.image = image;
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format = format;
+        viewInfo.subresourceRange.aspectMask = aspectFlags;
+        viewInfo.subresourceRange.baseMipLevel = 0;
+        viewInfo.subresourceRange.levelCount = 1;
+        viewInfo.subresourceRange.baseArrayLayer = 0;
+        viewInfo.subresourceRange.layerCount = 1;
+
+        VkImageView view = VK_NULL_HANDLE;
+        VkResult r = vkCreateImageView(device, &viewInfo, nullptr, &view);
+        HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateImageView failed for depth image view");
+        return view;
+    }
+
+    static void transition_image_layout_immediate(
+        VulkanBackend* backend,
+        VkDevice device,
+        VkImage image,
+        VkImageAspectFlags aspectMask,
+        VkImageLayout oldLayout,
+        VkImageLayout newLayout)
+    {
+        HN_PROFILE_FUNCTION();
+        HN_CORE_ASSERT(backend, "transition_image_layout_immediate: backend is null");
+        HN_CORE_ASSERT(device, "transition_image_layout_immediate: device is null");
+        HN_CORE_ASSERT(image, "transition_image_layout_immediate: image is null");
+
+        backend->immediate_submit([&](VkCommandBuffer cmd) {
+            VkImageMemoryBarrier barrier{};
+            barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barrier.oldLayout = oldLayout;
+            barrier.newLayout = newLayout;
+            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.image = image;
+            barrier.subresourceRange.aspectMask = aspectMask;
+            barrier.subresourceRange.baseMipLevel = 0;
+            barrier.subresourceRange.levelCount = 1;
+            barrier.subresourceRange.baseArrayLayer = 0;
+            barrier.subresourceRange.layerCount = 1;
+
+            VkPipelineStageFlags srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+            VkPipelineStageFlags dstStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+
+            barrier.srcAccessMask = 0;
+            barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                                    VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+            vkCmdPipelineBarrier(
+                cmd,
+                srcStage, dstStage,
+                0,
+                0, nullptr,
+                0, nullptr,
+                1, &barrier
             );
-
-            HN_CORE_ASSERT(fmt != VK_FORMAT_UNDEFINED, "Failed to find a supported depth format");
-            return fmt;
-        }
-
-        static bool has_stencil_component(VkFormat format)
-        {
-            return format == VK_FORMAT_D32_SFLOAT_S8_UINT ||
-                   format == VK_FORMAT_D24_UNORM_S8_UINT;
-        }
-
-        static void create_image(
-            VkDevice device,
-            VkPhysicalDevice physicalDevice,
-            uint32_t width,
-            uint32_t height,
-            VkFormat format,
-            VkImageTiling tiling,
-            VkImageUsageFlags usage,
-            VkMemoryPropertyFlags properties,
-            VkImage& outImage,
-            VkDeviceMemory& outMemory)
-        {
-            VkImageCreateInfo imageInfo{};
-            imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-            imageInfo.imageType = VK_IMAGE_TYPE_2D;
-            imageInfo.extent.width = width;
-            imageInfo.extent.height = height;
-            imageInfo.extent.depth = 1;
-            imageInfo.mipLevels = 1;
-            imageInfo.arrayLayers = 1;
-            imageInfo.format = format;
-            imageInfo.tiling = tiling;
-            imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            imageInfo.usage = usage;
-            imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-            imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-            VkResult r = vkCreateImage(device, &imageInfo, nullptr, &outImage);
-            HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateImage failed for depth image");
-
-            VkMemoryRequirements memReq{};
-            vkGetImageMemoryRequirements(device, outImage, &memReq);
-
-            VkMemoryAllocateInfo allocInfo{};
-            allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-            allocInfo.allocationSize = memReq.size;
-            allocInfo.memoryTypeIndex = find_memory_type_local(physicalDevice, memReq.memoryTypeBits, properties);
-
-            r = vkAllocateMemory(device, &allocInfo, nullptr, &outMemory);
-            HN_CORE_ASSERT(r == VK_SUCCESS, "vkAllocateMemory failed for depth image");
-
-            r = vkBindImageMemory(device, outImage, outMemory, 0);
-            HN_CORE_ASSERT(r == VK_SUCCESS, "vkBindImageMemory failed for depth image");
-        }
-
-        static VkImageView create_image_view(
-            VkDevice device,
-            VkImage image,
-            VkFormat format,
-            VkImageAspectFlags aspectFlags)
-        {
-            VkImageViewCreateInfo viewInfo{};
-            viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-            viewInfo.image = image;
-            viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-            viewInfo.format = format;
-            viewInfo.subresourceRange.aspectMask = aspectFlags;
-            viewInfo.subresourceRange.baseMipLevel = 0;
-            viewInfo.subresourceRange.levelCount = 1;
-            viewInfo.subresourceRange.baseArrayLayer = 0;
-            viewInfo.subresourceRange.layerCount = 1;
-
-            VkImageView view = VK_NULL_HANDLE;
-            VkResult r = vkCreateImageView(device, &viewInfo, nullptr, &view);
-            HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateImageView failed for depth image view");
-            return view;
-        }
-
-        static void transition_image_layout_immediate(
-            VulkanBackend* backend,
-            VkDevice device,
-            VkImage image,
-            VkImageAspectFlags aspectMask,
-            VkImageLayout oldLayout,
-            VkImageLayout newLayout)
-        {
-            HN_CORE_ASSERT(backend, "transition_image_layout_immediate: backend is null");
-            HN_CORE_ASSERT(device, "transition_image_layout_immediate: device is null");
-            HN_CORE_ASSERT(image, "transition_image_layout_immediate: image is null");
-
-            backend->immediate_submit([&](VkCommandBuffer cmd) {
-                VkImageMemoryBarrier barrier{};
-                barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                barrier.oldLayout = oldLayout;
-                barrier.newLayout = newLayout;
-                barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                barrier.image = image;
-                barrier.subresourceRange.aspectMask = aspectMask;
-                barrier.subresourceRange.baseMipLevel = 0;
-                barrier.subresourceRange.levelCount = 1;
-                barrier.subresourceRange.baseArrayLayer = 0;
-                barrier.subresourceRange.layerCount = 1;
-
-                VkPipelineStageFlags srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-                VkPipelineStageFlags dstStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-
-                barrier.srcAccessMask = 0;
-                barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
-                                        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-
-                vkCmdPipelineBarrier(
-                    cmd,
-                    srcStage, dstStage,
-                    0,
-                    0, nullptr,
-                    0, nullptr,
-                    1, &barrier
-                );
-            });
-        }
+        });
+    }
 
     VulkanContext::VulkanContext(GLFWwindow* window_handle, VulkanBackend* backend)
             : m_window_handle(window_handle), m_backend(backend) {
@@ -726,35 +729,6 @@ namespace Honey {
         return VK_FALSE;
     }
 
-    /*
-    static VkResult create_debug_utils_messenger_ext(
-        VkInstance instance,
-        const VkDebugUtilsMessengerCreateInfoEXT* create_info,
-        const VkAllocationCallbacks* allocator,
-        VkDebugUtilsMessengerEXT* messenger
-    ) {
-        auto fn = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(
-            vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT")
-        );
-        if (!fn)
-            return VK_ERROR_EXTENSION_NOT_PRESENT;
-        return fn(instance, create_info, allocator, messenger);
-    }
-
-    static void destroy_debug_utils_messenger_ext(
-        VkInstance instance,
-        VkDebugUtilsMessengerEXT messenger,
-        const VkAllocationCallbacks* allocator
-    ) {
-        auto fn = reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(
-            vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT")
-        );
-        if (fn) {
-            fn(instance, messenger, allocator);
-        }
-    }
-    */
-
     void VulkanContext::create_surface() {
         HN_PROFILE_FUNCTION();
 
@@ -923,174 +897,174 @@ namespace Honey {
 
         m_swapchain_depth_format = choose_depth_format(reinterpret_cast<VkPhysicalDevice>(m_physical_device));
 
-            VkAttachmentDescription color{};
-            color.format = static_cast<VkFormat>(m_swapchain_image_format);
-            color.samples = VK_SAMPLE_COUNT_1_BIT;
-            color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-            color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-            color.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-            color.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-            color.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            color.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        VkAttachmentDescription color{};
+        color.format = static_cast<VkFormat>(m_swapchain_image_format);
+        color.samples = VK_SAMPLE_COUNT_1_BIT;
+        color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        color.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        color.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        color.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        color.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
-            VkAttachmentDescription depth{};
-            depth.format = m_swapchain_depth_format;
-            depth.samples = VK_SAMPLE_COUNT_1_BIT;
-            depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-            depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-            depth.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-            depth.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-            depth.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            depth.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        VkAttachmentDescription depth{};
+        depth.format = m_swapchain_depth_format;
+        depth.samples = VK_SAMPLE_COUNT_1_BIT;
+        depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depth.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        depth.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depth.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        depth.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
-            VkAttachmentReference color_ref{};
-            color_ref.attachment = 0;
-            color_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        VkAttachmentReference color_ref{};
+        color_ref.attachment = 0;
+        color_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
-            VkAttachmentReference depth_ref{};
-            depth_ref.attachment = 1;
-            depth_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        VkAttachmentReference depth_ref{};
+        depth_ref.attachment = 1;
+        depth_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
-            VkSubpassDescription subpass{};
-            subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-            subpass.colorAttachmentCount = 1;
-            subpass.pColorAttachments = &color_ref;
-            subpass.pDepthStencilAttachment = &depth_ref;
+        VkSubpassDescription subpass{};
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.colorAttachmentCount = 1;
+        subpass.pColorAttachments = &color_ref;
+        subpass.pDepthStencilAttachment = &depth_ref;
 
-            VkSubpassDependency dep{};
-            dep.srcSubpass = VK_SUBPASS_EXTERNAL;
-            dep.dstSubpass = 0;
-            dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-            dep.srcAccessMask = 0;
-            dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-            dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        VkSubpassDependency dep{};
+        dep.srcSubpass = VK_SUBPASS_EXTERNAL;
+        dep.dstSubpass = 0;
+        dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+        dep.srcAccessMask = 0;
+        dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+        dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
-            VkAttachmentDescription attachments[2] = { color, depth };
+        VkAttachmentDescription attachments[2] = { color, depth };
 
-            VkRenderPassCreateInfo rp{};
-            rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-            rp.attachmentCount = 2;
-            rp.pAttachments = attachments;
-            rp.subpassCount = 1;
-            rp.pSubpasses = &subpass;
-            rp.dependencyCount = 1;
-            rp.pDependencies = &dep;
+        VkRenderPassCreateInfo rp{};
+        rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        rp.attachmentCount = 2;
+        rp.pAttachments = attachments;
+        rp.subpassCount = 1;
+        rp.pSubpasses = &subpass;
+        rp.dependencyCount = 1;
+        rp.pDependencies = &dep;
 
-            VkRenderPass render_pass = VK_NULL_HANDLE;
-            VkResult res = vkCreateRenderPass(reinterpret_cast<VkDevice>(m_device), &rp, nullptr, &render_pass);
-            HN_CORE_ASSERT(res == VK_SUCCESS, "vkCreateRenderPass failed: {0}", vk_result_to_string(res));
+        VkRenderPass render_pass = VK_NULL_HANDLE;
+        VkResult res = vkCreateRenderPass(reinterpret_cast<VkDevice>(m_device), &rp, nullptr, &render_pass);
+        HN_CORE_ASSERT(res == VK_SUCCESS, "vkCreateRenderPass failed: {0}", vk_result_to_string(res));
 
-            m_render_pass = reinterpret_cast<VkRenderPass>(render_pass);
+        m_render_pass = reinterpret_cast<VkRenderPass>(render_pass);
 
+        set_debug_name(reinterpret_cast<VkDevice>(m_device),
+                           VK_OBJECT_TYPE_RENDER_PASS,
+                           reinterpret_cast<uint64_t>(render_pass),
+                           "MainSwapchain_RenderPass");
+    }
+
+    void VulkanContext::create_framebuffers() {
+        HN_PROFILE_FUNCTION();
+
+        // --- Create depth resources (one per swapchain image) ---
+        {
+            // Cleanup any existing depth resources first (in case of resize/recreate path quirks)
+            for (VkImageView v : m_swapchain_depth_image_views) {
+                if (v) vkDestroyImageView(reinterpret_cast<VkDevice>(m_device), v, nullptr);
+            }
+            for (VkImage img : m_swapchain_depth_images) {
+                if (img) vkDestroyImage(reinterpret_cast<VkDevice>(m_device), img, nullptr);
+            }
+            for (VkDeviceMemory mem : m_swapchain_depth_memories) {
+                if (mem) vkFreeMemory(reinterpret_cast<VkDevice>(m_device), mem, nullptr);
+            }
+            m_swapchain_depth_images.clear();
+            m_swapchain_depth_memories.clear();
+            m_swapchain_depth_image_views.clear();
+
+            const size_t count = m_swapchain_image_views.size();
+            m_swapchain_depth_images.resize(count, VK_NULL_HANDLE);
+            m_swapchain_depth_memories.resize(count, VK_NULL_HANDLE);
+            m_swapchain_depth_image_views.resize(count, VK_NULL_HANDLE);
+
+            VkDevice dev = reinterpret_cast<VkDevice>(m_device);
+            VkPhysicalDevice phys = reinterpret_cast<VkPhysicalDevice>(m_physical_device);
+
+            for (size_t i = 0; i < count; ++i) {
+                create_image(
+                    dev,
+                    phys,
+                    m_swapchain_extent_width,
+                    m_swapchain_extent_height,
+                    m_swapchain_depth_format,
+                    VK_IMAGE_TILING_OPTIMAL,
+                    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                    m_swapchain_depth_images[i],
+                    m_swapchain_depth_memories[i]
+                );
+
+                VkImageAspectFlags aspect = VK_IMAGE_ASPECT_DEPTH_BIT;
+                if (has_stencil_component(m_swapchain_depth_format))
+                    aspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
+
+                m_swapchain_depth_image_views[i] = create_image_view(
+                    dev,
+                    m_swapchain_depth_images[i],
+                    m_swapchain_depth_format,
+                    aspect
+                );
+
+                char imgName[64];
+                std::snprintf(imgName, sizeof(imgName), "SwapchainDepthImage_%zu", i);
+                set_debug_name(dev, VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64_t>(m_swapchain_depth_images[i]), imgName);
+
+                char viewName[64];
+                std::snprintf(viewName, sizeof(viewName), "SwapchainDepthImageView_%zu", i);
+                set_debug_name(dev, VK_OBJECT_TYPE_IMAGE_VIEW, reinterpret_cast<uint64_t>(m_swapchain_depth_image_views[i]), viewName);
+
+                transition_image_layout_immediate(
+                    m_backend,
+                    dev,
+                    m_swapchain_depth_images[i],
+                    aspect,
+                    VK_IMAGE_LAYOUT_UNDEFINED,
+                    VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+                );
+            }
+        }
+
+        // --- Framebuffers (color + depth) ---
+        m_swapchain_framebuffers.resize(m_swapchain_image_views.size());
+
+        for (size_t i = 0; i < m_swapchain_image_views.size(); i++) {
+            VkImageView attachments[] = {
+                reinterpret_cast<VkImageView>(m_swapchain_image_views[i]),
+                m_swapchain_depth_image_views[i]
+            };
+
+            VkFramebufferCreateInfo fb{};
+            fb.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            fb.renderPass = reinterpret_cast<VkRenderPass>(m_render_pass);
+            fb.attachmentCount = 2;
+            fb.pAttachments = attachments;
+            fb.width = m_swapchain_extent_width;
+            fb.height = m_swapchain_extent_height;
+            fb.layers = 1;
+
+            VkFramebuffer framebuffer = VK_NULL_HANDLE;
+            VkResult res = vkCreateFramebuffer(reinterpret_cast<VkDevice>(m_device), &fb, nullptr, &framebuffer);
+            HN_CORE_ASSERT(res == VK_SUCCESS, "vkCreateFramebuffer failed: {0}", vk_result_to_string(res));
+
+            m_swapchain_framebuffers[i] = reinterpret_cast<VkFramebuffer>(framebuffer);
+
+            char fbName[64];
+            std::snprintf(fbName, sizeof(fbName), "SwapchainFramebuffer_%zu", i);
             set_debug_name(reinterpret_cast<VkDevice>(m_device),
-                               VK_OBJECT_TYPE_RENDER_PASS,
-                               reinterpret_cast<uint64_t>(render_pass),
-                               "MainSwapchain_RenderPass");
+                           VK_OBJECT_TYPE_FRAMEBUFFER,
+                           reinterpret_cast<uint64_t>(framebuffer),
+                           fbName);
         }
-
-        void VulkanContext::create_framebuffers() {
-            HN_PROFILE_FUNCTION();
-
-            // --- Create depth resources (one per swapchain image) ---
-            {
-                // Cleanup any existing depth resources first (in case of resize/recreate path quirks)
-                for (VkImageView v : m_swapchain_depth_image_views) {
-                    if (v) vkDestroyImageView(reinterpret_cast<VkDevice>(m_device), v, nullptr);
-                }
-                for (VkImage img : m_swapchain_depth_images) {
-                    if (img) vkDestroyImage(reinterpret_cast<VkDevice>(m_device), img, nullptr);
-                }
-                for (VkDeviceMemory mem : m_swapchain_depth_memories) {
-                    if (mem) vkFreeMemory(reinterpret_cast<VkDevice>(m_device), mem, nullptr);
-                }
-                m_swapchain_depth_images.clear();
-                m_swapchain_depth_memories.clear();
-                m_swapchain_depth_image_views.clear();
-
-                const size_t count = m_swapchain_image_views.size();
-                m_swapchain_depth_images.resize(count, VK_NULL_HANDLE);
-                m_swapchain_depth_memories.resize(count, VK_NULL_HANDLE);
-                m_swapchain_depth_image_views.resize(count, VK_NULL_HANDLE);
-
-                VkDevice dev = reinterpret_cast<VkDevice>(m_device);
-                VkPhysicalDevice phys = reinterpret_cast<VkPhysicalDevice>(m_physical_device);
-
-                for (size_t i = 0; i < count; ++i) {
-                    create_image(
-                        dev,
-                        phys,
-                        m_swapchain_extent_width,
-                        m_swapchain_extent_height,
-                        m_swapchain_depth_format,
-                        VK_IMAGE_TILING_OPTIMAL,
-                        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-                        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                        m_swapchain_depth_images[i],
-                        m_swapchain_depth_memories[i]
-                    );
-
-                    VkImageAspectFlags aspect = VK_IMAGE_ASPECT_DEPTH_BIT;
-                    if (has_stencil_component(m_swapchain_depth_format))
-                        aspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
-
-                    m_swapchain_depth_image_views[i] = create_image_view(
-                        dev,
-                        m_swapchain_depth_images[i],
-                        m_swapchain_depth_format,
-                        aspect
-                    );
-
-                    char imgName[64];
-                    std::snprintf(imgName, sizeof(imgName), "SwapchainDepthImage_%zu", i);
-                    set_debug_name(dev, VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64_t>(m_swapchain_depth_images[i]), imgName);
-
-                    char viewName[64];
-                    std::snprintf(viewName, sizeof(viewName), "SwapchainDepthImageView_%zu", i);
-                    set_debug_name(dev, VK_OBJECT_TYPE_IMAGE_VIEW, reinterpret_cast<uint64_t>(m_swapchain_depth_image_views[i]), viewName);
-
-                    transition_image_layout_immediate(
-                        m_backend,
-                        dev,
-                        m_swapchain_depth_images[i],
-                        aspect,
-                        VK_IMAGE_LAYOUT_UNDEFINED,
-                        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
-                    );
-                }
-            }
-
-            // --- Framebuffers (color + depth) ---
-            m_swapchain_framebuffers.resize(m_swapchain_image_views.size());
-
-            for (size_t i = 0; i < m_swapchain_image_views.size(); i++) {
-                VkImageView attachments[] = {
-                    reinterpret_cast<VkImageView>(m_swapchain_image_views[i]),
-                    m_swapchain_depth_image_views[i]
-                };
-
-                VkFramebufferCreateInfo fb{};
-                fb.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-                fb.renderPass = reinterpret_cast<VkRenderPass>(m_render_pass);
-                fb.attachmentCount = 2;
-                fb.pAttachments = attachments;
-                fb.width = m_swapchain_extent_width;
-                fb.height = m_swapchain_extent_height;
-                fb.layers = 1;
-
-                VkFramebuffer framebuffer = VK_NULL_HANDLE;
-                VkResult res = vkCreateFramebuffer(reinterpret_cast<VkDevice>(m_device), &fb, nullptr, &framebuffer);
-                HN_CORE_ASSERT(res == VK_SUCCESS, "vkCreateFramebuffer failed: {0}", vk_result_to_string(res));
-
-                m_swapchain_framebuffers[i] = reinterpret_cast<VkFramebuffer>(framebuffer);
-
-                char fbName[64];
-                std::snprintf(fbName, sizeof(fbName), "SwapchainFramebuffer_%zu", i);
-                set_debug_name(reinterpret_cast<VkDevice>(m_device),
-                               VK_OBJECT_TYPE_FRAMEBUFFER,
-                               reinterpret_cast<uint64_t>(framebuffer),
-                               fbName);
-            }
-        }
+    }
 
     void VulkanContext::create_command_pool() {
         HN_PROFILE_FUNCTION();
@@ -1468,6 +1442,14 @@ namespace Honey {
                     vkCmdPushConstants(cmd, current_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &c.pushMat4.value);
                     break;
             }
+            case FramePacket::CmdType::PushConstants: {
+                    HN_CORE_ASSERT(render_pass_open, "PushConstants must occur inside a render pass");
+                    HN_CORE_ASSERT(current_pipeline_layout != VK_NULL_HANDLE, "PushConstants: no pipeline layout bound yet. Call bind_pipeline() before PushConstants.");
+                    HN_CORE_ASSERT((c.push.size + c.push.offset) <= 128, "PushConstants: data size exceeds max size");
+
+                    vkCmdPushConstants(cmd, current_pipeline_layout, c.push.stageFlags, c.push.offset, c.push.size, c.push.bytes.data());
+                    break;
+            }
             case FramePacket::CmdType::DrawIndexed: {
                     HN_CORE_ASSERT(render_pass_open, "DrawIndexed must occur inside a render pass");
                     HN_CORE_ASSERT(c.draw.va, "DrawIndexed: VertexArray is null");
@@ -1478,25 +1460,25 @@ namespace Honey {
                     HN_CORE_ASSERT(!vbs.empty(), "Vulkan draw: VertexArray has no vertex buffers");
                     HN_CORE_ASSERT(ib, "Vulkan draw: VertexArray has no index buffer");
 
-                    std::vector<VkBuffer> vbufs;
-                    std::vector<VkDeviceSize> offsets;
-                    vbufs.reserve(vbs.size());
-                    offsets.reserve(vbs.size());
+                    // Force binding layout:
+                    //   binding 0 -> mesh VB (PNUV)
+                    //   binding 1 -> instance VB (mat4 as 4 vec4)
+                    HN_CORE_ASSERT(vbs.size() == 1, "Vulkan draw: expected exactly 1 mesh vertex buffer for Renderer3D path");
+                    HN_CORE_ASSERT(c.draw.instanceVB, "Vulkan draw: expected instanceVB for instanced Renderer3D draw");
 
-                    for (const auto& vb_ref : vbs) {
-                        auto vk_vb = std::dynamic_pointer_cast<VulkanVertexBuffer>(vb_ref);
-                        HN_CORE_ASSERT(vk_vb, "Vulkan draw: expected VulkanVertexBuffer in VertexArray");
-                        vbufs.push_back(reinterpret_cast<VkBuffer>(vk_vb->get_vk_buffer()));
-                        offsets.push_back(0);
-                    }
+                    auto vk_vb0 = std::dynamic_pointer_cast<VulkanVertexBuffer>(vbs[0]);
+                    HN_CORE_ASSERT(vk_vb0, "Vulkan draw: expected VulkanVertexBuffer for mesh VB");
 
-                    vkCmdBindVertexBuffers(
-                        cmd,
-                        0,
-                        static_cast<uint32_t>(vbufs.size()),
-                        vbufs.data(),
-                        offsets.data()
-                    );
+                    auto vk_inst = std::dynamic_pointer_cast<VulkanVertexBuffer>(c.draw.instanceVB);
+                    HN_CORE_ASSERT(vk_inst, "Vulkan draw: expected VulkanVertexBuffer for instanceVB");
+
+                    VkBuffer buffers[2] = {
+                        reinterpret_cast<VkBuffer>(vk_vb0->get_vk_buffer()),
+                        reinterpret_cast<VkBuffer>(vk_inst->get_vk_buffer())
+                    };
+                    VkDeviceSize offsets[2] = { 0, static_cast<VkDeviceSize>(c.draw.instanceByteOffset) };
+
+                    vkCmdBindVertexBuffers(cmd, 0, 2, buffers, offsets);
 
                     auto vk_ib = std::dynamic_pointer_cast<VulkanIndexBuffer>(ib);
                     HN_CORE_ASSERT(vk_ib, "Vulkan draw: expected VulkanIndexBuffer in VertexArray");

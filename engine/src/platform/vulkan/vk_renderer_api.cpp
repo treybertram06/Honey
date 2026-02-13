@@ -165,6 +165,31 @@ namespace Honey {
 
         pkt().cmds.push_back(cmd);
     }
+
+    void VulkanRendererAPI::submit_instanced_draw(
+        const Ref<VertexArray>& vertex_array,
+        const Ref<VertexBuffer>& instance_vb,
+        uint32_t index_count,
+        uint32_t instance_count,
+        uint32_t instance_byte_offset
+    ) {
+        require_frame_begun();
+        HN_CORE_ASSERT(vertex_array, "submit_instanced_draw: vertex_array is null");
+        HN_CORE_ASSERT(instance_vb, "submit_instanced_draw: instance_vb is null");
+        HN_CORE_ASSERT(instance_count > 0, "submit_instanced_draw: instance_count must be > 0");
+        HN_CORE_ASSERT((instance_byte_offset % 16u) == 0u, "submit_instanced_draw: instance_byte_offset must be 16-byte aligned");
+
+        VulkanContext::FramePacket::Cmd cmd{};
+        cmd.type = VulkanContext::FramePacket::CmdType::DrawIndexed;
+        cmd.draw.va = vertex_array;
+        cmd.draw.indexCount = index_count;
+        cmd.draw.instanceCount = instance_count;
+        cmd.draw.instanceVB = instance_vb;
+        cmd.draw.instanceByteOffset = instance_byte_offset;
+
+        pkt().cmds.push_back(cmd);
+    }
+
     void VulkanRendererAPI::set_wireframe(bool) {
         if (auto* vk = get_vulkan_context())
             vk->mark_pipeline_dirty();
@@ -252,6 +277,19 @@ namespace Honey {
         VulkanContext::FramePacket::Cmd cmd{};
         cmd.type = VulkanContext::FramePacket::CmdType::PushConstantsMat4;
         cmd.pushMat4.value = value;
+
+        pkt().cmds.push_back(cmd);
+    }
+
+    void VulkanRendererAPI::submit_push_constants(const void* data, uint32_t size, uint32_t offset, VkShaderStageFlags stageFlags) {
+        require_frame_begun();
+
+        VulkanContext::FramePacket::Cmd cmd{};
+        cmd.type = VulkanContext::FramePacket::CmdType::PushConstants;
+        std::memcpy(cmd.push.bytes.data(), data, size);
+        cmd.push.size = size;
+        cmd.push.offset = offset;
+        cmd.push.stageFlags = stageFlags;
 
         pkt().cmds.push_back(cmd);
     }

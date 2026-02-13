@@ -188,6 +188,11 @@ add_library(engine STATIC
         src/Honey/renderer/pipeline.cpp
         src/Honey/ui/notifications.h
         src/Honey/ui/notifications.cpp
+        src/Honey/renderer/material.h
+        src/Honey/renderer/mesh.h
+        src/Honey/renderer/mesh.cpp
+        src/Honey/utils/gltf_loader.h
+        src/Honey/utils/gltf_loader.cpp
 )
 
 # Apply MSVC runtime to engine itself
@@ -454,11 +459,6 @@ target_include_directories(soloud PUBLIC
         ${SOLOUD_DIR}/include
 )
 
-
-# tinygltf (header only)
-add_subdirectory(vendor/tinygltf)
-target_link_libraries(engine PRIVATE tinygltf)
-
 if (UNIX AND NOT APPLE)
    target_compile_definitions(soloud PUBLIC WITH_MINIAUDIO)
 else ()
@@ -467,7 +467,11 @@ endif ()
 # Make sure SoLoud uses the same CRT on MSVC
 hn_force_msvc_runtime(soloud)
 
-
+# tinygltf is header-only, but it depends on stb_image + stb_image_write
+target_include_directories(engine PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/tinygltf
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/stb_image
+)
 
 # Prefer dynamic for Debug builds on Windows: simplest and avoids CRT static mismatch pain
 if(TARGET shaderc_shared)

@@ -576,6 +576,7 @@ namespace Honey {
     }
 
     void Renderer2D::shutdown() {
+        HN_PROFILE_FUNCTION();
         if (!s_data)
             return;
 
@@ -616,6 +617,7 @@ namespace Honey {
 
 
     void Renderer2D::begin_scene(const OrthographicCamera& cam) {
+        HN_PROFILE_FUNCTION();
         reset_stats();
 
         HN_CORE_ASSERT(s_data, "Renderer2D not initialized before calling begin_scene");
@@ -638,6 +640,7 @@ namespace Honey {
     }
 
     void Renderer2D::begin_scene(const Camera &camera, const glm::mat4& transform) {
+        HN_PROFILE_FUNCTION();
         reset_stats();
 
         glm::mat4 view_proj = camera.get_projection_matrix() * glm::inverse(transform);
@@ -658,6 +661,7 @@ namespace Honey {
     }
 
     void Renderer2D::begin_scene(const EditorCamera& camera) {
+        HN_PROFILE_FUNCTION();
         reset_stats();
 
         glm::mat4 vp = camera.get_view_projection_matrix(); // EngineClip
@@ -684,6 +688,7 @@ namespace Honey {
     }
 
     void Renderer2D::end_scene() {
+        HN_PROFILE_FUNCTION();
         quad_end_scene();
         circle_end_scene();
         line_end_scene();
@@ -697,6 +702,7 @@ namespace Honey {
     }
 
     void Renderer2D::line_end_scene() {
+        HN_PROFILE_FUNCTION();
         if (s_data->line_instances.empty())
             return;
 
@@ -765,6 +771,7 @@ namespace Honey {
     }
 
     void Renderer2D::circle_end_scene() {
+        HN_PROFILE_FUNCTION();
         if (s_data->circle_instances.empty())
             return;
 
@@ -835,6 +842,7 @@ namespace Honey {
     }
 
     void Renderer2D::quad_end_scene() {
+        HN_PROFILE_FUNCTION();
         if (s_data->quad_instances.empty())
             return;
 
@@ -844,7 +852,7 @@ namespace Honey {
             std::sort(s_data->quad_sorted_instances.begin(), s_data->quad_sorted_instances.end(),
                 [](const QuadInstance& a, const QuadInstance& b) {
                     return a.center.z < b.center.z;
-                });
+                }); // TEMP DISABLE
 
             // Upload instance data
             const size_t bytes = s_data->quad_sorted_instances.size() * sizeof(QuadInstance);
@@ -852,6 +860,10 @@ namespace Honey {
                 s_data->quad_sorted_instances.data(),
                 static_cast<uint32_t>(bytes)
             );
+
+            //auto& src = s_data->quad_instances; // no copy
+            //const size_t bytes = src.size() * sizeof(QuadInstance);
+            //s_data->i_quad_vertex_buffer->set_data(src.data(), (uint32_t)bytes); // Way faster
 
             auto fb = Renderer::get_render_target();
             Ref<Pipeline> pipe;
@@ -889,6 +901,7 @@ namespace Honey {
                 s_data->quad_vertex_array,
                 6,
                 static_cast<uint32_t>(s_data->quad_sorted_instances.size())
+                //(uint32_t)src.size()
             );
             s_data->stats.draw_calls++;
             return;

@@ -5,6 +5,9 @@
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.h>
 
+#include "Honey/core/engine.h"
+#include "platform/vulkan/vk_backend.h"
+
 namespace Honey {
 
     static uint32_t find_memory_type(VkPhysicalDevice phys, uint32_t type_filter, VkMemoryPropertyFlags props) {
@@ -62,6 +65,63 @@ namespace Honey {
         vkUnmapMemory(dev, mem);
     }
 
+    static void copy_buffer_immediate(VulkanBackend& backend, VkBuffer src, VkBuffer dst, VkDeviceSize size) {
+        HN_PROFILE_FUNCTION();
+        HN_CORE_ASSERT(src && dst && size > 0, "copy_buffer_immediate: invalid args");
+
+        backend.immediate_submit([&](VkCommandBuffer cmd) {
+            VkBufferCopy region{};
+            region.srcOffset = 0;
+            region.dstOffset = 0;
+            region.size = size;
+            vkCmdCopyBuffer(cmd, src, dst, 1, &region);
+        });
+    }
+
+    static void create_device_local_buffer_with_staging(
+        VkDevice dev,
+        VkPhysicalDevice phys,
+        VulkanBackend& backend,
+        const void* initial_data,
+        VkDeviceSize size,
+        VkBufferUsageFlags final_usage,
+        VkBuffer& out_buffer,
+        VkDeviceMemory& out_memory
+    ) {
+        HN_PROFILE_FUNCTION();
+        HN_CORE_ASSERT(dev && phys, "create_device_local_buffer_with_staging: invalid device/physical device");
+        HN_CORE_ASSERT(size > 0, "create_device_local_buffer_with_staging: size must be > 0");
+        HN_CORE_ASSERT(initial_data, "create_device_local_buffer_with_staging: initial_data is null");
+
+        // 1) staging (CPU-visible)
+        VkBuffer staging_buf = VK_NULL_HANDLE;
+        VkDeviceMemory staging_mem = VK_NULL_HANDLE;
+
+        create_buffer(
+            dev, phys, size,
+            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            staging_buf, staging_mem
+        );
+
+        upload_to_buffer(dev, staging_mem, initial_data, size);
+
+        // 2) final (GPU-local)
+        create_buffer(
+            dev, phys, size,
+            final_usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            out_buffer, out_memory
+        );
+
+        // 3) copy
+        copy_buffer_immediate(backend, staging_buf, out_buffer, size);
+
+        // 4) cleanup staging
+        vkDestroyBuffer(dev, staging_buf, nullptr);
+        vkFreeMemory(dev, staging_mem, nullptr);
+    }
+
     VulkanVertexBuffer::VulkanVertexBuffer(VkDevice device, VkPhysicalDevice phys, uint32_t size)
         : m_device_raw(device), m_phys_raw(phys) {
         HN_PROFILE_FUNCTION();
@@ -96,22 +156,40 @@ namespace Honey {
         VkBuffer buf = VK_NULL_HANDLE;
         VkDeviceMemory mem = VK_NULL_HANDLE;
 
-        create_buffer(m_device_raw, m_phys_raw, size,
-                      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                      buf, mem);
+        if (initial_data) {
+            auto& backend = Application::get().get_vulkan_backend();
+            create_device_local_buffer_with_staging(
+                m_device_raw,
+                m_phys_raw,
+                backend,
+                initial_data,
+                size,
+                VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                buf,
+                mem
+            );
+        } else {
+            // No initial data: keep it simple for now (CPU-visible dynamic buffer)
+            create_buffer(
+                m_device_raw, m_phys_raw, size,
+                VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                buf, mem
+            );
+        }
 
         m_buffer = reinterpret_cast<void*>(buf);
         m_memory = reinterpret_cast<void*>(mem);
-
-        if (initial_data) {
-            upload_to_buffer(m_device_raw, mem, initial_data, size);
-        }
     }
 
     void VulkanVertexBuffer::set_data(const void* data, uint32_t size) {
         HN_PROFILE_FUNCTION();
         HN_CORE_ASSERT(size <= m_size, "VulkanVertexBuffer::set_data overflow (size > buffer size)");
+        HN_CORE_ASSERT(data, "VulkanVertexBuffer::set_data data is null");
+
+        // NOTE: If this buffer was allocated DEVICE_LOCAL (staged), this will not work.
+        // For now, keep your usage pattern: use set_data on "dynamic" buffers only.
+        // When you need dynamic meshes, add a separate DynamicVulkanVertexBuffer or keep a staging+copy path here too.
         upload_to_buffer(m_device_raw, reinterpret_cast<VkDeviceMemory>(m_memory), data, size);
     }
 
@@ -123,7 +201,7 @@ namespace Honey {
     }
 
     VulkanIndexBuffer::VulkanIndexBuffer(VkDevice device, VkPhysicalDevice phys, uint16_t* indices, uint32_t count)
-    : m_count(count), m_device_raw(device), m_phys_raw(phys), m_type(VK_INDEX_TYPE_UINT16) {
+        : m_count(count), m_device_raw(device), m_phys_raw(phys), m_type(VK_INDEX_TYPE_UINT16) {
         HN_PROFILE_FUNCTION();
         HN_CORE_ASSERT(m_device_raw && m_phys_raw, "VulkanIndexBuffer: invalid device/physical device");
         allocate(count * sizeof(uint16_t), indices);
@@ -144,18 +222,25 @@ namespace Honey {
 
     void VulkanIndexBuffer::allocate(uint32_t bytes, const void* initial_data) {
         HN_PROFILE_FUNCTION();
+        HN_CORE_ASSERT(initial_data, "VulkanIndexBuffer::allocate requires initial_data");
+
         VkBuffer buf = VK_NULL_HANDLE;
         VkDeviceMemory mem = VK_NULL_HANDLE;
 
-        create_buffer(m_device_raw, m_phys_raw, bytes,
-                      VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                      buf, mem);
+        auto& backend = Application::get().get_vulkan_backend();
+        create_device_local_buffer_with_staging(
+            m_device_raw,
+            m_phys_raw,
+            backend,
+            initial_data,
+            bytes,
+            VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+            buf,
+            mem
+        );
 
         m_buffer = reinterpret_cast<void*>(buf);
         m_memory = reinterpret_cast<void*>(mem);
-
-        upload_to_buffer(m_device_raw, mem, initial_data, bytes);
     }
 
     VulkanUniformBuffer::VulkanUniformBuffer(VkDevice device, VkPhysicalDevice phys, uint32_t size, uint32_t binding)

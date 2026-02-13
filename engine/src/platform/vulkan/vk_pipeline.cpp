@@ -41,53 +41,88 @@ namespace Honey {
         std::vector<VkVertexInputAttributeDescription> attributes;
     };
 
-    static VertexInputBuildResult build_vertex_input_from_spec(const PipelineSpec& spec) {
-        VertexInputBuildResult out{};
+static VertexInputBuildResult build_vertex_input_from_spec(const PipelineSpec& spec) {
+            VertexInputBuildResult out{};
 
-        uint32_t current_location = 0;
+            uint32_t current_location = 0;
 
-        out.bindings.reserve(spec.vertexBindings.size());
+            out.bindings.reserve(spec.vertexBindings.size());
 
-        for (uint32_t bindingIndex = 0; bindingIndex < spec.vertexBindings.size(); ++bindingIndex) {
-            const BufferLayout& layout = spec.vertexBindings[bindingIndex].layout;
+            for (uint32_t bindingIndex = 0; bindingIndex < spec.vertexBindings.size(); ++bindingIndex) {
+                const BufferLayout& layout = spec.vertexBindings[bindingIndex].layout;
 
-            VkVertexInputBindingDescription b{};
-            b.binding   = bindingIndex;
-            b.stride    = layout.get_stride();
-            b.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+                // Special-case: instance model matrix (4x vec4) for Renderer3D_Forward
+                // This avoids subtle stride/offset bugs that cause "everything centered" + flicker.
+                const auto& els = layout.get_elements();
+                const bool looks_like_instance_mat4 =
+                    els.size() == 4 &&
+                    els[0].name == "a_iModel0" && els[1].name == "a_iModel1" &&
+                    els[2].name == "a_iModel2" && els[3].name == "a_iModel3" &&
+                    els[0].type == ShaderDataType::Float4 &&
+                    els[1].type == ShaderDataType::Float4 &&
+                    els[2].type == ShaderDataType::Float4 &&
+                    els[3].type == ShaderDataType::Float4;
 
-            bool any_instanced = false;
-            bool any_non_instanced = false;
+                if (looks_like_instance_mat4) {
+                    VkVertexInputBindingDescription b{};
+                    b.binding   = bindingIndex;
+                    b.stride    = sizeof(glm::mat4);
+                    b.inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
+                    out.bindings.push_back(b);
 
-            for (const auto& el : layout.get_elements()) {
-                if (el.instanced) any_instanced = true;
-                else              any_non_instanced = true;
+                    // Explicit shader locations 3..6
+                    for (uint32_t i = 0; i < 4; ++i) {
+                        VkVertexInputAttributeDescription a{};
+                        a.location = 3 + i;
+                        a.binding  = bindingIndex;
+                        a.format   = VK_FORMAT_R32G32B32A32_SFLOAT;
+                        a.offset   = 16u * i;
+                        out.attributes.push_back(a);
+                    }
+
+                    // IMPORTANT:
+                    // Reserve locations 3..6 so any subsequent attributes can't collide.
+                    current_location = std::max(current_location, 7u);
+                    continue;
+                }
+
+                VkVertexInputBindingDescription b{};
+                b.binding   = bindingIndex;
+                b.stride    = layout.get_stride();
+                b.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+                bool any_instanced = false;
+                bool any_non_instanced = false;
+
+                for (const auto& el : layout.get_elements()) {
+                    if (el.instanced) any_instanced = true;
+                    else              any_non_instanced = true;
+                }
+
+                HN_CORE_ASSERT(!(any_instanced && any_non_instanced),
+                    "Vulkan vertex layout: cannot mix instanced and non-instanced attributes in a single buffer");
+
+                if (any_instanced)
+                    b.inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
+
+                out.bindings.push_back(b);
+
+                for (const auto& el : layout.get_elements()) {
+                    VkVertexInputAttributeDescription a{};
+                    a.location = current_location++;
+                    a.binding  = bindingIndex;
+                    a.format   = shader_data_type_to_vk_format(el.type);
+                    a.offset   = static_cast<uint32_t>(el.offset);
+
+                    HN_CORE_ASSERT(a.format != VK_FORMAT_UNDEFINED,
+                        "Failed to map ShaderDataType to VkFormat for attribute '{}'", el.name);
+
+                    out.attributes.push_back(a);
+                }
             }
 
-            HN_CORE_ASSERT(!(any_instanced && any_non_instanced),
-                "Vulkan vertex layout: cannot mix instanced and non-instanced attributes in a single buffer");
-
-            if (any_instanced)
-                b.inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
-
-            out.bindings.push_back(b);
-
-            for (const auto& el : layout.get_elements()) {
-                VkVertexInputAttributeDescription a{};
-                a.location = current_location++;
-                a.binding  = bindingIndex;
-                a.format   = shader_data_type_to_vk_format(el.type);
-                a.offset   = static_cast<uint32_t>(el.offset);
-
-                HN_CORE_ASSERT(a.format != VK_FORMAT_UNDEFINED,
-                    "Failed to map ShaderDataType to VkFormat for attribute '{}'", el.name);
-
-                out.attributes.push_back(a);
-            }
+            return out;
         }
-
-        return out;
-    }
 
     static std::vector<uint32_t> read_spirv_u32_file(const std::string& path) {
         std::ifstream file(path, std::ios::ate | std::ios::binary);
@@ -293,9 +328,9 @@ namespace Honey {
         layout_ci.pSetLayouts = set_layouts;
 
         VkPushConstantRange pc_range{};
-        pc_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        pc_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         pc_range.offset = 0;
-        pc_range.size = sizeof(glm::mat4);
+        pc_range.size = k_push_constant_max_size;
 
         layout_ci.pushConstantRangeCount = 1;
         layout_ci.pPushConstantRanges = &pc_range;
@@ -326,4 +361,4 @@ namespace Honey {
         HN_CORE_ASSERT(pr == VK_SUCCESS, "vkCreateGraphicsPipelines failed");
         m_pipeline = pipeline;
     }
-} // namespace Honey
+}
