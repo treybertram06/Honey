@@ -75,6 +75,20 @@ namespace Honey {
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, count * sizeof(uint32_t), indices, GL_STATIC_DRAW);
     }
 
+    OpenGLIndexBuffer::OpenGLIndexBuffer(uint16_t* indices, uint32_t count)
+        : m_count(count) {
+        HN_PROFILE_FUNCTION();
+
+#if defined(HN_PLATFORM_WINDOWS) || defined(HN_PLATFORM_LINUX)
+        glCreateBuffers(1, &m_renderer_id);
+#endif
+#ifdef HN_PLATFORM_MACOS
+        glGenBuffers(1, &m_renderer_id);
+#endif
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_renderer_id);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, count * sizeof(uint16_t), indices, GL_STATIC_DRAW);
+    }
+
     OpenGLIndexBuffer::~OpenGLIndexBuffer() {
         HN_PROFILE_FUNCTION();
 

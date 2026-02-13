@@ -24,14 +24,15 @@ namespace Honey {
         uint32_t h = win.get_height();
         m_camera = EditorCamera(w/h, 45.0f, 0.1f, 1000.0f);
 
-        // --- Minimal 3D test triangle (Vulkan path) ---
+        // --- Minimal 3D test quad (Vulkan path) ---
         {
             m_test_vao_3d = VertexArray::create();
 
-            TestVertex3D verts[3] = {
-                { { -0.5f, -0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f } },
-                { {  0.5f, -0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 1.0f, 0.0f } },
-                { {  0.0f,  0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 0.5f, 1.0f } },
+            TestVertex3D verts[4] = {
+                { { -0.5f, -0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f } }, // bottom left
+                { {  0.5f, -0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 1.0f, 0.0f } }, // bottom right
+                { {  0.5f,  0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 1.0f, 1.0f } }, // top right
+                { { -0.5f,  0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 0.0f, 1.0f } }, // top left
             };
 
             Ref<VertexBuffer> vb = VertexBuffer::create((uint32_t)sizeof(verts));
@@ -43,8 +44,13 @@ namespace Honey {
             });
             m_test_vao_3d->add_vertex_buffer(vb);
 
-            uint32_t indices[3] = { 0, 1, 2 };
-            Ref<IndexBuffer> ib = IndexBuffer::create(indices, 3);
+            // two triangles
+            uint16_t indices[6] = {
+                0, 1, 2,   // first triangle
+                2, 3, 0    // second triangle
+            };
+
+            Ref<IndexBuffer> ib = IndexBuffer::create(indices, 6);
             m_test_vao_3d->set_index_buffer(ib);
         }
     }
@@ -206,6 +212,16 @@ namespace Honey {
                     renderer.anisotropic_filtering_level = af_values[current_index];
                     // Recreate samplers so the new level takes effect
                     TextureCache::get().recreate_all_samplers();
+                }
+            }
+
+            // Cull mode
+            {
+                static const char* cull_mode_names[] = { "None", "Back", "Front" };
+                int current_index = static_cast<int>(renderer.cull_mode);
+                if (ImGui::Combo("Cull Mode", &current_index, cull_mode_names, IM_ARRAYSIZE(cull_mode_names))) {
+                    renderer.cull_mode = static_cast<CullMode>(current_index);
+                    RenderCommand::set_cull_mode(renderer.cull_mode);
                 }
             }
 

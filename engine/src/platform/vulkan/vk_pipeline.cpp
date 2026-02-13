@@ -293,7 +293,7 @@ namespace Honey {
         layout_ci.pSetLayouts = set_layouts;
 
         VkPushConstantRange pc_range{};
-        pc_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        pc_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
         pc_range.offset = 0;
         pc_range.size = sizeof(glm::mat4);
 

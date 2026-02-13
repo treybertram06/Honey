@@ -6,6 +6,7 @@
 #include "opengl_buffer.h"
 #include "opengl_framebuffer.h"
 #include "opengl_vertex_array.h"
+#include "Honey/renderer/pipeline_spec.h"
 
 namespace Honey {
     void OpenGLRendererAPI::init() {
@@ -132,6 +133,18 @@ namespace Honey {
         glfwSwapInterval(mode ? 1 : 0);
     }
 
+    void OpenGLRendererAPI::set_cull_mode(CullMode mode) {
+        glEnable(GL_CULL_FACE);
+        switch (mode) {
+            case CullMode::None:
+                glDisable(GL_CULL_FACE);
+                break;
+            case CullMode::Front:
+            case CullMode::Back:
+                glCullFace(mode == CullMode::Front ? GL_FRONT : GL_BACK);
+        }
+    }
+
     Ref<VertexBuffer> OpenGLRendererAPI::create_vertex_buffer(uint32_t size) {
         return CreateRef<OpenGLVertexBuffer>(size);
     }
@@ -140,7 +153,11 @@ namespace Honey {
         return CreateRef<OpenGLVertexBuffer>(vertices, size);
     }
 
-    Ref<IndexBuffer> OpenGLRendererAPI::create_index_buffer(uint32_t* indices, uint32_t size) {
+    Ref<IndexBuffer> OpenGLRendererAPI::create_index_buffer_u32(uint32_t* indices, uint32_t size) {
+        return CreateRef<OpenGLIndexBuffer>(indices, size);
+    }
+
+    Ref<IndexBuffer> OpenGLRendererAPI::create_index_buffer_u16(uint16_t* indices, uint32_t size) {
         return CreateRef<OpenGLIndexBuffer>(indices, size);
     }
 

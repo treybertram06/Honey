@@ -7,6 +7,7 @@
 #include "platform/vulkan/vk_backend.h"
 
 namespace Honey {
+    enum class CullMode;
 
     class Pipeline;
 
@@ -50,10 +51,12 @@ namespace Honey {
         virtual void set_blend(bool mode) = 0;
         virtual void set_blend_for_attachment(uint32_t attachment, bool mode) = 0;
         virtual void set_vsync(bool mode) = 0;
+        virtual void set_cull_mode(CullMode mode) = 0;
 
         virtual Ref<VertexBuffer> create_vertex_buffer(uint32_t size) = 0;
         virtual Ref<VertexBuffer> create_vertex_buffer(float* vertices, uint32_t size) = 0;
-        virtual Ref<IndexBuffer> create_index_buffer(uint32_t* indices, uint32_t size) = 0;
+        virtual Ref<IndexBuffer> create_index_buffer_u32(uint32_t* indices, uint32_t size) = 0;
+        virtual Ref<IndexBuffer> create_index_buffer_u16(uint16_t* indices, uint32_t size) = 0;
         virtual Ref<VertexArray> create_vertex_array() = 0;
         virtual Ref<UniformBuffer> create_uniform_buffer(uint32_t size, uint32_t binding) = 0;
 

@@ -48,6 +48,24 @@ namespace Honey {
         return "Nearest";
     }
 
+    static std::string cull_mode_to_string(CullMode mode) {
+        switch (mode) {
+        case CullMode::None: return "None";
+        case CullMode::Front: return "Front";
+        case CullMode::Back: return "Back";
+        }
+        return "None";
+    }
+
+    static CullMode string_to_cull_mode(const std::string& str) {
+        std::string s = str;
+        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
+        if (s == "None") return CullMode::None;
+        if (s == "Front") return CullMode::Front;
+        if (s == "Back") return CullMode::Back;
+        return CullMode::None;
+    }
+
     bool Settings::load_from_file(const std::filesystem::path& filepath) {
         if (!std::filesystem::exists(filepath)) {
             HN_CORE_WARN("Settings file does not exist: {}", filepath.string());
@@ -122,6 +140,10 @@ namespace Honey {
                     s.renderer.texture_filter
                 );
             }
+
+            if (auto n = renderer_node["CullMode"]) {
+                s.renderer.cull_mode = string_to_cull_mode(n.as<std::string>());
+            }
         }
 
         // ---------------- Physics ----------------
@@ -165,6 +187,8 @@ namespace Honey {
             << YAML::Value << s.renderer.anisotropic_filtering_level;
         out << YAML::Key << "TextureFilter"
             << YAML::Value << texture_filter_to_string(s.renderer.texture_filter);
+        out << YAML::Key << "CullMode"
+            << YAML::Value << cull_mode_to_string(s.renderer.cull_mode);
 
         out << YAML::EndMap; // Renderer
 

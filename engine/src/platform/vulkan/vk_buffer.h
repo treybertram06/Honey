@@ -37,12 +37,14 @@ namespace Honey {
     class VulkanIndexBuffer : public IndexBuffer {
     public:
         VulkanIndexBuffer(VkDevice device, VkPhysicalDevice phys, uint32_t* indices, uint32_t count);
+        VulkanIndexBuffer(VkDevice device, VkPhysicalDevice phys, uint16_t* indices, uint32_t count);
         ~VulkanIndexBuffer() override;
 
         void bind() const override {}
         void unbind() const override {}
 
         uint32_t get_count() const override { return m_count; }
+        VkIndexType get_type() const { return m_type; }
 
         void* get_vk_buffer() const { return m_buffer; }
 
@@ -50,6 +52,7 @@ namespace Honey {
         void allocate(uint32_t bytes, const void* initial_data);
 
         uint32_t m_count = 0;
+        VkIndexType m_type;
 
         VkDevice m_device_raw = nullptr;
         VkPhysicalDevice m_phys_raw = nullptr;

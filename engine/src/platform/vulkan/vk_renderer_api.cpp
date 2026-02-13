@@ -193,6 +193,11 @@ namespace Honey {
             vk->request_swapchain_recreation();
     }
 
+    void VulkanRendererAPI::set_cull_mode(CullMode mode) {
+        if (auto* vk = get_vulkan_context())
+            vk->mark_pipeline_dirty();
+    }
+
     Ref<VertexBuffer> VulkanRendererAPI::create_vertex_buffer(uint32_t size) {
         HN_CORE_ASSERT(m_device && m_physical_device, "VulkanRendererAPI not initialized (device not available)");
         return CreateRef<VulkanVertexBuffer>(m_device, m_physical_device, size);
@@ -203,7 +208,12 @@ namespace Honey {
         return CreateRef<VulkanVertexBuffer>(m_device, m_physical_device, vertices, size);
     }
 
-    Ref<IndexBuffer> VulkanRendererAPI::create_index_buffer(uint32_t* indices, uint32_t size) {
+    Ref<IndexBuffer> VulkanRendererAPI::create_index_buffer_u32(uint32_t* indices, uint32_t size) {
+        HN_CORE_ASSERT(m_device && m_physical_device, "VulkanRendererAPI not initialized (device not available)");
+        return CreateRef<VulkanIndexBuffer>(m_device, m_physical_device, indices, size);
+    }
+
+    Ref<IndexBuffer> VulkanRendererAPI::create_index_buffer_u16(uint16_t* indices, uint32_t size) {
         HN_CORE_ASSERT(m_device && m_physical_device, "VulkanRendererAPI not initialized (device not available)");
         return CreateRef<VulkanIndexBuffer>(m_device, m_physical_device, indices, size);
     }

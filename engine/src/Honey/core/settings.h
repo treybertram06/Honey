@@ -1,6 +1,7 @@
 #pragma once
 #include <glm/glm.hpp>
 #include "Honey/renderer/renderer_api.h"
+#include "Honey/renderer/pipeline_spec.h"
 
 namespace Honey {
 
@@ -23,6 +24,7 @@ namespace Honey {
         bool vsync = true;
         bool show_physics_debug_draw = false;
         float anisotropic_filtering_level = 16.0f; // This overrides what the actual maximum value is, but I don't care.
+        CullMode cull_mode = CullMode::Back;
 
         TextureFilter texture_filter = TextureFilter::nearest;
 

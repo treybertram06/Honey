@@ -34,10 +34,12 @@ namespace Honey {
         void set_blend(bool) override;
         void set_blend_for_attachment(uint32_t, bool) override;
         void set_vsync(bool mode) override;
+        void set_cull_mode(CullMode mode) override;
 
         Ref<VertexBuffer> create_vertex_buffer(uint32_t size) override;
         Ref<VertexBuffer> create_vertex_buffer(float* vertices, uint32_t size) override;
-        Ref<IndexBuffer> create_index_buffer(uint32_t* indices, uint32_t size) override;
+        Ref<IndexBuffer> create_index_buffer_u32(uint32_t* indices, uint32_t size) override;
+        Ref<IndexBuffer> create_index_buffer_u16(uint16_t* indices, uint32_t size) override;
         Ref<VertexArray> create_vertex_array() override;
         Ref<UniformBuffer> create_uniform_buffer(uint32_t size, uint32_t binding) override;
         Ref<Framebuffer> create_framebuffer(const FramebufferSpecification& spec) override;

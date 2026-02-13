@@ -127,6 +127,7 @@ namespace Honey {
         virtual uint32_t get_count() const = 0;
 
         static Ref<IndexBuffer> create(uint32_t* indices, uint32_t count);
+        static Ref<IndexBuffer> create(uint16_t* indices, uint32_t count);
 
     };
 

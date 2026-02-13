@@ -16,7 +16,11 @@ namespace Honey {
     }
 
     Ref<IndexBuffer> IndexBuffer::create(uint32_t *indices, uint32_t count) {
-        return RenderCommand::get_renderer_api()->create_index_buffer(indices, count);
+        return RenderCommand::get_renderer_api()->create_index_buffer_u32(indices, count);
+    }
+
+    Ref<IndexBuffer> IndexBuffer::create(uint16_t* indices, uint32_t count) {
+        return RenderCommand::get_renderer_api()->create_index_buffer_u16(indices, count);
     }
 
     Ref<UniformBuffer> UniformBuffer::create(uint32_t size, uint32_t binding) {

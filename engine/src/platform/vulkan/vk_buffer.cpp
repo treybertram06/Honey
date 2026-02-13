@@ -116,10 +116,17 @@ namespace Honey {
     }
 
     VulkanIndexBuffer::VulkanIndexBuffer(VkDevice device, VkPhysicalDevice phys, uint32_t* indices, uint32_t count)
-        : m_count(count), m_device_raw(device), m_phys_raw(phys) {
+        : m_count(count), m_device_raw(device), m_phys_raw(phys), m_type(VK_INDEX_TYPE_UINT32) {
         HN_PROFILE_FUNCTION();
         HN_CORE_ASSERT(m_device_raw && m_phys_raw, "VulkanIndexBuffer: invalid device/physical device");
         allocate(count * sizeof(uint32_t), indices);
+    }
+
+    VulkanIndexBuffer::VulkanIndexBuffer(VkDevice device, VkPhysicalDevice phys, uint16_t* indices, uint32_t count)
+    : m_count(count), m_device_raw(device), m_phys_raw(phys), m_type(VK_INDEX_TYPE_UINT16) {
+        HN_PROFILE_FUNCTION();
+        HN_CORE_ASSERT(m_device_raw && m_phys_raw, "VulkanIndexBuffer: invalid device/physical device");
+        allocate(count * sizeof(uint16_t), indices);
     }
 
     VulkanIndexBuffer::~VulkanIndexBuffer() {

@@ -226,6 +226,11 @@ namespace Honey {
         VkRenderPass m_render_pass = nullptr;
         std::vector<VkFramebuffer> m_swapchain_framebuffers;
 
+        VkFormat m_swapchain_depth_format = VK_FORMAT_UNDEFINED;
+        std::vector<VkImage> m_swapchain_depth_images;
+        std::vector<VkDeviceMemory> m_swapchain_depth_memories;
+        std::vector<VkImageView> m_swapchain_depth_image_views;
+
         //VulkanPipeline m_pipeline_quad;
         //VulkanPipeline m_pipeline_quad_fb;
 

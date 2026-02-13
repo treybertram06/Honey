@@ -1,5 +1,6 @@
 #pragma once
 
+#include "pipeline_spec.h"
 #include "renderer_api.h"
 
 namespace Honey {
@@ -67,6 +68,10 @@ namespace Honey {
 
         inline static void set_blend_for_attachment(uint32_t attachment, bool mode) {
             s_renderer_api->set_blend_for_attachment(attachment, mode);
+        }
+
+        inline static void set_cull_mode(CullMode mode) {
+            s_renderer_api->set_cull_mode(mode);
         }
 
         inline static void set_renderer_api(Scope<RendererAPI>&& api) {

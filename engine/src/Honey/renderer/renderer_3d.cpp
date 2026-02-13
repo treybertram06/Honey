@@ -7,6 +7,7 @@
 #include "renderer.h"
 #include "shader_cache.h"
 #include "Honey/core/engine.h"
+#include "Honey/core/settings.h"
 #include "platform/vulkan/vk_renderer_api.h"
 
 static const std::filesystem::path asset_root = ASSET_ROOT;
@@ -39,16 +40,18 @@ namespace Honey {
 
     static PipelineSpec build_vk_forward3d_pipeline_spec()
     {
+        auto& rs = Settings::get().renderer;
+
         PipelineSpec spec{};
         spec.shaderGLSLPath = asset_root / "shaders" / "Renderer3D_Forward.glsl";
         spec.topology = PrimitiveTopology::Triangles;
-        spec.cullMode = CullMode::Back;
+        spec.cullMode = rs.cull_mode;
         spec.frontFace = FrontFaceWinding::CounterClockwise;
-        spec.wireframe = false;
+        spec.wireframe = rs.wireframe;
 
         // Swapchain render pass currently has NO depth attachment, so keep depth off for now.
-        spec.depthStencil.depthTest = false;
-        spec.depthStencil.depthWrite = false;
+        spec.depthStencil.depthTest = rs.depth_test;
+        spec.depthStencil.depthWrite = rs.depth_write;
 
         spec.passType = RenderPassType::Swapchain;
 
@@ -69,7 +72,7 @@ namespace Honey {
         // Swapchain pass has a single color attachment; blending off for now.
         spec.perColorAttachmentBlend.clear();
         AttachmentBlendState b0{};
-        b0.enabled = false;
+        b0.enabled = rs.blending;
         spec.perColorAttachmentBlend.push_back(b0);
 
         return spec;
