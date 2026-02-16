@@ -133,6 +133,7 @@ namespace Honey {
         const auto frag_path = get_spirv_cache_path(shader_path, "frag");
 
         if (file_exists_nonempty(vert_path) && file_exists_nonempty(frag_path)) {
+            HN_CORE_INFO("Shader cache hit (SPIR-V only): {0}", shader_path.string());
             return { vert_path, frag_path };
         }
 

@@ -33,6 +33,7 @@ namespace Honey {
 		static void draw_mesh(const Ref<VertexArray>& vertex_array, const glm::mat4& transform);
 		static void draw_mesh(const Ref<VertexArray>& vertex_array, const Ref<Material>& material, const glm::mat4& transform);
 
+		static void prewarm_pipelines(void* native_render_pass);
 
 		// Statistics
 		struct Statistics {

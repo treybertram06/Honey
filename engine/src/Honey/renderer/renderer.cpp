@@ -90,6 +90,7 @@ namespace Honey {
         RenderCommand::set_viewport(0, 0, width, height);
     }
 
+    static bool s_pipelines_prewarmed = false;
     void Renderer::begin_frame() {
         HN_PROFILE_FUNCTION();
 
@@ -101,6 +102,11 @@ namespace Honey {
         HN_CORE_ASSERT(vk, "Renderer::begin_frame() expected VulkanContext when Vulkan is active");
 
         vk->frame_packet().begin_frame();
+
+        if (!s_pipelines_prewarmed) { // Prewarm once as soon as there's a valid context, and therefore a render pass exists
+            prewarm_pipelines(nullptr);
+            s_pipelines_prewarmed = true;
+        }
     }
 
     void Renderer::set_render_target(const Ref<Framebuffer>& framebuffer) {
@@ -195,6 +201,22 @@ namespace Honey {
             HN_CORE_ASSERT(false, "Renderer::end_pass: unsupported RendererAPI");
             break;
         }
+    }
+
+    void Renderer::prewarm_pipelines(void* native_render_pass) {
+        HN_PROFILE_FUNCTION();
+
+        // If caller didn't pass a pass, we can default to the main swapchain pass on Vulkan.
+        if (get_api() == RendererAPI::API::vulkan && !native_render_pass) {
+            auto* base = Application::get().get_window().get_context();
+            auto* vk = dynamic_cast<VulkanContext*>(base);
+            HN_CORE_ASSERT(vk, "Renderer::prewarm_pipelines: expected VulkanContext");
+            native_render_pass = vk->get_render_pass();
+        }
+
+        Renderer3D::prewarm_pipelines(native_render_pass);
+        Renderer2D::prewarm_pipelines(native_render_pass);
+        HN_CORE_INFO("Renderer::prewarm_pipelines: done.");
     }
 
     void Renderer::begin_scene(OrthographicCamera& camera) {

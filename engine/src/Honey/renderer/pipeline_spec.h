@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <vector>
 #include <cstdint>
+
 #include "Honey/renderer/buffer.h"
 
 namespace Honey {
@@ -50,8 +51,7 @@ namespace Honey {
 
     struct VertexInputBindingSpec {
         BufferLayout layout;
-        // binding index is implicit from order in the vector
-        // (0 = first, 1 = second, as with your VertexArray).
+        std::vector<uint32_t> locations;
     };
 
     struct PipelineSpec {
@@ -84,6 +84,9 @@ namespace Honey {
                    depthStencil == other.depthStencil &&
                    passType   == other.passType;
         }
-    };
 
-} // namespace Honey
+        static std::vector<VertexInputBindingSpec> reflect_vertex_input_bindings_from_spirv(const std::filesystem::path& vertexSpvPath);
+
+        static PipelineSpec from_shader(const std::filesystem::path& path);
+    };
+}

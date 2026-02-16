@@ -391,6 +391,7 @@ namespace Honey {
         sampler_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
         // binding 2 => texture array (sampled images, fragment)
+        // With variable descriptor count: descriptorCount here is the MAX.
         VkDescriptorSetLayoutBinding tex_binding{};
         tex_binding.binding = 2;
         tex_binding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
@@ -403,41 +404,64 @@ namespace Honey {
             tex_binding
         };
 
+        // ---- Descriptor indexing / bindless binding flags (variable descriptor count) ----
+        VkDescriptorBindingFlags binding_flags[3]{};
+        binding_flags[0] = 0; // UBO
+        binding_flags[1] = 0; // sampler
+        binding_flags[2] =
+            VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
+            VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT |
+            VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
+
+        VkDescriptorSetLayoutBindingFlagsCreateInfo binding_flags_ci{};
+        binding_flags_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+        binding_flags_ci.bindingCount = 3;
+        binding_flags_ci.pBindingFlags = binding_flags;
+
         VkDescriptorSetLayoutCreateInfo layout_ci{};
         layout_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layout_ci.pNext = &binding_flags_ci;
+        layout_ci.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
         layout_ci.bindingCount = 3;
         layout_ci.pBindings = bindings;
 
-        VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
-        VkResult r = vkCreateDescriptorSetLayout(reinterpret_cast<VkDevice>(m_device), &layout_ci, nullptr, &set_layout);
-        HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateDescriptorSetLayout failed");
-        m_global_set_layout = reinterpret_cast<VkDescriptorSetLayout>(set_layout);
+        {
+            VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
+            VkResult r = vkCreateDescriptorSetLayout(reinterpret_cast<VkDevice>(m_device), &layout_ci, nullptr, &set_layout);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateDescriptorSetLayout failed");
+            m_global_set_layout = reinterpret_cast<VkDescriptorSetLayout>(set_layout);
 
-        // Descriptor pool sized for frames-in-flight:
-        VkDescriptorPoolSize pool_sizes[3]{};
+            // Descriptor pool sized for frames-in-flight:
+            VkDescriptorPoolSize pool_sizes[3]{};
 
-        // UBOs (binding 0)
-        pool_sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        pool_sizes[0].descriptorCount = k_max_frames_in_flight;
+            // UBOs (binding 0)
+            pool_sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            pool_sizes[0].descriptorCount = k_max_frames_in_flight;
 
-        // Samplers (binding 1)
-        pool_sizes[1].type = VK_DESCRIPTOR_TYPE_SAMPLER;
-        pool_sizes[1].descriptorCount = k_max_frames_in_flight;
+            // Samplers (binding 1)
+            pool_sizes[1].type = VK_DESCRIPTOR_TYPE_SAMPLER;
+            pool_sizes[1].descriptorCount = k_max_frames_in_flight;
 
-        // Sampled images (binding 2)
-        pool_sizes[2].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-        pool_sizes[2].descriptorCount = k_max_frames_in_flight * VulkanRendererAPI::k_max_texture_slots;
+            // Sampled images (binding 2)
+            // Pool must cover the MAX possible descriptors you may allocate across sets.
+            pool_sizes[2].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            pool_sizes[2].descriptorCount = k_max_frames_in_flight * VulkanRendererAPI::k_max_texture_slots;
 
-        VkDescriptorPoolCreateInfo pool_ci{};
-        pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        pool_ci.maxSets = k_max_frames_in_flight;
-        pool_ci.poolSizeCount = 3;
-        pool_ci.pPoolSizes = pool_sizes;
+            VkDescriptorPoolCreateInfo pool_ci{};
+            pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+            pool_ci.maxSets = k_max_frames_in_flight;
+            pool_ci.poolSizeCount = 3;
+            pool_ci.pPoolSizes = pool_sizes;
+            pool_ci.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
 
-        VkDescriptorPool pool = VK_NULL_HANDLE;
-        r = vkCreateDescriptorPool(reinterpret_cast<VkDevice>(m_device), &pool_ci, nullptr, &pool);
-        HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateDescriptorPool failed");
-        m_descriptor_pool = reinterpret_cast<VkDescriptorPool>(pool);
+            // Required for UPDATE_AFTER_BIND descriptors/layouts
+            pool_ci.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
+
+            VkDescriptorPool pool = VK_NULL_HANDLE;
+            r = vkCreateDescriptorPool(reinterpret_cast<VkDevice>(m_device), &pool_ci, nullptr, &pool);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateDescriptorPool failed");
+            m_descriptor_pool = reinterpret_cast<VkDescriptorPool>(pool);
+        }
 
         // Create per-frame UBO + allocate per-frame descriptor sets
         m_camera_ubo_size = sizeof(glm::mat4);
@@ -446,68 +470,81 @@ namespace Honey {
         for (uint32_t i = 0; i < k_max_frames_in_flight; ++i)
             layouts[i] = reinterpret_cast<VkDescriptorSetLayout>(m_global_set_layout);
 
+        // Track allocated descriptor capacity for binding 2 (per frame)
+        static uint32_t s_global_texture_capacity_per_frame[k_max_frames_in_flight]{};
+        for (uint32_t i = 0; i < k_max_frames_in_flight; ++i)
+            s_global_texture_capacity_per_frame[i] = VulkanRendererAPI::k_max_texture_slots;
+
+        VkDescriptorSetVariableDescriptorCountAllocateInfo var_alloc{};
+        var_alloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO;
+        var_alloc.descriptorSetCount = k_max_frames_in_flight;
+        var_alloc.pDescriptorCounts = s_global_texture_capacity_per_frame;
+
         VkDescriptorSetAllocateInfo alloc{};
         alloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        alloc.pNext = &var_alloc;
         alloc.descriptorPool = reinterpret_cast<VkDescriptorPool>(m_descriptor_pool);
         alloc.descriptorSetCount = k_max_frames_in_flight;
         alloc.pSetLayouts = layouts;
+        {
+            VkDescriptorSet sets[k_max_frames_in_flight]{};
+            VkResult r = vkAllocateDescriptorSets(reinterpret_cast<VkDevice>(m_device), &alloc, sets);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "vkAllocateDescriptorSets failed");
 
-        VkDescriptorSet sets[k_max_frames_in_flight]{};
-        r = vkAllocateDescriptorSets(reinterpret_cast<VkDevice>(m_device), &alloc, sets);
-        HN_CORE_ASSERT(r == VK_SUCCESS, "vkAllocateDescriptorSets failed");
+            for (uint32_t frame = 0; frame < k_max_frames_in_flight; ++frame) {
+                m_global_descriptor_sets[frame] = reinterpret_cast<VkDescriptorSet>(sets[frame]);
 
-        for (uint32_t frame = 0; frame < k_max_frames_in_flight; ++frame) {
-            m_global_descriptor_sets[frame] = reinterpret_cast<VkDescriptorSet>(sets[frame]);
 
-            // Create camera UBO for this frame
-            VkBufferCreateInfo bi{};
-            bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-            bi.size = m_camera_ubo_size;
-            bi.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
-            bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+                // Create camera UBO for this frame
+                VkBufferCreateInfo bi{};
+                bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+                bi.size = m_camera_ubo_size;
+                bi.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+                bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-            VkBuffer ubo = VK_NULL_HANDLE;
-            r = vkCreateBuffer(reinterpret_cast<VkDevice>(m_device), &bi, nullptr, &ubo);
-            HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateBuffer (camera ubo) failed");
+                VkBuffer ubo = VK_NULL_HANDLE;
+                r = vkCreateBuffer(reinterpret_cast<VkDevice>(m_device), &bi, nullptr, &ubo);
+                HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateBuffer (camera ubo) failed");
 
-            VkMemoryRequirements req{};
-            vkGetBufferMemoryRequirements(reinterpret_cast<VkDevice>(m_device), ubo, &req);
+                VkMemoryRequirements req{};
+                vkGetBufferMemoryRequirements(reinterpret_cast<VkDevice>(m_device), ubo, &req);
 
-            VkMemoryAllocateInfo ai{};
-            ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-            ai.allocationSize = req.size;
-            ai.memoryTypeIndex = find_memory_type_local(
-                reinterpret_cast<VkPhysicalDevice>(m_physical_device),
-                req.memoryTypeBits,
-                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
-            );
+                VkMemoryAllocateInfo ai{};
+                ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+                ai.allocationSize = req.size;
+                ai.memoryTypeIndex = find_memory_type_local(
+                    reinterpret_cast<VkPhysicalDevice>(m_physical_device),
+                    req.memoryTypeBits,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+                );
 
-            VkDeviceMemory mem = VK_NULL_HANDLE;
-            r = vkAllocateMemory(reinterpret_cast<VkDevice>(m_device), &ai, nullptr, &mem);
-            HN_CORE_ASSERT(r == VK_SUCCESS, "vkAllocateMemory (camera ubo) failed");
+                VkDeviceMemory mem = VK_NULL_HANDLE;
+                r = vkAllocateMemory(reinterpret_cast<VkDevice>(m_device), &ai, nullptr, &mem);
+                HN_CORE_ASSERT(r == VK_SUCCESS, "vkAllocateMemory (camera ubo) failed");
 
-            r = vkBindBufferMemory(reinterpret_cast<VkDevice>(m_device), ubo, mem, 0);
-            HN_CORE_ASSERT(r == VK_SUCCESS, "vkBindBufferMemory (camera ubo) failed");
+                r = vkBindBufferMemory(reinterpret_cast<VkDevice>(m_device), ubo, mem, 0);
+                HN_CORE_ASSERT(r == VK_SUCCESS, "vkBindBufferMemory (camera ubo) failed");
 
-            m_camera_ubos[frame] = reinterpret_cast<void*>(ubo);
-            m_camera_ubo_memories[frame] = reinterpret_cast<void*>(mem);
+                m_camera_ubos[frame] = reinterpret_cast<void*>(ubo);
+                m_camera_ubo_memories[frame] = reinterpret_cast<void*>(mem);
 
-            // Write binding 0 (UBO) now; bindings 1 & 2 will be updated later.
-            VkDescriptorBufferInfo dbi{};
-            dbi.buffer = ubo;
-            dbi.offset = 0;
-            dbi.range = m_camera_ubo_size;
+                // Write binding 0 (UBO) now; bindings 1 & 2 will be updated later.
+                VkDescriptorBufferInfo dbi{};
+                dbi.buffer = ubo;
+                dbi.offset = 0;
+                dbi.range = m_camera_ubo_size;
 
-            VkWriteDescriptorSet write_ubo{};
-            write_ubo.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            write_ubo.dstSet = reinterpret_cast<VkDescriptorSet>(m_global_descriptor_sets[frame]);
-            write_ubo.dstBinding = 0;
-            write_ubo.dstArrayElement = 0;
-            write_ubo.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            write_ubo.descriptorCount = 1;
-            write_ubo.pBufferInfo = &dbi;
+                VkWriteDescriptorSet write_ubo{};
+                write_ubo.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                write_ubo.dstSet = reinterpret_cast<VkDescriptorSet>(m_global_descriptor_sets[frame]);
+                write_ubo.dstBinding = 0;
+                write_ubo.dstArrayElement = 0;
+                write_ubo.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+                write_ubo.descriptorCount = 1;
+                write_ubo.pBufferInfo = &dbi;
 
-            vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(m_device), 1, &write_ubo, 0, nullptr);
+                vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(m_device), 1, &write_ubo, 0, nullptr);
+            }
         }
     }
 
@@ -1239,10 +1276,14 @@ namespace Honey {
                 HN_CORE_ASSERT(g.textureCount > 0 && g.textures[0],
                                "Vulkan: expected texture slot 0 to be present");
 
+                const uint32_t write_count = std::max(1u, g.textureCount);
+                HN_CORE_ASSERT(write_count <= VulkanRendererAPI::k_max_texture_slots,
+                               "Vulkan: textureCount exceeds k_max_texture_slots");
+
                 bool textures_changed = true;
-                if (m_last_bound_textures_valid[frame] && m_last_bound_texture_count[frame] == g.textureCount) {
+                if (m_last_bound_textures_valid[frame] && m_last_bound_texture_count[frame] == write_count) {
                     textures_changed = false;
-                    for (uint32_t i = 0; i < g.textureCount; ++i) {
+                    for (uint32_t i = 0; i < write_count; ++i) {
                         if (m_last_bound_textures[frame][i] != g.textures[i]) {
                             textures_changed = true;
                             break;
@@ -1275,15 +1316,18 @@ namespace Honey {
                     write_sampler.descriptorCount = 1;
                     write_sampler.pImageInfo = &sampler_info;
 
-                    VkDescriptorImageInfo infos[VulkanRendererAPI::k_max_texture_slots]{};
-                    for (uint32_t i = 0; i < VulkanRendererAPI::k_max_texture_slots; ++i) {
-                        void* raw = (i < g.textureCount) ? g.textures[i] : g.textures[0];
+                    std::vector<VkDescriptorImageInfo> infos;
+                    infos.resize(write_count);
+
+                    for (uint32_t i = 0; i < write_count; ++i) {
+                        void* raw = g.textures[i] ? g.textures[i] : g.textures[0];
                         auto* base = reinterpret_cast<Texture2D*>(raw);
                         auto* vktex = dynamic_cast<VulkanTexture2D*>(base);
                         if (!vktex) vktex = white_vk;
 
                         infos[i].imageView = reinterpret_cast<VkImageView>(vktex->get_vk_image_view());
                         infos[i].imageLayout = static_cast<VkImageLayout>(vktex->get_vk_image_layout());
+                        infos[i].sampler = VK_NULL_HANDLE; // not used for SAMPLED_IMAGE
                     }
 
                     VkWriteDescriptorSet write_images{};
@@ -1291,8 +1335,8 @@ namespace Honey {
                     write_images.dstSet = ds;
                     write_images.dstBinding = 2;
                     write_images.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-                    write_images.descriptorCount = VulkanRendererAPI::k_max_texture_slots;
-                    write_images.pImageInfo = infos;
+                    write_images.descriptorCount = write_count;
+                    write_images.pImageInfo = infos.data();
 
                     VkWriteDescriptorSet writes[] = { write_sampler, write_images };
                     vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(m_device),
@@ -1302,7 +1346,7 @@ namespace Honey {
                                            nullptr);
 
                     m_last_bound_textures[frame] = g.textures;
-                    m_last_bound_texture_count[frame] = g.textureCount;
+                    m_last_bound_texture_count[frame] = write_count;
                     m_last_bound_textures_valid[frame] = true;
                 }
             }
@@ -1454,31 +1498,26 @@ namespace Honey {
                     HN_CORE_ASSERT(render_pass_open, "DrawIndexed must occur inside a render pass");
                     HN_CORE_ASSERT(c.draw.va, "DrawIndexed: VertexArray is null");
 
-                    const auto& vbs = c.draw.va->get_vertex_buffers();
                     const auto& ib = c.draw.va->get_index_buffer();
-
-                    HN_CORE_ASSERT(!vbs.empty(), "Vulkan draw: VertexArray has no vertex buffers");
                     HN_CORE_ASSERT(ib, "Vulkan draw: VertexArray has no index buffer");
 
-                    // Force binding layout:
-                    //   binding 0 -> mesh VB (PNUV)
-                    //   binding 1 -> instance VB (mat4 as 4 vec4)
-                    HN_CORE_ASSERT(vbs.size() == 1, "Vulkan draw: expected exactly 1 mesh vertex buffer for Renderer3D path");
-                    HN_CORE_ASSERT(c.draw.instanceVB, "Vulkan draw: expected instanceVB for instanced Renderer3D draw");
+                    HN_CORE_ASSERT(c.draw.vertexBufferCount > 0, "Vulkan draw: no vertex buffers specified in draw cmd");
+                    HN_CORE_ASSERT(c.draw.vertexBufferCount <= FramePacket::CmdDrawIndexed::k_max_vertex_buffers,
+                                   "Vulkan draw: vertexBufferCount exceeds max");
 
-                    auto vk_vb0 = std::dynamic_pointer_cast<VulkanVertexBuffer>(vbs[0]);
-                    HN_CORE_ASSERT(vk_vb0, "Vulkan draw: expected VulkanVertexBuffer for mesh VB");
+                    VkBuffer buffers[FramePacket::CmdDrawIndexed::k_max_vertex_buffers]{};
+                    VkDeviceSize offsets[FramePacket::CmdDrawIndexed::k_max_vertex_buffers]{};
 
-                    auto vk_inst = std::dynamic_pointer_cast<VulkanVertexBuffer>(c.draw.instanceVB);
-                    HN_CORE_ASSERT(vk_inst, "Vulkan draw: expected VulkanVertexBuffer for instanceVB");
+                    for (uint32_t i = 0; i < c.draw.vertexBufferCount; ++i) {
+                        HN_CORE_ASSERT(c.draw.vertexBuffers[i], "Vulkan draw: vertex buffer is null");
+                        auto vk_vb = std::dynamic_pointer_cast<VulkanVertexBuffer>(c.draw.vertexBuffers[i]);
+                        HN_CORE_ASSERT(vk_vb, "Vulkan draw: expected VulkanVertexBuffer");
 
-                    VkBuffer buffers[2] = {
-                        reinterpret_cast<VkBuffer>(vk_vb0->get_vk_buffer()),
-                        reinterpret_cast<VkBuffer>(vk_inst->get_vk_buffer())
-                    };
-                    VkDeviceSize offsets[2] = { 0, static_cast<VkDeviceSize>(c.draw.instanceByteOffset) };
+                        buffers[i] = reinterpret_cast<VkBuffer>(vk_vb->get_vk_buffer());
+                        offsets[i] = static_cast<VkDeviceSize>(c.draw.vertexBufferByteOffsets[i]);
+                    }
 
-                    vkCmdBindVertexBuffers(cmd, 0, 2, buffers, offsets);
+                    vkCmdBindVertexBuffers(cmd, 0, c.draw.vertexBufferCount, buffers, offsets);
 
                     auto vk_ib = std::dynamic_pointer_cast<VulkanIndexBuffer>(ib);
                     HN_CORE_ASSERT(vk_ib, "Vulkan draw: expected VulkanIndexBuffer in VertexArray");

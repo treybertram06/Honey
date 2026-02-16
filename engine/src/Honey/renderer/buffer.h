@@ -76,6 +76,11 @@ namespace Honey {
             calculate_offsets_and_stride();
         }
 
+        BufferLayout(std::vector<BufferElement> elements)
+            : m_elements(std::move(elements)) {
+            calculate_offsets_and_stride();
+        }
+
         inline uint32_t get_stride() const { return m_stride; }
         inline const std::vector<BufferElement>& get_elements() const { return m_elements; }
 

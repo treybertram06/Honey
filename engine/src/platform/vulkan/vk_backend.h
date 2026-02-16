@@ -9,6 +9,7 @@
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.h>
 
+#include "vk_pipeline_cache_blob.h"
 #include "vk_queue_lease.h"
 
 namespace Honey {
@@ -51,6 +52,7 @@ namespace Honey {
         VkPhysicalDevice physical_device() const { return m_physical_device; }
         VkDevice device() const { return m_device; }
 
+        const VulkanPipelineCacheBlob& get_pipeline_cache() const { return m_pipeline_cache; }
         VkInstance get_instance() const { return m_instance; }
         VkPhysicalDevice get_physical_device() const { return m_physical_device; }
         VkDevice get_device() const { return m_device; }
@@ -126,6 +128,8 @@ namespace Honey {
 
         VkPhysicalDevice m_physical_device = VK_NULL_HANDLE;
         VkDevice m_device = VK_NULL_HANDLE;
+
+        VulkanPipelineCacheBlob m_pipeline_cache{};
 
         // Chosen families (based on the first created surface; must remain compatible with all later surfaces)
         QueueFamilyInfo m_families{};

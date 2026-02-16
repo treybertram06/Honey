@@ -9,6 +9,7 @@ typedef struct VkDescriptorSetLayout_T* VkDescriptorSetLayout;
 typedef struct VkShaderModule_T* VkShaderModule;
 typedef struct VkPipelineLayout_T* VkPipelineLayout;
 typedef struct VkPipeline_T* VkPipeline;
+typedef struct VkPipelineCache_T* VkPipelineCache;
 
 namespace Honey {
 
@@ -23,7 +24,8 @@ namespace Honey {
             VkDescriptorSetLayout globalSetLayout,
             const std::string& vertexSpirvPath,
             const std::string& fragmentSpirvPath,
-            const PipelineSpec& spec
+            const PipelineSpec& spec,
+            VkPipelineCache pipelineCache = nullptr
         );
 
         void destroy(VkDevice device);

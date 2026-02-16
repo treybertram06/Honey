@@ -21,6 +21,8 @@ namespace Honey {
         static void circle_end_scene();
         static void line_end_scene();
 
+        static void prewarm_pipelines(void* native_render_pass);
+
         static void set_debug_pick_enabled(bool enabled);
 
         // Position-based overloads

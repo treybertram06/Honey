@@ -149,6 +149,17 @@ namespace Honey {
         cmd.draw.indexCount = index_count;
         cmd.draw.instanceCount = 1;
 
+        // Bind whatever VBs the VA owns (2D and non-instanced 3D both work)
+        const auto& vbs = vertex_array->get_vertex_buffers();
+        HN_CORE_ASSERT(vbs.size() <= VulkanContext::FramePacket::CmdDrawIndexed::k_max_vertex_buffers,
+                       "Vulkan draw_indexed: too many vertex buffers for CmdDrawIndexed");
+
+        cmd.draw.vertexBufferCount = static_cast<uint32_t>(vbs.size());
+        for (uint32_t i = 0; i < cmd.draw.vertexBufferCount; ++i) {
+            cmd.draw.vertexBuffers[i] = vbs[i];
+            cmd.draw.vertexBufferByteOffsets[i] = 0;
+        }
+
         pkt().cmds.push_back(cmd);
     }
 
@@ -162,6 +173,17 @@ namespace Honey {
         cmd.draw.va = vertex_array;
         cmd.draw.indexCount = index_count;
         cmd.draw.instanceCount = instance_count;
+
+        // Non-instanced path doesn't specify extra VBs; caller should use submit_instanced_draw
+        const auto& vbs = vertex_array->get_vertex_buffers();
+        HN_CORE_ASSERT(vbs.size() <= VulkanContext::FramePacket::CmdDrawIndexed::k_max_vertex_buffers,
+                       "Vulkan draw_indexed_instanced: too many vertex buffers for CmdDrawIndexed");
+
+        cmd.draw.vertexBufferCount = static_cast<uint32_t>(vbs.size());
+        for (uint32_t i = 0; i < cmd.draw.vertexBufferCount; ++i) {
+            cmd.draw.vertexBuffers[i] = vbs[i];
+            cmd.draw.vertexBufferByteOffsets[i] = 0;
+        }
 
         pkt().cmds.push_back(cmd);
     }
@@ -184,8 +206,20 @@ namespace Honey {
         cmd.draw.va = vertex_array;
         cmd.draw.indexCount = index_count;
         cmd.draw.instanceCount = instance_count;
-        cmd.draw.instanceVB = instance_vb;
-        cmd.draw.instanceByteOffset = instance_byte_offset;
+
+        // VA VBs + instance VB appended
+        const auto& vbs = vertex_array->get_vertex_buffers();
+        const size_t total = vbs.size() + 1;
+        HN_CORE_ASSERT(total <= VulkanContext::FramePacket::CmdDrawIndexed::k_max_vertex_buffers,
+                       "submit_instanced_draw: too many vertex buffers for CmdDrawIndexed");
+
+        cmd.draw.vertexBufferCount = static_cast<uint32_t>(total);
+        for (uint32_t i = 0; i < (uint32_t)vbs.size(); ++i) {
+            cmd.draw.vertexBuffers[i] = vbs[i];
+            cmd.draw.vertexBufferByteOffsets[i] = 0;
+        }
+        cmd.draw.vertexBuffers[(uint32_t)vbs.size()] = instance_vb;
+        cmd.draw.vertexBufferByteOffsets[(uint32_t)vbs.size()] = instance_byte_offset;
 
         pkt().cmds.push_back(cmd);
     }

@@ -16,6 +16,7 @@ namespace Honey {
 
 
     void Application2D::on_attach() {
+
         auto texture_path_prefix = asset_root / "textures";
         m_chuck_texture = Texture2D::create(texture_path_prefix / "bung.png");
 
@@ -25,8 +26,10 @@ namespace Honey {
         m_camera = EditorCamera(w/h, 45.0f, 0.1f, 10000.0f);
 
         //m_test_mesh = load_gltf_mesh(asset_root / "models" / "Box" / "glTF" / "Box.gltf");
-        m_test_mesh = load_gltf_mesh(asset_root / "models" / "2CylinderEngine" / "glTF" / "2CylinderEngine.gltf");
+        //m_test_mesh = load_gltf_mesh(asset_root / "models" / "ABeautifulGame" / "glTF" / "ABeautifulGame.gltf");
         //m_test_mesh = load_gltf_mesh(asset_root / "models" / "Sponza" / "glTF" / "Sponza.gltf");
+        //m_test_mesh = load_gltf_mesh(asset_root / "models" / "FlightHelmet" / "glTF" / "FlightHelmet.gltf");
+        m_test_mesh = load_gltf_mesh(asset_root / "models" / "DragonAttenuation" / "glTF" / "DragonAttenuation.gltf");
 
         if (!m_test_mesh) {
             HN_CORE_ERROR("Failed to load mesh!");
@@ -68,19 +71,22 @@ namespace Honey {
 
             Renderer2D::begin_scene(m_camera);
 
-             const int grid_x = 315;
-             const int grid_y = 315;
-             const float spacing = 1.1f;
-             glm::vec2 origin = {
-                 -(grid_x - 1) * spacing * 0.5f,
-                 -(grid_y - 1) * spacing * 0.5f
-             };
-             for (int y = 0; y < grid_y; ++y) {
-                 for (int x = 0; x < grid_x; ++x) {
-                     glm::vec2 pos = origin + glm::vec2(x * spacing, y * spacing);
-                     Renderer2D::draw_quad(pos, glm::vec2(1.0f, 1.0f), glm::vec4(1, 0, 0, 1));
-                 }
-             }
+             Renderer2D::draw_quad(glm::vec3(0, 0, 0), glm::vec2(5.0f, 5.0f), glm::vec4(1, 0, 0, 1));
+
+
+             //const int grid_x = 315;
+             //const int grid_y = 315;
+             //const float spacing = 1.1f;
+             //glm::vec2 origin = {
+             //    -(grid_x - 1) * spacing * 0.5f,
+             //    -(grid_y - 1) * spacing * 0.5f
+             //};
+             //for (int y = 0; y < grid_y; ++y) {
+             //    for (int x = 0; x < grid_x; ++x) {
+             //        glm::vec2 pos = origin + glm::vec2(x * spacing, y * spacing);
+             //        Renderer2D::draw_quad(pos, glm::vec2(1.0f, 1.0f), glm::vec4(1, 0, 0, 1));
+             //    }
+             //}
             Renderer2D::quad_end_scene();
             Renderer::end_pass();
         }
@@ -91,8 +97,8 @@ namespace Honey {
             Renderer::set_render_target(nullptr);
             Renderer::begin_pass();
 
-            RenderCommand::set_clear_color(m_clear_color);
-            RenderCommand::clear();
+            //RenderCommand::set_clear_color(m_clear_color);
+            //RenderCommand::clear();
 
             Renderer3D::begin_scene(m_camera);
 

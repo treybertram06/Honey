@@ -24,7 +24,6 @@
 #include "glm/gtx/quaternion.hpp"
 
 namespace Honey {
-
     namespace {
 
         // Local vertex type matching your current 3D shader expectations.
@@ -61,28 +60,28 @@ namespace Honey {
 
         static size_t component_type_size(int componentType) {
             switch (componentType) {
-                case TINYGLTF_COMPONENT_TYPE_BYTE:           return 1;
-                case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:  return 1;
-                case TINYGLTF_COMPONENT_TYPE_SHORT:          return 2;
-                case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT: return 2;
-                case TINYGLTF_COMPONENT_TYPE_INT:            return 4;
-                case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:   return 4;
-                case TINYGLTF_COMPONENT_TYPE_FLOAT:          return 4;
-                case TINYGLTF_COMPONENT_TYPE_DOUBLE:         return 8;
-                default: return 0;
+            case TINYGLTF_COMPONENT_TYPE_BYTE:           return 1;
+            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:  return 1;
+            case TINYGLTF_COMPONENT_TYPE_SHORT:          return 2;
+            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT: return 2;
+            case TINYGLTF_COMPONENT_TYPE_INT:            return 4;
+            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:   return 4;
+            case TINYGLTF_COMPONENT_TYPE_FLOAT:          return 4;
+            case TINYGLTF_COMPONENT_TYPE_DOUBLE:         return 8;
+            default: return 0;
             }
         }
 
         static int type_num_components(int type) {
             switch (type) {
-                case TINYGLTF_TYPE_SCALAR: return 1;
-                case TINYGLTF_TYPE_VEC2:   return 2;
-                case TINYGLTF_TYPE_VEC3:   return 3;
-                case TINYGLTF_TYPE_VEC4:   return 4;
-                case TINYGLTF_TYPE_MAT2:   return 4;
-                case TINYGLTF_TYPE_MAT3:   return 9;
-                case TINYGLTF_TYPE_MAT4:   return 16;
-                default: return 0;
+            case TINYGLTF_TYPE_SCALAR: return 1;
+            case TINYGLTF_TYPE_VEC2:   return 2;
+            case TINYGLTF_TYPE_VEC3:   return 3;
+            case TINYGLTF_TYPE_VEC4:   return 4;
+            case TINYGLTF_TYPE_MAT2:   return 4;
+            case TINYGLTF_TYPE_MAT3:   return 9;
+            case TINYGLTF_TYPE_MAT4:   return 16;
+            default: return 0;
             }
         }
 
@@ -139,6 +138,7 @@ namespace Honey {
             const GltfLoadOptions& options,
             std::unordered_map<int, Ref<Texture2D>>& textureCacheByImageIndex
         ) {
+            HN_PROFILE_FUNCTION();
             Ref<Material> mat = Material::create();
 
             if (materialIndex < 0 || materialIndex >= (int)model.materials.size()) {
@@ -221,6 +221,7 @@ namespace Honey {
         }
 
         static glm::mat4 node_local_transform(const tinygltf::Node& n) {
+            HN_PROFILE_FUNCTION();
             if (n.matrix.size() == 16) {
                 return gltf_mat4_to_glm(n.matrix);
             }
@@ -259,6 +260,7 @@ namespace Honey {
             const GltfLoadOptions& options,
             std::unordered_map<int, Ref<Texture2D>>& textureCacheByImageIndex
         ) {
+            HN_PROFILE_FUNCTION();
             if (gltfMeshIndex < 0 || gltfMeshIndex >= (int)model.meshes.size())
                 return;
 
@@ -410,6 +412,7 @@ namespace Honey {
             const GltfLoadOptions& options,
             std::unordered_map<int, Ref<Texture2D>>& textureCacheByImageIndex
         ) {
+            HN_PROFILE_FUNCTION();
             if (nodeIndex < 0 || nodeIndex >= (int)model.nodes.size())
                 return;
 
@@ -445,86 +448,89 @@ namespace Honey {
 
     } // namespace
 
-Ref<Mesh> load_gltf_mesh(const std::filesystem::path& path, const GltfLoadOptions& options) {
-    if (!std::filesystem::exists(path)) {
-        HN_CORE_ERROR("load_gltf_mesh: file does not exist: {}", path.string());
-        return nullptr;
-    }
-
-    tinygltf::Model model;
-    tinygltf::TinyGLTF loader;
-
-    std::string err;
-    std::string warn;
-
-    bool ok = false;
-    const std::string p = path.string();
-    if (has_ext(path, ".glb")) {
-        ok = loader.LoadBinaryFromFile(&model, &err, &warn, p);
-    } else {
-        ok = loader.LoadASCIIFromFile(&model, &err, &warn, p);
-    }
-
-    if (!warn.empty())
-        HN_CORE_WARN("glTF warn: {}", warn);
-    if (!err.empty())
-        HN_CORE_ERROR("glTF err: {}", err);
-    if (!ok) {
-        HN_CORE_ERROR("Failed to load glTF: {}", path.string());
-        return nullptr;
-    }
-
-    Ref<Mesh> out = Mesh::create(path.filename().string());
-
-    const std::filesystem::path gltfDir = path.parent_path();
-    std::unordered_map<int, Ref<Texture2D>> textureCacheByImageIndex;
-
-    // Traverse the scene graph so node transforms are applied.
-    // IMPORTANT: do NOT also do a second pass over model.meshes (that would duplicate submeshes at identity).
-    int sceneIndex = model.defaultScene;
-    if (sceneIndex < 0 || sceneIndex >= (int)model.scenes.size()) {
-        sceneIndex = model.scenes.empty() ? -1 : 0;
-    }
-
-    if (sceneIndex >= 0) {
-        const tinygltf::Scene& scene = model.scenes[(size_t)sceneIndex];
-        const glm::mat4 I(1.0f);
-
-        for (int rootNode : scene.nodes) {
-            traverse_node_tree_and_emit_meshes(
-                out,
-                model,
-                rootNode,
-                I,
-                gltfDir,
-                options,
-                textureCacheByImageIndex
-            );
+    Ref<Mesh> load_gltf_mesh(const std::filesystem::path& path, const GltfLoadOptions& options) {
+        HN_PROFILE_FUNCTION();
+        if (!std::filesystem::exists(path)) {
+            HN_CORE_ERROR("load_gltf_mesh: file does not exist: {}", path.string());
+            return nullptr;
         }
-    } else {
-        // No scenes? Fallback: emit all meshes at identity.
-        HN_CORE_WARN("glTF: model has no scenes; emitting meshes with identity transforms.");
-        const glm::mat4 I(1.0f);
-        for (int mi = 0; mi < (int)model.meshes.size(); ++mi) {
-            append_mesh_primitives_as_submeshes(
-                out,
-                model,
-                mi,
-                I,
-                gltfDir,
-                options,
-                textureCacheByImageIndex
-            );
+
+        tinygltf::Model model;
+        tinygltf::TinyGLTF loader;
+
+        std::string err;
+        std::string warn;
+
+        bool ok = false;
+        {
+            HN_PROFILE_SCOPE("load_gltf_mesh::loader.LoadBinaryFromFile");
+            const std::string p = path.string();
+            if (has_ext(path, ".glb")) {
+                ok = loader.LoadBinaryFromFile(&model, &err, &warn, p);
+            } else {
+                ok = loader.LoadASCIIFromFile(&model, &err, &warn, p);
+            }
         }
+
+        if (!warn.empty())
+            HN_CORE_WARN("glTF warn: {}", warn);
+        if (!err.empty())
+            HN_CORE_ERROR("glTF err: {}", err);
+        if (!ok) {
+            HN_CORE_ERROR("Failed to load glTF: {}", path.string());
+            return nullptr;
+        }
+
+        Ref<Mesh> out = Mesh::create(path.filename().string());
+
+        const std::filesystem::path gltfDir = path.parent_path();
+        std::unordered_map<int, Ref<Texture2D>> textureCacheByImageIndex;
+
+        // Traverse the scene graph so node transforms are applied.
+        // IMPORTANT: do NOT also do a second pass over model.meshes (that would duplicate submeshes at identity).
+        int sceneIndex = model.defaultScene;
+        if (sceneIndex < 0 || sceneIndex >= (int)model.scenes.size()) {
+            sceneIndex = model.scenes.empty() ? -1 : 0;
+        }
+
+        if (sceneIndex >= 0) {
+            const tinygltf::Scene& scene = model.scenes[(size_t)sceneIndex];
+            const glm::mat4 I(1.0f);
+
+            for (int rootNode : scene.nodes) {
+                traverse_node_tree_and_emit_meshes(
+                    out,
+                    model,
+                    rootNode,
+                    I,
+                    gltfDir,
+                    options,
+                    textureCacheByImageIndex
+                );
+            }
+        } else {
+            // No scenes? Fallback: emit all meshes at identity.
+            HN_CORE_WARN("glTF: model has no scenes; emitting meshes with identity transforms.");
+            const glm::mat4 I(1.0f);
+            for (int mi = 0; mi < (int)model.meshes.size(); ++mi) {
+                append_mesh_primitives_as_submeshes(
+                    out,
+                    model,
+                    mi,
+                    I,
+                    gltfDir,
+                    options,
+                    textureCacheByImageIndex
+                );
+            }
+        }
+
+        if (out->empty()) {
+            HN_CORE_WARN("load_gltf_mesh: loaded 0 primitives from {}", path.string());
+        } else {
+            HN_CORE_INFO("load_gltf_mesh: loaded {} submeshes from {}", out->submesh_count(), path.string());
+        }
+
+        return out;
     }
-
-    if (out->empty()) {
-        HN_CORE_WARN("load_gltf_mesh: loaded 0 primitives from {}", path.string());
-    } else {
-        HN_CORE_INFO("load_gltf_mesh: loaded {} submeshes from {}", out->submesh_count(), path.string());
-    }
-
-    return out;
-}
-
 } // namespace Honey

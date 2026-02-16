@@ -54,6 +54,7 @@ namespace Honey {
         VkRenderPass get_render_pass() const { return m_render_pass; }
 
         void mark_pipeline_dirty() { /* m_pipeline_dirty = true; */ } // Pipelines are owned by renderer2d now
+        const VulkanPipelineCacheBlob& get_pipeline_cache() const { return m_backend->get_pipeline_cache(); }
         void request_swapchain_recreation() { m_framebuffer_resized = true; }
 
         struct FramePacket {
@@ -134,8 +135,11 @@ namespace Honey {
                 Ref<VertexArray> va;
                 uint32_t indexCount = 0;
                 uint32_t instanceCount = 1;
-                Ref<VertexBuffer> instanceVB;
-                uint32_t instanceByteOffset = 0;
+
+                static constexpr uint32_t k_max_vertex_buffers = 4;
+                std::array<Ref<VertexBuffer>, k_max_vertex_buffers> vertexBuffers{};
+                std::array<uint32_t,        k_max_vertex_buffers> vertexBufferByteOffsets{};
+                uint32_t vertexBufferCount = 0;
             };
 
             struct Cmd {

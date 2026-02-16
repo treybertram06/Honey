@@ -193,6 +193,10 @@ add_library(engine STATIC
         src/Honey/renderer/mesh.cpp
         src/Honey/utils/gltf_loader.h
         src/Honey/utils/gltf_loader.cpp
+        src/platform/vulkan/vk_pipeline_wrapper.h
+        src/platform/vulkan/vk_pipeline_cache_blob.h
+        src/platform/vulkan/vk_pipeline_cache_blob.cpp
+        src/Honey/renderer/pipeline_spec.cpp
 )
 
 # Apply MSVC runtime to engine itself

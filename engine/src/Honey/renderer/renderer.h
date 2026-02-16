@@ -22,6 +22,8 @@ namespace Honey {
         static void begin_pass();
         static void end_pass();
 
+        static void prewarm_pipelines(void* native_render_pass);
+
         static void begin_scene(OrthographicCamera& camera);
         static void end_scene();
 

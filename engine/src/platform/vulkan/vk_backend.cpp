@@ -219,6 +219,9 @@ namespace Honey {
             // Destroys fence/command pool used by immediate_submit()
             shutdown_upload_context();
 
+            // Save > destroy pipeline cache while device is valid
+            m_pipeline_cache.shutdown();
+
             {
                 std::scoped_lock lock(m_pool_mutex);
                 if (m_device) {
@@ -816,14 +819,49 @@ namespace Honey {
         features.fillModeNonSolid = VK_TRUE;
 
         const std::vector<const char*> device_extensions = {
-            VK_KHR_SWAPCHAIN_EXTENSION_NAME
+            VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+            VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME
         };
+
+        // ---- Bindless / descriptor indexing feature chain ----
+        VkPhysicalDeviceDescriptorIndexingFeatures indexing_features{};
+        indexing_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
+
+        VkPhysicalDeviceFeatures2 features2{};
+        features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        features2.pNext = &indexing_features;
+
+        vkGetPhysicalDeviceFeatures2(m_physical_device, &features2);
+
+        // Enable the descriptor indexing features we want (assert support first)
+        HN_CORE_ASSERT(indexing_features.runtimeDescriptorArray == VK_TRUE,
+                       "Bindless requires runtimeDescriptorArray (VK_EXT_descriptor_indexing)");
+        HN_CORE_ASSERT(indexing_features.descriptorBindingPartiallyBound == VK_TRUE,
+                       "Bindless requires descriptorBindingPartiallyBound (VK_EXT_descriptor_indexing)");
+        HN_CORE_ASSERT(indexing_features.shaderSampledImageArrayNonUniformIndexing == VK_TRUE,
+                       "Bindless requires shaderSampledImageArrayNonUniformIndexing (VK_EXT_descriptor_indexing)");
+
+        // Optional but commonly used for "true bindless" (variable-sized arrays / update-after-bind)
+        // If you don't need them yet, you can leave them disabled and also omit related layout/pool flags.
+        if (indexing_features.descriptorBindingVariableDescriptorCount) {
+            indexing_features.descriptorBindingVariableDescriptorCount = VK_TRUE;
+        }
+        if (indexing_features.descriptorBindingSampledImageUpdateAfterBind) {
+            indexing_features.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+        }
+
+        // Keep your core features:
+        features2.features = features;
 
         VkDeviceCreateInfo create_info{};
         create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
         create_info.queueCreateInfoCount = static_cast<uint32_t>(queue_infos.size());
         create_info.pQueueCreateInfos = queue_infos.data();
-        create_info.pEnabledFeatures = &features;
+
+        // IMPORTANT: when using Features2, pass it via pNext and keep pEnabledFeatures null
+        create_info.pEnabledFeatures = nullptr;
+        create_info.pNext = &features2;
+
         create_info.enabledExtensionCount = static_cast<uint32_t>(device_extensions.size());
         create_info.ppEnabledExtensionNames = device_extensions.data();
 
@@ -835,6 +873,11 @@ namespace Honey {
         HN_CORE_ASSERT(res == VK_SUCCESS, "vkCreateDevice failed: {0}", vk_result_to_string(res));
 
         m_device = device;
+
+        { // Init pipeline cache
+            const std::filesystem::path cache_dir = std::filesystem::path(ASSET_ROOT) / "cache" / "pipelines" / "vk";
+            m_pipeline_cache.init(m_physical_device, m_device, cache_dir);
+        }
 
         m_graphics_queues.clear();
         m_graphics_queues.resize(graphics_count, VK_NULL_HANDLE);

@@ -33,9 +33,14 @@ namespace Honey {
         fetch_device_handles();
 
         int w = 0, h = 0, channels = 0;
-        stbi_uc* pixels = stbi_load(path.c_str(), &w, &h, &channels, STBI_rgb_alpha);
-        HN_CORE_ASSERT(pixels, "Failed to load image: {0}", path);
+        stbi_uc* pixels;
+        {
+            std::string profiler_title = "VulkanTexture2D: stbi_load - " + path;
+            HN_PROFILE_SCOPE(profiler_title.c_str());
 
+            pixels = stbi_load(path.c_str(), &w, &h, &channels, STBI_rgb_alpha);
+            HN_CORE_ASSERT(pixels, "Failed to load image: {0}", path);
+        }
         m_width = static_cast<uint32_t>(w);
         m_height = static_cast<uint32_t>(h);
 
@@ -112,6 +117,7 @@ namespace Honey {
     }
 
     void VulkanTexture2D::fetch_device_handles() {
+        HN_PROFILE_FUNCTION();
         m_backend = &Application::get().get_vulkan_backend();
         HN_CORE_ASSERT(m_backend && m_backend->initialized(), "VulkanTexture2D: VulkanBackend not initialized");
 

@@ -177,9 +177,11 @@ namespace Honey {
         // Vertex bindings must match the VA layout (static + instance)
         VertexInputBindingSpec static_binding;
         static_binding.layout = s_data->s_quad_vertex_buffer->get_layout();
+        static_binding.locations = { 0, 1 };
 
         VertexInputBindingSpec instance_binding;
         instance_binding.layout = s_data->i_quad_vertex_buffer->get_layout();
+        instance_binding.locations = { 2, 3, 4, 5, 6, 7, 8, 9, 10 };
 
         spec.vertexBindings.clear();
         spec.vertexBindings.push_back(static_binding);
@@ -215,22 +217,22 @@ namespace Honey {
 
         if (!debugPick) {
             if (!pair.normal) {
-                PipelineSpec spec = build_vk_quad_pipeline_spec(
-                    asset_root / "shaders" / "Renderer2D_Quad.glsl",
-                    Settings::get().renderer.blending,
-                    true
-                );
-                pair.normal = Pipeline::create(spec, renderPassNative);
+                //PipelineSpec spec = build_vk_quad_pipeline_spec(
+                //    asset_root / "shaders" / "Renderer2D_Quad.glsl",
+                //    Settings::get().renderer.blending,
+                //    true
+                //);
+                pair.normal = Pipeline::create(asset_root / "shaders" / "Renderer2D_Quad.glsl", renderPassNative);
             }
             return pair.normal;
         } else {
             if (!pair.debugPick) {
-                PipelineSpec spec = build_vk_quad_pipeline_spec(
-                    asset_root / "shaders" / "Renderer2D_DebugPick.glsl",
-                    false, // debug pick is opaque, no need for blending
-                    true
-                );
-                pair.debugPick = Pipeline::create(spec, renderPassNative);
+                //PipelineSpec spec = build_vk_quad_pipeline_spec(
+                //    asset_root / "shaders" / "Renderer2D_DebugPick.glsl",
+                //    false, // debug pick is opaque, no need for blending
+                //    true
+                //);
+                pair.debugPick = Pipeline::create(asset_root / "shaders" / "Renderer2D_DebugPick.glsl", renderPassNative);
             }
             return pair.debugPick;
         }
@@ -248,12 +250,12 @@ namespace Honey {
         auto& pair = s_data->vk_offscreen_pipelines_quad;
 
         if (!pair.normal) {
-            PipelineSpec spec = build_vk_quad_pipeline_spec(
-                asset_root / "shaders" / "Renderer2D_QuadNoPick.glsl",
-                Settings::get().renderer.blending,
-                false
-            );
-            pair.normal = Pipeline::create(spec, renderPassNative);
+            //PipelineSpec spec = build_vk_quad_pipeline_spec(
+            //    asset_root / "shaders" / "Renderer2D_QuadNoPick.glsl",
+            //    Settings::get().renderer.blending,
+            //    false
+            //);
+            pair.normal = Pipeline::create(asset_root / "shaders" / "Renderer2D_QuadNoPick.glsl", renderPassNative);
         }
         return pair.normal;
     }
@@ -766,8 +768,26 @@ namespace Honey {
             s_data->texture_slots[i]->bind(i);
 
         s_data->line_vertex_array->bind();
-        RenderCommand::draw_indexed_instanced(s_data->line_vertex_array, 6, s_data->line_sorted_instances.size());
+        RenderCommand::draw_indexed_instanced(
+            s_data->line_vertex_array,
+            6,
+            static_cast<uint32_t>(s_data->line_sorted_instances.size())
+        );
         s_data->stats.draw_calls++;
+    }
+
+    void Renderer2D::prewarm_pipelines(void* native_render_pass) {
+        HN_PROFILE_FUNCTION();
+
+        if (Renderer::get_api() != RendererAPI::API::vulkan)
+            return;
+
+        HN_CORE_ASSERT(native_render_pass, "Renderer2D Vulkan prewarm_pipelines requires a valid native render pass");
+
+        //(void)get_or_create_vk_offscreen_circle_pipeline(native_render_pass); // Create only if the current render target is offscreen
+        //(void)get_or_create_vk_offscreen_line_pipeline(native_render_pass);
+        //(void)get_or_create_vk_offscreen_quad_pipeline(native_render_pass, true);
+        (void)get_or_create_vk_quad_pipeline(native_render_pass);
     }
 
     void Renderer2D::circle_end_scene() {
@@ -837,7 +857,13 @@ namespace Honey {
             s_data->texture_slots[i]->bind(i);
 
         s_data->circle_vertex_array->bind();
-        RenderCommand::draw_indexed_instanced(s_data->circle_vertex_array, 6, s_data->circle_sorted_instances.size());
+        VulkanRendererAPI::submit_instanced_draw(
+                        s_data->circle_vertex_array,
+                        s_data->i_circle_vertex_buffer,
+                        6,
+                        static_cast<uint32_t>(s_data->circle_sorted_instances.size()),
+                        0
+                    );
         s_data->stats.draw_calls++;
     }
 
@@ -897,12 +923,15 @@ namespace Honey {
             RenderCommand::bind_pipeline(pipe);
 
             s_data->quad_vertex_array->bind();
-            RenderCommand::draw_indexed_instanced(
-                s_data->quad_vertex_array,
-                6,
-                static_cast<uint32_t>(s_data->quad_sorted_instances.size())
-                //(uint32_t)src.size()
-            );
+
+            VulkanRendererAPI::submit_instanced_draw(
+                            s_data->quad_vertex_array,
+                            s_data->i_quad_vertex_buffer,
+                            6,
+                            static_cast<uint32_t>(s_data->quad_sorted_instances.size()),
+                            0
+                        );
+
             s_data->stats.draw_calls++;
             return;
         }
