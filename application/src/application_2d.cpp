@@ -58,16 +58,18 @@ namespace Honey {
             m_framerate = m_framerate_counter.get_smoothed_fps();
         }
 
+        Renderer::set_render_target(nullptr);
+        Renderer::begin_pass();
+
+        RenderCommand::set_clear_color(m_clear_color);
+        RenderCommand::clear();
+
         bool three_dee = true;
 
-         if (!three_dee) {
+         if (three_dee) {
             HN_PROFILE_SCOPE("Application2D::renderer_clear / begin pass");
             // render
-            Renderer::set_render_target(nullptr);
-            Renderer::begin_pass();
 
-            RenderCommand::set_clear_color(m_clear_color);
-            RenderCommand::clear();
 
             Renderer2D::begin_scene(m_camera);
 
@@ -88,17 +90,12 @@ namespace Honey {
              //    }
              //}
             Renderer2D::quad_end_scene();
-            Renderer::end_pass();
+            //Renderer::end_pass();
         }
 
         if (three_dee) {
             HN_PROFILE_SCOPE("Application2D::draw 3d")
 
-            Renderer::set_render_target(nullptr);
-            Renderer::begin_pass();
-
-            //RenderCommand::set_clear_color(m_clear_color);
-            //RenderCommand::clear();
 
             Renderer3D::begin_scene(m_camera);
 
@@ -111,9 +108,9 @@ namespace Honey {
             }
             Renderer3D::end_scene();
 
-            Renderer::end_pass();
 
         }
+            Renderer::end_pass();
 
     }
 

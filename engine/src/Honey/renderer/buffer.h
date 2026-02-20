@@ -41,7 +41,7 @@ namespace Honey {
         BufferElement(ShaderDataType t,
                   const std::string& n,
                   bool norm     = false,
-                  bool inst     = false)        // ← NEW
+                  bool inst     = false)
         : name(n), type(t), size(shader_data_type_size(t)),
           offset(0), normalized(norm), instanced(inst) {}
 

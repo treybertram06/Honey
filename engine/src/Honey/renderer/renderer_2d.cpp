@@ -158,51 +158,6 @@ namespace Honey {
         return (int)idx;
     }
 
-    static PipelineSpec build_vk_quad_pipeline_spec(const std::filesystem::path& shaderPath,
-                                                    bool blending_for_color0,
-                                                    bool include_id_attachment)
-    {
-        auto& rs = Settings::get().renderer;
-
-        PipelineSpec spec;
-        spec.shaderGLSLPath = shaderPath;
-        spec.topology = PrimitiveTopology::Triangles;
-        spec.cullMode = CullMode::None;
-        spec.frontFace = FrontFaceWinding::CounterClockwise;
-        spec.depthStencil.depthTest  = rs.depth_test;
-        spec.depthStencil.depthWrite = rs.depth_write;
-        spec.passType = RenderPassType::Offscreen;
-        spec.wireframe = rs.wireframe;
-
-        // Vertex bindings must match the VA layout (static + instance)
-        VertexInputBindingSpec static_binding;
-        static_binding.layout = s_data->s_quad_vertex_buffer->get_layout();
-        static_binding.locations = { 0, 1 };
-
-        VertexInputBindingSpec instance_binding;
-        instance_binding.layout = s_data->i_quad_vertex_buffer->get_layout();
-        instance_binding.locations = { 2, 3, 4, 5, 6, 7, 8, 9, 10 };
-
-        spec.vertexBindings.clear();
-        spec.vertexBindings.push_back(static_binding);
-        spec.vertexBindings.push_back(instance_binding);
-
-        // Blend states: attachment 0 is RGBA8; attachment 1 is integer ID (no blend)
-        spec.perColorAttachmentBlend.clear();
-        {
-            AttachmentBlendState b0{};
-            b0.enabled = blending_for_color0;
-            spec.perColorAttachmentBlend.push_back(b0);
-        }
-        if (include_id_attachment) {
-            AttachmentBlendState b1{};
-            b1.enabled = false;
-            spec.perColorAttachmentBlend.push_back(b1);
-        }
-
-        return spec;
-    }
-
     static Ref<Pipeline> get_or_create_vk_offscreen_quad_pipeline(void* renderPassNative, bool debugPick)
     {
         HN_CORE_ASSERT(renderPassNative, "get_or_create_vk_offscreen_pipeline: renderPassNative is null");
@@ -217,21 +172,11 @@ namespace Honey {
 
         if (!debugPick) {
             if (!pair.normal) {
-                //PipelineSpec spec = build_vk_quad_pipeline_spec(
-                //    asset_root / "shaders" / "Renderer2D_Quad.glsl",
-                //    Settings::get().renderer.blending,
-                //    true
-                //);
                 pair.normal = Pipeline::create(asset_root / "shaders" / "Renderer2D_Quad.glsl", renderPassNative);
             }
             return pair.normal;
         } else {
             if (!pair.debugPick) {
-                //PipelineSpec spec = build_vk_quad_pipeline_spec(
-                //    asset_root / "shaders" / "Renderer2D_DebugPick.glsl",
-                //    false, // debug pick is opaque, no need for blending
-                //    true
-                //);
                 pair.debugPick = Pipeline::create(asset_root / "shaders" / "Renderer2D_DebugPick.glsl", renderPassNative);
             }
             return pair.debugPick;
@@ -250,57 +195,9 @@ namespace Honey {
         auto& pair = s_data->vk_offscreen_pipelines_quad;
 
         if (!pair.normal) {
-            //PipelineSpec spec = build_vk_quad_pipeline_spec(
-            //    asset_root / "shaders" / "Renderer2D_QuadNoPick.glsl",
-            //    Settings::get().renderer.blending,
-            //    false
-            //);
             pair.normal = Pipeline::create(asset_root / "shaders" / "Renderer2D_QuadNoPick.glsl", renderPassNative);
         }
         return pair.normal;
-    }
-
-    static PipelineSpec build_vk_circle_pipeline_spec(const std::filesystem::path& shaderPath,
-                                                    bool blending_for_color0,
-                                                    bool include_id_attachment)
-    {
-        auto& rs = Settings::get().renderer;
-
-        PipelineSpec spec;
-        spec.shaderGLSLPath = shaderPath;
-        spec.topology = PrimitiveTopology::Triangles;
-        spec.cullMode = CullMode::None;
-        spec.frontFace = FrontFaceWinding::CounterClockwise;
-        spec.depthStencil.depthTest  = rs.depth_test;
-        spec.depthStencil.depthWrite = rs.depth_write;
-        spec.passType = RenderPassType::Offscreen;
-        spec.wireframe = rs.wireframe;
-
-        // Vertex bindings must match the VA layout (static + instance)
-        VertexInputBindingSpec static_binding;
-        static_binding.layout = s_data->s_circle_vertex_buffer->get_layout();
-
-        VertexInputBindingSpec instance_binding;
-        instance_binding.layout = s_data->i_circle_vertex_buffer->get_layout();
-
-        spec.vertexBindings.clear();
-        spec.vertexBindings.push_back(static_binding);
-        spec.vertexBindings.push_back(instance_binding);
-
-        // Blend states: attachment 0 is RGBA8; attachment 1 is integer ID (no blend)
-        spec.perColorAttachmentBlend.clear();
-        {
-            AttachmentBlendState b0{};
-            b0.enabled = blending_for_color0;
-            spec.perColorAttachmentBlend.push_back(b0);
-        }
-        if (include_id_attachment) {
-            AttachmentBlendState b1{};
-            b1.enabled = false;
-            spec.perColorAttachmentBlend.push_back(b1);
-        }
-
-        return spec;
     }
 
     static Ref<Pipeline> get_or_create_vk_offscreen_circle_pipeline(void* renderPassNative)
@@ -315,56 +212,10 @@ namespace Honey {
         auto& pair = s_data->vk_offscreen_pipelines_circle;
 
         if (!pair.normal) {
-            PipelineSpec spec = build_vk_circle_pipeline_spec(
-                asset_root / "shaders" / "Renderer2D_Circle.glsl",
-                Settings::get().renderer.blending,
-                true
-            );
-            pair.normal = Pipeline::create(spec, renderPassNative);
+            pair.normal = Pipeline::create(asset_root / "shaders" / "Renderer2D_Circle.glsl", renderPassNative);
         }
 
         return pair.normal;
-    }
-
-    static PipelineSpec build_vk_line_pipeline_spec(const std::filesystem::path& shaderPath,
-                                                   bool blending_for_color0,
-                                                   bool include_id_attachment)
-    {
-        auto& rs = Settings::get().renderer;
-
-        PipelineSpec spec;
-        spec.shaderGLSLPath = shaderPath;
-        spec.topology = PrimitiveTopology::Triangles;
-        spec.cullMode = CullMode::None;
-        spec.frontFace = FrontFaceWinding::CounterClockwise;
-        spec.depthStencil.depthTest  = rs.depth_test;
-        spec.depthStencil.depthWrite = rs.depth_write;
-        spec.passType = RenderPassType::Offscreen;
-        spec.wireframe = rs.wireframe;
-
-        VertexInputBindingSpec static_binding;
-        static_binding.layout = s_data->s_line_vertex_buffer->get_layout();
-
-        VertexInputBindingSpec instance_binding;
-        instance_binding.layout = s_data->i_line_vertex_buffer->get_layout();
-
-        spec.vertexBindings.clear();
-        spec.vertexBindings.push_back(static_binding);
-        spec.vertexBindings.push_back(instance_binding);
-
-        spec.perColorAttachmentBlend.clear();
-        {
-            AttachmentBlendState b0{};
-            b0.enabled = blending_for_color0;
-            spec.perColorAttachmentBlend.push_back(b0);
-        }
-        if (include_id_attachment) {
-            AttachmentBlendState b1{};
-            b1.enabled = false;
-            spec.perColorAttachmentBlend.push_back(b1);
-        }
-
-        return spec;
     }
 
     static Ref<Pipeline> get_or_create_vk_offscreen_line_pipeline(void* renderPassNative)
@@ -379,12 +230,7 @@ namespace Honey {
         auto& pair = s_data->vk_offscreen_pipelines_line;
 
         if (!pair.normal) {
-            PipelineSpec spec = build_vk_line_pipeline_spec(
-                asset_root / "shaders" / "Renderer2D_Line.glsl",
-                Settings::get().renderer.blending,
-                true
-            );
-            pair.normal = Pipeline::create(spec, renderPassNative);
+            pair.normal = Pipeline::create(asset_root / "shaders" / "Renderer2D_Line.glsl", renderPassNative);
         }
 
         return pair.normal;

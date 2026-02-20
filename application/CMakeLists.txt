@@ -40,7 +40,8 @@ if(MSVC)
     )
 else() # GCC / Clang / AppleClang
     target_compile_options(application PRIVATE
-            $<$<CONFIG:Release>:-O3 -march=native -flto> # high optimisation + LTO
+            #$<$<CONFIG:Release>:-O3 -march=native -flto> # high optimisation + LTO
+            $<$<CONFIG:Release>:-O3 -march=native> # high optimisation
             $<$<CONFIG:Debug>:-O0 -g>                     # debug friendly
     )
 endif()

@@ -12,7 +12,7 @@
 
 
 namespace Honey {
-    // Same mapping logic as we used in vk_pipeline_quad2d.cpp
+
     static VkFormat shader_data_type_to_vk_format(ShaderDataType type) {
         switch (type) {
         case ShaderDataType::Float:  return VK_FORMAT_R32_SFLOAT;

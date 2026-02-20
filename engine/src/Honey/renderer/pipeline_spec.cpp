@@ -224,6 +224,26 @@ namespace Honey {
         b0.enabled = rs.blending;
         spec.perColorAttachmentBlend.push_back(b0);
 
+        // TEMP HACK for editor offscreen FB:
+        // We know the editor framebuffer has:
+        //  - color[0] = RGBA8 (blended)
+        //  - color[1] = R32_SINT (entity ID, must NOT be blended)
+        //
+        // Until we have a proper render‑graph describing per‑attachment state,
+        // we just add a second, non‑blended attachment when building pipelines
+        // for an offscreen pass that uses the quad / editor shaders.
+        //
+        // TODO(HN‑rendergraph): derive perColorAttachmentBlend from the actual
+        // render‑pass / framebuffer description instead of hardcoding this.
+        if (spec.passType == RenderPassType::Offscreen) {
+            const std::string glsl_name = path.filename().string();
+            //if (glsl_name.find("Renderer2D_Quad") != std::string::npos) {
+                AttachmentBlendState b1{};
+                b1.enabled = false; // integer ID buffer, no blending
+                spec.perColorAttachmentBlend.push_back(b1);
+            //}
+        }
+
         return spec;
     }
 

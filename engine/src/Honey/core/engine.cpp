@@ -161,13 +161,14 @@ namespace Honey {
                 }
                 m_imgui_layer->end();
 
-                //if (RendererAPI::get_api() == RendererAPI::API::vulkan) {
-                //    // nullptr => main window / swapchain
-                //    Renderer::set_render_target(nullptr);
-                //    Renderer::begin_pass();
-                //    // Any future direct window-space rendering would go here
-                //    Renderer::end_pass();
-                //}
+                // Swapchain render pass for ImGui to inject draw calls into
+                if (RendererAPI::get_api() == RendererAPI::API::vulkan) {
+                    // nullptr => main window / swapchain
+                    Renderer::set_render_target(nullptr);
+                    Renderer::begin_pass();
+                    // Any future direct window-space rendering would go here
+                    Renderer::end_pass();
+                }
             }
 
             m_window->on_update();

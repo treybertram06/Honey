@@ -407,8 +407,8 @@ namespace Honey {
         // ---- Descriptor indexing / bindless binding flags (variable descriptor count) ----
         VkDescriptorBindingFlags binding_flags[3]{};
         binding_flags[0] = 0; // UBO
-        binding_flags[1] = 0; // sampler
-        binding_flags[2] =
+        binding_flags[1] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT; // sampler
+        binding_flags[2] = // tex
             VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
             VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT |
             VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
@@ -1280,18 +1280,24 @@ namespace Honey {
                 HN_CORE_ASSERT(write_count <= VulkanRendererAPI::k_max_texture_slots,
                                "Vulkan: textureCount exceeds k_max_texture_slots");
 
-                bool textures_changed = true;
-                if (m_last_bound_textures_valid[frame] && m_last_bound_texture_count[frame] == write_count) {
-                    textures_changed = false;
-                    for (uint32_t i = 0; i < write_count; ++i) {
-                        if (m_last_bound_textures[frame][i] != g.textures[i]) {
-                            textures_changed = true;
-                            break;
-                        }
-                    }
-                }
+                //bool textures_changed = true;
+                //if (m_last_bound_textures_valid[frame] && m_last_bound_texture_count[frame] == write_count) {
+                //    textures_changed = false;
+                //    for (uint32_t i = 0; i < write_count; ++i) {
+                //        if (m_last_bound_textures[frame][i] != g.textures[i]) {
+                //            textures_changed = true;
+                //            break;
+                //        }
+                //    }
+                //}
 
-                if (textures_changed) {
+                /*
+                 * This optimization fails to work when multiple renderer instances are submitting commands
+                 * in the same frame, since they overwrite each other's m_last_bound_textures. A more robust
+                 * solution would be needed to properly track this per-renderer or per-descriptor-set.
+                 */
+                //if (textures_changed) {
+                if (true) {
                     auto* white_base = reinterpret_cast<Texture2D*>(g.textures[0]);
                     auto* white_vk = dynamic_cast<VulkanTexture2D*>(white_base);
                     HN_CORE_ASSERT(white_vk, "Vulkan: slot 0 texture is not a VulkanTexture2D");
