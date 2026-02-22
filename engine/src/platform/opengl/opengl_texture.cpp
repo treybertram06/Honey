@@ -13,6 +13,9 @@
 
 #include <glad/glad.h>
 
+#include "Honey/core/task_system.h"
+#include "Honey/renderer/texture_cache.h"
+
 namespace Honey {
 
 	static void apply_filter_params(GLuint texture_id) {
@@ -162,6 +165,66 @@ namespace Honey {
 
         stbi_image_free(data);
     }
+
+	void OpenGLTexture2D::create_async(const std::string& path,
+                                           const Ref<Texture2D::AsyncHandle>& handle)
+        {
+            // CPU-side load on worker thread
+            TaskSystem::run_async([path, handle]() {
+                HN_PROFILE_SCOPE("OpenGLTexture2D::create_async::stbi_load");
+
+                int w = 0, h = 0, channels = 0;
+                stbi_set_flip_vertically_on_load(true);
+                stbi_uc* pixels = stbi_load(path.c_str(), &w, &h, &channels, 0);
+
+                if (!pixels) {
+                    handle->failed.store(true, std::memory_order_release);
+                    handle->error = "stbi_load failed";
+                    HN_CORE_WARN("OpenGLTexture2D::create_async: stbi_load failed for '{}'", path);
+                    handle->done.store(true, std::memory_order_release);
+                    return;
+                }
+
+                DecodedImageRGBA8 decoded;
+                decoded.width  = static_cast<uint32_t>(w);
+                decoded.height = static_cast<uint32_t>(h);
+
+                // Use the same channel count logic as the synchronous ctor.
+                const uint32_t bpp = (channels == 4) ? 4u : 3u;
+                const size_t expected_size = static_cast<size_t>(decoded.width) *
+                                             static_cast<size_t>(decoded.height) * bpp;
+
+                decoded.pixels.resize(expected_size);
+                std::memcpy(decoded.pixels.data(), pixels, expected_size);
+                stbi_image_free(pixels);
+
+                TaskSystem::enqueue_main([path, handle, decoded = std::move(decoded), channels]() mutable {
+                    if (!decoded.ok()) {
+                        handle->failed.store(true, std::memory_order_release);
+                        handle->error = "decoded image invalid";
+                        handle->done.store(true, std::memory_order_release);
+                        return;
+                    }
+
+                    // Create an empty texture and upload pixel data
+                    Ref<OpenGLTexture2D> gl_tex = CreateRef<OpenGLTexture2D>(decoded.width, decoded.height);
+                    gl_tex->m_path = path;
+
+                    // Override internal format to match channel count (as in sync ctor)
+                    gl_tex->m_internal_format = (channels == 4 ? GL_RGBA8 : GL_RGB8);
+                    gl_tex->m_format          = (channels == 4 ? GL_RGBA  : GL_RGB);
+
+                    gl_tex->set_data(decoded.pixels.data(),
+                                     static_cast<uint32_t>(decoded.pixels.size()));
+
+                    Ref<Texture2D> as_tex = gl_tex;
+                    as_tex = Texture2D::texture_cache_instance().add(path, as_tex);
+
+                    handle->texture = as_tex;
+                    handle->done.store(true, std::memory_order_release);
+                });
+            });
+        }
 
     OpenGLTexture2D::~OpenGLTexture2D()
     {

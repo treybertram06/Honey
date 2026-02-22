@@ -54,3 +54,6 @@
 [submodule "engine/vendor/tinygltf"]
 	path = engine/vendor/tinygltf
 	url = https://github.com/syoyo/tinygltf.git
+[submodule "engine/vendor/enkiTS"]
+	path = engine/vendor/enkiTS
+	url = https://github.com/dougbinks/enkiTS.git

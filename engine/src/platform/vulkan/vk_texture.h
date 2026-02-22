@@ -19,6 +19,8 @@ namespace Honey {
         VulkanTexture2D(const std::string& path);
         ~VulkanTexture2D() override;
 
+        static void create_async(const std::string& path, const Ref<AsyncHandle>& handle);
+
         uint32_t get_width() const override { return m_width; }
         uint32_t get_height() const override { return m_height; }
 

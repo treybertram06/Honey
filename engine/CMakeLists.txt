@@ -191,16 +191,39 @@ add_library(engine STATIC
         src/Honey/renderer/material.h
         src/Honey/renderer/mesh.h
         src/Honey/renderer/mesh.cpp
-        src/Honey/utils/gltf_loader.h
-        src/Honey/utils/gltf_loader.cpp
+        src/Honey/loaders/gltf_loader.h
+        src/Honey/loaders/gltf_loader.cpp
         src/platform/vulkan/vk_pipeline_wrapper.h
         src/platform/vulkan/vk_pipeline_cache_blob.h
         src/platform/vulkan/vk_pipeline_cache_blob.cpp
         src/Honey/renderer/pipeline_spec.cpp
+        src/Honey/core/task_system.h
+        src/Honey/core/task_system.cpp
+        src/Honey/loaders/texture_async.h
 )
 
 # Apply MSVC runtime to engine itself
 hn_force_msvc_runtime(engine)
+
+# ------------------------------------------------------------------------------
+# enkiTS (vendored)
+# ------------------------------------------------------------------------------
+set(HN_ENKITS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/enkiTS" CACHE PATH "Vendored enkiTS root")
+
+add_library(enkiTS STATIC
+        ${HN_ENKITS_DIR}/src/TaskScheduler.cpp
+        # add other .cpps here if your copy of enkiTS has more
+)
+
+target_include_directories(enkiTS PUBLIC
+        ${HN_ENKITS_DIR}/src
+)
+
+# Make sure enkiTS uses same CRT on MSVC
+hn_force_msvc_runtime(enkiTS)
+
+# Link engine against enkiTS
+target_link_libraries(engine PRIVATE enkiTS)
 
 # ------------------------------------------------------------------------------
 # Lua (vendored) + sol2 (header-only)

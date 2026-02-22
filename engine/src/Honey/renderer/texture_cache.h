@@ -11,7 +11,7 @@ namespace Honey {
         static TextureCache& get() {
             // Use the same instance as Texture2D::create()
             extern TextureCache& texture_cache_instance();
-            return texture_cache_instance();
+            return Texture2D::texture_cache_instance();
         }
 
         bool contains(const std::string& path) const;

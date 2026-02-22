@@ -4,11 +4,11 @@
 #include "input.h"
 #include "Honey/renderer/renderer.h"
 #include "Honey/scripting/script_engine.h"
+#include "settings.h"
+#include "task_system.h"
 
-#include "Honey/renderer/camera.h"
 #include <GLFW/glfw3.h>
 
-#include "settings.h"
 
 namespace Honey {
 
@@ -24,6 +24,12 @@ namespace Honey {
 
         HN_CORE_ASSERT(!s_instance, "Application already exists!");
         s_instance = this;
+
+        TaskSystem::init();
+        
+        TaskSystem::run_async([] {
+            HN_CORE_INFO("TaskSystem init complete. Running test async task.");
+        });
 
         const std::filesystem::path asset_root = ASSET_ROOT;
         Settings::load_from_file( asset_root / ".." / "config" / "settings.yaml" );
@@ -82,6 +88,8 @@ namespace Honey {
             m_vulkan_backend->shutdown();
             m_vulkan_backend.reset();
         }
+
+        TaskSystem::shutdown();
     }
 
     VulkanBackend& Application::get_vulkan_backend() {
@@ -135,6 +143,9 @@ namespace Honey {
         while (m_running)
         {
             HN_PROFILE_SCOPE("Application run loop");
+
+            // Execute main thread tasks
+            TaskSystem::pump_main();
 
             float time = (float)glfwGetTime();
             Timestep timestep = time - m_last_frame_time;

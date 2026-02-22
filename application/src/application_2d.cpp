@@ -5,7 +5,7 @@
 #include "hnpch.h"
 #include "Honey/core/settings.h"
 #include "Honey/renderer/texture_cache.h"
-#include "Honey/utils/gltf_loader.h"
+#include "../../engine/src/Honey/loaders/gltf_loader.h"
 
 namespace Honey {
     static const std::filesystem::path asset_root = ASSET_ROOT;

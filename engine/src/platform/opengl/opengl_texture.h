@@ -10,6 +10,7 @@ namespace Honey {
         OpenGLTexture2D(uint32_t width, uint32_t height);
         OpenGLTexture2D(const std::string& path);
         virtual ~OpenGLTexture2D();
+        static void create_async(const std::string& path, const Ref<Texture2D::AsyncHandle>& handle);
 
         virtual uint32_t get_width() const override { return m_width; }
         virtual uint32_t get_height() const override { return m_height; }

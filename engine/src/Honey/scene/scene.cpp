@@ -334,109 +334,111 @@ namespace Honey {
         }
 
         //physics
-        auto& physics_settings = Settings::get().physics;
-        if (physics_settings.enabled) {
-            // Sync physics bodies with their transforms if needed
-            for (auto e : m_registry.view<TransformComponent, Rigidbody2DComponent>()) {
-                Entity entity = { e, this };
-                auto& tc = entity.get_component<TransformComponent>();
-                if (tc.dirty) {
+        { // Box2D handles its own multithreading
+            auto& physics_settings = Settings::get().physics;
+            if (physics_settings.enabled) {
+                // Sync physics bodies with their transforms if needed
+                for (auto e : m_registry.view<TransformComponent, Rigidbody2DComponent>()) {
+                    Entity entity = { e, this };
+                    auto& tc = entity.get_component<TransformComponent>();
+                    if (tc.dirty) {
+                        auto& rb = entity.get_component<Rigidbody2DComponent>();
+
+                        b2BodyId body;
+                        memcpy(&body, &rb.runtime_body, sizeof(b2BodyId));
+
+                        b2Body_SetTransform(body, { tc.translation.x, tc.translation.y }, b2MakeRot(tc.rotation.z));
+                        tc.dirty = false;
+                    }
+
+                    if (tc.collider_dirty) {
+                        rebuild_colliders(this, entity);
+                        tc.collider_dirty = false;
+                    }
+                }
+
+                const int32_t sub_steps = physics_settings.substeps;
+
+                if (b2World_IsValid(m_world)) {
+                    b2World_Step(m_world, ts, sub_steps);
+                }
+
+                b2ContactEvents events = b2World_GetContactEvents(m_world);
+
+                for (int i = 0; i < events.beginCount; i++) {
+                    b2ContactBeginTouchEvent* evt = &events.beginEvents[i];
+
+                    b2BodyId body_a = b2Shape_GetBody(evt->shapeIdA);
+                    b2BodyId body_b = b2Shape_GetBody(evt->shapeIdB);
+
+                    UUID uuid_a = (uint64_t)b2Body_GetUserData(body_a);
+                    UUID uuid_b = (uint64_t)b2Body_GetUserData(body_b);
+
+                    Entity entity_a = get_entity(uuid_a);
+                    Entity entity_b = get_entity(uuid_b);
+
+                    if (entity_a.is_valid() && entity_b.is_valid()) {
+                        ScriptEngine::on_collision_begin(entity_a, entity_b); // I could be checking if entity_a has a script component before calling this
+                        ScriptEngine::on_collision_begin(entity_b, entity_a); // Likewise but entity_b
+                    }
+                }
+                for (int i = 0; i < events.endCount; i++) {
+                    b2ContactEndTouchEvent* evt = &events.endEvents[i];
+
+                    b2BodyId body_a = b2Shape_GetBody(evt->shapeIdA);
+                    b2BodyId body_b = b2Shape_GetBody(evt->shapeIdB);
+
+                    UUID uuid_a = (uint64_t)b2Body_GetUserData(body_a);
+                    UUID uuid_b = (uint64_t)b2Body_GetUserData(body_b);
+
+                    Entity entity_a = get_entity(uuid_a);
+                    Entity entity_b = get_entity(uuid_b);
+
+                    if (entity_a.is_valid() && entity_b.is_valid()) {
+                        ScriptEngine::on_collision_end(entity_a, entity_b);
+                        ScriptEngine::on_collision_end(entity_b, entity_a);
+                    }
+                }
+
+                auto view = m_registry.view<Rigidbody2DComponent>();
+                for (auto e : view) {
+                    Entity entity = { e, this };
+                    auto& tc = entity.get_component<TransformComponent>();
                     auto& rb = entity.get_component<Rigidbody2DComponent>();
 
                     b2BodyId body;
                     memcpy(&body, &rb.runtime_body, sizeof(b2BodyId));
 
-                    b2Body_SetTransform(body, { tc.translation.x, tc.translation.y }, b2MakeRot(tc.rotation.z));
-                    tc.dirty = false;
-                }
+                    if (!b2Body_IsValid(body))
+                        continue;
 
-                if (tc.collider_dirty) {
-                    rebuild_colliders(this, entity);
-                    tc.collider_dirty = false;
-                }
-            }
+                    b2Transform bt = b2Body_GetTransform(body);
+                    glm::vec3 world_pos(bt.p.x, bt.p.y, tc.translation.z);
+                    float world_rot = b2Rot_GetAngle(bt.q);
 
-            const int32_t sub_steps = physics_settings.substeps;
+                    if (!entity.has_parent()) {
+                        // Root Rigidbody: world == local
+                        tc.translation = world_pos;
+                        tc.rotation.z = world_rot;
+                    } else {
+                        // Child Rigidbody: convert world → local
+                        Entity parent = entity.get_parent();
+                        glm::mat4 parent_world = parent.get_world_transform();
+                        glm::mat4 inv_parent = glm::inverse(parent_world);
 
-            if (b2World_IsValid(m_world)) {
-                b2World_Step(m_world, ts, sub_steps);
-            }
+                        glm::mat4 world =
+                            glm::translate(glm::mat4(1.0f), world_pos) *
+                            glm::rotate(glm::mat4(1.0f), world_rot, {0,0,1});
 
-            b2ContactEvents events = b2World_GetContactEvents(m_world);
+                        glm::mat4 local = inv_parent * world;
 
-            for (int i = 0; i < events.beginCount; i++) {
-                b2ContactBeginTouchEvent* evt = &events.beginEvents[i];
-
-                b2BodyId body_a = b2Shape_GetBody(evt->shapeIdA);
-                b2BodyId body_b = b2Shape_GetBody(evt->shapeIdB);
-
-                UUID uuid_a = (uint64_t)b2Body_GetUserData(body_a);
-                UUID uuid_b = (uint64_t)b2Body_GetUserData(body_b);
-
-                Entity entity_a = get_entity(uuid_a);
-                Entity entity_b = get_entity(uuid_b);
-
-                if (entity_a.is_valid() && entity_b.is_valid()) {
-                    ScriptEngine::on_collision_begin(entity_a, entity_b); // I could be checking if entity_a has a script component before calling this
-                    ScriptEngine::on_collision_begin(entity_b, entity_a); // Likewise but entity_b
-                }
-            }
-            for (int i = 0; i < events.endCount; i++) {
-                b2ContactEndTouchEvent* evt = &events.endEvents[i];
-
-                b2BodyId body_a = b2Shape_GetBody(evt->shapeIdA);
-                b2BodyId body_b = b2Shape_GetBody(evt->shapeIdB);
-
-                UUID uuid_a = (uint64_t)b2Body_GetUserData(body_a);
-                UUID uuid_b = (uint64_t)b2Body_GetUserData(body_b);
-
-                Entity entity_a = get_entity(uuid_a);
-                Entity entity_b = get_entity(uuid_b);
-
-                if (entity_a.is_valid() && entity_b.is_valid()) {
-                    ScriptEngine::on_collision_end(entity_a, entity_b);
-                    ScriptEngine::on_collision_end(entity_b, entity_a);
-                }
-            }
-
-            auto view = m_registry.view<Rigidbody2DComponent>();
-            for (auto e : view) {
-                Entity entity = { e, this };
-                auto& tc = entity.get_component<TransformComponent>();
-                auto& rb = entity.get_component<Rigidbody2DComponent>();
-
-                b2BodyId body;
-                memcpy(&body, &rb.runtime_body, sizeof(b2BodyId));
-
-                if (!b2Body_IsValid(body))
-                    continue;
-
-                b2Transform bt = b2Body_GetTransform(body);
-                glm::vec3 world_pos(bt.p.x, bt.p.y, tc.translation.z);
-                float world_rot = b2Rot_GetAngle(bt.q);
-
-                if (!entity.has_parent()) {
-                    // Root Rigidbody: world == local
-                    tc.translation = world_pos;
-                    tc.rotation.z = world_rot;
-                } else {
-                    // Child Rigidbody: convert world → local
-                    Entity parent = entity.get_parent();
-                    glm::mat4 parent_world = parent.get_world_transform();
-                    glm::mat4 inv_parent = glm::inverse(parent_world);
-
-                    glm::mat4 world =
-                        glm::translate(glm::mat4(1.0f), world_pos) *
-                        glm::rotate(glm::mat4(1.0f), world_rot, {0,0,1});
-
-                    glm::mat4 local = inv_parent * world;
-
-                    Math::decompose_transform(
-                        local,
-                        tc.translation,
-                        tc.rotation,
-                        tc.scale
-                    );
+                        Math::decompose_transform(
+                            local,
+                            tc.translation,
+                            tc.rotation,
+                            tc.scale
+                        );
+                    }
                 }
             }
         }

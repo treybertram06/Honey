@@ -15,6 +15,8 @@
 
 #include "imgui_impl_vulkan.h"
 #include "Honey/core/settings.h"
+#include "Honey/core/task_system.h"
+#include "Honey/renderer/texture_cache.h"
 
 namespace Honey {
     VulkanTexture2D::VulkanTexture2D(uint32_t width, uint32_t height)
@@ -84,6 +86,57 @@ namespace Honey {
         m_backend = nullptr;
         m_device = nullptr;
         m_physical_device = nullptr;
+    }
+
+    void VulkanTexture2D::create_async(const std::string& path, const Ref<AsyncHandle>& handle) {
+        // CPU-side load on worker thread
+        TaskSystem::run_async([path, handle]() {
+            HN_PROFILE_SCOPE("VulkanTexture2D::create_async::stbi_load");
+
+            HN_CORE_TRACE("VulkanTexture2D::create_async: loading image from disk: '{}'", path);
+
+            int w = 0, h = 0, channels = 0;
+            stbi_uc* pixels = stbi_load(path.c_str(), &w, &h, &channels, STBI_rgb_alpha);
+
+            if (!pixels) {
+                handle->failed.store(true, std::memory_order_release);
+                handle->error = "stbi_load failed";
+                HN_CORE_WARN("VulkanTexture2D::create_async: stbi_load failed for '{}'", path);
+                handle->done.store(true, std::memory_order_release);
+                return;
+            }
+
+            DecodedImageRGBA8 decoded;
+            decoded.width  = static_cast<uint32_t>(w);
+            decoded.height = static_cast<uint32_t>(h);
+            decoded.pixels.resize(decoded.width * decoded.height * 4);
+            std::memcpy(decoded.pixels.data(), pixels, decoded.pixels.size());
+            stbi_image_free(pixels);
+
+            // GPU work must run on main thread while VulkanBackend is alive.
+            TaskSystem::enqueue_main([path, handle, decoded = std::move(decoded)]() mutable {
+                HN_PROFILE_SCOPE("VulkanTexture2D::create_async::GPU work");
+                HN_CORE_TRACE("VulkanTexture2D::create_async: GPU work started for '{}'", path);
+                if (!decoded.ok()) {
+                    handle->failed.store(true, std::memory_order_release);
+                    handle->error = "decoded image invalid";
+                    handle->done.store(true, std::memory_order_release);
+                    return;
+                }
+
+                // Create Vulkan texture (device handles are accessed via Application::get()).
+                Ref<VulkanTexture2D> vk_tex = CreateRef<VulkanTexture2D>(decoded.width, decoded.height);
+                vk_tex->m_path = path; // keep original path for logging/samplers
+                vk_tex->set_data(decoded.pixels.data(), static_cast<uint32_t>(decoded.pixels.size()));
+
+                Ref<Texture2D> as_tex = vk_tex;
+                as_tex = Texture2D::texture_cache_instance().add(path, as_tex);
+
+                handle->texture = as_tex;
+                handle->done.store(true, std::memory_order_release);
+            });
+        });
+        HN_CORE_TRACE("VulkanTexture2D::create_async: async load started for '{}'", path);
     }
 
     bool VulkanTexture2D::operator==(const Texture& other) const {

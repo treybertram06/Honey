@@ -2,9 +2,11 @@
 #include "texture.h"
 
 #include "texture_cache.h"
+#include "Honey/core/task_system.h"
 #include "Honey/renderer/renderer.h"
 #include "platform/opengl/opengl_texture.h"
 #include "platform/vulkan/vk_texture.h"
+#include "vendor/tinygltf/stb_image.h"
 
 
 namespace Honey {
@@ -39,7 +41,7 @@ namespace Honey {
         }
     }
 
-    TextureCache& texture_cache_instance() {
+    TextureCache& Texture2D::texture_cache_instance() {
         // Intentionally leaked to avoid static destruction order issues (Vulkan device may be gone).
         static TextureCache* cache = new TextureCache();
         return *cache;
@@ -83,4 +85,44 @@ namespace Honey {
         return nullptr;
     }
 
+    Ref<Texture2D::AsyncHandle> Texture2D::create_async(const std::string& path) {
+        auto handle = CreateRef<AsyncHandle>();
+        handle->path = path;
+
+        // Already cached: complete immediately.
+        if (texture_cache_instance().contains(path)) {
+            handle->texture = texture_cache_instance().get(path);
+            handle->done.store(true, std::memory_order_release);
+            return handle;
+        }
+
+        // Validate early; if missing, just use the missing texture synchronously.
+        if (!texture_file_exists(path)) {
+            HN_CORE_WARN("Texture2D::create_async: missing/invalid texture path '{}'", path);
+            handle->texture = Texture2D::create("../resources/textures/missing.png");
+            handle->done.store(true, std::memory_order_release);
+            return handle;
+        }
+
+        // Delegate to backend-specific async implementation.
+        switch (Renderer::get_api()) {
+        case RendererAPI::API::none:
+            HN_CORE_ASSERT(false, "RendererAPI::none is not supported for async textures.");
+            handle->failed.store(true, std::memory_order_release);
+            handle->error = "RendererAPI::none";
+            handle->done.store(true, std::memory_order_release);
+            return handle;
+
+        case RendererAPI::API::opengl:
+            OpenGLTexture2D::create_async(path, handle);
+            break;
+
+        case RendererAPI::API::vulkan:
+            HN_CORE_TRACE("Texture2D::create_async: Vulkan texture async creation starting.");
+            VulkanTexture2D::create_async(path, handle);
+            break;
+        }
+
+        return handle;
+    }
 }
