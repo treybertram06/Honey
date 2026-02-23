@@ -48,6 +48,8 @@ namespace Honey {
         cmd.globals.textures = p.textures;
         cmd.globals.textureCount = p.textureCount;
 
+        cmd.globals.source = p.sourceTag;
+
         return cmd;
     }
 
@@ -300,7 +302,23 @@ namespace Honey {
     void VulkanRendererAPI::submit_bound_textures(const std::array<void*, k_max_texture_slots>& textures, uint32_t texture_count) {
         require_frame_begun();
         auto& p = pkt();
-        p.textures = textures;
+
+        HN_CORE_ASSERT(texture_count > 0, "VulkanRendererAPI::submit_bound_textures called with texture_count == 0");
+        HN_CORE_ASSERT(texture_count <= k_max_texture_slots,
+                       "VulkanRendererAPI::submit_bound_textures texture_count ({0}) exceeds k_max_texture_slots ({1})",
+                       texture_count, k_max_texture_slots);
+        HN_CORE_ASSERT(textures[0],
+                       "VulkanRendererAPI::submit_bound_textures requires textures[0] to be a valid fallback (e.g. white texture)");
+
+        std::array<void*, k_max_texture_slots> sanitized{};
+        void* fallback = textures[0];
+
+        for (uint32_t i = 0; i < texture_count; ++i) {
+            sanitized[i] = textures[i] ? textures[i] : fallback;
+        }
+
+        // Copy into the per-frame packet.
+        p.textures = sanitized;
         p.textureCount = texture_count;
         p.hasTextures = true;
     }
@@ -354,6 +372,8 @@ namespace Honey {
         s.textureCount = p.textureCount;
         s.hasTextures = p.hasTextures;
 
+        s.source = static_cast<GlobalsState::Source>(p.sourceTag);
+
         return s;
     }
 
@@ -367,6 +387,8 @@ namespace Honey {
         p.textures = state.textures;
         p.textureCount = state.textureCount;
         p.hasTextures = state.hasTextures;
+
+        p.sourceTag = static_cast<VulkanContext::FramePacket::CmdBindGlobals::Source>(state.source);
     }
 
 } // namespace Honey

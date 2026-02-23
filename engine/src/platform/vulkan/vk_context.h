@@ -118,7 +118,10 @@ namespace Honey {
                 std::array<void*, 32> textures{};
                 uint32_t textureCount = 0;
                 bool hasTextures = false;
+
+                enum class Source : uint8_t { Unknown = 0, Renderer2D, Renderer3D } source = Source::Unknown;
             };
+            CmdBindGlobals::Source sourceTag = CmdBindGlobals::Source::Unknown;
 
             struct CmdPushConstantsMat4 {
                 glm::mat4 value{1.0f};
@@ -167,6 +170,8 @@ namespace Honey {
 
                 cmds.clear();
                 frame_begun = true;
+
+                sourceTag = FramePacket::CmdBindGlobals::Source::Unknown;
 
                 // NOTE: we no longer auto-begin a swapchain pass here.
                 // Pass boundaries are driven by Renderer::begin_pass / end_pass.

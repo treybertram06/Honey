@@ -12,6 +12,7 @@
 #include <entt/entt.hpp>
 
 #include "box2d/id.h"
+#include "Honey/renderer/mesh.h"
 #include "Honey/renderer/sprite.h"
 
 
@@ -73,6 +74,24 @@ namespace Honey {
         SpriteRendererComponent(const glm::vec4& color)
             : color(color) {}
 
+    };
+
+    struct MeshRendererComponent {
+        glm::vec4 color = {1.0f, 1.0f, 1.0f, 1.0f};
+
+        Ref<Mesh> mesh;
+        std::filesystem::path mesh_path;
+
+        std::vector<Ref<Material>> material_overrides;
+
+        MeshRendererComponent() = default;
+        MeshRendererComponent(const MeshRendererComponent&) = default;
+        MeshRendererComponent(MeshRendererComponent&&) noexcept = default;
+        MeshRendererComponent& operator=(const MeshRendererComponent&) = default;
+        MeshRendererComponent& operator=(MeshRendererComponent&&) noexcept = default;
+
+        explicit MeshRendererComponent(const glm::vec4& color)
+            : color(color) {}
     };
 
     struct CircleRendererComponent {

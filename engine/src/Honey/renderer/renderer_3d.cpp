@@ -8,6 +8,7 @@
 #include "shader_cache.h"
 #include "Honey/core/engine.h"
 #include "Honey/core/settings.h"
+#include "platform/vulkan/vk_framebuffer.h"
 #include "platform/vulkan/vk_renderer_api.h"
 
 static const std::filesystem::path asset_root = ASSET_ROOT;
@@ -26,11 +27,7 @@ namespace Honey {
 
         Ref<ShaderCache> shader_cache;
 
-        struct VkPipelineCacheEntry {
-            void* renderPassNative = nullptr; // VkRenderPass
-            Ref<Pipeline> pipeline;
-        };
-        VkPipelineCacheEntry vk_forward_pipeline{};
+        std::unordered_map<void*, Ref<Pipeline>> vk_forward_pipelines;
 
         Ref<Material> default_material;
 
@@ -103,7 +100,9 @@ namespace Honey {
 
         glm::mat4 vp = camera.get_view_projection_matrix(); // EngineClip (GL style)
 
-        s_data->vk_globals_stack.push_back(VulkanRendererAPI::get_globals_state());
+        auto state = VulkanRendererAPI::get_globals_state();
+        state.source = VulkanRendererAPI::GlobalsState::Source::Renderer3D;
+        s_data->vk_globals_stack.push_back(state);
         VulkanRendererAPI::submit_camera_view_projection(vp); // Converts to VulkanClip internally
 
         // Reset frame texture table (keep white bound at slot 0)
@@ -147,21 +146,23 @@ namespace Honey {
         auto* vkCtx = dynamic_cast<Honey::VulkanContext*>(base);
         HN_CORE_ASSERT(vkCtx, "Renderer3D Vulkan path expected VulkanContext");
 
-        void* rpNative = vkCtx->get_render_pass();
+        void* rpNative = nullptr;
+        if (auto target = Renderer::get_render_target()) {
+            auto* vk_fb = dynamic_cast<VulkanFramebuffer*>(target.get());
+            HN_CORE_ASSERT(vk_fb, "Renderer3D: current render target is not a VulkanFramebuffer");
+            rpNative = vk_fb->get_render_pass();          // editor / offscreen
+        } else {
+            rpNative = vkCtx->get_render_pass();          // main swapchain
+        }
         HN_CORE_ASSERT(rpNative, "Renderer3D: rpNative is null");
 
-        // Cache by render pass (matches your manual pattern)
-        if (s_data->vk_forward_pipeline.renderPassNative != rpNative) {
-            s_data->vk_forward_pipeline = {};
-            s_data->vk_forward_pipeline.renderPassNative = rpNative;
+        Ref<Pipeline> pipe;
+        auto it = s_data->vk_forward_pipelines.find(rpNative);
+        if (it == s_data->vk_forward_pipelines.end()) {
+            auto pipeline = Pipeline::create(asset_root / "shaders" / "Renderer3D_Forward.glsl", rpNative);
+            it = s_data->vk_forward_pipelines.emplace(rpNative, pipeline).first;
         }
-
-        if (!s_data->vk_forward_pipeline.pipeline) {
-            s_data->vk_forward_pipeline.pipeline =
-                Pipeline::create(asset_root / "shaders" / "Renderer3D_Forward.glsl", rpNative);
-        }
-
-        Ref<Pipeline> pipe = s_data->vk_forward_pipeline.pipeline;
+        pipe = it->second;
 
         // Build per-frame texture bindings used by this flush
         // Slot 0 is white, then unique base color textures.

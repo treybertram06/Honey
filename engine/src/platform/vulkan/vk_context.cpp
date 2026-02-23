@@ -700,7 +700,9 @@ namespace Honey {
         } else {
             submit_res = vkQueueSubmit(reinterpret_cast<VkQueue>(m_graphics_queue), 1, &submit_info, in_flight);
         }
-        HN_CORE_ASSERT(submit_res == VK_SUCCESS, "vkQueueSubmit failed: {0}", vk_result_to_string(submit_res));
+        if (submit_res != VK_SUCCESS)
+            HN_CORE_ERROR("vkQueueSubmit failed: {0}", vk_result_to_string(submit_res));
+        HN_CORE_ASSERT(submit_res == VK_SUCCESS, "vkQueueSubmit failed");
 
         VkSwapchainKHR swapchains[] = { reinterpret_cast<VkSwapchainKHR>(m_swapchain) };
 
@@ -1273,88 +1275,85 @@ namespace Honey {
 
             // Sampler + texture descriptors
             if (g.hasTextures) {
-                HN_CORE_ASSERT(g.textureCount > 0 && g.textures[0],
-                               "Vulkan: expected texture slot 0 to be present");
+                HN_CORE_ASSERT(g.textureCount > 0,
+                               "Vulkan: BindGlobals hasTextures=true but textureCount == 0");
+                HN_CORE_ASSERT(g.textureCount <= VulkanRendererAPI::k_max_texture_slots,
+                               "Vulkan: textureCount ({0}) exceeds k_max_texture_slots ({1})",
+                               g.textureCount, VulkanRendererAPI::k_max_texture_slots);
+                HN_CORE_ASSERT(g.textures[0],
+                               "Vulkan: expected texture slot 0 to be present and non-null");
 
                 const uint32_t write_count = std::max(1u, g.textureCount);
-                HN_CORE_ASSERT(write_count <= VulkanRendererAPI::k_max_texture_slots,
-                               "Vulkan: textureCount exceeds k_max_texture_slots");
 
-                //bool textures_changed = true;
-                //if (m_last_bound_textures_valid[frame] && m_last_bound_texture_count[frame] == write_count) {
-                //    textures_changed = false;
-                //    for (uint32_t i = 0; i < write_count; ++i) {
-                //        if (m_last_bound_textures[frame][i] != g.textures[i]) {
-                //            textures_changed = true;
-                //            break;
-                //        }
-                //    }
-                //}
+                // Build a sanitized view of the textures: no nullptrs, no out-of-range reads.
+                // Use slot 0 as fallback for any missing or null entry.
+                void* fallback_raw = g.textures[0];
+                auto* fallback_base = reinterpret_cast<Texture2D*>(fallback_raw);
+                auto* white_vk = dynamic_cast<VulkanTexture2D*>(fallback_base);
+                HN_CORE_ASSERT(white_vk, "Vulkan: slot 0 texture is not a VulkanTexture2D");
 
-                /*
-                 * This optimization fails to work when multiple renderer instances are submitting commands
-                 * in the same frame, since they overwrite each other's m_last_bound_textures. A more robust
-                 * solution would be needed to properly track this per-renderer or per-descriptor-set.
-                 */
-                //if (textures_changed) {
-                if (true) {
-                    auto* white_base = reinterpret_cast<Texture2D*>(g.textures[0]);
-                    auto* white_vk = dynamic_cast<VulkanTexture2D*>(white_base);
-                    HN_CORE_ASSERT(white_vk, "Vulkan: slot 0 texture is not a VulkanTexture2D");
-
-                    VkSampler sampler_handle = VK_NULL_HANDLE;
-                    auto& rs = Settings::get().renderer;
-                    switch (rs.texture_filter) {
-                    case RendererSettings::TextureFilter::nearest:      sampler_handle = m_backend->get_sampler_nearest(); break;
-                    case RendererSettings::TextureFilter::linear:       sampler_handle = m_backend->get_sampler_linear(); break;
-                    case RendererSettings::TextureFilter::anisotropic:  sampler_handle = m_backend->get_sampler_anisotropic(); break;
-                    }
-                    if (!sampler_handle) sampler_handle = m_backend->get_sampler_linear();
-
-                    VkDescriptorImageInfo sampler_info{};
-                    sampler_info.sampler = sampler_handle;
-
-                    VkWriteDescriptorSet write_sampler{};
-                    write_sampler.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                    write_sampler.dstSet = ds;
-                    write_sampler.dstBinding = 1;
-                    write_sampler.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
-                    write_sampler.descriptorCount = 1;
-                    write_sampler.pImageInfo = &sampler_info;
-
-                    std::vector<VkDescriptorImageInfo> infos;
-                    infos.resize(write_count);
-
-                    for (uint32_t i = 0; i < write_count; ++i) {
-                        void* raw = g.textures[i] ? g.textures[i] : g.textures[0];
-                        auto* base = reinterpret_cast<Texture2D*>(raw);
-                        auto* vktex = dynamic_cast<VulkanTexture2D*>(base);
-                        if (!vktex) vktex = white_vk;
-
-                        infos[i].imageView = reinterpret_cast<VkImageView>(vktex->get_vk_image_view());
-                        infos[i].imageLayout = static_cast<VkImageLayout>(vktex->get_vk_image_layout());
-                        infos[i].sampler = VK_NULL_HANDLE; // not used for SAMPLED_IMAGE
-                    }
-
-                    VkWriteDescriptorSet write_images{};
-                    write_images.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                    write_images.dstSet = ds;
-                    write_images.dstBinding = 2;
-                    write_images.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-                    write_images.descriptorCount = write_count;
-                    write_images.pImageInfo = infos.data();
-
-                    VkWriteDescriptorSet writes[] = { write_sampler, write_images };
-                    vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(m_device),
-                                           static_cast<uint32_t>(std::size(writes)),
-                                           writes,
-                                           0,
-                                           nullptr);
-
-                    m_last_bound_textures[frame] = g.textures;
-                    m_last_bound_texture_count[frame] = write_count;
-                    m_last_bound_textures_valid[frame] = true;
+                VkSampler sampler_handle = VK_NULL_HANDLE;
+                auto& rs = Settings::get().renderer;
+                switch (rs.texture_filter) {
+                case RendererSettings::TextureFilter::nearest:      sampler_handle = m_backend->get_sampler_nearest(); break;
+                case RendererSettings::TextureFilter::linear:       sampler_handle = m_backend->get_sampler_linear(); break;
+                case RendererSettings::TextureFilter::anisotropic:  sampler_handle = m_backend->get_sampler_anisotropic(); break;
                 }
+                if (!sampler_handle) sampler_handle = m_backend->get_sampler_linear();
+
+                VkDescriptorImageInfo sampler_info{};
+                sampler_info.sampler = sampler_handle;
+
+                VkWriteDescriptorSet write_sampler{};
+                write_sampler.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                write_sampler.dstSet = ds;
+                write_sampler.dstBinding = 1;
+                write_sampler.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+                write_sampler.descriptorCount = 1;
+                write_sampler.pImageInfo = &sampler_info;
+
+                std::vector<VkDescriptorImageInfo> infos;
+                infos.resize(write_count);
+
+                for (uint32_t i = 0; i < write_count; ++i) {
+                    void* rawPtr = nullptr;
+
+                    if (i < g.textureCount && g.textures[i]) {
+                        rawPtr = g.textures[i];
+                    } else {
+                        rawPtr = fallback_raw;
+                    }
+
+                    auto* base = reinterpret_cast<Texture2D*>(rawPtr);
+                    auto* vktex = dynamic_cast<VulkanTexture2D*>(base);
+                    if (!vktex) {
+                        // Fall back to slot 0 texture if this slot is invalid.
+                        vktex = white_vk;
+                    }
+
+                    infos[i].imageView  = reinterpret_cast<VkImageView>(vktex->get_vk_image_view());
+                    infos[i].imageLayout = static_cast<VkImageLayout>(vktex->get_vk_image_layout());
+                    infos[i].sampler    = VK_NULL_HANDLE; // not used for SAMPLED_IMAGE
+                }
+
+                VkWriteDescriptorSet write_images{};
+                write_images.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                write_images.dstSet = ds;
+                write_images.dstBinding = 2;
+                write_images.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+                write_images.descriptorCount = write_count;
+                write_images.pImageInfo = infos.data();
+
+                VkWriteDescriptorSet writes[] = { write_sampler, write_images };
+                vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(m_device),
+                                       static_cast<uint32_t>(std::size(writes)),
+                                       writes,
+                                       0,
+                                       nullptr);
+
+                m_last_bound_textures[frame]        = g.textures;
+                m_last_bound_texture_count[frame]   = write_count;
+                m_last_bound_textures_valid[frame]  = true;
             }
 
             vkCmdBindDescriptorSets(cmd,

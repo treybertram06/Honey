@@ -75,6 +75,9 @@ namespace Honey {
             std::array<void*, k_max_texture_slots> textures{};
             uint32_t textureCount = 0;
             bool hasTextures = false;
+
+            // Debug tag to identify source of globals state (for debugging / validation purposes)
+            enum class Source : uint8_t { Unknown = 0, Renderer2D, Renderer3D } source = Source::Unknown;
         };
 
         static GlobalsState get_globals_state();

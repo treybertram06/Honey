@@ -523,7 +523,9 @@ namespace Honey {
                 &s_data->camera_buffer
             );
         } else {
-            s_data->vk_globals_stack.push_back(VulkanRendererAPI::get_globals_state());
+            auto state = VulkanRendererAPI::get_globals_state();
+            state.source = VulkanRendererAPI::GlobalsState::Source::Renderer2D;
+            s_data->vk_globals_stack.push_back(state);
             // Vulkan backend will convert EngineClip to VulkanClip.
             VulkanRendererAPI::submit_camera_view_projection(vp);
         }

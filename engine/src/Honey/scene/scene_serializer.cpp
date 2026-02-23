@@ -10,6 +10,7 @@
 #include <yaml-cpp/yaml.h>
 
 #include "Honey/core/task_system.h"
+#include "Honey/loaders/gltf_loader.h"
 
 
 namespace Honey {
@@ -83,6 +84,20 @@ namespace Honey {
 
 
             out << YAML::EndMap; // SpriteRendererComponent
+        }
+
+        if (entity.has_component<MeshRendererComponent>()) {
+            out << YAML::Key << "MeshRendererComponent";
+            out << YAML::BeginMap;
+
+            auto& mr = entity.get_component<MeshRendererComponent>();
+            out << YAML::Key << "Color" << YAML::Value << mr.color;
+            out << YAML::Key << "MeshPath" << YAML::Value
+                << (mr.mesh_path.empty() ? "" : mr.mesh_path.string());
+
+            // Optionally: material overrides here
+
+            out << YAML::EndMap;
         }
 
         if (entity.has_component<CircleRendererComponent>()) {
@@ -416,6 +431,20 @@ namespace Honey {
                 // store TaskHandle(s). In many cases you can just let it run to completion.
                 (void)wait_task;
             }
+        }
+
+        auto mesh_node = entity_node["MeshRendererComponent"];
+        if (mesh_node) {
+            auto& mr = deserialized_entity.add_component<MeshRendererComponent>();
+            mr.color = mesh_node["Color"].as<glm::vec4>();
+
+            std::string mesh_path_str = mesh_node["MeshPath"].as<std::string>("");
+            if (!mesh_path_str.empty()) {
+                mr.mesh_path = std::filesystem::path(mesh_path_str);
+                mr.mesh = load_gltf_mesh(mr.mesh_path);
+            }
+
+            // Optionally: material overrides
         }
 
         auto circle_node = entity_node["CircleRendererComponent"];
