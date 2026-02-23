@@ -193,7 +193,7 @@ namespace Honey {
             }
 
             const std::filesystem::path texPath = gltfDir / img.uri;
-            Ref<Texture2D> tex = Texture2D::create(texPath);
+            Ref<Texture2D> tex = Texture2D::create_async(texPath.string());
             textureCacheByImageIndex[gt.source] = tex;
             mat->set_base_color_texture(tex);
 

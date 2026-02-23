@@ -39,6 +39,8 @@ namespace Honey {
 
         static TextureCache& texture_cache_instance();
 
+        static Ref<Texture2D> create_async(const std::string& path);
+
         struct AsyncHandle {
             std::atomic<bool> done{false};
             std::atomic<bool> failed{false};
@@ -46,9 +48,11 @@ namespace Honey {
             std::string path;
             std::string error;
         };
-        static Ref<AsyncHandle> create_async(const std::string& path);
+        static Ref<AsyncHandle> create_async_manual(const std::string& path);
 
         static void shutdown_cache();
+
+        virtual void resize(uint32_t /* width */, uint32_t /* height */) {}
         virtual void refresh_sampler() {}
     };
 

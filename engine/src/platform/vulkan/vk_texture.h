@@ -41,6 +41,7 @@ namespace Honey {
         ImTextureID get_imgui_texture_id() override;
 
         void refresh_sampler() override;
+        void resize(uint32_t width, uint32_t height) override;
 
     private:
         void fetch_device_handles();

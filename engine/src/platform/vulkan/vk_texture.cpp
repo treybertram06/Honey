@@ -93,8 +93,6 @@ namespace Honey {
         TaskSystem::run_async([path, handle]() {
             HN_PROFILE_SCOPE("VulkanTexture2D::create_async::stbi_load");
 
-            HN_CORE_TRACE("VulkanTexture2D::create_async: loading image from disk: '{}'", path);
-
             int w = 0, h = 0, channels = 0;
             stbi_uc* pixels = stbi_load(path.c_str(), &w, &h, &channels, STBI_rgb_alpha);
 
@@ -116,7 +114,6 @@ namespace Honey {
             // GPU work must run on main thread while VulkanBackend is alive.
             TaskSystem::enqueue_main([path, handle, decoded = std::move(decoded)]() mutable {
                 HN_PROFILE_SCOPE("VulkanTexture2D::create_async::GPU work");
-                HN_CORE_TRACE("VulkanTexture2D::create_async: GPU work started for '{}'", path);
                 if (!decoded.ok()) {
                     handle->failed.store(true, std::memory_order_release);
                     handle->error = "decoded image invalid";
@@ -136,7 +133,6 @@ namespace Honey {
                 handle->done.store(true, std::memory_order_release);
             });
         });
-        HN_CORE_TRACE("VulkanTexture2D::create_async: async load started for '{}'", path);
     }
 
     bool VulkanTexture2D::operator==(const Texture& other) const {
@@ -494,5 +490,49 @@ namespace Honey {
             HN_CORE_INFO("Refreshing sampler for texture '{}'", m_path);
         }
         create_sampler();
+    }
+
+    void VulkanTexture2D::resize(uint32_t width, uint32_t height) {
+        HN_PROFILE_FUNCTION();
+        if (width == 0 || height == 0)
+            return;
+
+        if (width == m_width && height == m_height)
+            return; // nothing to do
+
+        VkDevice dev = reinterpret_cast<VkDevice>(m_device);
+        if (!dev)
+            return;
+
+        // Destroy old resources
+        if (m_imgui_texture_id != 0 && m_backend && m_backend->imgui_initialized()) {
+            ImGui_ImplVulkan_RemoveTexture(
+                reinterpret_cast<VkDescriptorSet>(m_imgui_texture_id)
+            );
+            m_imgui_texture_id = 0;
+        }
+        if (m_sampler) {
+            vkDestroySampler(dev, reinterpret_cast<VkSampler>(m_sampler), nullptr);
+            m_sampler = nullptr;
+        }
+        if (m_image_view) {
+            vkDestroyImageView(dev, reinterpret_cast<VkImageView>(m_image_view), nullptr);
+            m_image_view = nullptr;
+        }
+        if (m_image) {
+            vkDestroyImage(dev, reinterpret_cast<VkImage>(m_image), nullptr);
+            m_image = nullptr;
+        }
+        if (m_image_memory) {
+            vkFreeMemory(dev, reinterpret_cast<VkDeviceMemory>(m_image_memory), nullptr);
+            m_image_memory = nullptr;
+        }
+
+        m_width  = width;
+        m_height = height;
+
+        // Recreate image + view + sampler (no data yet).
+        std::vector<uint8_t> empty(m_width * m_height * 4, 0);
+        init_from_pixels_rgba8(empty.data(), m_width, m_height);
     }
 } // namespace Honey

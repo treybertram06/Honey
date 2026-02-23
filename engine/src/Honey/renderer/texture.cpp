@@ -10,7 +10,6 @@
 
 
 namespace Honey {
-
     namespace {
         static bool is_supported_texture_extension(const std::filesystem::path& p) {
             auto ext = p.extension().string();
@@ -53,9 +52,9 @@ namespace Honey {
 
     Ref<Texture2D> Texture2D::create(uint32_t width, uint32_t height) {
         switch (Renderer::get_api()) {
-            case RendererAPI::API::none:     HN_CORE_ASSERT(false, "RendererAPI::none is not supported."); return nullptr;
-            case RendererAPI::API::opengl:   return CreateRef<OpenGLTexture2D>(width, height);
-            case RendererAPI::API::vulkan:   return CreateRef<VulkanTexture2D>(width, height);
+        case RendererAPI::API::none:     HN_CORE_ASSERT(false, "RendererAPI::none is not supported."); return nullptr;
+        case RendererAPI::API::opengl:   return CreateRef<OpenGLTexture2D>(width, height);
+        case RendererAPI::API::vulkan:   return CreateRef<VulkanTexture2D>(width, height);
         }
 
         HN_CORE_ASSERT(false, "Unknown RendererAPI.");
@@ -76,16 +75,78 @@ namespace Honey {
         }
 
         switch (Renderer::get_api()) {
-            case RendererAPI::API::none:     HN_CORE_ASSERT(false, "RendererAPI::none is not supported."); return nullptr;
-            case RendererAPI::API::opengl:   return texture_cache_instance().add(path, CreateRef<OpenGLTexture2D>(path));
-            case RendererAPI::API::vulkan:   return texture_cache_instance().add(path, CreateRef<VulkanTexture2D>(path));
+        case RendererAPI::API::none:     HN_CORE_ASSERT(false, "RendererAPI::none is not supported."); return nullptr;
+        case RendererAPI::API::opengl:   return texture_cache_instance().add(path, CreateRef<OpenGLTexture2D>(path));
+        case RendererAPI::API::vulkan:   return texture_cache_instance().add(path, CreateRef<VulkanTexture2D>(path));
         }
 
         HN_CORE_ASSERT(false, "Unknown RendererAPI.");
         return nullptr;
     }
 
-    Ref<Texture2D::AsyncHandle> Texture2D::create_async(const std::string& path) {
+    Ref<Texture2D> Texture2D::create_async(const std::string& path) {
+        // 1) If cached, just return it immediately.
+        if (texture_cache_instance().contains(path)) {
+            return texture_cache_instance().get(path);
+        }
+
+        // 2) Validate – if file invalid, just use the normal fallback.
+        if (!texture_file_exists(path)) {
+            HN_CORE_WARN("Texture2D::create_async: missing/invalid texture path '{}'", path);
+            return Texture2D::create("../resources/textures/missing.png");
+        }
+
+        // 3) Create small placeholder texture and put it in the cache under 'path'
+        const uint32_t placeholderW = 1;
+        const uint32_t placeholderH = 1;
+        Ref<Texture2D> tex = Texture2D::create(placeholderW, placeholderH);
+
+        // Magenta placeholder
+        uint32_t magenta = 0xFF00FFFFu;
+        tex->set_data(&magenta, sizeof(magenta));
+
+        tex = texture_cache_instance().add(path, tex);
+
+        // 4) Kick off background load of actual pixels
+        TaskSystem::run_async([path, tex]() {
+            HN_PROFILE_SCOPE("Texture2D::create_async::stbi_load");
+
+            int w = 0, h = 0, channels = 0;
+            stbi_uc* pixels = stbi_load(path.c_str(), &w, &h, &channels, STBI_rgb_alpha);
+            if (!pixels) {
+                HN_CORE_WARN("Texture2D::create_async: stbi_load failed for '{}'", path);
+                return; // keep placeholder
+            }
+
+            DecodedImageRGBA8 decoded;
+            decoded.width  = static_cast<uint32_t>(w);
+            decoded.height = static_cast<uint32_t>(h);
+            decoded.pixels.resize(decoded.width * decoded.height * 4);
+            std::memcpy(decoded.pixels.data(), pixels, decoded.pixels.size());
+            stbi_image_free(pixels);
+
+            if (!decoded.ok()) {
+                HN_CORE_WARN("Texture2D::create_async: decoded image invalid for '{}'", path);
+                return; // keep placeholder
+            }
+
+            // GPU upload must happen on main / render thread.
+            TaskSystem::enqueue_main([tex, decoded = std::move(decoded)]() mutable {
+                HN_PROFILE_SCOPE("Texture2D::create_async::GPU upload");
+                if (!tex)
+                    return;
+
+                // Resize backend to the real size, then upload pixels.
+                tex->resize(decoded.width, decoded.height);
+                tex->set_data(decoded.pixels.data(),
+                              decoded.width * decoded.height * 4);
+            });
+        });
+
+        return tex;
+    }
+
+    Ref<Texture2D::AsyncHandle> Texture2D::create_async_manual(const std::string& path) {
         auto handle = CreateRef<AsyncHandle>();
         handle->path = path;
 
@@ -118,7 +179,6 @@ namespace Honey {
             break;
 
         case RendererAPI::API::vulkan:
-            HN_CORE_TRACE("Texture2D::create_async: Vulkan texture async creation starting.");
             VulkanTexture2D::create_async(path, handle);
             break;
         }

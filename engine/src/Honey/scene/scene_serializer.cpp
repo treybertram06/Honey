@@ -9,6 +9,8 @@
 #include <fstream>
 #include <yaml-cpp/yaml.h>
 
+#include "Honey/core/task_system.h"
+
 
 namespace Honey {
 
@@ -364,9 +366,55 @@ namespace Honey {
             glm::vec2 pivot = sprite_node["Pivot"].as<glm::vec2>(glm::vec2(0.5f));
 
             if (!texture_path_str.empty()) {
-                sprite.sprite_path = std::filesystem::path(texture_path_str); // <-- keep it!
-                //HN_CORE_INFO("PPU: {0}, Pivot: {1},{2}", ppu, pivot.x, pivot.y);
-                sprite.sprite = Sprite::create_from_texture( Texture2D::create(texture_path_str), ppu, pivot );
+                sprite.sprite_path = std::filesystem::path(texture_path_str);
+
+                Ref<Texture2D::AsyncHandle> tex_handle = Texture2D::create_async_manual(texture_path_str);
+
+                // If texture was already in cache or loaded instantly, this is valid now.
+                if (tex_handle && tex_handle->texture) {
+                    sprite.sprite = Sprite::create_from_texture(tex_handle->texture, ppu, pivot);
+                } else {
+                    // Optional: create a placeholder sprite if you want something visible
+                    // sprite.sprite = Sprite::create_placeholder(ppu, pivot);
+                }
+
+                TaskHandle wait_task = TaskSystem::run_async(
+                    [tex_handle, sprite_ptr = &sprite, ppu, pivot]() {
+                        // Wait until backend async completes this handle
+                        while (!tex_handle->done.load(std::memory_order_acquire)) {
+                            // Small sleep to avoid a tight busy-wait loop
+                            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                        }
+
+                        // If it failed, leave whatever fallback we had
+                        if (tex_handle->failed.load(std::memory_order_acquire) ||
+                            !tex_handle->texture) {
+                            return;
+                        }
+
+                        Ref<Texture2D> final_tex = tex_handle->texture;
+
+                        // Schedule sprite update on main thread
+                        TaskSystem::enqueue_main(
+                            [sprite_ptr, final_tex, ppu, pivot]() {
+                                if (!sprite_ptr)
+                                    return;
+
+                                if (!sprite_ptr->sprite) {
+                                    // Sprite wasn't created yet; make it now.
+                                    sprite_ptr->sprite = Sprite::create_from_texture(
+                                        final_tex, ppu, pivot);
+                                } else {
+                                    // If Sprite supports changing texture in-place.
+                                    sprite_ptr->sprite->set_texture(final_tex);
+                                    sprite_ptr->sprite->recalc_size();
+                                }
+                            });
+                    });
+
+                // If you want to eventually join this specific wait_task somewhere, you can
+                // store TaskHandle(s). In many cases you can just let it run to completion.
+                (void)wait_task;
             }
         }
 
@@ -380,7 +428,7 @@ namespace Honey {
             std::string texture_path_str = circle_node["Texture"].as<std::string>("");
             if (!texture_path_str.empty()) {
                 sprite.texture_path = std::filesystem::path(texture_path_str); // <-- keep it!
-                sprite.texture = Texture2D::create(texture_path_str);
+                sprite.texture = Texture2D::create_async(texture_path_str);
             }
         }
 
@@ -393,7 +441,7 @@ namespace Honey {
             std::string texture_path_str = line_node["Texture"].as<std::string>("");
             if (!texture_path_str.empty()) {
                 sprite.texture_path = std::filesystem::path(texture_path_str); // <-- keep it!
-                sprite.texture = Texture2D::create(texture_path_str);
+                sprite.texture = Texture2D::create_async(texture_path_str);
             }
         }
 

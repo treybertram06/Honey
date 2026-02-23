@@ -42,6 +42,7 @@ namespace Honey {
         }
 
         Ref<Texture2D> get_texture() const { return m_texture; }
+        void set_texture(const Ref<Texture2D>& texture) { m_texture = texture; recalc_size(); }
 
         float get_pixels_per_unit() const { return m_pixels_per_unit; }
         void  set_pixels_per_unit(float value) {
@@ -55,6 +56,10 @@ namespace Honey {
 
         glm::ivec2 get_pixel_min() const { return m_pixel_min; }
         glm::ivec2 get_pixel_size() const { return m_pixel_size; }
+
+        void recalc_size() {
+            m_pixel_size = {m_texture->get_width(), m_texture->get_height()};
+        }
 
     private:
         Ref<Texture2D> m_texture;
