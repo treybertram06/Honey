@@ -199,7 +199,6 @@ add_library(engine STATIC
         src/Honey/renderer/pipeline_spec.cpp
         src/Honey/core/task_system.h
         src/Honey/core/task_system.cpp
-        src/Honey/loaders/texture_async.h
 )
 
 # Apply MSVC runtime to engine itself
