@@ -441,7 +441,9 @@ namespace Honey {
             std::string mesh_path_str = mesh_node["MeshPath"].as<std::string>("");
             if (!mesh_path_str.empty()) {
                 mr.mesh_path = std::filesystem::path(mesh_path_str);
-                mr.mesh = load_gltf_mesh(mr.mesh_path);
+
+                auto handle = load_gltf_mesh_async(mr.mesh_path);
+                mr.async_load_handle = handle;
             }
 
             // Optionally: material overrides

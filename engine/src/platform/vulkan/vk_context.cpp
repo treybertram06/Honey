@@ -700,8 +700,9 @@ namespace Honey {
         } else {
             submit_res = vkQueueSubmit(reinterpret_cast<VkQueue>(m_graphics_queue), 1, &submit_info, in_flight);
         }
-        if (submit_res != VK_SUCCESS)
+        if (submit_res != VK_SUCCESS) {
             HN_CORE_ERROR("vkQueueSubmit failed: {0}", vk_result_to_string(submit_res));
+        } // In the case of "vkQueueSubmit failed: VK_ERROR_DEVICE_LOST", I have no idea why this is happening
         HN_CORE_ASSERT(submit_res == VK_SUCCESS, "vkQueueSubmit failed");
 
         VkSwapchainKHR swapchains[] = { reinterpret_cast<VkSwapchainKHR>(m_swapchain) };

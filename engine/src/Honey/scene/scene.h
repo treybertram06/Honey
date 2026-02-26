@@ -84,6 +84,9 @@ namespace Honey {
 
 
     private:
+
+        void update_streamed_assets();
+
         static Scene* s_active_scene;
         entt::registry m_registry;
         std::unordered_map<std::string, SceneValue> m_scene_state;

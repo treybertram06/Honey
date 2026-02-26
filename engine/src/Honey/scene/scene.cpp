@@ -483,6 +483,9 @@ namespace Honey {
     }
 
     void Scene::on_update_editor(Timestep ts, EditorCamera& camera) {
+
+        update_streamed_assets();
+
         // render
         Renderer2D::begin_scene(camera);
 
@@ -786,5 +789,43 @@ namespace Honey {
                 cc.runtime_shapes.push_back(shape);
             }
         }
+    }
+
+    namespace {
+        void promote_finished_mesh_streams(Scene* scene) {
+            if (!scene)
+                return;
+
+            auto& registry = scene->get_registry();
+
+            auto view = registry.view<MeshRendererComponent>();
+            for (auto e : view) {
+                auto& mr = view.get<MeshRendererComponent>(e);
+
+                if (!mr.async_load_handle)
+                    continue;
+
+                auto& handle = mr.async_load_handle;
+
+                // If not finished yet, nothing to do.
+                if (!handle->done.load(std::memory_order_acquire))
+                    continue;
+
+                // Finished: either succeeded or failed
+                if (!handle->failed.load(std::memory_order_acquire) && handle->mesh) {
+                    mr.mesh = handle->mesh;
+                } else {
+                    HN_CORE_WARN("Async mesh load failed for '{}'",
+                                 mr.mesh_path.string());
+                }
+
+                // Clear the handle so we don't process again
+                mr.async_load_handle.reset();
+            }
+        }
+    }
+
+    void Scene::update_streamed_assets() {
+        promote_finished_mesh_streams(this);
     }
 }

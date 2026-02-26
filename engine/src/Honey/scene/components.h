@@ -12,6 +12,7 @@
 #include <entt/entt.hpp>
 
 #include "box2d/id.h"
+#include "Honey/loaders/gltf_loader.h"
 #include "Honey/renderer/mesh.h"
 #include "Honey/renderer/sprite.h"
 
@@ -83,6 +84,8 @@ namespace Honey {
         std::filesystem::path mesh_path;
 
         std::vector<Ref<Material>> material_overrides;
+
+        Ref<MeshAsyncHandle> async_load_handle;
 
         MeshRendererComponent() = default;
         MeshRendererComponent(const MeshRendererComponent&) = default;

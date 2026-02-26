@@ -22,6 +22,7 @@
 #include "glm/ext/matrix_transform.hpp"
 #include "glm/gtc/type_ptr.hpp"
 #include "glm/gtx/quaternion.hpp"
+#include "Honey/core/task_system.h"
 
 namespace Honey {
     namespace {
@@ -532,5 +533,25 @@ namespace Honey {
         }
 
         return out;
+    }
+
+    Ref<MeshAsyncHandle> load_gltf_mesh_async(const std::filesystem::path& path,
+                                              const GltfLoadOptions& options) {
+        HN_PROFILE_FUNCTION();
+
+        auto handle = CreateRef<MeshAsyncHandle>();
+
+        // Kick work to background thread(s)
+        TaskSystem::run_async([handle, path, options]() {
+            Ref<Mesh> result = load_gltf_mesh(path, options);
+            if (!result) {
+                handle->failed.store(true, std::memory_order_release);
+            } else {
+                handle->mesh = result;
+            }
+            handle->done.store(true, std::memory_order_release);
+        });
+
+        return handle;
     }
 } // namespace Honey
