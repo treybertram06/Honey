@@ -93,6 +93,32 @@ namespace Honey {
 
         bool imgui_initialized() const { return m_imgui_initialized; }
 
+        // Streaming upload
+        struct BufferUploadDesc {
+            VkBuffer      dstBuffer  = VK_NULL_HANDLE;
+            VkDeviceSize  dstOffset  = 0;
+            const void*   srcData    = nullptr;
+            VkDeviceSize  size       = 0;
+        };
+
+        struct ImageUploadDesc {
+            VkImage       dstImage   = VK_NULL_HANDLE;
+            uint32_t      width      = 0;
+            uint32_t      height     = 0;
+            uint32_t      mipLevel   = 0;
+            uint32_t      arrayLayer = 0;
+            VkImageLayout initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            VkImageLayout finalLayout   = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            const void*   srcData       = nullptr;
+            VkDeviceSize  size          = 0;
+        };
+
+        void queue_buffer_upload(const BufferUploadDesc& desc);
+        void queue_image_upload(const ImageUploadDesc& desc);
+
+        // Called once per frame from the render thread, before recording draw commands.
+        void process_stream_uploads();
+
     private:
         struct QueueFamilyInfo {
             uint32_t graphicsFamily = UINT32_MAX;
@@ -120,6 +146,11 @@ namespace Honey {
 
         void init_imgui_resources();
         void shutdown_imgui_resources();
+
+        void init_stream_uploader();
+        void shutdown_stream_uploader();
+
+        bool stream_staging_allocate(VkDeviceSize size, VkDeviceSize alignment, VkDeviceSize& outOffset);
     private:
         bool m_initialized = false;
 
@@ -169,6 +200,29 @@ namespace Honey {
         static constexpr uint32_t k_desired_queues_per_family = 4;
 
         bool m_imgui_initialized = false;
+
+        VkBuffer       m_stream_staging_buffer  = VK_NULL_HANDLE;
+        VkDeviceMemory m_stream_staging_memory  = VK_NULL_HANDLE;
+        void*          m_stream_staging_mapped  = nullptr;
+        VkDeviceSize   m_stream_staging_size    = 0;
+        VkDeviceSize   m_stream_staging_head    = 0;
+
+        struct StreamUploadJob {
+            enum class Type : uint8_t { Buffer, Image } type = Type::Buffer;
+
+            // Common staging suballocation
+            VkDeviceSize stagingOffset = 0;
+            VkDeviceSize size         = 0;
+
+            BufferUploadDesc buf{};
+            ImageUploadDesc  img{};
+        };
+
+        std::vector<StreamUploadJob> m_stream_jobs;
+        VkFence                      m_stream_fence = VK_NULL_HANDLE;
+        bool                         m_stream_submit_in_flight = false;
+        VkCommandBuffer              m_stream_inflight_cmd = VK_NULL_HANDLE;
+
     };
 
 } // namespace Honey

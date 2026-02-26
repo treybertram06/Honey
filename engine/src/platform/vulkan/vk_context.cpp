@@ -638,6 +638,9 @@ namespace Honey {
 
         recreate_swapchain_if_needed();
 
+        if (m_backend)
+            m_backend->process_stream_uploads();
+
         m_last_bound_textures_valid[m_current_frame] = false;
         m_last_bound_texture_count[m_current_frame] = 0;
         m_last_bound_textures[m_current_frame] = {};

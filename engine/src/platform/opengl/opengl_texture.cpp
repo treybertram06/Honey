@@ -237,7 +237,7 @@ namespace Honey {
 #endif
     }
 
-    void OpenGLTexture2D::set_data(void *data, uint32_t size) {
+    void OpenGLTexture2D::set_data(const void *data, uint32_t size) {
     	HN_PROFILE_FUNCTION();
 
         uint32_t bpp = m_format == GL_RGBA ? 4 : 3;

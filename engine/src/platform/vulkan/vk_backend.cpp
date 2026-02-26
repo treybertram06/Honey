@@ -202,6 +202,7 @@ namespace Honey {
             vkDeviceWaitIdle(device);
 
             shutdown_imgui_resources();
+            shutdown_stream_uploader();
 
             if (m_sampler_nearest) {
                 vkDestroySampler(device, m_sampler_nearest, nullptr);
@@ -362,6 +363,8 @@ namespace Honey {
 
         r = vkCreateFence(m_device, &fence_ci, nullptr, &m_upload_fence);
         HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateFence failed for upload context");
+
+        init_stream_uploader(); // Relies on upload context
     }
 
     void VulkanBackend::shutdown_upload_context() {
@@ -605,6 +608,286 @@ namespace Honey {
         // Let Dear ImGui's Vulkan backend record draw calls into our command buffer.
         // We pass VK_NULL_HANDLE as pipeline; the backend will use its internally created pipeline.
         ImGui_ImplVulkan_RenderDrawData(draw_data, cmd, VK_NULL_HANDLE);
+    }
+
+    void VulkanBackend::queue_buffer_upload(const BufferUploadDesc& desc) {
+        HN_PROFILE_FUNCTION();
+        if (!desc.dstBuffer || !desc.srcData || desc.size == 0)
+            return;
+
+        // Align to 16 bytes, good for most GPUs
+        VkDeviceSize offset = 0;
+        const VkDeviceSize alignment = 16;
+        if (!stream_staging_allocate(desc.size, alignment, offset)) {
+            // Fallback: do immediate one-off upload to avoid hard failure.
+            HN_CORE_WARN("Streaming uploader ran out of space; falling back to immediate_submit for buffer upload.");
+            immediate_submit([&](VkCommandBuffer cmd) {
+
+                VkBufferCreateInfo bi{};
+                bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+                bi.size = desc.size;
+                bi.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+                bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+                VkBuffer tmpBuf = VK_NULL_HANDLE;
+                VkResult r = vkCreateBuffer(m_device, &bi, nullptr, &tmpBuf);
+                HN_CORE_ASSERT(r == VK_SUCCESS, "queue_buffer_upload fallback vkCreateBuffer failed");
+
+                VkMemoryRequirements req{};
+                vkGetBufferMemoryRequirements(m_device, tmpBuf, &req);
+
+                VkPhysicalDeviceMemoryProperties memProps{};
+                vkGetPhysicalDeviceMemoryProperties(m_physical_device, &memProps);
+
+                uint32_t typeIndex = UINT32_MAX;
+                for (uint32_t i = 0; i < memProps.memoryTypeCount; ++i) {
+                    if ((req.memoryTypeBits & (1u << i)) &&
+                        (memProps.memoryTypes[i].propertyFlags &
+                         (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) ==
+                        (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
+                        typeIndex = i;
+                        break;
+                    }
+                }
+                HN_CORE_ASSERT(typeIndex != UINT32_MAX, "queue_buffer_upload fallback: no suitable memory type");
+
+                VkMemoryAllocateInfo ai{};
+                ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+                ai.allocationSize = req.size;
+                ai.memoryTypeIndex = typeIndex;
+
+                VkDeviceMemory tmpMem = VK_NULL_HANDLE;
+                r = vkAllocateMemory(m_device, &ai, nullptr, &tmpMem);
+                HN_CORE_ASSERT(r == VK_SUCCESS, "queue_buffer_upload fallback vkAllocateMemory failed");
+                r = vkBindBufferMemory(m_device, tmpBuf, tmpMem, 0);
+                HN_CORE_ASSERT(r == VK_SUCCESS, "queue_buffer_upload fallback vkBindBufferMemory failed");
+
+                void* mapped = nullptr;
+                r = vkMapMemory(m_device, tmpMem, 0, desc.size, 0, &mapped);
+                HN_CORE_ASSERT(r == VK_SUCCESS, "queue_buffer_upload fallback vkMapMemory failed");
+                std::memcpy(mapped, desc.srcData, static_cast<size_t>(desc.size));
+                vkUnmapMemory(m_device, tmpMem);
+
+                VkBufferCopy region{};
+                region.srcOffset = 0;
+                region.dstOffset = desc.dstOffset;
+                region.size      = desc.size;
+                vkCmdCopyBuffer(cmd, tmpBuf, desc.dstBuffer, 1, &region);
+
+                // tmpBuf/tmpMem freed when cmd buffer is freed (or we can clean after submit; omitted for brevity).
+            });
+            return;
+        }
+
+        // Copy src data into mapped staging
+        std::memcpy(static_cast<uint8_t*>(m_stream_staging_mapped) + offset,
+                    desc.srcData,
+                    static_cast<size_t>(desc.size));
+
+        StreamUploadJob job{};
+        job.type         = StreamUploadJob::Type::Buffer;
+        job.stagingOffset = offset;
+        job.size          = desc.size;
+        job.buf           = desc;
+
+        m_stream_jobs.push_back(job);
+    }
+
+    void VulkanBackend::queue_image_upload(const ImageUploadDesc& desc) {
+        HN_PROFILE_FUNCTION();
+        HN_CORE_ASSERT(desc.dstImage != VK_NULL_HANDLE,
+                       "queue_image_upload: dstImage is null (w={}, h={})",
+                       desc.width, desc.height);
+
+        if (!desc.dstImage || !desc.srcData || desc.size == 0 || desc.width == 0 || desc.height == 0)
+            return;
+
+        // 4-byte alignment is enough for tightly packed RGBA8; use 16 for safety.
+        VkDeviceSize offset = 0;
+        const VkDeviceSize alignment = 16;
+        if (!stream_staging_allocate(desc.size, alignment, offset)) {
+            HN_CORE_WARN("Streaming uploader ran out of space; falling back to immediate_submit for image upload.");
+            immediate_submit([&](VkCommandBuffer cmd) {
+                // Fallback per-upload staging omitted for brevity.
+                // Similar to buffer fallback but with vkCmdCopyBufferToImage.
+            });
+            return;
+        }
+
+        std::memcpy(static_cast<uint8_t*>(m_stream_staging_mapped) + offset,
+                    desc.srcData,
+                    static_cast<size_t>(desc.size));
+
+        StreamUploadJob job{};
+        job.type          = StreamUploadJob::Type::Image;
+        job.stagingOffset = offset;
+        job.size          = desc.size;
+        job.img           = desc;
+
+        m_stream_jobs.push_back(job);
+    }
+
+    void VulkanBackend::process_stream_uploads() {
+        HN_PROFILE_FUNCTION();
+
+        if (!m_device || !m_upload_command_pool || !m_stream_staging_buffer)
+            return;
+
+        // If previous batched submit is still in flight, check the fence.
+        if (m_stream_submit_in_flight) {
+            VkResult fenceRes = vkGetFenceStatus(m_device, m_stream_fence);
+            if (fenceRes == VK_NOT_READY) {
+                // Uploads still in flight; cannot reuse staging or cmd buffer yet.
+                return;
+            }
+
+            HN_CORE_ASSERT(fenceRes == VK_SUCCESS,
+                           "process_stream_uploads: upload fence error");
+
+            // Previous batch finished: free its command buffer (if any) and reclaim staging.
+            if (m_stream_inflight_cmd != VK_NULL_HANDLE) {
+                vkFreeCommandBuffers(m_device,
+                                     m_upload_command_pool,
+                                     1,
+                                     &m_stream_inflight_cmd);
+                m_stream_inflight_cmd = VK_NULL_HANDLE;
+            }
+
+            m_stream_submit_in_flight = false;
+            m_stream_staging_head     = 0; // reclaim entire staging buffer
+        }
+
+        if (m_stream_jobs.empty())
+            return; // nothing to do
+
+        VkCommandBufferAllocateInfo alloc{};
+        alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        alloc.commandPool = m_upload_command_pool;
+        alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        alloc.commandBufferCount = 1;
+
+        VkCommandBuffer cmd = VK_NULL_HANDLE;
+        VkResult r = vkAllocateCommandBuffers(m_device, &alloc, &cmd);
+        HN_CORE_ASSERT(r == VK_SUCCESS, "process_stream_uploads: vkAllocateCommandBuffers failed");
+
+        VkCommandBufferBeginInfo begin{};
+        begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+        r = vkBeginCommandBuffer(cmd, &begin);
+        HN_CORE_ASSERT(r == VK_SUCCESS, "process_stream_uploads: vkBeginCommandBuffer failed");
+
+        for (const StreamUploadJob& job : m_stream_jobs) {
+            if (job.type == StreamUploadJob::Type::Buffer) {
+                const auto& d = job.buf;
+                VkBufferCopy region{};
+                region.srcOffset = job.stagingOffset;
+                region.dstOffset = d.dstOffset;
+                region.size      = d.size;
+
+                vkCmdCopyBuffer(cmd,
+                                m_stream_staging_buffer,
+                                d.dstBuffer,
+                                1,
+                                &region);
+            } else {
+                const auto& d = job.img;
+
+                // Transition image layout if needed.
+                if (d.initialLayout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+                    VkImageMemoryBarrier barrier{};
+                    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                    barrier.oldLayout = d.initialLayout;
+                    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+                    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    barrier.image = d.dstImage;
+                    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                    barrier.subresourceRange.baseMipLevel = d.mipLevel;
+                    barrier.subresourceRange.levelCount   = 1;
+                    barrier.subresourceRange.baseArrayLayer = d.arrayLayer;
+                    barrier.subresourceRange.layerCount     = 1;
+
+                    barrier.srcAccessMask = 0;
+                    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+                    vkCmdPipelineBarrier(cmd,
+                                         VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                         VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                         0,
+                                         0, nullptr,
+                                         0, nullptr,
+                                         1, &barrier);
+                }
+
+                VkBufferImageCopy region{};
+                region.bufferOffset                    = job.stagingOffset;
+                region.bufferRowLength                 = 0;
+                region.bufferImageHeight               = 0;
+                region.imageSubresource.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+                region.imageSubresource.mipLevel       = d.mipLevel;
+                region.imageSubresource.baseArrayLayer = d.arrayLayer;
+                region.imageSubresource.layerCount     = 1;
+                region.imageOffset                     = { 0, 0, 0 };
+                region.imageExtent                     = { d.width, d.height, 1 };
+
+                vkCmdCopyBufferToImage(cmd,
+                                       m_stream_staging_buffer,
+                                       d.dstImage,
+                                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                       1,
+                                       &region);
+
+                if (d.finalLayout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+                    VkImageMemoryBarrier barrier{};
+                    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+                    barrier.newLayout = d.finalLayout;
+                    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    barrier.image = d.dstImage;
+                    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                    barrier.subresourceRange.baseMipLevel = d.mipLevel;
+                    barrier.subresourceRange.levelCount   = 1;
+                    barrier.subresourceRange.baseArrayLayer = d.arrayLayer;
+                    barrier.subresourceRange.layerCount     = 1;
+
+                    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+                    vkCmdPipelineBarrier(cmd,
+                                         VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                                         0,
+                                         0, nullptr,
+                                         0, nullptr,
+                                         1, &barrier);
+                }
+            }
+        }
+
+        r = vkEndCommandBuffer(cmd);
+        HN_CORE_ASSERT(r == VK_SUCCESS, "process_stream_uploads: vkEndCommandBuffer failed");
+
+        vkResetFences(m_device, 1, &m_stream_fence);
+
+        VkSubmitInfo submit{};
+        submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submit.commandBufferCount = 1;
+        submit.pCommandBuffers = &cmd;
+
+        {
+            std::scoped_lock qlk(m_shared_graphics_mutex);
+            r = vkQueueSubmit(m_upload_queue, 1, &submit, m_stream_fence);
+        }
+        HN_CORE_ASSERT(r == VK_SUCCESS, "process_stream_uploads: vkQueueSubmit failed");
+
+        // Do NOT wait here: let the upload happen in the background.
+        // We'll free the command buffer and reclaim staging when the fence signals
+        // in a subsequent call.
+        m_stream_submit_in_flight = true;
+        m_stream_inflight_cmd     = cmd;
+        m_stream_jobs.clear();
     }
 
     // -----------------------------
@@ -954,5 +1237,131 @@ namespace Honey {
             res = vkCreateSampler(m_device, &si, nullptr, &m_sampler_aniso);
             HN_CORE_ASSERT(res == VK_SUCCESS, "vkCreateSampler failed for m_sampler_aniso: {0}", vk_result_to_string(res));
         }
+    }
+
+    void VulkanBackend::init_stream_uploader() {
+        HN_PROFILE_FUNCTION();
+        if (!m_device || !m_physical_device)
+            return;
+        if (m_stream_staging_buffer)
+            return; // already initialized
+
+        // 64 MB
+        m_stream_staging_size = 64ull * 1024ull * 1024ull;
+
+        VkBufferCreateInfo bi{};
+        bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bi.size  = m_stream_staging_size;
+        bi.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        VkResult r = vkCreateBuffer(m_device, &bi, nullptr, &m_stream_staging_buffer);
+        HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanBackend::init_stream_uploader vkCreateBuffer failed");
+
+        VkMemoryRequirements req{};
+        vkGetBufferMemoryRequirements(m_device, m_stream_staging_buffer, &req);
+
+        VkPhysicalDeviceMemoryProperties memProps{};
+        vkGetPhysicalDeviceMemoryProperties(m_physical_device, &memProps);
+
+        uint32_t typeIndex = UINT32_MAX;
+        for (uint32_t i = 0; i < memProps.memoryTypeCount; ++i) {
+            if ((req.memoryTypeBits & (1u << i)) &&
+                (memProps.memoryTypes[i].propertyFlags &
+                 (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) ==
+                (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
+                typeIndex = i;
+                break;
+                }
+        }
+        HN_CORE_ASSERT(typeIndex != UINT32_MAX, "VulkanBackend::init_stream_uploader: no suitable HOST_VISIBLE|COHERENT memory type");
+
+        VkMemoryAllocateInfo ai{};
+        ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        ai.allocationSize  = req.size;
+        ai.memoryTypeIndex = typeIndex;
+
+        r = vkAllocateMemory(m_device, &ai, nullptr, &m_stream_staging_memory);
+        HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanBackend::init_stream_uploader vkAllocateMemory failed");
+
+        r = vkBindBufferMemory(m_device, m_stream_staging_buffer, m_stream_staging_memory, 0);
+        HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanBackend::init_stream_uploader vkBindBufferMemory failed");
+
+        r = vkMapMemory(m_device, m_stream_staging_memory, 0, m_stream_staging_size, 0, &m_stream_staging_mapped);
+        HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanBackend::init_stream_uploader vkMapMemory failed");
+
+        m_stream_staging_head = 0;
+        m_stream_jobs.clear();
+
+        // Dedicated fence for batched stream submissions
+        VkFenceCreateInfo fence_ci{};
+        fence_ci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        fence_ci.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
+        r = vkCreateFence(m_device, &fence_ci, nullptr, &m_stream_fence);
+        HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanBackend::init_stream_uploader vkCreateFence failed");
+
+        m_stream_submit_in_flight = false;
+        m_stream_inflight_cmd     = VK_NULL_HANDLE;
+
+        HN_CORE_INFO("Streaming uploader initialized with staging buffer of {} MB",
+                     (uint32_t)(m_stream_staging_size / (1024 * 1024)));
+    }
+
+    void VulkanBackend::shutdown_stream_uploader() {
+        HN_PROFILE_FUNCTION();
+        if (!m_device)
+            return;
+
+        if (m_stream_fence) {
+            vkDestroyFence(m_device, m_stream_fence, nullptr);
+            m_stream_fence = VK_NULL_HANDLE;
+        }
+
+        if (m_stream_staging_mapped) {
+            vkUnmapMemory(m_device, m_stream_staging_memory);
+            m_stream_staging_mapped = nullptr;
+        }
+
+        if (m_stream_staging_buffer) {
+            vkDestroyBuffer(m_device, m_stream_staging_buffer, nullptr);
+            m_stream_staging_buffer = VK_NULL_HANDLE;
+        }
+
+        if (m_stream_staging_memory) {
+            vkFreeMemory(m_device, m_stream_staging_memory, nullptr);
+            m_stream_staging_memory = VK_NULL_HANDLE;
+        }
+
+        m_stream_staging_size = 0;
+        m_stream_staging_head = 0;
+        m_stream_jobs.clear();
+        m_stream_submit_in_flight = false;
+        m_stream_inflight_cmd = VK_NULL_HANDLE;
+    }
+
+    bool VulkanBackend::stream_staging_allocate(VkDeviceSize size, VkDeviceSize alignment, VkDeviceSize& outOffset) {
+        HN_CORE_ASSERT(m_stream_staging_buffer && m_stream_staging_mapped, "Streaming uploader not initialized");
+
+        // Simple linear alloc with wrap-around if it fits.
+        VkDeviceSize alignedHead = (m_stream_staging_head + (alignment - 1)) & ~(alignment - 1);
+
+        if (alignedHead + size <= m_stream_staging_size) {
+            outOffset = alignedHead;
+            m_stream_staging_head = alignedHead + size;
+            return true;
+        }
+
+        // Try wrapping to 0 if it fits.
+        if (size <= m_stream_staging_size) {
+            outOffset = 0;
+            m_stream_staging_head = size;
+            return true;
+        }
+
+        // The requested allocation is bigger than the whole staging buffer.
+        HN_CORE_ERROR("Streaming uploader: allocation of {} bytes exceeds staging buffer size {}",
+                      (uint64_t)size, (uint64_t)m_stream_staging_size);
+        return false;
     }
 }

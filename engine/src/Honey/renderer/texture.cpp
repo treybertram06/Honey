@@ -138,7 +138,7 @@ namespace Honey {
 
                 // Resize backend to the real size, then upload pixels.
                 tex->resize(decoded.width, decoded.height);
-                tex->set_data(decoded.pixels.data(),
+                tex->set_data_streaming(decoded.pixels.data(),
                               decoded.width * decoded.height * 4);
             });
         });

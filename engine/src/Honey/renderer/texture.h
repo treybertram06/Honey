@@ -23,7 +23,8 @@ namespace Honey {
         virtual uint32_t get_height() const = 0;
         virtual uint32_t get_renderer_id() const = 0;
 
-        virtual void set_data(void* data, uint32_t size) = 0;
+        virtual void set_data(const void* data, uint32_t size) = 0;
+        virtual void set_data_streaming(const void* data, uint32_t size) = 0;
 
         virtual void bind(uint32_t slot = 0) const = 0;
 
@@ -40,6 +41,10 @@ namespace Honey {
         static TextureCache& texture_cache_instance();
 
         static Ref<Texture2D> create_async(const std::string& path);
+
+        void set_data_streaming(const void* data, uint32_t size) override {
+            set_data(data, size);
+        }
 
         struct AsyncHandle {
             std::atomic<bool> done{false};

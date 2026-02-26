@@ -26,7 +26,42 @@ namespace Honey {
         fetch_device_handles();
 
         std::vector<uint8_t> empty(m_width * m_height * 4, 0);
-        init_from_pixels_rgba8(empty.data(), m_width, m_height);
+
+        // For tiny placeholder textures, avoid the streaming path and do a
+        // synchronous upload so they are immediately sampleable.
+        if (m_width == 1 && m_height == 1) {
+            // Explicitly create resources and do an immediate upload.
+            create_image(m_width, m_height);
+            create_image_view();
+            create_sampler();
+
+            // Use the old immediate path: transition -> copy -> transition.
+            const uint32_t size = m_width * m_height * 4;
+
+            void* staging_buffer = nullptr;
+            void* staging_memory = nullptr;
+            create_staging_buffer(size, staging_buffer, staging_memory);
+
+            VkDevice dev = reinterpret_cast<VkDevice>(m_device);
+            void* mapped = nullptr;
+            VkResult r = vkMapMemory(dev,
+                                     reinterpret_cast<VkDeviceMemory>(staging_memory),
+                                     0, size, 0, &mapped);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "vkMapMemory failed for placeholder staging buffer");
+            std::memcpy(mapped, empty.data(), size);
+            vkUnmapMemory(dev, reinterpret_cast<VkDeviceMemory>(staging_memory));
+
+            transition_image_layout(VK_IMAGE_LAYOUT_UNDEFINED,
+                                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+            copy_buffer_to_image(staging_buffer);
+            transition_image_layout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+            destroy_buffer(staging_buffer, staging_memory);
+        } else {
+            // Normal textures use the streaming‑friendly initialization.
+            init_from_pixels_rgba8(empty.data(), m_width, m_height);
+        }
     }
 
     VulkanTexture2D::VulkanTexture2D(const std::string& path)
@@ -124,7 +159,7 @@ namespace Honey {
                 // Create Vulkan texture (device handles are accessed via Application::get()).
                 Ref<VulkanTexture2D> vk_tex = CreateRef<VulkanTexture2D>(decoded.width, decoded.height);
                 vk_tex->m_path = path; // keep original path for logging/samplers
-                vk_tex->set_data(decoded.pixels.data(), static_cast<uint32_t>(decoded.pixels.size()));
+                vk_tex->set_data_streaming(decoded.pixels.data(), static_cast<uint32_t>(decoded.pixels.size()));
 
                 Ref<Texture2D> as_tex = vk_tex;
                 as_tex = Texture2D::texture_cache_instance().add(path, as_tex);
@@ -141,7 +176,7 @@ namespace Honey {
         return m_image == o->m_image && m_image_view == o->m_image_view;
     }
 
-    void VulkanTexture2D::set_data(void* data, uint32_t size) {
+    void VulkanTexture2D::set_data(const void* data, uint32_t size) {
         HN_PROFILE_FUNCTION();
         HN_CORE_ASSERT(data, "VulkanTexture2D::set_data - data is null");
         HN_CORE_ASSERT(m_width > 0 && m_height > 0, "VulkanTexture2D::set_data - invalid size");
@@ -163,6 +198,34 @@ namespace Honey {
         transition_image_layout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
         destroy_buffer(staging_buffer, staging_memory);
+    }
+
+    void VulkanTexture2D::set_data_streaming(const void* data, uint32_t size) {
+        HN_PROFILE_FUNCTION();
+        HN_CORE_ASSERT(data, "VulkanTexture2D::set_data_streaming - data is null");
+        HN_CORE_ASSERT(m_width > 0 && m_height > 0, "VulkanTexture2D::set_data_streaming - invalid size");
+        HN_CORE_ASSERT(size == m_width * m_height * 4,
+                       "VulkanTexture2D::set_data_streaming - size mismatch (expected RGBA8)");
+
+        HN_CORE_ASSERT(m_backend && m_backend->initialized(),
+                       "VulkanTexture2D::set_data_streaming: backend not initialized");
+
+        VulkanBackend::ImageUploadDesc desc{};
+        desc.dstImage       = reinterpret_cast<VkImage>(m_image);
+        desc.width          = m_width;
+        desc.height         = m_height;
+        desc.mipLevel       = 0;
+        desc.arrayLayer     = 0;
+        desc.initialLayout  = static_cast<VkImageLayout>(m_current_layout); // usually UNDEFINED for freshly created images
+        desc.finalLayout    = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        desc.srcData        = data;
+        desc.size           = size;
+
+        m_backend->queue_image_upload(desc);
+
+        // We *expect* the backend to transition to finalLayout in its batched upload path.
+        // Keep our cached layout in sync.
+        m_current_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     }
 
     void VulkanTexture2D::fetch_device_handles() {
@@ -272,6 +335,8 @@ namespace Honey {
         m_image = reinterpret_cast<void*>(img);
         m_image_memory = reinterpret_cast<void*>(mem);
         m_current_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+        HN_CORE_ASSERT(m_image != nullptr, "create_image: m_image is null after vkCreateImage");
     }
 
     void VulkanTexture2D::create_image_view() {
@@ -293,7 +358,7 @@ namespace Honey {
         m_image_view = reinterpret_cast<void*>(iv);
     }
 
- void VulkanTexture2D::create_sampler() {
+    void VulkanTexture2D::create_sampler() {
         VkSamplerCreateInfo si{};
         si.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
 
@@ -421,8 +486,8 @@ namespace Honey {
     }
 
     void VulkanTexture2D::init_from_pixels_rgba8(const void* rgba_pixels,
-                                                 uint32_t width,
-                                                 uint32_t height) {
+                                                     uint32_t width,
+                                                     uint32_t height) {
         HN_PROFILE_FUNCTION();
         HN_CORE_ASSERT(rgba_pixels, "VulkanTexture2D: pixels null");
 
@@ -430,8 +495,29 @@ namespace Honey {
         create_image_view();
         create_sampler();
 
+        HN_CORE_ASSERT(m_image != nullptr, "init_from_pixels: m_image is null");
+
         const uint32_t size = width * height * 4;
 
+        // Streaming-friendly path: prefer using backend's staging ring if available.
+        if (m_backend && m_backend->initialized()) {
+            VulkanBackend::ImageUploadDesc desc{};
+            desc.dstImage       = reinterpret_cast<VkImage>(m_image);
+            desc.width          = width;
+            desc.height         = height;
+            desc.mipLevel       = 0;
+            desc.arrayLayer     = 0;
+            desc.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+            desc.finalLayout    = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            desc.srcData        = rgba_pixels;
+            desc.size           = size;
+
+            m_backend->queue_image_upload(desc);
+            m_current_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            return;
+        }
+
+        // Fallback: old per-image staging + immediate_submit.
         void* staging_buffer = nullptr;
         void* staging_memory = nullptr;
         create_staging_buffer(size, staging_buffer, staging_memory);
@@ -452,9 +538,6 @@ namespace Honey {
                                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
         destroy_buffer(staging_buffer, staging_memory);
-
-        // Do NOT touch ImGui here. ImGui Vulkan backend may not be initialized yet.
-        // m_imgui_texture_id will be created lazily in ensure_imgui_texture_registered().
     }
 
     void VulkanTexture2D::ensure_imgui_texture_registered() {
@@ -535,4 +618,4 @@ namespace Honey {
         std::vector<uint8_t> empty(m_width * m_height * 4, 0);
         init_from_pixels_rgba8(empty.data(), m_width, m_height);
     }
-} // namespace Honey
+}

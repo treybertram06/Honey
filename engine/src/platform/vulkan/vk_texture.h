@@ -28,7 +28,8 @@ namespace Honey {
         // Editor code will bypass this for Vulkan and use native handles instead.
         inline uint32_t get_renderer_id() const override { return 0; }
 
-        void set_data(void* data, uint32_t size) override;
+        void set_data(const void* data, uint32_t size) override;
+        void set_data_streaming(const void* data, uint32_t size) override;
         void bind(uint32_t /*slot*/) const override {} // Vulkan uses descriptor sets
 
         bool operator==(const Texture& other) const override;
