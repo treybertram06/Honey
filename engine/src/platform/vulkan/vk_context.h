@@ -42,6 +42,8 @@ namespace Honey {
         virtual void swap_buffers() override;
         virtual void wait_idle() override;
 
+        double get_last_gpu_frame_time_ms() const override;
+
         void notify_framebuffer_resized();
 
         VkDevice get_device() const { return m_device; }
@@ -201,6 +203,8 @@ namespace Honey {
 
         void create_sync_objects();
 
+        void create_timing_query_pool();
+
         void record_command_buffer(uint32_t image_index);
 
         void cleanup_swapchain();
@@ -273,6 +277,12 @@ namespace Honey {
 
         bool m_framebuffer_resized = false;
         bool m_initialized = false;
+
+        VkQueryPool m_timestamp_query_pool = VK_NULL_HANDLE;
+        std::vector<bool> m_timestamp_valid;
+        std::vector<double> m_gpu_frame_time_ms;
+        std::vector<bool>  m_timestamp_written;
+        std::vector<bool>  m_timestamp_written_this_frame;
     };
 
 }

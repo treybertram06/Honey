@@ -368,6 +368,15 @@ namespace Honey {
         create_framebuffers();
         create_command_buffers();
 
+        // Recreate GPU timing resources to match new swapchain image count
+        if (m_timestamp_query_pool) {
+            vkDestroyQueryPool(reinterpret_cast<VkDevice>(m_device),
+                               m_timestamp_query_pool,
+                               nullptr);
+            m_timestamp_query_pool = VK_NULL_HANDLE;
+        }
+        create_timing_query_pool();
+
         m_framebuffer_resized = false;
     }
 
@@ -619,6 +628,8 @@ namespace Honey {
 
         create_sync_objects();
 
+        create_timing_query_pool();
+
         m_initialized = true;
     }
 
@@ -640,6 +651,11 @@ namespace Honey {
 
         if (m_backend)
             m_backend->process_stream_uploads();
+
+        if (!m_timestamp_written_this_frame.empty()) {
+            std::fill(m_timestamp_written_this_frame.begin(),
+                      m_timestamp_written_this_frame.end(), false);
+        }
 
         m_last_bound_textures_valid[m_current_frame] = false;
         m_last_bound_texture_count[m_current_frame] = 0;
@@ -672,6 +688,48 @@ namespace Honey {
             vkWaitForFences(reinterpret_cast<VkDevice>(m_device), 1, &image_fence, VK_TRUE, UINT64_MAX);
         }
         m_images_in_flight[image_index] = in_flight;
+
+        if (m_timestamp_query_pool &&
+                image_index < m_timestamp_written.size() &&
+                m_timestamp_written[image_index] &&
+                image_index < m_timestamp_written_this_frame.size() &&
+                m_timestamp_valid.size() == m_gpu_frame_time_ms.size()) {
+
+            uint32_t base = image_index * 2;
+            uint64_t timestamps[2] = {};
+
+            VkResult qr = vkGetQueryPoolResults(
+                reinterpret_cast<VkDevice>(m_device),
+                m_timestamp_query_pool,
+                base,
+                2,
+                sizeof(timestamps),
+                timestamps,
+                sizeof(uint64_t),
+                VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT
+            );
+
+            if (qr == VK_SUCCESS) {
+                VkPhysicalDeviceProperties props{};
+                vkGetPhysicalDeviceProperties(reinterpret_cast<VkPhysicalDevice>(m_physical_device), &props);
+
+                const double period_ns = static_cast<double>(props.limits.timestampPeriod);
+                const double start_ns  = static_cast<double>(timestamps[0]) * period_ns;
+                const double end_ns    = static_cast<double>(timestamps[1]) * period_ns;
+                const double delta_ms  = (end_ns - start_ns) / 1.0e6;
+
+                if (delta_ms >= 0.0 && image_index < m_gpu_frame_time_ms.size()) {
+                    m_gpu_frame_time_ms[image_index] = delta_ms;
+                    m_timestamp_valid[image_index] = true;
+                }
+            } else if (qr != VK_NOT_READY) {
+                // Non-fatal warning; don't crash the editor over timing
+                HN_CORE_WARN("vkGetQueryPoolResults for GPU timing failed: {0}",
+                             vk_result_to_string(qr));
+                if (image_index < m_timestamp_valid.size())
+                    m_timestamp_valid[image_index] = false;
+            }
+        }
 
         vkResetFences(reinterpret_cast<VkDevice>(m_device), 1, &in_flight);
 
@@ -1202,6 +1260,38 @@ namespace Honey {
         }
     }
 
+    void VulkanContext::create_timing_query_pool() {
+        VkQueryPoolCreateInfo qp{};
+        qp.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+        qp.queryType = VK_QUERY_TYPE_TIMESTAMP;
+        qp.queryCount = static_cast<uint32_t>(m_swapchain_images.size()) * 2; // 2 queries per image
+
+        VkResult r = vkCreateQueryPool(
+            reinterpret_cast<VkDevice>(m_device),
+            &qp,
+            nullptr,
+            &m_timestamp_query_pool
+        );
+        HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateQueryPool failed for GPU timing");
+
+        m_timestamp_valid.assign(m_swapchain_images.size(), false);
+        m_gpu_frame_time_ms.assign(m_swapchain_images.size(), 0.0);
+        m_timestamp_written.assign(m_swapchain_images.size(), false);
+        m_timestamp_written_this_frame.assign(m_swapchain_images.size(), false);
+    }
+
+    double VulkanContext::get_last_gpu_frame_time_ms() const {
+        double sum = 0.0;
+        uint32_t count = 0;
+        for (size_t i = 0; i < m_gpu_frame_time_ms.size(); ++i) {
+            if (i < m_timestamp_valid.size() && m_timestamp_valid[i]) {
+                sum += m_gpu_frame_time_ms[i];
+                ++count;
+            }
+        }
+        return (count > 0) ? (sum / count) : 0.0;
+    }
+
     void VulkanContext::record_command_buffer(uint32_t image_index) {
         HN_PROFILE_FUNCTION();
 
@@ -1216,6 +1306,18 @@ namespace Honey {
 
         VkResult res = vkBeginCommandBuffer(cmd, &begin);
         HN_CORE_ASSERT(res == VK_SUCCESS, "vkBeginCommandBuffer failed: {0}", vk_result_to_string(res));
+
+        // Reset the two timestamp queries for this swapchain image
+        // write a "frame begin" timestamp at TOP_OF_PIPE.
+        if (m_timestamp_query_pool) {
+            uint32_t base = image_index * 2;
+            vkCmdResetQueryPool(cmd, m_timestamp_query_pool, base, 2);
+
+            vkCmdWriteTimestamp(cmd,
+                    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                    m_timestamp_query_pool,
+                    base + 0);
+        }
 
         auto& p = frame_packet();
 
@@ -1589,6 +1691,22 @@ namespace Honey {
             current_pass_is_swapchain = false;
         }
 
+        // Write a "frame end" timestamp at BOTTOM_OF_PIPE and mark this
+        // image's timing as written for this frame.
+        if (m_timestamp_query_pool) {
+            uint32_t base = image_index * 2;
+            vkCmdWriteTimestamp(cmd,
+                                VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                                m_timestamp_query_pool,
+                                base + 1);
+            if (image_index < m_timestamp_written_this_frame.size()) {
+                m_timestamp_written_this_frame[image_index] = true;
+            }
+            if (image_index < m_timestamp_written.size()) {
+                m_timestamp_written[image_index] = true;
+            }
+        }
+
         res = vkEndCommandBuffer(cmd);
         HN_CORE_ASSERT(res == VK_SUCCESS, "vkEndCommandBuffer failed: {0}", vk_result_to_string(res));
     }
@@ -1689,6 +1807,13 @@ namespace Honey {
 
         if (m_device) {
             vkDeviceWaitIdle(reinterpret_cast<VkDevice>(m_device));
+
+            if (m_timestamp_query_pool) {
+                vkDestroyQueryPool(reinterpret_cast<VkDevice>(m_device),
+                                   m_timestamp_query_pool,
+                                   nullptr);
+                m_timestamp_query_pool = VK_NULL_HANDLE;
+            }
 
             for (uint32_t i = 0; i < m_image_available_semaphores.size(); i++) {
                 if (m_image_available_semaphores[i]) {
