@@ -151,6 +151,12 @@ namespace Honey {
         void shutdown_stream_uploader();
 
         bool stream_staging_allocate(VkDeviceSize size, VkDeviceSize alignment, VkDeviceSize& outOffset);
+
+        inline void assert_render_thread() const {
+#if defined(BUILD_DEBUG)
+            HN_CORE_ASSERT(std::this_thread::get_id() == m_render_thread_id, "VulkanBackend method must be called from the render thread");
+#endif
+        }
     private:
         bool m_initialized = false;
 
@@ -222,6 +228,8 @@ namespace Honey {
         VkFence                      m_stream_fence = VK_NULL_HANDLE;
         bool                         m_stream_submit_in_flight = false;
         VkCommandBuffer              m_stream_inflight_cmd = VK_NULL_HANDLE;
+
+        std::thread::id m_render_thread_id{};
 
     };
 

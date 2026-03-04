@@ -180,6 +180,8 @@ namespace Honey {
         create_instance();
         setup_debug_messenger();
 
+        m_render_thread_id = std::this_thread::get_id();
+
         // Defer physical device + logical device until first surface (present support needs a surface).
         m_initialized = true;
     }
@@ -612,6 +614,8 @@ namespace Honey {
 
     void VulkanBackend::queue_buffer_upload(const BufferUploadDesc& desc) {
         HN_PROFILE_FUNCTION();
+        assert_render_thread();
+
         if (!desc.dstBuffer || !desc.srcData || desc.size == 0)
             return;
 
@@ -695,6 +699,8 @@ namespace Honey {
 
     void VulkanBackend::queue_image_upload(const ImageUploadDesc& desc) {
         HN_PROFILE_FUNCTION();
+        assert_render_thread();
+
         HN_CORE_ASSERT(desc.dstImage != VK_NULL_HANDLE,
                        "queue_image_upload: dstImage is null (w={}, h={})",
                        desc.width, desc.height);
@@ -729,6 +735,7 @@ namespace Honey {
 
     void VulkanBackend::process_stream_uploads() {
         HN_PROFILE_FUNCTION();
+        assert_render_thread();
 
         if (!m_device || !m_upload_command_pool || !m_stream_staging_buffer)
             return;
