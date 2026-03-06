@@ -33,7 +33,8 @@ namespace Honey {
         return out;
     }
 
-    SceneSerializer::SceneSerializer(const Ref<Scene> &scene) : m_scene(scene) {}
+    SceneSerializer::SceneSerializer(const Ref<Scene> &scene, const EditorSceneMeta* meta)
+    : m_scene(scene), m_editor_meta(meta) {}
 
     static void serialize_entity(Entity entity, YAML::Emitter &out) {
         HN_CORE_ASSERT(entity.has_component<IDComponent>(), "Entity is missing IDComponent!");
@@ -310,6 +311,24 @@ namespace Honey {
         }
 
         out << YAML::EndSeq;
+
+        if (m_editor_meta && m_editor_meta->has_camera) {
+            out << YAML::Key << "Editor";
+            out << YAML::BeginMap;
+
+            out << YAML::Key << "Camera";
+            out << YAML::BeginMap;
+            out << YAML::Key << "Position" << YAML::Value << m_editor_meta->camera_position;
+            out << YAML::Key << "Yaw"      << YAML::Value << m_editor_meta->camera_yaw;
+            out << YAML::Key << "Pitch"    << YAML::Value << m_editor_meta->camera_pitch;
+            out << YAML::Key << "FOV"      << YAML::Value << m_editor_meta->camera_fov;
+            out << YAML::Key << "Near"     << YAML::Value << m_editor_meta->camera_near;
+            out << YAML::Key << "Far"      << YAML::Value << m_editor_meta->camera_far;
+            out << YAML::EndMap; // Camera
+
+            out << YAML::EndMap; // Editor
+        }
+
         out << YAML::EndMap;
 
         std::filesystem::path file_path(path);
@@ -682,6 +701,26 @@ namespace Honey {
 
         m_pending_relationships.clear();
         m_pending_transforms.clear();
+
+        m_loaded_editor_meta = EditorSceneMeta{};
+        if (YAML::Node editor_node = data["Editor"]) {
+            if (YAML::Node cam_node = editor_node["Camera"]) {
+                m_loaded_editor_meta.has_camera = true;
+
+                if (auto pos = cam_node["Position"])
+                    m_loaded_editor_meta.camera_position = pos.as<glm::vec3>();
+                if (auto yaw = cam_node["Yaw"])
+                    m_loaded_editor_meta.camera_yaw = yaw.as<float>();
+                if (auto pitch = cam_node["Pitch"])
+                    m_loaded_editor_meta.camera_pitch = pitch.as<float>();
+                if (auto fov = cam_node["FOV"])
+                    m_loaded_editor_meta.camera_fov = fov.as<float>();
+                if (auto near_clip = cam_node["Near"])
+                    m_loaded_editor_meta.camera_near = near_clip.as<float>();
+                if (auto far_clip = cam_node["Far"])
+                    m_loaded_editor_meta.camera_far = far_clip.as<float>();
+            }
+        }
 
         return true;
     }

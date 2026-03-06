@@ -34,6 +34,19 @@ namespace Honey {
         float get_pitch() const { return m_pitch; }
         float get_yaw()   const { return m_yaw;  }
 
+        float get_fov()  const { return m_fov; }
+        float get_near_clip() const { return m_near_clip; }
+        float get_far_clip()  const { return m_far_clip; }
+
+        void set_fov(float fov)          { m_fov = fov; recalc_projection_matrix(); }
+        void set_near_clip(float value)  { m_near_clip = value; recalc_projection_matrix(); }
+        void set_far_clip(float value)   { m_far_clip = value; recalc_projection_matrix(); }
+
+        void set_yaw(float yaw)          { m_yaw = yaw;   recalc_view_matrix(); }
+        void set_pitch(float pitch)      { m_pitch = pitch; recalc_view_matrix(); }
+        void set_focal_point(const glm::vec3& fp) { m_focal_point = fp; recalc_view_matrix(); }
+
+
     protected:
         // Keep base Camera’s matrices in sync
         void recalc_view_matrix() override;
