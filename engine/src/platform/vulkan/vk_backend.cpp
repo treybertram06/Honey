@@ -128,6 +128,7 @@ namespace Honey {
 
         if (k_enable_validation) {
             extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+            extensions.push_back(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
         }
 
         return extensions;
@@ -219,8 +220,9 @@ namespace Honey {
                 m_sampler_aniso = VK_NULL_HANDLE;
             }
 
-            // Destroys fence/command pool used by immediate_submit()
+            // Immediate + streaming upload contexts
             shutdown_upload_context();
+            shutdown_immediate_context();
 
             // Save > destroy pipeline cache while device is valid
             m_pipeline_cache.shutdown();
@@ -280,6 +282,7 @@ namespace Honey {
 
             // Device now exists; create upload context once.
             init_upload_context();
+            init_immediate_context();
             init_imgui_resources();
         }
 
@@ -358,6 +361,10 @@ namespace Honey {
 
         VkResult r = vkCreateCommandPool(m_device, &pool_ci, nullptr, &m_upload_command_pool);
         HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateCommandPool failed for upload context");
+        set_debug_name(m_device,
+               VK_OBJECT_TYPE_COMMAND_POOL,
+               reinterpret_cast<uint64_t>(m_upload_command_pool),
+               "BackendUploadCommandPool");
 
         VkFenceCreateInfo fence_ci{};
         fence_ci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
@@ -388,18 +395,72 @@ namespace Honey {
         m_upload_queue = VK_NULL_HANDLE;
     }
 
+    void VulkanBackend::init_immediate_context() {
+        HN_PROFILE_FUNCTION();
+        HN_CORE_ASSERT(m_device, "init_immediate_context called without device");
+
+        if (m_immediate_command_pool || m_immediate_fence || m_immediate_queue) {
+            return;
+        }
+
+        HN_CORE_ASSERT(!m_graphics_queues.empty() && m_graphics_queues[0],
+                       "No graphics queue available for immediate context");
+
+        m_immediate_queue = m_graphics_queues[0];
+
+        VkCommandPoolCreateInfo pool_ci{};
+        pool_ci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        pool_ci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        pool_ci.queueFamilyIndex = m_families.graphicsFamily;
+
+        VkResult r = vkCreateCommandPool(m_device, &pool_ci, nullptr, &m_immediate_command_pool);
+        HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateCommandPool failed for immediate context");
+        set_debug_name(m_device, VK_OBJECT_TYPE_COMMAND_POOL,
+                       reinterpret_cast<uint64_t>(m_immediate_command_pool),
+                       "BackendImmediateCommandPool");
+
+        VkFenceCreateInfo fence_ci{};
+        fence_ci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        fence_ci.flags = 0;
+
+        r = vkCreateFence(m_device, &fence_ci, nullptr, &m_immediate_fence);
+        HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateFence failed for immediate context");
+    }
+
+    void VulkanBackend::shutdown_immediate_context() {
+        HN_PROFILE_FUNCTION();
+        if (!m_device)
+            return;
+
+        std::scoped_lock lk(m_immediate_mutex);
+
+        if (m_immediate_fence) {
+            vkDestroyFence(m_device, m_immediate_fence, nullptr);
+            m_immediate_fence = VK_NULL_HANDLE;
+        }
+        if (m_immediate_command_pool) {
+            vkDestroyCommandPool(m_device, m_immediate_command_pool, nullptr);
+            m_immediate_command_pool = VK_NULL_HANDLE;
+        }
+        m_immediate_queue = VK_NULL_HANDLE;
+    }
+
     void VulkanBackend::immediate_submit(const std::function<void(VkCommandBuffer)>& record) {
+        immediate_submit("unlabeled", record);
+    }
+
+    void VulkanBackend::immediate_submit(const char* debug_label, const std::function<void(VkCommandBuffer)>& record) {
         HN_PROFILE_FUNCTION();
         HN_CORE_ASSERT(m_device, "immediate_submit requires a valid VkDevice");
-        HN_CORE_ASSERT(m_upload_command_pool && m_upload_fence && m_upload_queue,
-                       "immediate_submit called before upload context was initialized");
+        HN_CORE_ASSERT(m_immediate_command_pool && m_immediate_fence && m_immediate_queue,
+                       "immediate_submit called before immediate context was initialized");
         HN_CORE_ASSERT(record, "immediate_submit record callback is empty");
 
-        std::scoped_lock lk(m_upload_mutex);
+        std::scoped_lock lk(m_immediate_mutex);
 
         VkCommandBufferAllocateInfo alloc{};
         alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        alloc.commandPool = m_upload_command_pool;
+        alloc.commandPool = m_immediate_command_pool;
         alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         alloc.commandBufferCount = 1;
 
@@ -419,24 +480,27 @@ namespace Honey {
         r = vkEndCommandBuffer(cmd);
         HN_CORE_ASSERT(r == VK_SUCCESS, "vkEndCommandBuffer failed (immediate_submit)");
 
-        vkResetFences(m_device, 1, &m_upload_fence);
+        vkResetFences(m_device, 1, &m_immediate_fence);
 
         VkSubmitInfo submit{};
         submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         submit.commandBufferCount = 1;
         submit.pCommandBuffers = &cmd;
 
-        // Protect shared queue usage (queue index 0) with the existing shared graphics mutex
         {
             std::scoped_lock qlk(m_shared_graphics_mutex);
-            r = vkQueueSubmit(m_upload_queue, 1, &submit, m_upload_fence);
+            r = vkQueueSubmit(m_immediate_queue, 1, &submit, m_immediate_fence);
+        }
+
+        if (r != VK_SUCCESS) {
+            HN_CORE_ERROR("immediate_submit '{}' failed at vkQueueSubmit: {}", debug_label ? debug_label : "<null>", vk_result_to_string(r));
         }
         HN_CORE_ASSERT(r == VK_SUCCESS, "vkQueueSubmit failed (immediate_submit)");
 
-        r = vkWaitForFences(m_device, 1, &m_upload_fence, VK_TRUE, UINT64_MAX);
+        r = vkWaitForFences(m_device, 1, &m_immediate_fence, VK_TRUE, UINT64_MAX);
         HN_CORE_ASSERT(r == VK_SUCCESS, "vkWaitForFences failed (immediate_submit)");
 
-        vkFreeCommandBuffers(m_device, m_upload_command_pool, 1, &cmd);
+        vkFreeCommandBuffers(m_device, m_immediate_command_pool, 1, &cmd);
     }
 
     void VulkanBackend::release_queue_lease(const VulkanQueueLease& lease) {
@@ -453,12 +517,14 @@ namespace Honey {
 
     VkCommandBuffer VulkanBackend::begin_single_time_commands() {
         HN_PROFILE_FUNCTION();
+        assert_render_thread();
+
         HN_CORE_ASSERT(m_device, "begin_single_time_commands requires valid device");
-        HN_CORE_ASSERT(m_upload_command_pool, "begin_single_time_commands requires upload command pool");
+        HN_CORE_ASSERT(m_immediate_command_pool, "begin_single_time_commands requires immediate command pool");
 
         VkCommandBufferAllocateInfo alloc{};
         alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        alloc.commandPool = m_upload_command_pool;
+        alloc.commandPool = m_immediate_command_pool;
         alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         alloc.commandBufferCount = 1;
 
@@ -478,14 +544,16 @@ namespace Honey {
 
     void VulkanBackend::end_single_time_commands(VkCommandBuffer cmd) {
         HN_PROFILE_FUNCTION();
+        assert_render_thread();
+
         HN_CORE_ASSERT(m_device, "end_single_time_commands requires valid device");
-        HN_CORE_ASSERT(m_upload_fence && m_upload_queue, "end_single_time_commands requires upload context");
+        HN_CORE_ASSERT(m_immediate_fence && m_immediate_queue, "end_single_time_commands requires immediate context");
         HN_CORE_ASSERT(cmd, "end_single_time_commands called with null command buffer");
 
         VkResult r = vkEndCommandBuffer(cmd);
         HN_CORE_ASSERT(r == VK_SUCCESS, "vkEndCommandBuffer failed (end_single_time_commands)");
 
-        vkResetFences(m_device, 1, &m_upload_fence);
+        vkResetFences(m_device, 1, &m_immediate_fence);
 
         VkSubmitInfo submit{};
         submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -494,14 +562,14 @@ namespace Honey {
 
         {
             std::scoped_lock qlk(m_shared_graphics_mutex);
-            r = vkQueueSubmit(m_upload_queue, 1, &submit, m_upload_fence);
+            r = vkQueueSubmit(m_immediate_queue, 1, &submit, m_immediate_fence);
         }
         HN_CORE_ASSERT(r == VK_SUCCESS, "vkQueueSubmit failed (end_single_time_commands)");
 
-        r = vkWaitForFences(m_device, 1, &m_upload_fence, VK_TRUE, UINT64_MAX);
+        r = vkWaitForFences(m_device, 1, &m_immediate_fence, VK_TRUE, UINT64_MAX);
         HN_CORE_ASSERT(r == VK_SUCCESS, "vkWaitForFences failed (end_single_time_commands)");
 
-        vkFreeCommandBuffers(m_device, m_upload_command_pool, 1, &cmd);
+        vkFreeCommandBuffers(m_device, m_immediate_command_pool, 1, &cmd);
     }
 
     void VulkanBackend::init_imgui_resources() {
@@ -744,8 +812,7 @@ namespace Honey {
         if (m_stream_submit_in_flight) {
             VkResult fenceRes = vkGetFenceStatus(m_device, m_stream_fence);
             if (fenceRes == VK_NOT_READY) {
-                // Uploads still in flight; cannot reuse staging or cmd buffer yet.
-                return;
+                fenceRes = vkWaitForFences(m_device, 1, &m_stream_fence, VK_TRUE, UINT64_MAX);
             }
 
             HN_CORE_ASSERT(fenceRes == VK_SUCCESS,
@@ -897,6 +964,18 @@ namespace Honey {
         m_stream_jobs.clear();
     }
 
+    bool VulkanBackend::debug_is_buffer_in_stream_jobs(VkBuffer buffer) const {
+#if defined(BUILD_DEBUG)
+        for (const auto& job : m_stream_jobs) {
+            if (job.type == StreamUploadJob::Type::Buffer &&
+                job.buf.dstBuffer == buffer) {
+                return true;
+                }
+        }
+#endif
+        return false;
+    }
+
     // -----------------------------
     // Core init helpers
     // -----------------------------
@@ -928,6 +1007,19 @@ namespace Honey {
         create_info.ppEnabledExtensionNames = extensions.data();
 
         VkDebugUtilsMessengerCreateInfoEXT debug_ci{};
+        VkValidationFeatureEnableEXT enabled_validation_features[] = {
+            VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT,
+            VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT//,
+            //VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
+            //VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_RESERVE_BINDING_SLOT_EXT
+        };
+
+        VkValidationFeaturesEXT validation_features{};
+        validation_features.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
+        validation_features.enabledValidationFeatureCount =
+            static_cast<uint32_t>(std::size(enabled_validation_features));
+        validation_features.pEnabledValidationFeatures = enabled_validation_features;
+
         if (k_enable_validation) {
             create_info.enabledLayerCount = static_cast<uint32_t>(k_validation_layers.size());
             create_info.ppEnabledLayerNames = k_validation_layers.data();
@@ -942,7 +1034,8 @@ namespace Honey {
                 VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
             debug_ci.pfnUserCallback = vk_debug_callback;
 
-            create_info.pNext = &debug_ci;
+            validation_features.pNext = &debug_ci;
+            create_info.pNext = &validation_features;
         } else {
             create_info.enabledLayerCount = 0;
             create_info.pNext = nullptr;

@@ -216,6 +216,13 @@ namespace Honey {
         void create_global_descriptor_resources();
         void cleanup_global_descriptor_resources();
 
+        inline void assert_render_thread() const {
+#if defined(BUILD_DEBUG)
+            HN_CORE_ASSERT(std::this_thread::get_id() == m_render_thread_id,
+                           "VulkanContext method must be called from the render thread");
+#endif
+        }
+
         static constexpr uint32_t k_max_frames_in_flight = 2;
 
         GLFWwindow* m_window_handle = nullptr;
@@ -283,6 +290,8 @@ namespace Honey {
         std::vector<double> m_gpu_frame_time_ms;
         std::vector<bool>  m_timestamp_written;
         std::vector<bool>  m_timestamp_written_this_frame;
+
+        std::thread::id m_render_thread_id{};
     };
 
 }

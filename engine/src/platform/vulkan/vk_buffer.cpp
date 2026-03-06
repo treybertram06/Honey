@@ -75,6 +75,28 @@ namespace Honey {
             region.dstOffset = 0;
             region.size = size;
             vkCmdCopyBuffer(cmd, src, dst, 1, &region);
+
+            VkBufferMemoryBarrier barrier{};
+            barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier.dstAccessMask =
+                VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT |
+                VK_ACCESS_INDEX_READ_BIT;
+            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.buffer = dst;
+            barrier.offset = 0;
+            barrier.size = size;
+
+            vkCmdPipelineBarrier(
+                cmd,
+                VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+                0,
+                0, nullptr,
+                1, &barrier,
+                0, nullptr
+            );
         });
     }
 
@@ -139,6 +161,14 @@ namespace Honey {
     VulkanVertexBuffer::~VulkanVertexBuffer() {
         HN_PROFILE_FUNCTION();
         if (!m_device_raw) return;
+
+#if defined(BUILD_DEBUG)
+        VkBuffer buf = reinterpret_cast<VkBuffer>(m_buffer);
+        HN_CORE_ASSERT(
+            !Application::get().get_vulkan_backend().debug_is_buffer_in_stream_jobs(buf),
+            "Destroying VulkanVertexBuffer while it is still referenced by streaming upload jobs"
+        );
+#endif
 
         if (m_buffer) vkDestroyBuffer(m_device_raw, reinterpret_cast<VkBuffer>(m_buffer), nullptr);
         if (m_memory) vkFreeMemory(m_device_raw, reinterpret_cast<VkDeviceMemory>(m_memory), nullptr);

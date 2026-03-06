@@ -595,6 +595,8 @@ namespace Honey {
 
         HN_CORE_ASSERT(m_backend && m_backend->initialized(), "VulkanContext::init requires initialized VulkanBackend");
 
+        m_render_thread_id = std::this_thread::get_id();
+
         // Shared handles from backend
         m_instance = m_backend->instance();
         m_device = m_backend->device();
@@ -635,6 +637,8 @@ namespace Honey {
 
     void VulkanContext::swap_buffers() {
         HN_PROFILE_FUNCTION();
+        assert_render_thread();
+
         HN_CORE_ASSERT(m_initialized, "VulkanContext::swap_buffers called before init");
         HN_CORE_ASSERT(!m_image_available_semaphores.empty(),
                        "m_image_available_semaphores is empty (sync objects not created?)");
@@ -662,7 +666,11 @@ namespace Honey {
         m_last_bound_textures[m_current_frame] = {};
 
         VkFence in_flight = m_in_flight_fences[m_current_frame];
-        vkWaitForFences(reinterpret_cast<VkDevice>(m_device), 1, &in_flight, VK_TRUE, UINT64_MAX);
+        VkResult wait_res = vkWaitForFences(reinterpret_cast<VkDevice>(m_device), 1, &in_flight, VK_TRUE, UINT64_MAX);
+        if (wait_res != VK_SUCCESS) {
+            HN_CORE_ERROR("vkWaitForFences failed before acquire: {0}", vk_result_to_string(wait_res));
+            return;
+        }
 
         uint32_t image_index = 0;
         VkResult acquire_res = vkAcquireNextImageKHR(
@@ -689,6 +697,7 @@ namespace Honey {
         }
         m_images_in_flight[image_index] = in_flight;
 
+        /*
         if (m_timestamp_query_pool &&
                 image_index < m_timestamp_written.size() &&
                 m_timestamp_written[image_index] &&
@@ -730,6 +739,7 @@ namespace Honey {
                     m_timestamp_valid[image_index] = false;
             }
         }
+        */
 
         vkResetFences(reinterpret_cast<VkDevice>(m_device), 1, &in_flight);
 
@@ -1169,6 +1179,7 @@ namespace Honey {
 
     void VulkanContext::create_command_pool() {
         HN_PROFILE_FUNCTION();
+        assert_render_thread();
 
         VkCommandPoolCreateInfo pool{};
         pool.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -1178,20 +1189,25 @@ namespace Honey {
         VkCommandPool command_pool = VK_NULL_HANDLE;
         VkResult res = vkCreateCommandPool(reinterpret_cast<VkDevice>(m_device), &pool, nullptr, &command_pool);
         HN_CORE_ASSERT(res == VK_SUCCESS, "vkCreateCommandPool failed: {0}", vk_result_to_string(res));
+        set_debug_name(reinterpret_cast<VkDevice>(m_device),
+               VK_OBJECT_TYPE_COMMAND_POOL,
+               reinterpret_cast<uint64_t>(command_pool),
+               "ContextMainCommandPool");
 
         m_command_pool = reinterpret_cast<VkCommandPool>(command_pool);
     }
 
     void VulkanContext::create_command_buffers() {
         HN_PROFILE_FUNCTION();
+        assert_render_thread();
 
         // If we recreate swapchain, command buffers must match swapchain image count.
         if (!m_command_buffers.empty()) {
             vkFreeCommandBuffers(
-                reinterpret_cast<VkDevice>(m_device),
-                reinterpret_cast<VkCommandPool>(m_command_pool),
+                m_device,
+                m_command_pool,
                 static_cast<uint32_t>(m_command_buffers.size()),
-                reinterpret_cast<VkCommandBuffer*>(m_command_buffers.data())
+                m_command_buffers.data()
             );
             m_command_buffers.clear();
         }
@@ -1214,6 +1230,7 @@ namespace Honey {
 
     void VulkanContext::create_sync_objects() {
         HN_PROFILE_FUNCTION();
+        assert_render_thread();
 
         // Destroy old per-frame sync if recreate/init called twice
         for (VkSemaphore sem : m_image_available_semaphores) {
@@ -1294,6 +1311,7 @@ namespace Honey {
 
     void VulkanContext::record_command_buffer(uint32_t image_index) {
         HN_PROFILE_FUNCTION();
+        assert_render_thread();
 
         VulkanRendererAPI::set_recording_context(this);
 
@@ -1310,6 +1328,7 @@ namespace Honey {
         // Reset the two timestamp queries for this swapchain image
         // write a "frame begin" timestamp at TOP_OF_PIPE.
         if (m_timestamp_query_pool) {
+            /*
             uint32_t base = image_index * 2;
             vkCmdResetQueryPool(cmd, m_timestamp_query_pool, base, 2);
 
@@ -1317,6 +1336,7 @@ namespace Honey {
                     VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                     m_timestamp_query_pool,
                     base + 0);
+                    */
         }
 
         auto& p = frame_packet();
@@ -1694,6 +1714,7 @@ namespace Honey {
         // Write a "frame end" timestamp at BOTTOM_OF_PIPE and mark this
         // image's timing as written for this frame.
         if (m_timestamp_query_pool) {
+            /*
             uint32_t base = image_index * 2;
             vkCmdWriteTimestamp(cmd,
                                 VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
@@ -1705,6 +1726,7 @@ namespace Honey {
             if (image_index < m_timestamp_written.size()) {
                 m_timestamp_written[image_index] = true;
             }
+            */
         }
 
         res = vkEndCommandBuffer(cmd);
@@ -1712,6 +1734,8 @@ namespace Honey {
     }
 
     void VulkanContext::cleanup_swapchain() {
+        assert_render_thread();
+
         if (!m_device || !m_swapchain)
             return;
 

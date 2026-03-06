@@ -86,6 +86,7 @@ namespace Honey {
         // Thread-safe helper for one-off GPU work (uploads, layout transitions, etc.).
         // Serializes through an internal mutex and blocks until completion.
         void immediate_submit(const std::function<void(VkCommandBuffer)>& record);
+        void immediate_submit(const char* debug_label, const std::function<void(VkCommandBuffer)>& record);
 
         void render_imgui_on_current_swapchain_image(VkCommandBuffer cmd, VkImageView target_view, VkExtent2D extent);
 
@@ -119,6 +120,8 @@ namespace Honey {
         // Called once per frame from the render thread, before recording draw commands.
         void process_stream_uploads();
 
+        bool debug_is_buffer_in_stream_jobs(VkBuffer buffer) const;
+
     private:
         struct QueueFamilyInfo {
             uint32_t graphicsFamily = UINT32_MAX;
@@ -143,6 +146,9 @@ namespace Honey {
         // Upload context (created after device exists)
         void init_upload_context();
         void shutdown_upload_context();
+
+        void init_immediate_context();
+        void shutdown_immediate_context();
 
         void init_imgui_resources();
         void shutdown_imgui_resources();
@@ -183,11 +189,17 @@ namespace Honey {
         std::mutex m_shared_graphics_mutex{};
         std::mutex m_shared_present_mutex{};
 
-        // Immediate submit / upload context (thread-safe, serialized)
+        // Streaming upload context (ring buffer, used only on render thread)
         std::mutex m_upload_mutex{};
         VkCommandPool m_upload_command_pool = VK_NULL_HANDLE;
         VkFence m_upload_fence = VK_NULL_HANDLE;
         VkQueue m_upload_queue = VK_NULL_HANDLE;
+
+        // Immediate submit context - can be used from any thread
+        std::mutex    m_immediate_mutex{};
+        VkCommandPool m_immediate_command_pool = VK_NULL_HANDLE;
+        VkFence       m_immediate_fence        = VK_NULL_HANDLE;
+        VkQueue       m_immediate_queue        = VK_NULL_HANDLE;
 
         VkDescriptorPool m_imgui_descriptor_pool = VK_NULL_HANDLE;
         VkSampler m_imgui_sampler = VK_NULL_HANDLE;

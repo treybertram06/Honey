@@ -183,11 +183,15 @@ namespace Honey {
             return slot;
         };
 
+        std::unordered_map<const Material*, uint32_t> material_texture_slots;
+
         // Pre-scan batches to populate the texture table once
         for (auto& [key, batch] : s_data->batches) {
             if (!batch.material)
                 continue;
-            find_or_add_texture_slot(batch.material->get_base_color_texture());
+
+            const uint32_t slot = find_or_add_texture_slot(batch.material->get_base_color_texture());
+            material_texture_slots[batch.material.get()] = slot;
         }
 
         // Submit global texture bindings (pointer array)
@@ -244,7 +248,7 @@ namespace Honey {
                 continue;
 
             const uint32_t base_color_tex_index =
-                batch.material ? find_or_add_texture_slot(batch.material->get_base_color_texture()) : 0;
+                batch.material ? material_texture_slots[batch.material.get()] : 0;
 
             const glm::vec4 base_color_factor =
                 batch.material ? batch.material->get_base_color_factor() : glm::vec4(1.0f);
@@ -262,9 +266,13 @@ namespace Honey {
             pc.baseColorTexIndex = (int32_t)base_color_tex_index;
             pc._pad0 = pc._pad1 = pc._pad2 = 0;
 
+            std::array<std::byte, 128> push_block{};
+            static_assert(sizeof(MaterialPC) <= 128, "MaterialPC exceeds push constant block size");
+            std::memcpy(push_block.data(), &pc, sizeof(MaterialPC));
+
             VulkanRendererAPI::submit_push_constants(
-                &pc,
-                (uint32_t)sizeof(MaterialPC),
+                push_block.data(),
+                (uint32_t)push_block.size(),
                 0,
                 VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT
             );
