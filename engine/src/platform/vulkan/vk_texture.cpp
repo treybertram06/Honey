@@ -216,15 +216,18 @@ namespace Honey {
         desc.height         = m_height;
         desc.mipLevel       = 0;
         desc.arrayLayer     = 0;
-        desc.initialLayout  = static_cast<VkImageLayout>(m_current_layout); // usually UNDEFINED for freshly created images
+        desc.initialLayout  = static_cast<VkImageLayout>(m_current_layout);
         desc.finalLayout    = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         desc.srcData        = data;
         desc.size           = size;
 
         m_backend->queue_image_upload(desc);
 
-        // We *expect* the backend to transition to finalLayout in its batched upload path.
-        // Keep our cached layout in sync.
+        // TEMPORARY SYNCHRONOUS ASSUMPTION:
+        // process_stream_uploads() currently waits for upload completion before returning.
+        // That makes it safe to cache the final layout here for now.
+        // TODO(trey): once uploads are truly async again, replace this eager state update
+        // with completion-driven layout tracking.
         m_current_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     }
 
@@ -486,8 +489,8 @@ namespace Honey {
     }
 
     void VulkanTexture2D::init_from_pixels_rgba8(const void* rgba_pixels,
-                                                     uint32_t width,
-                                                     uint32_t height) {
+                                                         uint32_t width,
+                                                         uint32_t height) {
         HN_PROFILE_FUNCTION();
         HN_CORE_ASSERT(rgba_pixels, "VulkanTexture2D: pixels null");
 
@@ -513,6 +516,12 @@ namespace Honey {
             desc.size           = size;
 
             m_backend->queue_image_upload(desc);
+
+            // TEMPORARY SYNCHRONOUS ASSUMPTION:
+            // process_stream_uploads() currently waits for upload completion before returning.
+            // That makes it safe to cache the final layout here for now.
+            // TODO(trey): once uploads are truly async again, replace this eager state update
+            // with completion-driven layout tracking.
             m_current_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             return;
         }

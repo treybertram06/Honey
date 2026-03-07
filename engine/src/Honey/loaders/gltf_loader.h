@@ -26,7 +26,7 @@ namespace Honey {
 
     // Loads the first scene's referenced meshes (or all meshes if scenes are empty) into a Mesh (Submesh per primitive).
     // Returns nullptr on failure.
-    Ref<Mesh> load_gltf_mesh(const std::filesystem::path& path, const GltfLoadOptions& options = {});
+    Ref<Mesh> load_gltf_mesh(const std::filesystem::path& path, const GltfLoadOptions& options = {}, bool async = true);
 
     Ref<MeshAsyncHandle> load_gltf_mesh_async(const std::filesystem::path& path, const GltfLoadOptions& options = {});
 

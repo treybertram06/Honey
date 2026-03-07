@@ -83,6 +83,44 @@ namespace Honey {
             return VK_IMAGE_ASPECT_COLOR_BIT;
         }
 
+        static VkPipelineStageFlags stage_for_layout(VkImageLayout layout) {
+            switch (layout) {
+            case VK_IMAGE_LAYOUT_UNDEFINED:
+                return VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+            case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
+            case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
+                return VK_PIPELINE_STAGE_TRANSFER_BIT;
+            case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+                return VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+            case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+                return VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+            case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
+                return VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+            default:
+                return VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+            }
+        }
+
+        static VkAccessFlags access_for_layout(VkImageLayout layout) {
+            switch (layout) {
+            case VK_IMAGE_LAYOUT_UNDEFINED:
+                return 0;
+            case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
+                return VK_ACCESS_TRANSFER_WRITE_BIT;
+            case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
+                return VK_ACCESS_TRANSFER_READ_BIT;
+            case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+                return VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+                return VK_ACCESS_SHADER_READ_BIT;
+            case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
+                return VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                       VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+            default:
+                return 0;
+            }
+        }
+
     } // anonymous namespace
 
 
@@ -126,7 +164,6 @@ namespace Honey {
         HN_CORE_ASSERT(device == m_backend->get_device(),
                                    "VulkanFramebuffer::destroy: device mismatch (backend was probably shut down earlier)");
 
-        // ImGui descriptor sets: backend will free them when it destroys the pool.
         m_imgui_texture_sets.clear();
 
         if (m_framebuffer) {
@@ -194,7 +231,7 @@ namespace Honey {
             img.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
             img.usage =
                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-                VK_IMAGE_USAGE_SAMPLED_BIT          |
+                VK_IMAGE_USAGE_SAMPLED_BIT |
                 VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
                 VK_IMAGE_USAGE_TRANSFER_DST_BIT;
             img.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -246,6 +283,8 @@ namespace Honey {
             r = vkCreateImageView(m_device, &view, nullptr, &out.view);
             HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanFramebuffer: vkCreateImageView (color) failed: {0}", vk_result_to_string(r));
 
+            out.layout = VK_IMAGE_LAYOUT_UNDEFINED;
+
             {
                 char name[64];
                 std::snprintf(name, sizeof(name), "EditorFB_ColorView_%zu", i);
@@ -257,7 +296,6 @@ namespace Honey {
 
             {
                 VkSampler sampler = m_backend->get_imgui_sampler();
-                // Must match ad.finalLayout above, because ImGui will sample in this layout.
                 VkImageLayout layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
                 m_imgui_texture_sets[i] = ImGui_ImplVulkan_AddTexture(
@@ -286,7 +324,7 @@ namespace Honey {
             img.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
             img.usage =
                 VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
-                VK_IMAGE_USAGE_SAMPLED_BIT;       // if you ever sample depth
+                VK_IMAGE_USAGE_SAMPLED_BIT;
             img.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
             img.samples = (VkSampleCountFlagBits)m_samples;
 
@@ -333,37 +371,37 @@ namespace Honey {
             HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanFramebuffer: vkCreateImageView (depth) failed: {0}", vk_result_to_string(r));
 
             m_backend->immediate_submit([&](VkCommandBuffer cmd) {
-                    VkImageMemoryBarrier barrier{};
-                    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-                    barrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                    barrier.image = m_depth_attachment.image;
-                    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
-                    barrier.subresourceRange.baseMipLevel = 0;
-                    barrier.subresourceRange.levelCount = 1;
-                    barrier.subresourceRange.baseArrayLayer = 0;
-                    barrier.subresourceRange.layerCount = 1;
-                    barrier.srcAccessMask = 0;
-                    barrier.dstAccessMask =
-                        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
-                        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+                VkImageMemoryBarrier barrier{};
+                barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                barrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+                barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.image = m_depth_attachment.image;
+                barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+                barrier.subresourceRange.baseMipLevel = 0;
+                barrier.subresourceRange.levelCount = 1;
+                barrier.subresourceRange.baseArrayLayer = 0;
+                barrier.subresourceRange.layerCount = 1;
+                barrier.srcAccessMask = 0;
+                barrier.dstAccessMask =
+                    VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                    VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
-                    vkCmdPipelineBarrier(
-                        cmd,
-                        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-                        VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                        0,
-                        0, nullptr,
-                        0, nullptr,
-                        1, &barrier
-                    );
-                });
+                vkCmdPipelineBarrier(
+                    cmd,
+                    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                    VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                    0,
+                    0, nullptr,
+                    0, nullptr,
+                    1, &barrier
+                );
+            });
+
+            m_depth_attachment.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
         }
-
-        // --- Create render pass ---
 
         std::vector<VkAttachmentDescription> attachments;
         attachments.reserve(m_color_specs.size() + (has_depth ? 1 : 0));
@@ -381,11 +419,9 @@ namespace Honey {
             ad.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
             ad.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
             ad.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
-            // Render as color attachment, end in shader-read layout for ImGui sampling
             ad.finalLayout    = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
             color_refs[i].attachment = static_cast<uint32_t>(attachments.size());
-            // Must be a color attachment layout during the subpass
             color_refs[i].layout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
             attachments.push_back(ad);
@@ -492,16 +528,10 @@ namespace Honey {
         r = vkCreateFramebuffer(m_device, &fb, nullptr, &m_framebuffer);
         HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanFramebuffer: vkCreateFramebuffer failed: {0}", vk_result_to_string(r));
 
-        set_debug_name(m_device,
-               VK_OBJECT_TYPE_FRAMEBUFFER,
-               reinterpret_cast<uint64_t>(m_framebuffer),
-               "EditorFB_Framebuffer");
-
-        // --- Transition images to usable layouts (optional for now) ---
-
-        // For simplicity we leave colour in UNDEFINED -> first render pass will handle it using loadOp=CLEAR.
-        // If you want them immediately in COLOR_ATTACHMENT_OPTIMAL outside of a pass, you could use
-        // m_backend->immediate_submit with vkCmdPipelineBarrier here.
+        for (auto& att : m_color_attachments)
+            att.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        if (has_depth)
+            m_depth_attachment.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     }
 
     void VulkanFramebuffer::bind() {
@@ -550,7 +580,9 @@ namespace Honey {
         const uint32_t px = static_cast<uint32_t>(x);
         const uint32_t py = static_cast<uint32_t>(y);
 
-        VkImage src_image = m_color_attachments[attachment_index].image;
+        auto& src_attachment = m_color_attachments[attachment_index];
+        VkImage src_image = src_attachment.image;
+        const VkImageLayout old_layout = src_attachment.layout;
 
         VkDevice device          = m_backend->get_device();
         VkPhysicalDevice phys    = m_backend->get_physical_device();
@@ -614,18 +646,18 @@ namespace Honey {
 
             VkImageMemoryBarrier barrier_to_src{};
             barrier_to_src.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-            barrier_to_src.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            barrier_to_src.oldLayout = old_layout;
             barrier_to_src.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
             barrier_to_src.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier_to_src.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier_to_src.image = src_image;
             barrier_to_src.subresourceRange = range;
-            barrier_to_src.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            barrier_to_src.srcAccessMask = access_for_layout(old_layout);
             barrier_to_src.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
 
             vkCmdPipelineBarrier(
                 cmd,
-                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                stage_for_layout(old_layout),
                 VK_PIPELINE_STAGE_TRANSFER_BIT,
                 0,
                 0, nullptr,
@@ -656,18 +688,18 @@ namespace Honey {
             VkImageMemoryBarrier barrier_from_src{};
             barrier_from_src.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
             barrier_from_src.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-            barrier_from_src.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            barrier_from_src.newLayout = old_layout;
             barrier_from_src.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier_from_src.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier_from_src.image = src_image;
             barrier_from_src.subresourceRange = range;
             barrier_from_src.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-            barrier_from_src.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            barrier_from_src.dstAccessMask = access_for_layout(old_layout);
 
             vkCmdPipelineBarrier(
                 cmd,
                 VK_PIPELINE_STAGE_TRANSFER_BIT,
-                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                stage_for_layout(old_layout),
                 0,
                 0, nullptr,
                 0, nullptr,
@@ -711,10 +743,10 @@ namespace Honey {
                        "VulkanFramebuffer: clear_attachment specs/index mismatch");
 
         const auto fmt = m_color_specs[attachment_index].texture_format;
-        VkImage image   = m_color_attachments[attachment_index].image;
+        auto& attachment = m_color_attachments[attachment_index];
+        VkImage image = attachment.image;
+        const VkImageLayout old_layout = attachment.layout;
 
-        // For the editor FB path we don't have a render pass that ever transitions
-        // this image. So we do: UNDEFINED/SHADER_READ_ONLY_OPTIMAL -> TRANSFER_DST_OPTIMAL -> SHADER_READ_ONLY_OPTIMAL.
         m_backend->immediate_submit([&](VkCommandBuffer cmd) {
             VkImageSubresourceRange range{};
             range.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -723,21 +755,20 @@ namespace Honey {
             range.baseArrayLayer = 0;
             range.layerCount     = 1;
 
-            // Transition to TRANSFER_DST_OPTIMAL from "don't care" (treat as UNDEFINED here)
             VkImageMemoryBarrier to_clear{};
             to_clear.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-            to_clear.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            to_clear.oldLayout = old_layout;
             to_clear.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
             to_clear.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             to_clear.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             to_clear.image = image;
             to_clear.subresourceRange = range;
-            to_clear.srcAccessMask = 0;
+            to_clear.srcAccessMask = access_for_layout(old_layout);
             to_clear.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 
             vkCmdPipelineBarrier(
                 cmd,
-                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                stage_for_layout(old_layout),
                 VK_PIPELINE_STAGE_TRANSFER_BIT,
                 0,
                 0, nullptr,
@@ -748,17 +779,17 @@ namespace Honey {
             VkClearColorValue clear_color{};
 
             switch (fmt) {
-                case FramebufferTextureFormat::RED_INTEGER: {
-                    if (value)
-                        std::memcpy(&clear_color.uint32[0], value, sizeof(uint32_t));
-                    else
-                        clear_color.uint32[0] = 0;
-                    clear_color.uint32[1] = clear_color.uint32[0];
-                    clear_color.uint32[2] = clear_color.uint32[0];
-                    clear_color.uint32[3] = clear_color.uint32[0];
-                    break;
-                }
-                case FramebufferTextureFormat::RGBA8:
+            case FramebufferTextureFormat::RED_INTEGER: {
+                if (value)
+                    std::memcpy(&clear_color.uint32[0], value, sizeof(uint32_t));
+                else
+                    clear_color.uint32[0] = 0;
+                clear_color.uint32[1] = clear_color.uint32[0];
+                clear_color.uint32[2] = clear_color.uint32[0];
+                clear_color.uint32[3] = clear_color.uint32[0];
+                break;
+            }
+            case FramebufferTextureFormat::RGBA8:
             default: {
                 float v = 0.0f;
                 if (value)
@@ -769,30 +800,29 @@ namespace Honey {
                 clear_color.float32[3] = 1.0f;
                 break;
             }
-        }
+            }
 
-        vkCmdClearColorImage(
-            cmd,
-            image,
-            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-            &clear_color,
-            1,
-            &range
-        );
+            vkCmdClearColorImage(
+                cmd,
+                image,
+                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                &clear_color,
+                1,
+                &range
+            );
 
-        // Transition to SHADER_READ_ONLY_OPTIMAL so ImGui can sample
-        VkImageMemoryBarrier to_sample{};
-        to_sample.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        to_sample.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        to_sample.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        to_sample.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        to_sample.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        to_sample.image = image;
-        to_sample.subresourceRange = range;
-        to_sample.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        to_sample.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            VkImageMemoryBarrier to_sample{};
+            to_sample.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            to_sample.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            to_sample.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            to_sample.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            to_sample.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            to_sample.image = image;
+            to_sample.subresourceRange = range;
+            to_sample.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            to_sample.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 
-        vkCmdPipelineBarrier(
+            vkCmdPipelineBarrier(
             cmd,
             VK_PIPELINE_STAGE_TRANSFER_BIT,
             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
@@ -800,8 +830,10 @@ namespace Honey {
             0, nullptr,
             0, nullptr,
             1, &to_sample
-        );
-    });
+            );
+        });
+
+        attachment.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     }
 
     uint32_t VulkanFramebuffer::get_color_attachment_renderer_id(uint32_t index) const {

@@ -137,7 +137,8 @@ namespace Honey {
             int materialIndex,
             const std::filesystem::path& gltfDir,
             const GltfLoadOptions& options,
-            std::unordered_map<int, Ref<Texture2D>>& textureCacheByImageIndex
+            std::unordered_map<int, Ref<Texture2D>>& textureCacheByImageIndex,
+            bool async = true
         ) {
             HN_PROFILE_FUNCTION();
             Ref<Material> mat = Material::create();
@@ -194,7 +195,13 @@ namespace Honey {
             }
 
             const std::filesystem::path texPath = gltfDir / img.uri;
-            Ref<Texture2D> tex = Texture2D::create_async(texPath.string());
+
+            Ref<Texture2D> tex;
+            if (async)
+                tex = Texture2D::create_async(texPath.string());
+            else
+                tex = Texture2D::create(texPath.string());
+
             textureCacheByImageIndex[gt.source] = tex;
             mat->set_base_color_texture(tex);
 
@@ -259,7 +266,8 @@ namespace Honey {
             const glm::mat4& worldTransform,
             const std::filesystem::path& gltfDir,
             const GltfLoadOptions& options,
-            std::unordered_map<int, Ref<Texture2D>>& textureCacheByImageIndex
+            std::unordered_map<int, Ref<Texture2D>>& textureCacheByImageIndex,
+            bool async = true
         ) {
             HN_PROFILE_FUNCTION();
             if (gltfMeshIndex < 0 || gltfMeshIndex >= (int)model.meshes.size())
@@ -391,7 +399,8 @@ namespace Honey {
                     prim.material,
                     gltfDir,
                     options,
-                    textureCacheByImageIndex
+                    textureCacheByImageIndex,
+                    async
                 );
 
                 Submesh sm{};
@@ -411,7 +420,8 @@ namespace Honey {
             const glm::mat4& parentWorld,
             const std::filesystem::path& gltfDir,
             const GltfLoadOptions& options,
-            std::unordered_map<int, Ref<Texture2D>>& textureCacheByImageIndex
+            std::unordered_map<int, Ref<Texture2D>>& textureCacheByImageIndex,
+            bool async = true
         ) {
             HN_PROFILE_FUNCTION();
             if (nodeIndex < 0 || nodeIndex >= (int)model.nodes.size())
@@ -430,7 +440,8 @@ namespace Honey {
                     world,
                     gltfDir,
                     options,
-                    textureCacheByImageIndex
+                    textureCacheByImageIndex,
+                    async
                 );
             }
 
@@ -442,14 +453,15 @@ namespace Honey {
                     world,
                     gltfDir,
                     options,
-                    textureCacheByImageIndex
+                    textureCacheByImageIndex,
+                    async
                 );
             }
         }
 
     } // namespace
 
-    Ref<Mesh> load_gltf_mesh(const std::filesystem::path& path, const GltfLoadOptions& options) {
+    Ref<Mesh> load_gltf_mesh(const std::filesystem::path& path, const GltfLoadOptions& options, bool async) {
         HN_PROFILE_FUNCTION();
         if (!std::filesystem::exists(path)) {
             HN_CORE_ERROR("load_gltf_mesh: file does not exist: {}", path.string());
@@ -506,7 +518,8 @@ namespace Honey {
                     I,
                     gltfDir,
                     options,
-                    textureCacheByImageIndex
+                    textureCacheByImageIndex,
+                    async
                 );
             }
         } else {
@@ -521,7 +534,8 @@ namespace Honey {
                     I,
                     gltfDir,
                     options,
-                    textureCacheByImageIndex
+                    textureCacheByImageIndex,
+                    async
                 );
             }
         }
@@ -543,7 +557,7 @@ namespace Honey {
 
         // Kick work to background thread(s)
         TaskSystem::run_async([handle, path, options]() {
-            Ref<Mesh> result = load_gltf_mesh(path, options);
+            Ref<Mesh> result = load_gltf_mesh(path, options, true);
             if (!result) {
                 handle->failed.store(true, std::memory_order_release);
             } else {

@@ -65,8 +65,8 @@ namespace Honey {
         static void submit_bound_textures(const std::array<void*, k_max_texture_slots>& textures, uint32_t texture_count);
         static bool consume_bound_textures(std::array<void*, k_max_texture_slots>& out_textures, uint32_t& out_texture_count);
 
-        static void push_globals_state();
-        static void pop_globals_state();
+        static void flush_globals();
+
 
         struct GlobalsState {
             glm::mat4 viewProjection{1.0f};

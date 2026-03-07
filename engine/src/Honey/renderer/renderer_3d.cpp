@@ -208,6 +208,11 @@ namespace Honey {
         RenderCommand::bind_pipeline(pipe);
         s_data->stats.pipeline_binds++;
 
+        // Bind globals (camera + textures) explicitly AFTER the pipeline is bound.
+        // If this is omitted, the current frame's descriptor state never gets emitted,
+        // so the shader can sample invalid/default resources and render nothing.
+        VulkanRendererAPI::flush_globals();
+
         // --- Pack all instance transforms into one contiguous array ---
         uint32_t total_instances = 0;
         for (auto& [key, batch] : s_data->batches) {

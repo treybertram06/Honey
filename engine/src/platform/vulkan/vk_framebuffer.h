@@ -55,6 +55,7 @@ namespace Honey {
             VkImage        image  = VK_NULL_HANDLE;
             VkDeviceMemory memory = VK_NULL_HANDLE;
             VkImageView    view   = VK_NULL_HANDLE;
+            VkImageLayout  layout = VK_IMAGE_LAYOUT_UNDEFINED;
         };
 
         void invalidate();  // (re)create images, views, render pass, framebuffer
@@ -84,4 +85,4 @@ namespace Honey {
         uint32_t       m_samples = 1;
     };
 
-} // namespace Honey
+}

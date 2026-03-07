@@ -691,6 +691,15 @@ namespace Honey {
         VkDeviceSize offset = 0;
         const VkDeviceSize alignment = 16;
         if (!stream_staging_allocate(desc.size, alignment, offset)) {
+            // If the ring is full but we already have queued jobs, flush now and retry.
+            // This prevents staging overwrite when large scenes queue many uploads before the
+            // normal per-frame process_stream_uploads() call.
+            if (!m_stream_jobs.empty()) {
+                HN_CORE_WARN("Streaming uploader buffer pressure (buffer upload). Flushing pending stream jobs early.");
+                process_stream_uploads();
+            }
+
+            if (!stream_staging_allocate(desc.size, alignment, offset)) {
             // Fallback: do immediate one-off upload to avoid hard failure.
             HN_CORE_WARN("Streaming uploader ran out of space; falling back to immediate_submit for buffer upload.");
             immediate_submit([&](VkCommandBuffer cmd) {
@@ -749,6 +758,7 @@ namespace Honey {
                 // tmpBuf/tmpMem freed when cmd buffer is freed (or we can clean after submit; omitted for brevity).
             });
             return;
+            }
         }
 
         // Copy src data into mapped staging
@@ -780,12 +790,138 @@ namespace Honey {
         VkDeviceSize offset = 0;
         const VkDeviceSize alignment = 16;
         if (!stream_staging_allocate(desc.size, alignment, offset)) {
+            // If we already have queued jobs, flush to free the ring and retry once.
+            if (!m_stream_jobs.empty()) {
+                HN_CORE_WARN("Streaming uploader buffer pressure (image upload). Flushing pending stream jobs early.");
+                process_stream_uploads();
+            }
+
+            if (!stream_staging_allocate(desc.size, alignment, offset)) {
             HN_CORE_WARN("Streaming uploader ran out of space; falling back to immediate_submit for image upload.");
+            // Complete fallback path: one-off staging buffer + copy + transitions.
+
+            VkBufferCreateInfo bi{};
+            bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+            bi.size = desc.size;
+            bi.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+            bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+            VkBuffer tmpBuf = VK_NULL_HANDLE;
+            VkResult r = vkCreateBuffer(m_device, &bi, nullptr, &tmpBuf);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "queue_image_upload fallback vkCreateBuffer failed");
+
+            VkMemoryRequirements req{};
+            vkGetBufferMemoryRequirements(m_device, tmpBuf, &req);
+
+            VkPhysicalDeviceMemoryProperties memProps{};
+            vkGetPhysicalDeviceMemoryProperties(m_physical_device, &memProps);
+
+            uint32_t typeIndex = UINT32_MAX;
+            for (uint32_t i = 0; i < memProps.memoryTypeCount; ++i) {
+                if ((req.memoryTypeBits & (1u << i)) &&
+                    (memProps.memoryTypes[i].propertyFlags &
+                     (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) ==
+                    (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
+                    typeIndex = i;
+                    break;
+                    }
+            }
+            HN_CORE_ASSERT(typeIndex != UINT32_MAX, "queue_image_upload fallback: no suitable memory type");
+
+            VkMemoryAllocateInfo ai{};
+            ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+            ai.allocationSize = req.size;
+            ai.memoryTypeIndex = typeIndex;
+
+            VkDeviceMemory tmpMem = VK_NULL_HANDLE;
+            r = vkAllocateMemory(m_device, &ai, nullptr, &tmpMem);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "queue_image_upload fallback vkAllocateMemory failed");
+
+            r = vkBindBufferMemory(m_device, tmpBuf, tmpMem, 0);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "queue_image_upload fallback vkBindBufferMemory failed");
+
+            void* mapped = nullptr;
+            r = vkMapMemory(m_device, tmpMem, 0, desc.size, 0, &mapped);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "queue_image_upload fallback vkMapMemory failed");
+            std::memcpy(mapped, desc.srcData, static_cast<size_t>(desc.size));
+            vkUnmapMemory(m_device, tmpMem);
+
             immediate_submit([&](VkCommandBuffer cmd) {
-                // Fallback per-upload staging omitted for brevity.
-                // Similar to buffer fallback but with vkCmdCopyBufferToImage.
+                if (desc.initialLayout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+                    VkImageMemoryBarrier barrier{};
+                    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                    barrier.oldLayout = desc.initialLayout;
+                    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+                    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    barrier.image = desc.dstImage;
+                    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                    barrier.subresourceRange.baseMipLevel = desc.mipLevel;
+                    barrier.subresourceRange.levelCount   = 1;
+                    barrier.subresourceRange.baseArrayLayer = desc.arrayLayer;
+                    barrier.subresourceRange.layerCount     = 1;
+
+                    barrier.srcAccessMask = 0;
+                    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+                    vkCmdPipelineBarrier(cmd,
+                                         VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                         VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                         0,
+                                         0, nullptr,
+                                         0, nullptr,
+                                         1, &barrier);
+                }
+
+                VkBufferImageCopy region{};
+                region.bufferOffset                    = 0;
+                region.bufferRowLength                 = 0;
+                region.bufferImageHeight               = 0;
+                region.imageSubresource.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+                region.imageSubresource.mipLevel       = desc.mipLevel;
+                region.imageSubresource.baseArrayLayer = desc.arrayLayer;
+                region.imageSubresource.layerCount     = 1;
+                region.imageOffset                     = { 0, 0, 0 };
+                region.imageExtent                     = { desc.width, desc.height, 1 };
+
+                vkCmdCopyBufferToImage(cmd,
+                                       tmpBuf,
+                                       desc.dstImage,
+                                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                       1,
+                                       &region);
+
+                if (desc.finalLayout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+                    VkImageMemoryBarrier barrier{};
+                    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+                    barrier.newLayout = desc.finalLayout;
+                    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    barrier.image = desc.dstImage;
+                    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                    barrier.subresourceRange.baseMipLevel = desc.mipLevel;
+                    barrier.subresourceRange.levelCount   = 1;
+                    barrier.subresourceRange.baseArrayLayer = desc.arrayLayer;
+                    barrier.subresourceRange.layerCount     = 1;
+
+                    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+                    vkCmdPipelineBarrier(cmd,
+                                         VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                                         0,
+                                         0, nullptr,
+                                         0, nullptr,
+                                         1, &barrier);
+                }
             });
+
+            vkDestroyBuffer(m_device, tmpBuf, nullptr);
+            vkFreeMemory(m_device, tmpMem, nullptr);
             return;
+            }
         }
 
         std::memcpy(static_cast<uint8_t*>(m_stream_staging_mapped) + offset,
@@ -808,7 +944,6 @@ namespace Honey {
         if (!m_device || !m_upload_command_pool || !m_stream_staging_buffer)
             return;
 
-        // If previous batched submit is still in flight, check the fence.
         if (m_stream_submit_in_flight) {
             VkResult fenceRes = vkGetFenceStatus(m_device, m_stream_fence);
             if (fenceRes == VK_NOT_READY) {
@@ -818,7 +953,6 @@ namespace Honey {
             HN_CORE_ASSERT(fenceRes == VK_SUCCESS,
                            "process_stream_uploads: upload fence error");
 
-            // Previous batch finished: free its command buffer (if any) and reclaim staging.
             if (m_stream_inflight_cmd != VK_NULL_HANDLE) {
                 vkFreeCommandBuffers(m_device,
                                      m_upload_command_pool,
@@ -828,11 +962,11 @@ namespace Honey {
             }
 
             m_stream_submit_in_flight = false;
-            m_stream_staging_head     = 0; // reclaim entire staging buffer
+            m_stream_staging_head     = 0;
         }
 
         if (m_stream_jobs.empty())
-            return; // nothing to do
+            return;
 
         VkCommandBufferAllocateInfo alloc{};
         alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -867,7 +1001,6 @@ namespace Honey {
             } else {
                 const auto& d = job.img;
 
-                // Transition image layout if needed.
                 if (d.initialLayout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
                     VkImageMemoryBarrier barrier{};
                     barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -956,11 +1089,19 @@ namespace Honey {
         }
         HN_CORE_ASSERT(r == VK_SUCCESS, "process_stream_uploads: vkQueueSubmit failed");
 
-        // Do NOT wait here: let the upload happen in the background.
-        // We'll free the command buffer and reclaim staging when the fence signals
-        // in a subsequent call.
-        m_stream_submit_in_flight = true;
-        m_stream_inflight_cmd     = cmd;
+        // TEMPORARY SYNCHRONOUS PATH:
+        // We intentionally wait here so queued uploads are definitely complete
+        // before any later draw in the frame can sample from them.
+        // TODO(trey): replace this with proper async upload-to-render synchronization
+        // (e.g. semaphore chaining / timeline semaphore / explicit dependency tracking).
+        r = vkWaitForFences(m_device, 1, &m_stream_fence, VK_TRUE, UINT64_MAX);
+        HN_CORE_ASSERT(r == VK_SUCCESS, "process_stream_uploads: vkWaitForFences failed");
+
+        vkFreeCommandBuffers(m_device, m_upload_command_pool, 1, &cmd);
+
+        m_stream_inflight_cmd = VK_NULL_HANDLE;
+        m_stream_submit_in_flight = false;
+        m_stream_staging_head = 0;
         m_stream_jobs.clear();
     }
 
@@ -1452,8 +1593,9 @@ namespace Honey {
             return true;
         }
 
-        // Try wrapping to 0 if it fits.
-        if (size <= m_stream_staging_size) {
+        // Try wrapping to 0 only when there are no pending jobs.
+        // If jobs are pending, wrapping would overwrite unsent staging data.
+        if (m_stream_jobs.empty() && size <= m_stream_staging_size) {
             outOffset = 0;
             m_stream_staging_head = size;
             return true;

@@ -89,28 +89,9 @@ namespace Honey {
 
         p.cmds.push_back(bind);
 
-        // If any old code already pushed BindGlobals earlier in the frame, it will now
-        // be incorrectly ordered. To avoid the assert, we conservatively "null out"
-        // any previously queued BindGlobals by clearing their payload.
-        // (After this migration, you can remove this loop.)
-        for (auto& c : p.cmds) {
-            if (c.type == VulkanContext::FramePacket::CmdType::BindGlobals) {
-                c.globals.hasCamera = false;
-                c.globals.hasTextures = false;
-                c.globals.textureCount = 0;
-                c.globals.textures = {};
-            }
-        }
-
-        // Defer->flush: emit BindGlobals immediately after binding pipeline (layout is now known)
-        if (pkt_has_pending_globals(p)) {
-            VulkanContext::FramePacket::Cmd globals = make_bind_globals_cmd_from_pkt(p);
-            p.cmds.push_back(globals);
-
-            // Keep the "latest globals" cached too; do NOT clear them here if other passes
-            // in the same frame may also need them. If you want "one-shot", clear here.
-            // p.hasCamera = false; p.hasTextures = false; ... (not doing that yet)
-        }
+        // NOTE:
+        // Do NOT auto-emit BindGlobals here.
+        // Globals ordering must be explicit; otherwise stale packet state can be captured.
     }
 
     void VulkanRendererAPI::set_clear_color(const glm::vec4& color) {
@@ -299,6 +280,23 @@ namespace Honey {
         p.hasCamera = true;
     }
 
+    void VulkanRendererAPI::flush_globals() {
+        require_frame_begun();
+        auto& p = pkt();
+
+        HN_CORE_ASSERT(pkt_has_pending_globals(p),
+                       "VulkanRendererAPI::flush_globals called but no globals are pending");
+
+        VulkanContext::FramePacket::Cmd globals = make_bind_globals_cmd_from_pkt(p);
+        p.cmds.push_back(globals);
+
+        // After emitting the command, clear the "pending" flags so we don't accidentally reuse them.
+        p.hasCamera = false;
+        p.hasTextures = false;
+        p.textureCount = 0;
+        p.textures = {};
+    }
+
     void VulkanRendererAPI::submit_bound_textures(const std::array<void*, k_max_texture_slots>& textures, uint32_t texture_count) {
         require_frame_begun();
         auto& p = pkt();
@@ -317,7 +315,6 @@ namespace Honey {
             sanitized[i] = textures[i] ? textures[i] : fallback;
         }
 
-        // Copy into the per-frame packet.
         p.textures = sanitized;
         p.textureCount = texture_count;
         p.hasTextures = true;
