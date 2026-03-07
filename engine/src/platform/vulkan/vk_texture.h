@@ -4,6 +4,9 @@
 
 #include <string>
 #include <cstdint>
+#include <atomic>
+#include <functional>
+#include <memory>
 
 #include <imgui.h>
 #include <vulkan/vulkan_core.h>
@@ -13,7 +16,7 @@ namespace Honey {
     class VulkanBackend;
     typedef struct VkDescriptorSet_T* VkDescriptorSet;
 
-    class VulkanTexture2D : public Texture2D {
+    class VulkanTexture2D : public Texture2D, public std::enable_shared_from_this<VulkanTexture2D> {
     public:
         VulkanTexture2D(uint32_t width, uint32_t height);
         VulkanTexture2D(const std::string& path);
@@ -36,7 +39,8 @@ namespace Honey {
 
         void* get_vk_image_view() const { return m_image_view; }
         void* get_vk_sampler() const { return m_sampler; }
-        uint32_t get_vk_image_layout() const { return m_current_layout; }
+        uint32_t get_vk_image_layout() const { return m_current_layout.load(std::memory_order_acquire); }
+        bool is_ready_for_sampling() const { return !m_stream_upload_pending.load(std::memory_order_acquire); }
 
         // Returns an ImGui texture id, registering with ImGui on first use.
         ImTextureID get_imgui_texture_id() override;
@@ -45,6 +49,8 @@ namespace Honey {
         void resize(uint32_t width, uint32_t height) override;
 
     private:
+        void queue_stream_upload(const void* data, uint32_t size, std::function<void()> on_complete);
+
         void fetch_device_handles();
         void init_from_pixels_rgba8(const void* rgba_pixels, uint32_t width, uint32_t height);
 
@@ -77,7 +83,8 @@ namespace Honey {
         void* m_image_view = nullptr;
         void* m_sampler = nullptr;
 
-        uint32_t m_current_layout = 0;
+        std::atomic<uint32_t> m_current_layout{VK_IMAGE_LAYOUT_UNDEFINED};
+        std::atomic<bool> m_stream_upload_pending{false};
 
         ImTextureID m_imgui_texture_id = 0;
 

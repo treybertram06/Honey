@@ -461,9 +461,9 @@ namespace Honey {
             if (!mesh_path_str.empty()) {
                 mr.mesh_path = std::filesystem::path(mesh_path_str);
 
-                //auto handle = load_gltf_mesh_async(mr.mesh_path); // Temporarily disabled while trying to debug annoying crash
-                //mr.async_load_handle = handle;
-                mr.mesh = load_gltf_mesh(mr.mesh_path, {}, false);
+                auto handle = load_gltf_mesh_async(mr.mesh_path); // Temporarily disabled while trying to debug annoying crash
+                mr.async_load_handle = handle;
+                //mr.mesh = load_gltf_mesh(mr.mesh_path, {}, false);
             }
 
             // Optionally: material overrides

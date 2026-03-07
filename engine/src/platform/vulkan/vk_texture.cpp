@@ -19,6 +19,71 @@
 #include "Honey/renderer/texture_cache.h"
 
 namespace Honey {
+    void VulkanTexture2D::queue_stream_upload(const void* data, uint32_t size, std::function<void()> on_complete) {
+        HN_CORE_ASSERT(data, "VulkanTexture2D::queue_stream_upload - data is null");
+        HN_CORE_ASSERT(m_backend && m_backend->initialized(),
+                       "VulkanTexture2D::queue_stream_upload: backend not initialized");
+
+        const bool had_pending_upload = m_stream_upload_pending.load(std::memory_order_acquire);
+        const uint32_t current_layout = m_current_layout.load(std::memory_order_acquire);
+
+        // Safety fallback: if this texture already has an in-flight streaming upload,
+        // force completion before applying new data. Queuing multiple upload jobs for
+        // the same image in one batch can create ambiguous oldLayout assumptions.
+        if (had_pending_upload) {
+            HN_CORE_WARN("VulkanTexture2D::queue_stream_upload: pending upload detected, forcing synchronous fallback");
+
+            // Drain already queued uploads first so image layout/state is settled.
+            m_backend->process_stream_uploads();
+
+            m_stream_upload_pending.store(false, std::memory_order_release);
+            set_data(data, size);
+            if (on_complete) {
+                on_complete();
+            }
+            return;
+        }
+
+        const uint32_t initial_layout = current_layout;
+        m_stream_upload_pending.store(true, std::memory_order_release);
+
+        VulkanBackend::ImageUploadDesc desc{};
+        desc.dstImage      = reinterpret_cast<VkImage>(m_image);
+        desc.width         = m_width;
+        desc.height        = m_height;
+        desc.mipLevel      = 0;
+        desc.arrayLayer    = 0;
+        desc.initialLayout = static_cast<VkImageLayout>(initial_layout);
+        desc.finalLayout   = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        desc.srcData       = data;
+        desc.size          = size;
+        Ref<VulkanTexture2D> self_ref;
+        try {
+            self_ref = std::static_pointer_cast<VulkanTexture2D>(shared_from_this());
+            desc.keepAlive = std::static_pointer_cast<void>(self_ref);
+            desc.onComplete = [self_ref, on_complete = std::move(on_complete)]() mutable {
+                self_ref->m_current_layout.store(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                                 std::memory_order_release);
+                self_ref->m_stream_upload_pending.store(false, std::memory_order_release);
+
+                if (on_complete) {
+                    on_complete();
+                }
+            };
+        } catch (const std::bad_weak_ptr&) {
+            // No shared owner yet (e.g. constructor path). Fall back to immediate
+            // synchronous upload to avoid dangling-callback lifetime hazards.
+            m_stream_upload_pending.store(false, std::memory_order_release);
+            set_data(data, size);
+            if (on_complete) {
+                on_complete();
+            }
+            return;
+        }
+
+        m_backend->queue_image_upload(desc);
+    }
+
     VulkanTexture2D::VulkanTexture2D(uint32_t width, uint32_t height)
         : m_width(width), m_height(height) {
         HN_PROFILE_FUNCTION();
@@ -159,13 +224,16 @@ namespace Honey {
                 // Create Vulkan texture (device handles are accessed via Application::get()).
                 Ref<VulkanTexture2D> vk_tex = CreateRef<VulkanTexture2D>(decoded.width, decoded.height);
                 vk_tex->m_path = path; // keep original path for logging/samplers
-                vk_tex->set_data_streaming(decoded.pixels.data(), static_cast<uint32_t>(decoded.pixels.size()));
 
                 Ref<Texture2D> as_tex = vk_tex;
                 as_tex = Texture2D::texture_cache_instance().add(path, as_tex);
 
                 handle->texture = as_tex;
-                handle->done.store(true, std::memory_order_release);
+
+                const uint32_t upload_size = static_cast<uint32_t>(decoded.pixels.size());
+                vk_tex->queue_stream_upload(decoded.pixels.data(), upload_size, [handle]() {
+                    handle->done.store(true, std::memory_order_release);
+                });
             });
         });
     }
@@ -193,7 +261,8 @@ namespace Honey {
         std::memcpy(mapped, data, size);
         vkUnmapMemory(dev, reinterpret_cast<VkDeviceMemory>(staging_memory));
 
-        transition_image_layout(m_current_layout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        transition_image_layout(m_current_layout.load(std::memory_order_acquire),
+                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         copy_buffer_to_image(staging_buffer);
         transition_image_layout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
@@ -210,25 +279,7 @@ namespace Honey {
         HN_CORE_ASSERT(m_backend && m_backend->initialized(),
                        "VulkanTexture2D::set_data_streaming: backend not initialized");
 
-        VulkanBackend::ImageUploadDesc desc{};
-        desc.dstImage       = reinterpret_cast<VkImage>(m_image);
-        desc.width          = m_width;
-        desc.height         = m_height;
-        desc.mipLevel       = 0;
-        desc.arrayLayer     = 0;
-        desc.initialLayout  = static_cast<VkImageLayout>(m_current_layout);
-        desc.finalLayout    = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        desc.srcData        = data;
-        desc.size           = size;
-
-        m_backend->queue_image_upload(desc);
-
-        // TEMPORARY SYNCHRONOUS ASSUMPTION:
-        // process_stream_uploads() currently waits for upload completion before returning.
-        // That makes it safe to cache the final layout here for now.
-        // TODO(trey): once uploads are truly async again, replace this eager state update
-        // with completion-driven layout tracking.
-        m_current_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        queue_stream_upload(data, size, {});
     }
 
     void VulkanTexture2D::fetch_device_handles() {
@@ -337,7 +388,8 @@ namespace Honey {
 
         m_image = reinterpret_cast<void*>(img);
         m_image_memory = reinterpret_cast<void*>(mem);
-        m_current_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+        m_current_layout.store(VK_IMAGE_LAYOUT_UNDEFINED, std::memory_order_release);
+        m_stream_upload_pending.store(false, std::memory_order_release);
 
         HN_CORE_ASSERT(m_image != nullptr, "create_image: m_image is null after vkCreateImage");
     }
@@ -461,7 +513,8 @@ namespace Honey {
                                  1, &barrier);
         });
 
-        m_current_layout = new_layout;
+        m_current_layout.store(new_layout, std::memory_order_release);
+        m_stream_upload_pending.store(false, std::memory_order_release);
     }
 
     void VulkanTexture2D::copy_buffer_to_image(void* staging_buffer) {
@@ -504,25 +557,7 @@ namespace Honey {
 
         // Streaming-friendly path: prefer using backend's staging ring if available.
         if (m_backend && m_backend->initialized()) {
-            VulkanBackend::ImageUploadDesc desc{};
-            desc.dstImage       = reinterpret_cast<VkImage>(m_image);
-            desc.width          = width;
-            desc.height         = height;
-            desc.mipLevel       = 0;
-            desc.arrayLayer     = 0;
-            desc.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
-            desc.finalLayout    = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            desc.srcData        = rgba_pixels;
-            desc.size           = size;
-
-            m_backend->queue_image_upload(desc);
-
-            // TEMPORARY SYNCHRONOUS ASSUMPTION:
-            // process_stream_uploads() currently waits for upload completion before returning.
-            // That makes it safe to cache the final layout here for now.
-            // TODO(trey): once uploads are truly async again, replace this eager state update
-            // with completion-driven layout tracking.
-            m_current_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            queue_stream_upload(rgba_pixels, size, {});
             return;
         }
 

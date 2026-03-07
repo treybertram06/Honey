@@ -745,9 +745,83 @@ namespace Honey {
 
         record_command_buffer(image_index);
 
-        VkSemaphore wait_semaphores[] = { m_image_available_semaphores[m_current_frame] };
-        VkPipelineStageFlags wait_stages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+        VkSemaphore wait_semaphores[2] = { m_image_available_semaphores[m_current_frame], VK_NULL_HANDLE };
+        VkPipelineStageFlags wait_stages[2] = {
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+        };
+        uint32_t wait_count = 1;
 
+        if (m_backend && m_backend->has_stream_timeline_sync()) {
+            const uint64_t upload_timeline_value = m_backend->get_stream_timeline_value();
+            if (upload_timeline_value > 0) {
+                wait_semaphores[wait_count] = m_backend->get_stream_timeline_semaphore();
+
+                static thread_local uint64_t s_wait_values[2] = {0, 0};
+                s_wait_values[0] = 0;
+                s_wait_values[1] = upload_timeline_value;
+
+                VkTimelineSemaphoreSubmitInfo timeline_wait{};
+                timeline_wait.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
+                timeline_wait.waitSemaphoreValueCount = wait_count + 1;
+                timeline_wait.pWaitSemaphoreValues = s_wait_values;
+
+                VkSemaphore signal_semaphores[] = { m_render_finished_semaphores[image_index] };
+                VkCommandBuffer cmd = reinterpret_cast<VkCommandBuffer>(m_command_buffers[image_index]);
+
+                VkSubmitInfo submit_info{};
+                submit_info.sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+                submit_info.pNext                = &timeline_wait;
+                submit_info.waitSemaphoreCount   = wait_count + 1;
+                submit_info.pWaitSemaphores      = wait_semaphores;
+                submit_info.pWaitDstStageMask    = wait_stages;
+                submit_info.commandBufferCount   = 1;
+                submit_info.pCommandBuffers      = &cmd;
+                submit_info.signalSemaphoreCount = 1;
+                submit_info.pSignalSemaphores    = signal_semaphores;
+
+                VkResult submit_res = VK_SUCCESS;
+                if (m_queue_lease.sharedGraphics && m_queue_lease.graphicsSubmitMutex) {
+                    std::scoped_lock lk(*m_queue_lease.graphicsSubmitMutex);
+                    submit_res = vkQueueSubmit(reinterpret_cast<VkQueue>(m_graphics_queue), 1, &submit_info, in_flight);
+                } else {
+                    submit_res = vkQueueSubmit(reinterpret_cast<VkQueue>(m_graphics_queue), 1, &submit_info, in_flight);
+                }
+                if (submit_res != VK_SUCCESS) {
+                    HN_CORE_ERROR("vkQueueSubmit failed: {0}", vk_result_to_string(submit_res));
+                }
+                HN_CORE_ASSERT(submit_res == VK_SUCCESS, "vkQueueSubmit failed");
+
+                VkSwapchainKHR swapchains[] = { reinterpret_cast<VkSwapchainKHR>(m_swapchain) };
+
+                VkPresentInfoKHR present_info{};
+                present_info.sType              = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+                present_info.waitSemaphoreCount = 1;
+                present_info.pWaitSemaphores    = signal_semaphores;
+                present_info.swapchainCount     = 1;
+                present_info.pSwapchains        = swapchains;
+                present_info.pImageIndices      = &image_index;
+
+                VkResult present_res = VK_SUCCESS;
+                if (m_queue_lease.sharedPresent && m_queue_lease.presentSubmitMutex) {
+                    std::scoped_lock lk(*m_queue_lease.presentSubmitMutex);
+                    present_res = vkQueuePresentKHR(reinterpret_cast<VkQueue>(m_present_queue), &present_info);
+                } else {
+                    present_res = vkQueuePresentKHR(reinterpret_cast<VkQueue>(m_present_queue), &present_info);
+                }
+
+                if (present_res == VK_ERROR_OUT_OF_DATE_KHR || present_res == VK_SUBOPTIMAL_KHR) {
+                    m_framebuffer_resized = true;
+                    recreate_swapchain_if_needed();
+                } else {
+                    HN_CORE_ASSERT(present_res == VK_SUCCESS, "vkQueuePresentKHR failed: {0}", vk_result_to_string(present_res));
+                }
+
+                m_current_frame = (m_current_frame + 1) % k_max_frames_in_flight;
+                frame_packet().frame_begun = false;
+                return;
+            }
+        }
         HN_CORE_ASSERT(image_index < m_render_finished_semaphores.size(),
                        "image_index out of range for m_render_finished_semaphores");
         VkSemaphore signal_semaphores[] = { m_render_finished_semaphores[image_index] };
@@ -756,7 +830,7 @@ namespace Honey {
 
         VkSubmitInfo submit_info{};
         submit_info.sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        submit_info.waitSemaphoreCount   = 1;
+        submit_info.waitSemaphoreCount   = wait_count;
         submit_info.pWaitSemaphores      = wait_semaphores;
         submit_info.pWaitDstStageMask    = wait_stages;
         submit_info.commandBufferCount   = 1;
@@ -1454,6 +1528,14 @@ namespace Honey {
                     auto* vktex = dynamic_cast<VulkanTexture2D*>(base);
                     if (!vktex) {
                         // Fall back to slot 0 texture if this slot is invalid.
+                        vktex = white_vk;
+                    }
+
+                    // Async uploads are completion-driven now. Never expose a texture to
+                    // descriptor sampling until its upload/layout transition is confirmed done.
+                    const bool ready = vktex->is_ready_for_sampling();
+                    const uint32_t image_layout = vktex->get_vk_image_layout();
+                    if (!ready || image_layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
                         vktex = white_vk;
                     }
 

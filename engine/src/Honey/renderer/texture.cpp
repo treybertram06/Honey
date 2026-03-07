@@ -11,6 +11,36 @@
 
 namespace Honey {
     namespace {
+        static bool texture_file_exists(const std::string& path);
+
+        static Ref<Texture2D> create_builtin_missing_texture() {
+            constexpr uint32_t w = 1;
+            constexpr uint32_t h = 1;
+            Ref<Texture2D> tex = Texture2D::create(w, h);
+            uint32_t magenta = 0xFF00FFFFu;
+            tex->set_data(&magenta, sizeof(magenta));
+            return tex;
+        }
+
+        static Ref<Texture2D> create_missing_texture_fallback() {
+            // Try common runtime locations first.
+            static const char* k_candidates[] = {
+                "resources/textures/missing.png",
+                "../resources/textures/missing.png",
+                "../../resources/textures/missing.png",
+                "assets/textures/missing.png"
+            };
+
+            for (const char* candidate : k_candidates) {
+                if (texture_file_exists(candidate)) {
+                    return Texture2D::create(candidate);
+                }
+            }
+
+            HN_CORE_ERROR("Texture2D: failed to locate missing.png fallback; using built-in magenta texture");
+            return create_builtin_missing_texture();
+        }
+
         static bool is_supported_texture_extension(const std::filesystem::path& p) {
             auto ext = p.extension().string();
             std::transform(ext.begin(), ext.end(), ext.begin(),
@@ -71,7 +101,7 @@ namespace Honey {
 
         if (!texture_file_exists(path)) {
             HN_CORE_WARN("Texture2D::create: missing/invalid texture path '{}'", path);
-            return Texture2D::create("../resources/textures/missing.png");
+            return create_missing_texture_fallback();
         }
 
         switch (Renderer::get_api()) {
@@ -93,7 +123,7 @@ namespace Honey {
         // 2) Validate – if file invalid, just use the normal fallback.
         if (!texture_file_exists(path)) {
             HN_CORE_WARN("Texture2D::create_async: missing/invalid texture path '{}'", path);
-            return Texture2D::create("../resources/textures/missing.png");
+            return create_missing_texture_fallback();
         }
 
         // 3) Create small placeholder texture and put it in the cache under 'path'
@@ -160,7 +190,7 @@ namespace Honey {
         // Validate early; if missing, just use the missing texture synchronously.
         if (!texture_file_exists(path)) {
             HN_CORE_WARN("Texture2D::create_async: missing/invalid texture path '{}'", path);
-            handle->texture = Texture2D::create("../resources/textures/missing.png");
+            handle->texture = create_missing_texture_fallback();
             handle->done.store(true, std::memory_order_release);
             return handle;
         }

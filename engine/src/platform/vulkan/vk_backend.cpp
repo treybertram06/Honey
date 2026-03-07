@@ -307,19 +307,14 @@ namespace Honey {
 
         lease.presentFamily = m_families.presentFamily;
 
-        // Try unique graphics
-        if (!m_free_graphics_indices.empty()) {
-            lease.graphicsQueueIndex = m_free_graphics_indices.back();
-            m_free_graphics_indices.pop_back();
-            lease.graphicsQueue = m_graphics_queues[lease.graphicsQueueIndex];
-            lease.sharedGraphics = false;
-            lease.graphicsSubmitMutex = nullptr;
-        } else {
-            lease.graphicsQueueIndex = 0;
-            lease.graphicsQueue = m_graphics_queues.empty() ? VK_NULL_HANDLE : m_graphics_queues[0];
-            lease.sharedGraphics = true;
-            lease.graphicsSubmitMutex = &m_shared_graphics_mutex;
-        }
+        // Safety mode: keep all graphics submissions on queue[0].
+        // This avoids cross-queue image hazards for resources (e.g. offscreen FB attachments)
+        // that are currently transitioned/written by multiple systems without explicit
+        // ownership-transfer synchronization.
+        lease.graphicsQueueIndex = 0;
+        lease.graphicsQueue = m_graphics_queues.empty() ? VK_NULL_HANDLE : m_graphics_queues[0];
+        lease.sharedGraphics = true;
+        lease.graphicsSubmitMutex = &m_shared_graphics_mutex;
 
         // Try unique present
         if (!m_free_present_indices.empty()) {
@@ -338,6 +333,17 @@ namespace Honey {
         HN_CORE_ASSERT(lease.graphicsQueue, "Failed to acquire graphics queue");
         HN_CORE_ASSERT(lease.presentQueue, "Failed to acquire present queue");
 
+        HN_CORE_INFO("Queue lease acquired: gfxFamily={0}, gfxIndex={1}, sharedGfx={2}, gfxHandle=0x{3:x}, "
+                     "presentFamily={4}, presentIndex={5}, sharedPresent={6}, presentHandle=0x{7:x}",
+                     lease.graphicsFamily,
+                     lease.graphicsQueueIndex,
+                     lease.sharedGraphics,
+                     reinterpret_cast<uint64_t>(lease.graphicsQueue),
+                     lease.presentFamily,
+                     lease.presentQueueIndex,
+                     lease.sharedPresent,
+                     reinterpret_cast<uint64_t>(lease.presentQueue));
+
         return lease;
     }
 
@@ -353,6 +359,8 @@ namespace Honey {
         HN_CORE_ASSERT(!m_graphics_queues.empty() && m_graphics_queues[0], "No graphics queue available for upload context");
 
         m_upload_queue = m_graphics_queues[0];
+        HN_CORE_INFO("VulkanBackend upload context using graphics queue[0] handle=0x{0:x}",
+                     reinterpret_cast<uint64_t>(m_upload_queue));
 
         VkCommandPoolCreateInfo pool_ci{};
         pool_ci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -702,61 +710,63 @@ namespace Honey {
             if (!stream_staging_allocate(desc.size, alignment, offset)) {
             // Fallback: do immediate one-off upload to avoid hard failure.
             HN_CORE_WARN("Streaming uploader ran out of space; falling back to immediate_submit for buffer upload.");
-            immediate_submit([&](VkCommandBuffer cmd) {
+            VkBuffer tmpBuf = VK_NULL_HANDLE;
+            VkDeviceMemory tmpMem = VK_NULL_HANDLE;
 
-                VkBufferCreateInfo bi{};
-                bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-                bi.size = desc.size;
-                bi.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-                bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            VkBufferCreateInfo bi{};
+            bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+            bi.size = desc.size;
+            bi.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+            bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-                VkBuffer tmpBuf = VK_NULL_HANDLE;
-                VkResult r = vkCreateBuffer(m_device, &bi, nullptr, &tmpBuf);
-                HN_CORE_ASSERT(r == VK_SUCCESS, "queue_buffer_upload fallback vkCreateBuffer failed");
+            VkResult r = vkCreateBuffer(m_device, &bi, nullptr, &tmpBuf);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "queue_buffer_upload fallback vkCreateBuffer failed");
 
-                VkMemoryRequirements req{};
-                vkGetBufferMemoryRequirements(m_device, tmpBuf, &req);
+            VkMemoryRequirements req{};
+            vkGetBufferMemoryRequirements(m_device, tmpBuf, &req);
 
-                VkPhysicalDeviceMemoryProperties memProps{};
-                vkGetPhysicalDeviceMemoryProperties(m_physical_device, &memProps);
+            VkPhysicalDeviceMemoryProperties memProps{};
+            vkGetPhysicalDeviceMemoryProperties(m_physical_device, &memProps);
 
-                uint32_t typeIndex = UINT32_MAX;
-                for (uint32_t i = 0; i < memProps.memoryTypeCount; ++i) {
-                    if ((req.memoryTypeBits & (1u << i)) &&
-                        (memProps.memoryTypes[i].propertyFlags &
-                         (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) ==
-                        (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
-                        typeIndex = i;
-                        break;
-                    }
+            uint32_t typeIndex = UINT32_MAX;
+            for (uint32_t i = 0; i < memProps.memoryTypeCount; ++i) {
+                if ((req.memoryTypeBits & (1u << i)) &&
+                    (memProps.memoryTypes[i].propertyFlags &
+                     (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) ==
+                    (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
+                    typeIndex = i;
+                    break;
                 }
-                HN_CORE_ASSERT(typeIndex != UINT32_MAX, "queue_buffer_upload fallback: no suitable memory type");
+            }
+            HN_CORE_ASSERT(typeIndex != UINT32_MAX, "queue_buffer_upload fallback: no suitable memory type");
 
-                VkMemoryAllocateInfo ai{};
-                ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-                ai.allocationSize = req.size;
-                ai.memoryTypeIndex = typeIndex;
+            VkMemoryAllocateInfo ai{};
+            ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+            ai.allocationSize = req.size;
+            ai.memoryTypeIndex = typeIndex;
 
-                VkDeviceMemory tmpMem = VK_NULL_HANDLE;
-                r = vkAllocateMemory(m_device, &ai, nullptr, &tmpMem);
-                HN_CORE_ASSERT(r == VK_SUCCESS, "queue_buffer_upload fallback vkAllocateMemory failed");
-                r = vkBindBufferMemory(m_device, tmpBuf, tmpMem, 0);
-                HN_CORE_ASSERT(r == VK_SUCCESS, "queue_buffer_upload fallback vkBindBufferMemory failed");
+            r = vkAllocateMemory(m_device, &ai, nullptr, &tmpMem);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "queue_buffer_upload fallback vkAllocateMemory failed");
+            r = vkBindBufferMemory(m_device, tmpBuf, tmpMem, 0);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "queue_buffer_upload fallback vkBindBufferMemory failed");
 
-                void* mapped = nullptr;
-                r = vkMapMemory(m_device, tmpMem, 0, desc.size, 0, &mapped);
-                HN_CORE_ASSERT(r == VK_SUCCESS, "queue_buffer_upload fallback vkMapMemory failed");
-                std::memcpy(mapped, desc.srcData, static_cast<size_t>(desc.size));
-                vkUnmapMemory(m_device, tmpMem);
+            void* mapped = nullptr;
+            r = vkMapMemory(m_device, tmpMem, 0, desc.size, 0, &mapped);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "queue_buffer_upload fallback vkMapMemory failed");
+            std::memcpy(mapped, desc.srcData, static_cast<size_t>(desc.size));
+            vkUnmapMemory(m_device, tmpMem);
+
+            immediate_submit([&](VkCommandBuffer cmd) {
 
                 VkBufferCopy region{};
                 region.srcOffset = 0;
                 region.dstOffset = desc.dstOffset;
                 region.size      = desc.size;
                 vkCmdCopyBuffer(cmd, tmpBuf, desc.dstBuffer, 1, &region);
-
-                // tmpBuf/tmpMem freed when cmd buffer is freed (or we can clean after submit; omitted for brevity).
             });
+
+            vkDestroyBuffer(m_device, tmpBuf, nullptr);
+            vkFreeMemory(m_device, tmpMem, nullptr);
             return;
             }
         }
@@ -917,6 +927,10 @@ namespace Honey {
                                          1, &barrier);
                 }
             });
+
+            if (desc.onComplete) {
+                desc.onComplete();
+            }
 
             vkDestroyBuffer(m_device, tmpBuf, nullptr);
             vkFreeMemory(m_device, tmpMem, nullptr);
@@ -1089,6 +1103,9 @@ namespace Honey {
         }
         HN_CORE_ASSERT(r == VK_SUCCESS, "process_stream_uploads: vkQueueSubmit failed");
 
+        // Keep timeline value unchanged in the synchronous safety path.
+        // process_stream_uploads() waits for completion via fence below.
+
         // TEMPORARY SYNCHRONOUS PATH:
         // We intentionally wait here so queued uploads are definitely complete
         // before any later draw in the frame can sample from them.
@@ -1096,6 +1113,13 @@ namespace Honey {
         // (e.g. semaphore chaining / timeline semaphore / explicit dependency tracking).
         r = vkWaitForFences(m_device, 1, &m_stream_fence, VK_TRUE, UINT64_MAX);
         HN_CORE_ASSERT(r == VK_SUCCESS, "process_stream_uploads: vkWaitForFences failed");
+
+        // Completion callbacks run only after GPU transfer work is complete.
+        for (const StreamUploadJob& job : m_stream_jobs) {
+            if (job.type == StreamUploadJob::Type::Image && job.img.onComplete) {
+                job.img.onComplete();
+            }
+        }
 
         vkFreeCommandBuffers(m_device, m_upload_command_pool, 1, &cmd);
 
@@ -1351,6 +1375,10 @@ namespace Honey {
         VkPhysicalDeviceDescriptorIndexingFeatures indexing_features{};
         indexing_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
 
+        VkPhysicalDeviceTimelineSemaphoreFeatures timeline_features{};
+        timeline_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES;
+        indexing_features.pNext = &timeline_features;
+
         VkPhysicalDeviceFeatures2 features2{};
         features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
         features2.pNext = &indexing_features;
@@ -1364,6 +1392,8 @@ namespace Honey {
                        "Bindless requires descriptorBindingPartiallyBound (VK_EXT_descriptor_indexing)");
         HN_CORE_ASSERT(indexing_features.shaderSampledImageArrayNonUniformIndexing == VK_TRUE,
                        "Bindless requires shaderSampledImageArrayNonUniformIndexing (VK_EXT_descriptor_indexing)");
+        HN_CORE_ASSERT(timeline_features.timelineSemaphore == VK_TRUE,
+                       "Async upload sync requires timelineSemaphore feature support");
 
         // Optional but commonly used for "true bindless" (variable-sized arrays / update-after-bind)
         // If you don't need them yet, you can leave them disabled and also omit related layout/pool flags.
@@ -1373,6 +1403,8 @@ namespace Honey {
         if (indexing_features.descriptorBindingSampledImageUpdateAfterBind) {
             indexing_features.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
         }
+
+        timeline_features.timelineSemaphore = VK_TRUE;
 
         // Keep your core features:
         features2.features = features;
@@ -1542,6 +1574,10 @@ namespace Honey {
         r = vkCreateFence(m_device, &fence_ci, nullptr, &m_stream_fence);
         HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanBackend::init_stream_uploader vkCreateFence failed");
 
+        // Synchronous safety mode: no timeline semaphore required.
+        m_stream_timeline_semaphore = VK_NULL_HANDLE;
+        m_stream_timeline_value.store(0, std::memory_order_release);
+
         m_stream_submit_in_flight = false;
         m_stream_inflight_cmd     = VK_NULL_HANDLE;
 
@@ -1558,6 +1594,13 @@ namespace Honey {
             vkDestroyFence(m_device, m_stream_fence, nullptr);
             m_stream_fence = VK_NULL_HANDLE;
         }
+
+        if (m_stream_timeline_semaphore) {
+            vkDestroySemaphore(m_device, m_stream_timeline_semaphore, nullptr);
+            m_stream_timeline_semaphore = VK_NULL_HANDLE;
+        }
+
+        m_stream_timeline_value.store(0, std::memory_order_release);
 
         if (m_stream_staging_mapped) {
             vkUnmapMemory(m_device, m_stream_staging_memory);

@@ -1,8 +1,11 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
+#include <atomic>
 #include <vector>
 
 #define GLFW_INCLUDE_VULKAN
@@ -112,6 +115,8 @@ namespace Honey {
             VkImageLayout finalLayout   = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             const void*   srcData       = nullptr;
             VkDeviceSize  size          = 0;
+            std::function<void()> onComplete;
+            std::shared_ptr<void> keepAlive;
         };
 
         void queue_buffer_upload(const BufferUploadDesc& desc);
@@ -119,6 +124,10 @@ namespace Honey {
 
         // Called once per frame from the render thread, before recording draw commands.
         void process_stream_uploads();
+
+        VkSemaphore get_stream_timeline_semaphore() const { return m_stream_timeline_semaphore; }
+        uint64_t get_stream_timeline_value() const { return m_stream_timeline_value.load(std::memory_order_acquire); }
+        bool has_stream_timeline_sync() const { return m_stream_timeline_semaphore != VK_NULL_HANDLE; }
 
         bool debug_is_buffer_in_stream_jobs(VkBuffer buffer) const;
 
@@ -238,6 +247,8 @@ namespace Honey {
 
         std::vector<StreamUploadJob> m_stream_jobs;
         VkFence                      m_stream_fence = VK_NULL_HANDLE;
+        VkSemaphore                  m_stream_timeline_semaphore = VK_NULL_HANDLE;
+        std::atomic<uint64_t>        m_stream_timeline_value{0};
         bool                         m_stream_submit_in_flight = false;
         VkCommandBuffer              m_stream_inflight_cmd = VK_NULL_HANDLE;
 
