@@ -672,6 +672,12 @@ namespace Honey {
             return;
         }
 
+        if (m_backend) {
+            // One frame slot has definitely completed on GPU; allow backend to retire
+            // deferred texture resources that are now safe to destroy.
+            m_backend->notify_frame_completed();
+        }
+
         uint32_t image_index = 0;
         VkResult acquire_res = vkAcquireNextImageKHR(
             reinterpret_cast<VkDevice>(m_device),

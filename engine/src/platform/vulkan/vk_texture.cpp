@@ -34,7 +34,7 @@ namespace Honey {
             HN_CORE_WARN("VulkanTexture2D::queue_stream_upload: pending upload detected, forcing synchronous fallback");
 
             // Drain already queued uploads first so image layout/state is settled.
-            m_backend->process_stream_uploads();
+            m_backend->flush_stream_uploads_blocking();
 
             m_stream_upload_pending.store(false, std::memory_order_release);
             set_data(data, size);
@@ -159,29 +159,20 @@ namespace Honey {
         HN_CORE_ASSERT(dev == m_backend->device(),
                            "VulkanTexture2D: device mismatch in destructor (backend was probably shut down earlier)");
 
-        if (m_imgui_texture_id != 0 && m_backend->imgui_initialized()) {
-            ImGui_ImplVulkan_RemoveTexture(
-                reinterpret_cast<VkDescriptorSet>(m_imgui_texture_id)
-            );
-            m_imgui_texture_id = 0;
-        }
+        VulkanBackend::RetiredTextureResources retired{};
+        retired.sampler = reinterpret_cast<VkSampler>(m_sampler);
+        retired.imageView = reinterpret_cast<VkImageView>(m_image_view);
+        retired.image = reinterpret_cast<VkImage>(m_image);
+        retired.memory = reinterpret_cast<VkDeviceMemory>(m_image_memory);
+        retired.imguiDescriptorSet = reinterpret_cast<VkDescriptorSet>(m_imgui_texture_id);
 
-        if (m_sampler) {
-            vkDestroySampler(dev, reinterpret_cast<VkSampler>(m_sampler), nullptr);
-            m_sampler = nullptr;
-        }
-        if (m_image_view) {
-            vkDestroyImageView(dev, reinterpret_cast<VkImageView>(m_image_view), nullptr);
-            m_image_view = nullptr;
-        }
-        if (m_image) {
-            vkDestroyImage(dev, reinterpret_cast<VkImage>(m_image), nullptr);
-            m_image = nullptr;
-        }
-        if (m_image_memory) {
-            vkFreeMemory(dev, reinterpret_cast<VkDeviceMemory>(m_image_memory), nullptr);
-            m_image_memory = nullptr;
-        }
+        m_backend->defer_destroy_texture_resources(retired);
+
+        m_imgui_texture_id = 0;
+        m_sampler = nullptr;
+        m_image_view = nullptr;
+        m_image = nullptr;
+        m_image_memory = nullptr;
 
         m_backend = nullptr;
         m_device = nullptr;
@@ -631,35 +622,50 @@ namespace Honey {
         if (!dev)
             return;
 
-        // Destroy old resources
-        if (m_imgui_texture_id != 0 && m_backend && m_backend->imgui_initialized()) {
-            ImGui_ImplVulkan_RemoveTexture(
-                reinterpret_cast<VkDescriptorSet>(m_imgui_texture_id)
-            );
-            m_imgui_texture_id = 0;
+        // Ensure pending uploads for this texture complete before replacing backing resources.
+        if (m_stream_upload_pending.load(std::memory_order_acquire) && m_backend) {
+            m_backend->flush_stream_uploads_blocking();
         }
-        if (m_sampler) {
-            vkDestroySampler(dev, reinterpret_cast<VkSampler>(m_sampler), nullptr);
-            m_sampler = nullptr;
+
+        VulkanBackend::RetiredTextureResources retired{};
+        retired.sampler = reinterpret_cast<VkSampler>(m_sampler);
+        retired.imageView = reinterpret_cast<VkImageView>(m_image_view);
+        retired.image = reinterpret_cast<VkImage>(m_image);
+        retired.memory = reinterpret_cast<VkDeviceMemory>(m_image_memory);
+        retired.imguiDescriptorSet = reinterpret_cast<VkDescriptorSet>(m_imgui_texture_id);
+
+        if (m_backend) {
+            m_backend->defer_destroy_texture_resources(retired);
+        } else {
+            if (retired.imguiDescriptorSet != VK_NULL_HANDLE) {
+                ImGui_ImplVulkan_RemoveTexture(retired.imguiDescriptorSet);
+            }
+            if (retired.sampler) {
+                vkDestroySampler(dev, retired.sampler, nullptr);
+            }
+            if (retired.imageView) {
+                vkDestroyImageView(dev, retired.imageView, nullptr);
+            }
+            if (retired.image) {
+                vkDestroyImage(dev, retired.image, nullptr);
+            }
+            if (retired.memory) {
+                vkFreeMemory(dev, retired.memory, nullptr);
+            }
         }
-        if (m_image_view) {
-            vkDestroyImageView(dev, reinterpret_cast<VkImageView>(m_image_view), nullptr);
-            m_image_view = nullptr;
-        }
-        if (m_image) {
-            vkDestroyImage(dev, reinterpret_cast<VkImage>(m_image), nullptr);
-            m_image = nullptr;
-        }
-        if (m_image_memory) {
-            vkFreeMemory(dev, reinterpret_cast<VkDeviceMemory>(m_image_memory), nullptr);
-            m_image_memory = nullptr;
-        }
+
+        m_imgui_texture_id = 0;
+        m_sampler = nullptr;
+        m_image_view = nullptr;
+        m_image = nullptr;
+        m_image_memory = nullptr;
 
         m_width  = width;
         m_height = height;
 
-        // Recreate image + view + sampler (no data yet).
-        std::vector<uint8_t> empty(m_width * m_height * 4, 0);
-        init_from_pixels_rgba8(empty.data(), m_width, m_height);
+        // Recreate image + view + sampler only. Data is uploaded by caller.
+        create_image(m_width, m_height);
+        create_image_view();
+        create_sampler();
     }
 }

@@ -204,6 +204,10 @@ namespace Honey {
         if (device) {
             vkDeviceWaitIdle(device);
 
+            // Ensure queued uploads complete and callbacks run before resource teardown.
+            flush_stream_uploads_blocking();
+            flush_deferred_destroys();
+
             shutdown_imgui_resources();
             shutdown_stream_uploader();
 
@@ -702,9 +706,9 @@ namespace Honey {
             // If the ring is full but we already have queued jobs, flush now and retry.
             // This prevents staging overwrite when large scenes queue many uploads before the
             // normal per-frame process_stream_uploads() call.
-            if (!m_stream_jobs.empty()) {
+            if (!m_stream_jobs.empty() || m_stream_submit_in_flight) {
                 HN_CORE_WARN("Streaming uploader buffer pressure (buffer upload). Flushing pending stream jobs early.");
-                process_stream_uploads();
+                flush_stream_uploads_blocking();
             }
 
             if (!stream_staging_allocate(desc.size, alignment, offset)) {
@@ -801,9 +805,9 @@ namespace Honey {
         const VkDeviceSize alignment = 16;
         if (!stream_staging_allocate(desc.size, alignment, offset)) {
             // If we already have queued jobs, flush to free the ring and retry once.
-            if (!m_stream_jobs.empty()) {
+            if (!m_stream_jobs.empty() || m_stream_submit_in_flight) {
                 HN_CORE_WARN("Streaming uploader buffer pressure (image upload). Flushing pending stream jobs early.");
-                process_stream_uploads();
+                flush_stream_uploads_blocking();
             }
 
             if (!stream_staging_allocate(desc.size, alignment, offset)) {
@@ -960,12 +964,20 @@ namespace Honey {
 
         if (m_stream_submit_in_flight) {
             VkResult fenceRes = vkGetFenceStatus(m_device, m_stream_fence);
-            if (fenceRes == VK_NOT_READY) {
-                fenceRes = vkWaitForFences(m_device, 1, &m_stream_fence, VK_TRUE, UINT64_MAX);
-            }
+            if (fenceRes == VK_NOT_READY)
+                return;
 
             HN_CORE_ASSERT(fenceRes == VK_SUCCESS,
-                           "process_stream_uploads: upload fence error");
+                           "process_stream_uploads: upload fence error ({})",
+                           vk_result_to_string(fenceRes));
+
+            // Completion callbacks run only after GPU transfer work is complete.
+            for (const StreamUploadJob& job : m_stream_inflight_jobs) {
+                if (job.type == StreamUploadJob::Type::Image && job.img.onComplete) {
+                    job.img.onComplete();
+                }
+            }
+            m_stream_inflight_jobs.clear();
 
             if (m_stream_inflight_cmd != VK_NULL_HANDLE) {
                 vkFreeCommandBuffers(m_device,
@@ -976,7 +988,12 @@ namespace Honey {
             }
 
             m_stream_submit_in_flight = false;
-            m_stream_staging_head     = 0;
+            // If no unsent jobs remain, reclaim the staging ring from the start.
+            // If jobs were queued while this submit was in flight, keep head as-is
+            // so new allocations cannot overlap their staging ranges.
+            if (m_stream_jobs.empty()) {
+                m_stream_staging_head = 0;
+            }
         }
 
         if (m_stream_jobs.empty())
@@ -1103,35 +1120,107 @@ namespace Honey {
         }
         HN_CORE_ASSERT(r == VK_SUCCESS, "process_stream_uploads: vkQueueSubmit failed");
 
-        // Keep timeline value unchanged in the synchronous safety path.
-        // process_stream_uploads() waits for completion via fence below.
+        m_stream_inflight_cmd = cmd;
+        m_stream_submit_in_flight = true;
+        m_stream_inflight_jobs.swap(m_stream_jobs);
+    }
 
-        // TEMPORARY SYNCHRONOUS PATH:
-        // We intentionally wait here so queued uploads are definitely complete
-        // before any later draw in the frame can sample from them.
-        // TODO(trey): replace this with proper async upload-to-render synchronization
-        // (e.g. semaphore chaining / timeline semaphore / explicit dependency tracking).
-        r = vkWaitForFences(m_device, 1, &m_stream_fence, VK_TRUE, UINT64_MAX);
-        HN_CORE_ASSERT(r == VK_SUCCESS, "process_stream_uploads: vkWaitForFences failed");
+    void VulkanBackend::flush_stream_uploads_blocking() {
+        HN_PROFILE_FUNCTION();
 
-        // Completion callbacks run only after GPU transfer work is complete.
-        for (const StreamUploadJob& job : m_stream_jobs) {
-            if (job.type == StreamUploadJob::Type::Image && job.img.onComplete) {
-                job.img.onComplete();
+        if (!m_device || !m_upload_command_pool || !m_stream_staging_buffer)
+            return;
+
+        while (true) {
+            process_stream_uploads();
+
+            if (!m_stream_submit_in_flight && m_stream_jobs.empty())
+                break;
+
+            if (m_stream_submit_in_flight) {
+                const VkResult r = vkWaitForFences(m_device, 1, &m_stream_fence, VK_TRUE, UINT64_MAX);
+                HN_CORE_ASSERT(r == VK_SUCCESS,
+                               "flush_stream_uploads_blocking: vkWaitForFences failed ({})",
+                               vk_result_to_string(r));
             }
         }
+    }
 
-        vkFreeCommandBuffers(m_device, m_upload_command_pool, 1, &cmd);
+    void VulkanBackend::defer_destroy_texture_resources(const RetiredTextureResources& resources) {
+        if (!m_device || resources.empty())
+            return;
 
-        m_stream_inflight_cmd = VK_NULL_HANDLE;
-        m_stream_submit_in_flight = false;
-        m_stream_staging_head = 0;
-        m_stream_jobs.clear();
+        std::scoped_lock lock(m_deferred_destroy_mutex);
+
+        DeferredDestroyItem item{};
+        item.retireFrame = m_completed_frame_counter + k_deferred_destroy_frame_lag;
+        item.resources = resources;
+
+        m_deferred_destroy_items.push_back(item);
+    }
+
+    void VulkanBackend::collect_deferred_destroys_locked(uint64_t completedFrame) {
+        if (!m_device) {
+            m_deferred_destroy_items.clear();
+            return;
+        }
+
+        auto it = std::remove_if(m_deferred_destroy_items.begin(),
+                                 m_deferred_destroy_items.end(),
+                                 [&](const DeferredDestroyItem& item) {
+                                     if (item.retireFrame > completedFrame)
+                                         return false;
+
+                                     const auto& r = item.resources;
+
+                                     if (r.imguiDescriptorSet != VK_NULL_HANDLE && m_imgui_initialized) {
+                                         ImGui_ImplVulkan_RemoveTexture(r.imguiDescriptorSet);
+                                     }
+
+                                     if (r.sampler) {
+                                         vkDestroySampler(m_device, r.sampler, nullptr);
+                                     }
+                                     if (r.imageView) {
+                                         vkDestroyImageView(m_device, r.imageView, nullptr);
+                                     }
+                                     if (r.image) {
+                                         vkDestroyImage(m_device, r.image, nullptr);
+                                     }
+                                     if (r.memory) {
+                                         vkFreeMemory(m_device, r.memory, nullptr);
+                                     }
+
+                                     return true;
+                                 });
+
+        m_deferred_destroy_items.erase(it, m_deferred_destroy_items.end());
+    }
+
+    void VulkanBackend::notify_frame_completed() {
+        HN_PROFILE_FUNCTION();
+        assert_render_thread();
+
+        std::scoped_lock lock(m_deferred_destroy_mutex);
+        ++m_completed_frame_counter;
+        collect_deferred_destroys_locked(m_completed_frame_counter);
+    }
+
+    void VulkanBackend::flush_deferred_destroys() {
+        HN_PROFILE_FUNCTION();
+
+        std::scoped_lock lock(m_deferred_destroy_mutex);
+        collect_deferred_destroys_locked(UINT64_MAX);
     }
 
     bool VulkanBackend::debug_is_buffer_in_stream_jobs(VkBuffer buffer) const {
 #if defined(BUILD_DEBUG)
         for (const auto& job : m_stream_jobs) {
+            if (job.type == StreamUploadJob::Type::Buffer &&
+                job.buf.dstBuffer == buffer) {
+                return true;
+                }
+        }
+        for (const auto& job : m_stream_inflight_jobs) {
             if (job.type == StreamUploadJob::Type::Buffer &&
                 job.buf.dstBuffer == buffer) {
                 return true;
@@ -1565,6 +1654,7 @@ namespace Honey {
 
         m_stream_staging_head = 0;
         m_stream_jobs.clear();
+        m_stream_inflight_jobs.clear();
 
         // Dedicated fence for batched stream submissions
         VkFenceCreateInfo fence_ci{};
@@ -1589,6 +1679,8 @@ namespace Honey {
         HN_PROFILE_FUNCTION();
         if (!m_device)
             return;
+
+        flush_stream_uploads_blocking();
 
         if (m_stream_fence) {
             vkDestroyFence(m_device, m_stream_fence, nullptr);
@@ -1620,6 +1712,7 @@ namespace Honey {
         m_stream_staging_size = 0;
         m_stream_staging_head = 0;
         m_stream_jobs.clear();
+        m_stream_inflight_jobs.clear();
         m_stream_submit_in_flight = false;
         m_stream_inflight_cmd = VK_NULL_HANDLE;
     }
@@ -1638,7 +1731,7 @@ namespace Honey {
 
         // Try wrapping to 0 only when there are no pending jobs.
         // If jobs are pending, wrapping would overwrite unsent staging data.
-        if (m_stream_jobs.empty() && size <= m_stream_staging_size) {
+        if (m_stream_jobs.empty() && !m_stream_submit_in_flight && size <= m_stream_staging_size) {
             outOffset = 0;
             m_stream_staging_head = size;
             return true;

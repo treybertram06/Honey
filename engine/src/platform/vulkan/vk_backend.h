@@ -124,6 +124,26 @@ namespace Honey {
 
         // Called once per frame from the render thread, before recording draw commands.
         void process_stream_uploads();
+        void flush_stream_uploads_blocking();
+
+        struct RetiredTextureResources {
+            VkSampler      sampler = VK_NULL_HANDLE;
+            VkImageView    imageView = VK_NULL_HANDLE;
+            VkImage        image = VK_NULL_HANDLE;
+            VkDeviceMemory memory = VK_NULL_HANDLE;
+            VkDescriptorSet imguiDescriptorSet = VK_NULL_HANDLE;
+
+            bool empty() const {
+                return sampler == VK_NULL_HANDLE &&
+                       imageView == VK_NULL_HANDLE &&
+                       image == VK_NULL_HANDLE &&
+                       memory == VK_NULL_HANDLE &&
+                       imguiDescriptorSet == VK_NULL_HANDLE;
+            }
+        };
+
+        void defer_destroy_texture_resources(const RetiredTextureResources& resources);
+        void notify_frame_completed();
 
         VkSemaphore get_stream_timeline_semaphore() const { return m_stream_timeline_semaphore; }
         uint64_t get_stream_timeline_value() const { return m_stream_timeline_value.load(std::memory_order_acquire); }
@@ -164,6 +184,8 @@ namespace Honey {
 
         void init_stream_uploader();
         void shutdown_stream_uploader();
+        void flush_deferred_destroys();
+        void collect_deferred_destroys_locked(uint64_t completedFrame);
 
         bool stream_staging_allocate(VkDeviceSize size, VkDeviceSize alignment, VkDeviceSize& outOffset);
 
@@ -246,11 +268,22 @@ namespace Honey {
         };
 
         std::vector<StreamUploadJob> m_stream_jobs;
+        std::vector<StreamUploadJob> m_stream_inflight_jobs;
         VkFence                      m_stream_fence = VK_NULL_HANDLE;
         VkSemaphore                  m_stream_timeline_semaphore = VK_NULL_HANDLE;
         std::atomic<uint64_t>        m_stream_timeline_value{0};
         bool                         m_stream_submit_in_flight = false;
         VkCommandBuffer              m_stream_inflight_cmd = VK_NULL_HANDLE;
+
+        struct DeferredDestroyItem {
+            uint64_t retireFrame = 0;
+            RetiredTextureResources resources{};
+        };
+
+        std::mutex m_deferred_destroy_mutex{};
+        std::vector<DeferredDestroyItem> m_deferred_destroy_items;
+        uint64_t m_completed_frame_counter = 0;
+        static constexpr uint64_t k_deferred_destroy_frame_lag = 4;
 
         std::thread::id m_render_thread_id{};
 
