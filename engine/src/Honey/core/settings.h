@@ -25,6 +25,7 @@ namespace Honey {
         bool show_physics_debug_draw = false;
         float anisotropic_filtering_level = 16.0f; // This overrides what the actual maximum value is, but I don't care.
         CullMode cull_mode = CullMode::Back;
+        bool enable_parallel_mesh_submission = false;
 
         TextureFilter texture_filter = TextureFilter::nearest;
 

@@ -18,6 +18,7 @@
 #include "vk_texture.h"
 #include "glm/gtx/string_cast.hpp"
 #include "Honey/core/settings.h"
+#include "Honey/core/task_system.h"
 #include "Honey/renderer/shader_cache.h"
 #include "Honey/renderer/texture_cache.h"
 #include "platform/vulkan/vk_renderer_api.h"
@@ -626,6 +627,7 @@ namespace Honey {
         create_framebuffers();
 
         create_command_pool();
+        create_secondary_command_pools();
         create_command_buffers();
 
         create_sync_objects();
@@ -671,6 +673,8 @@ namespace Honey {
             HN_CORE_ERROR("vkWaitForFences failed before acquire: {0}", vk_result_to_string(wait_res));
             return;
         }
+
+        reset_secondary_command_pools_for_frame(m_current_frame);
 
         if (m_backend) {
             // One frame slot has definitely completed on GPU; allow backend to retire
@@ -751,6 +755,22 @@ namespace Honey {
 
         record_command_buffer(image_index);
 
+        auto validate_present_inputs = [&](uint32_t idx, VkSemaphore render_finished) {
+            HN_CORE_ASSERT(m_present_queue != VK_NULL_HANDLE, "vkQueuePresentKHR: present queue is null");
+            HN_CORE_ASSERT(m_swapchain != VK_NULL_HANDLE, "vkQueuePresentKHR: swapchain is null");
+            HN_CORE_ASSERT(idx < m_swapchain_images.size(),
+                           "vkQueuePresentKHR: image index ({0}) out of range for swapchain images ({1})",
+                           idx,
+                           (uint32_t)m_swapchain_images.size());
+            HN_CORE_ASSERT(idx < m_render_finished_semaphores.size(),
+                           "vkQueuePresentKHR: image index ({0}) out of range for render-finished semaphores ({1})",
+                           idx,
+                           (uint32_t)m_render_finished_semaphores.size());
+            HN_CORE_ASSERT(render_finished != VK_NULL_HANDLE,
+                           "vkQueuePresentKHR: render-finished semaphore for image {0} is null",
+                           idx);
+        };
+
         VkSemaphore wait_semaphores[2] = { m_image_available_semaphores[m_current_frame], VK_NULL_HANDLE };
         VkPipelineStageFlags wait_stages[2] = {
             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
@@ -761,6 +781,8 @@ namespace Honey {
         if (m_backend && m_backend->has_stream_timeline_sync()) {
             const uint64_t upload_timeline_value = m_backend->get_stream_timeline_value();
             if (upload_timeline_value > 0) {
+                HN_CORE_ASSERT(image_index < m_render_finished_semaphores.size(),
+                               "image_index out of range for m_render_finished_semaphores");
                 wait_semaphores[wait_count] = m_backend->get_stream_timeline_semaphore();
 
                 static thread_local uint64_t s_wait_values[2] = {0, 0};
@@ -774,6 +796,8 @@ namespace Honey {
 
                 VkSemaphore signal_semaphores[] = { m_render_finished_semaphores[image_index] };
                 VkCommandBuffer cmd = reinterpret_cast<VkCommandBuffer>(m_command_buffers[image_index]);
+
+                validate_present_inputs(image_index, signal_semaphores[0]);
 
                 VkSubmitInfo submit_info{};
                 submit_info.sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -833,6 +857,8 @@ namespace Honey {
         VkSemaphore signal_semaphores[] = { m_render_finished_semaphores[image_index] };
 
         VkCommandBuffer cmd = reinterpret_cast<VkCommandBuffer>(m_command_buffers[image_index]);
+
+        validate_present_inputs(image_index, signal_semaphores[0]);
 
         VkSubmitInfo submit_info{};
         submit_info.sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -1306,6 +1332,71 @@ namespace Honey {
             reinterpret_cast<VkCommandBuffer*>(m_command_buffers.data())
         );
         HN_CORE_ASSERT(res == VK_SUCCESS, "vkAllocateCommandBuffers failed: {0}", vk_result_to_string(res));
+    }
+
+    void VulkanContext::create_secondary_command_pools() {
+        HN_PROFILE_FUNCTION();
+        assert_render_thread();
+
+        cleanup_secondary_command_pools();
+
+        const uint32_t hw = std::max(1u, std::thread::hardware_concurrency());
+        m_secondary_worker_count = (hw > 1) ? (hw - 1) : 1;
+
+        const uint32_t pool_count_per_frame = m_secondary_worker_count + 1; // +1 for serial fallback pool
+
+        for (uint32_t frame = 0; frame < k_max_frames_in_flight; ++frame) {
+            auto& pools = m_secondary_command_pools[frame];
+            pools.resize(pool_count_per_frame, VK_NULL_HANDLE);
+
+            for (uint32_t i = 0; i < pool_count_per_frame; ++i) {
+                VkCommandPoolCreateInfo pool_ci{};
+                pool_ci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+                pool_ci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+                pool_ci.queueFamilyIndex = m_graphics_queue_family;
+
+                VkResult r = vkCreateCommandPool(reinterpret_cast<VkDevice>(m_device), &pool_ci, nullptr, &pools[i]);
+                HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateCommandPool failed for secondary command pool");
+
+                char pool_name[96];
+                std::snprintf(pool_name, sizeof(pool_name), "ContextSecondaryPool_F%u_P%u", frame, i);
+                set_debug_name(reinterpret_cast<VkDevice>(m_device),
+                               VK_OBJECT_TYPE_COMMAND_POOL,
+                               reinterpret_cast<uint64_t>(pools[i]),
+                               pool_name);
+            }
+        }
+    }
+
+    void VulkanContext::reset_secondary_command_pools_for_frame(uint32_t frame_index) {
+        HN_PROFILE_FUNCTION();
+        assert_render_thread();
+
+        HN_CORE_ASSERT(frame_index < k_max_frames_in_flight, "secondary pool reset: frame index out of range");
+
+        auto& pools = m_secondary_command_pools[frame_index];
+        for (VkCommandPool pool : pools) {
+            if (!pool)
+                continue;
+            VkResult r = vkResetCommandPool(reinterpret_cast<VkDevice>(m_device), pool, 0);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "vkResetCommandPool failed for secondary command pool");
+        }
+    }
+
+    void VulkanContext::cleanup_secondary_command_pools() {
+        if (!m_device)
+            return;
+
+        for (uint32_t frame = 0; frame < k_max_frames_in_flight; ++frame) {
+            auto& pools = m_secondary_command_pools[frame];
+            for (VkCommandPool pool : pools) {
+                if (pool) {
+                    vkDestroyCommandPool(reinterpret_cast<VkDevice>(m_device), pool, nullptr);
+                }
+            }
+            pools.clear();
+        }
+        m_secondary_worker_count = 0;
     }
 
     void VulkanContext::create_sync_objects() {
@@ -1949,6 +2040,7 @@ namespace Honey {
             //cleanup_pipeline();
             cleanup_swapchain();
             cleanup_global_descriptor_resources();
+            cleanup_secondary_command_pools();
 
             if (m_command_pool) {
                 vkDestroyCommandPool(m_device, m_command_pool, nullptr);

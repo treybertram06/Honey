@@ -12,6 +12,7 @@
 #include "scene_serializer.h"
 #include "Honey/audio/audio_system.h"
 #include "Honey/core/settings.h"
+#include "Honey/core/task_system.h"
 #include "Honey/math/math.h"
 #include "Honey/renderer/renderer_3d.h"
 #include "Honey/scripting/script_engine.h"
@@ -484,6 +485,8 @@ namespace Honey {
 
     void Scene::on_update_editor(Timestep ts, EditorCamera& camera) {
 
+        bool parallel_mesh_submit_enabled = Settings::get().renderer.enable_parallel_mesh_submission;
+
         update_streamed_assets();
 
         // render
@@ -514,30 +517,34 @@ namespace Honey {
 
         Renderer3D::begin_scene(camera);
 
-        for (auto entity : m_registry.view<TransformComponent, MeshRendererComponent>()) {
-            auto& tc = m_registry.get<TransformComponent>(entity);
-            auto& mr = m_registry.get<MeshRendererComponent>(entity);
+        if (!parallel_mesh_submit_enabled) {
+            for (auto entity : m_registry.view<TransformComponent, MeshRendererComponent>()) {
+                auto& tc = m_registry.get<TransformComponent>(entity);
+                auto& mr = m_registry.get<MeshRendererComponent>(entity);
 
-            if (!mr.mesh)
-                continue;
+                if (!mr.mesh)
+                    continue;
 
-            const glm::mat4 world = tc.get_transform();
+                const glm::mat4 world = tc.get_transform();
 
-            const auto& submeshes = mr.mesh->get_submeshes();
-            for (size_t i = 0; i < submeshes.size(); ++i) {
-                const auto& sm = submeshes[i];
+                const auto& submeshes = mr.mesh->get_submeshes();
+                for (size_t i = 0; i < submeshes.size(); ++i) {
+                    const auto& sm = submeshes[i];
 
-                Ref<Material> material = sm.material;
+                    Ref<Material> material = sm.material;
 
-                // Optional: override material if present
-                if (i < mr.material_overrides.size() && mr.material_overrides[i])
-                    material = mr.material_overrides[i];
+                    // Optional: override material if present
+                    if (i < mr.material_overrides.size() && mr.material_overrides[i])
+                        material = mr.material_overrides[i];
 
-                if (material)
-                    material->set_base_color_factor(mr.color);
+                    if (material)
+                        material->set_base_color_factor(mr.color);
 
-                Renderer3D::draw_mesh(sm.vao, material, world * sm.transform);
+                    Renderer3D::draw_mesh(sm.vao, material, world * sm.transform);
+                }
             }
+        } else {
+            HN_CORE_WARN("Parallel mesh submission is not yet implemented! No meshes will be drawn.");
         }
 
         Renderer3D::end_scene();

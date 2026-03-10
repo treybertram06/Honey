@@ -124,6 +124,8 @@ namespace Honey {
                 s.renderer.vsync = n.as<bool>(s.renderer.vsync);
             if (auto n = renderer_node["ShowPhysicsDebugDraw"])
                 s.renderer.show_physics_debug_draw = n.as<bool>(s.renderer.show_physics_debug_draw);
+            if (auto n = renderer_node["ParallelMeshSubmission"])
+                s.renderer.enable_parallel_mesh_submission = n.as<bool>(s.renderer.enable_parallel_mesh_submission);
 
             if (auto n = renderer_node["AnisotropicFilteringLevel"]) {
                 try {
@@ -183,6 +185,7 @@ namespace Honey {
         out << YAML::Key << "Blending"                << YAML::Value << s.renderer.blending;
         out << YAML::Key << "VSync"                   << YAML::Value << s.renderer.vsync;
         out << YAML::Key << "ShowPhysicsDebugDraw"    << YAML::Value << s.renderer.show_physics_debug_draw;
+        out << YAML::Key << "ParallelMeshSubmission"  << YAML::Value << s.renderer.enable_parallel_mesh_submission;
         out << YAML::Key << "AnisotropicFilteringLevel"
             << YAML::Value << s.renderer.anisotropic_filtering_level;
         out << YAML::Key << "TextureFilter"

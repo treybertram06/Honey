@@ -200,6 +200,9 @@ namespace Honey {
 
         void create_command_pool();
         void create_command_buffers();
+        void create_secondary_command_pools();
+        void reset_secondary_command_pools_for_frame(uint32_t frame_index);
+        void cleanup_secondary_command_pools();
 
         void create_sync_objects();
 
@@ -271,6 +274,12 @@ namespace Honey {
 
         VkCommandPool m_command_pool = nullptr;
         std::vector<VkCommandBuffer> m_command_buffers;
+
+        // Per-frame secondary command pools.
+        // Index 0 in each frame is reserved for serial/primary-thread secondary recording,
+        // indices [1..] are used by worker threads for parallel secondary recording.
+        std::array<std::vector<VkCommandPool>, k_max_frames_in_flight> m_secondary_command_pools{};
+        uint32_t m_secondary_worker_count = 0;
 
         std::vector<VkSemaphore> m_image_available_semaphores;
         std::vector<VkSemaphore> m_render_finished_semaphores;
