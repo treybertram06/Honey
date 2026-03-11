@@ -707,7 +707,6 @@ namespace Honey {
         }
         m_images_in_flight[image_index] = in_flight;
 
-        /*
         if (m_timestamp_query_pool &&
                 image_index < m_timestamp_written.size() &&
                 m_timestamp_written[image_index] &&
@@ -749,7 +748,6 @@ namespace Honey {
                     m_timestamp_valid[image_index] = false;
             }
         }
-        */
 
         vkResetFences(reinterpret_cast<VkDevice>(m_device), 1, &in_flight);
 
@@ -1499,7 +1497,6 @@ namespace Honey {
         // Reset the two timestamp queries for this swapchain image
         // write a "frame begin" timestamp at TOP_OF_PIPE.
         if (m_timestamp_query_pool) {
-            /*
             uint32_t base = image_index * 2;
             vkCmdResetQueryPool(cmd, m_timestamp_query_pool, base, 2);
 
@@ -1507,7 +1504,6 @@ namespace Honey {
                     VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                     m_timestamp_query_pool,
                     base + 0);
-                    */
         }
 
         auto& p = frame_packet();
@@ -1893,7 +1889,6 @@ namespace Honey {
         // Write a "frame end" timestamp at BOTTOM_OF_PIPE and mark this
         // image's timing as written for this frame.
         if (m_timestamp_query_pool) {
-            /*
             uint32_t base = image_index * 2;
             vkCmdWriteTimestamp(cmd,
                                 VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
@@ -1905,7 +1900,6 @@ namespace Honey {
             if (image_index < m_timestamp_written.size()) {
                 m_timestamp_written[image_index] = true;
             }
-            */
         }
 
         res = vkEndCommandBuffer(cmd);
