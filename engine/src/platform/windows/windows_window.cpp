@@ -184,6 +184,12 @@ namespace Honey {
         return m_data.vsync;
     }
 
+    void WindowsWindow::request_close() {
+        if (!m_window)
+            return;
+        glfwSetWindowShouldClose(m_window, GLFW_TRUE);
+    }
+
 }
 
 #endif

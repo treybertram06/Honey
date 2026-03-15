@@ -209,7 +209,10 @@ hn_force_msvc_runtime(engine)
 # ------------------------------------------------------------------------------
 
 if(DEFINED ENV{VULKAN_SDK})
-    list(APPEND CMAKE_PREFIX_PATH "$ENV{VULKAN_SDK}")
+ list(FIND CMAKE_PREFIX_PATH "$ENV{VULKAN_SDK}" _vulkan_sdk_idx)
+ if(_vulkan_sdk_idx EQUAL -1)
+  list(APPEND CMAKE_PREFIX_PATH "$ENV{VULKAN_SDK}")
+ endif()
 endif()
 
 find_package(Vulkan REQUIRED)
@@ -362,6 +365,7 @@ target_compile_definitions(engine PUBLIC
 # ------------------------------------------------------------------------------
 if(MSVC)
  target_compile_options(engine PRIVATE
+         /bigobj
          $<$<CONFIG:Release>:/O2 /Ot /Ob2>
          $<$<CONFIG:Debug>:/Od /RTC1>
  )
