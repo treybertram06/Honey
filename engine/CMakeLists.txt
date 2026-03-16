@@ -205,6 +205,22 @@ add_library(engine STATIC
 hn_force_msvc_runtime(engine)
 
 # ------------------------------------------------------------------------------
+# Vulkan libs
+# ------------------------------------------------------------------------------
+
+if(DEFINED ENV{VULKAN_SDK})
+    list(APPEND CMAKE_PREFIX_PATH "$ENV{VULKAN_SDK}")
+endif()
+
+find_package(Vulkan REQUIRED)
+target_link_libraries(engine PRIVATE Vulkan::Vulkan)
+
+message(STATUS "Vulkan found: ${Vulkan_FOUND}")
+if(DEFINED ENV{VULKAN_SDK})
+    message(STATUS "Using Vulkan SDK: $ENV{VULKAN_SDK}")
+endif()
+
+# ------------------------------------------------------------------------------
 # enkiTS (vendored)
 # ------------------------------------------------------------------------------
 set(HN_ENKITS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/enkiTS" CACHE PATH "Vendored enkiTS root")
@@ -233,7 +249,7 @@ target_link_libraries(engine PRIVATE enkiTS)
 # If your lua.c files live in a "src" subfolder, change ${HN_LUA_DIR}/lapi.c to
 # ${HN_LUA_DIR}/src/lapi.c, etc.
 # ------------------------------------------------------------------------------
-set(HN_LUA_DIR  "${CMAKE_CURRENT_SOURCE_DIR}/vendor/lua"  CACHE PATH "Vendored Lua source root")
+set(HN_LUA_DIR  "${CMAKE_CURRENT_SOURCE_DIR}/vendor/lua-5.4.8/src"  CACHE PATH "Vendored Lua source root")
 set(HN_SOL2_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/sol2" CACHE PATH "Vendored sol2 root")
 
 add_library(lua STATIC
@@ -457,13 +473,11 @@ file(GLOB SOLOUD_CORE
         ${SOLOUD_DIR}/src/filter/*.cpp
 )
 
-# Only include the audio sources you actually need.
 set(SOLOUD_AUDIO_SOURCES
         ${SOLOUD_DIR}/src/audiosource/wav/soloud_wav.cpp
         ${SOLOUD_DIR}/src/audiosource/wav/dr_impl.cpp
         ${SOLOUD_DIR}/src/audiosource/wav/stb_vorbis.c
-        ${SOLOUD_DIR}/src/audiosource/wav/soloud_wavstream.cpp     # optional, for streaming/ogg
-        # If you want speech too:
+        ${SOLOUD_DIR}/src/audiosource/wav/soloud_wavstream.cpp
         ${SOLOUD_DIR}/src/audiosource/speech/soloud_speech.cpp
         ${SOLOUD_DIR}/src/audiosource/speech/resonator.cpp
         ${SOLOUD_DIR}/src/audiosource/speech/tts.cpp
@@ -485,13 +499,32 @@ target_include_directories(soloud PUBLIC
         ${SOLOUD_DIR}/include
 )
 
-if (UNIX AND NOT APPLE)
-   target_compile_definitions(soloud PUBLIC WITH_MINIAUDIO)
-else ()
-   error("SoLoud currently only supports the miniaudio backend on Linux.")
-endif ()
-# Make sure SoLoud uses the same CRT on MSVC
+target_compile_definitions(soloud PUBLIC WITH_MINIAUDIO)
+
+if(WIN32)
+    target_compile_definitions(soloud PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+
 hn_force_msvc_runtime(soloud)
+
+if(WIN32)
+    target_link_libraries(soloud PUBLIC winmm)
+elseif(APPLE)
+    find_library(COREAUDIO_FRAMEWORK CoreAudio)
+    find_library(AUDIOTOOLBOX_FRAMEWORK AudioToolbox)
+    find_library(AUDIOUNIT_FRAMEWORK AudioUnit)
+    find_library(FOUNDATION_FRAMEWORK Foundation)
+
+    target_link_libraries(soloud PUBLIC
+            ${COREAUDIO_FRAMEWORK}
+            ${AUDIOTOOLBOX_FRAMEWORK}
+            ${AUDIOUNIT_FRAMEWORK}
+            ${FOUNDATION_FRAMEWORK}
+    )
+elseif(UNIX)
+    find_package(Threads REQUIRED)
+    target_link_libraries(soloud PUBLIC Threads::Threads dl)
+endif()
 
 # tinygltf is header-only, but it depends on stb_image + stb_image_write
 target_include_directories(engine PRIVATE
@@ -576,23 +609,3 @@ elseif(UNIX)
  target_compile_options(engine PRIVATE ${GTK3_CFLAGS_OTHER})
 endif()
 
-# ------------------------------------------------------------------------------
-# Vulkan libs
-# ------------------------------------------------------------------------------
-
-if(APPLE)
- # Help CMake find the Vulkan SDK (MoltenVK) if installed via the official SDK
- if(DEFINED ENV{VULKAN_SDK})
-  list(APPEND CMAKE_PREFIX_PATH "$ENV{VULKAN_SDK}")
- endif()
-
-elseif (UNIX AND NOT APPLE)
- find_package(Vulkan REQUIRED)
- target_link_libraries(engine PRIVATE Vulkan::Vulkan)
-
-endif()
-
-message(STATUS "Vulkan found: ${Vulkan_FOUND}")
-if(DEFINED ENV{VULKAN_SDK})
- message(STATUS "Using Vulkan SDK: $ENV{VULKAN_SDK}")
-endif()

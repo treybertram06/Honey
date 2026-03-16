@@ -24,8 +24,9 @@ target_compile_definitions(${PROJECT_NAME}
         IMGUI_IMPL_OPENGL_LOADER_GLAD
 )
 
-# Link against GLFW
+# Link against GLFW & Vulkan
 target_link_libraries(${PROJECT_NAME}
         PUBLIC
         glfw
+        Vulkan::Vulkan
 )
