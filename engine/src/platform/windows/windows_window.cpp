@@ -7,12 +7,14 @@
 
 #include "Honey.h"
 #include "glad/glad.h"
+#include "Honey/core/settings.h"
 
 #include "Honey/events/application_event.h"
 #include "Honey/events/key_event.h"
 #include "Honey/events/mouse_event.h"
 
 #include "platform/opengl/opengl_context.h"
+#include "platform/vulkan/vk_context.h"
 
 namespace Honey {
 
@@ -48,27 +50,61 @@ namespace Honey {
         HN_CORE_INFO("Creating window {0} ({1}, {2})", props.title, props.width, props.height);
 
         if (!s_glfw_initialized) {
-            //TODO: glfwTerminate on shutdown
-            int success = glfwInit();
-            HN_CORE_ASSERT(success, "Could not initialize GLFW!");
-            glfwSetErrorCallback(GLFW_error_callback);
+            auto& renderer_settings = Settings::get().renderer;
 
-            s_glfw_initialized = true;
+            if (renderer_settings.api == RendererAPI::API::vulkan) {
+                // Application already called glfwInit() before creating the VulkanBackend.
+                // Mark it initialized so we don't call glfwInit() again.
+                glfwSetErrorCallback(GLFW_error_callback);
+                s_glfw_initialized = true;
+            } else {
+                // OpenGL path owns GLFW init here.
+                int success = glfwInit();
+                HN_CORE_ASSERT(success, "Could not initialize GLFW!");
+                glfwSetErrorCallback(GLFW_error_callback);
+                s_glfw_initialized = true;
+            }
         }
 
-        glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 5);
-        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-        glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+        auto& renderer_settings = Settings::get().renderer;
+        switch (renderer_settings.api) {
 
-        m_window = glfwCreateWindow((int)props.width, (int)props.height, m_data.title.c_str(), nullptr, nullptr);
-        HN_CORE_ASSERT(m_window, "GLFW window creation failed!");
+            case RendererAPI::API::opengl:
+            {
+                glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
+                glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+                glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 5);
+                glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+                glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
 
-        glfwMakeContextCurrent(m_window);
-        m_context = new OpenGLContext(m_window);
-        m_context->init();
-        // ^
+                m_window = glfwCreateWindow((int)props.width, (int)props.height, m_data.title.c_str(), nullptr, nullptr);
+                HN_CORE_ASSERT(m_window, "GLFW window creation failed!");
+
+                glfwMakeContextCurrent(m_window);
+                m_context = new OpenGLContext(m_window);
+                m_context->init();
+                m_data.context = m_context;
+                set_vsync(true);
+            }
+                break;
+            case RendererAPI::API::vulkan:
+            {
+                glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+
+                m_window = glfwCreateWindow((int)props.width, (int)props.height, m_data.title.c_str(), nullptr, nullptr);
+                HN_CORE_ASSERT(m_window, "GLFW window creation failed!");
+
+                auto& backend = Application::get().get_vulkan_backend();
+                m_context = new VulkanContext(m_window, &backend);
+                m_context->init();
+                m_data.context = m_context;
+                m_data.vsync = true;
+            }
+                break;
+
+            case RendererAPI::API::none: HN_CORE_ASSERT(false, "RendererAPI::None is currently not supported!");
+                break;
+        }
 
 
         glfwSetWindowUserPointer(m_window, &m_data);

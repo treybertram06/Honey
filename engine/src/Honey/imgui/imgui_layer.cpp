@@ -42,9 +42,9 @@ namespace Honey {
          //io.ConfigFlags |= ImGuiConfigFlags_ViewportsNoTaskBarIcons;
          //io.ConfigFlags |= ImGuiConfigFlags_ViewPortsNoMerge;
 
-         io.Fonts->AddFontFromFileTTF(reinterpret_cast<const char *>((asset_root / "fonts/JetBrains_Mono/static/JetBrainsMono-ExtraBold.ttf").c_str()), 18.0f);
-         io.Fonts->AddFontFromFileTTF(reinterpret_cast<const char *>((asset_root / "fonts/JetBrains_Mono/static/JetBrainsMono-Bold.ttf").c_str()), 18.0f);
-         io.FontDefault = io.Fonts->AddFontFromFileTTF(reinterpret_cast<const char *>((asset_root / "fonts/JetBrains_Mono/static/JetBrainsMono-Regular.ttf").c_str()), 18.0f);
+         io.Fonts->AddFontFromFileTTF((asset_root / "fonts/JetBrains_Mono/static/JetBrainsMono-ExtraBold.ttf").string().c_str(), 18.0f);
+         io.Fonts->AddFontFromFileTTF((asset_root / "fonts/JetBrains_Mono/static/JetBrainsMono-Bold.ttf").string().c_str(), 18.0f);
+         io.FontDefault = io.Fonts->AddFontFromFileTTF((asset_root / "fonts/JetBrains_Mono/static/JetBrainsMono-Regular.ttf").string().c_str(), 18.0f);
 
          //setup style
          ImGui::StyleColorsDark();

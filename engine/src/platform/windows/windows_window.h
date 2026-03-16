@@ -39,6 +39,8 @@ namespace Honey {
             unsigned int width, height;
             bool vsync;
 
+            GraphicsContext* context = nullptr;
+
             event_callback_fn event_callback;
         };
 
