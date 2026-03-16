@@ -18,7 +18,7 @@ namespace Honey {
     void Application2D::on_attach() {
 
         auto texture_path_prefix = asset_root / "textures";
-        m_chuck_texture = Texture2D::create(texture_path_prefix / "bung.png");
+        m_chuck_texture = Texture2D::create((texture_path_prefix / "bung.png").string());
 
         auto& win = Application::get().get_window();
         uint32_t w = win.get_width();
