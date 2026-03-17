@@ -720,57 +720,198 @@ namespace Honey {
                         mark_use(h);
                 }
 
+                auto estimate_format_bytes_per_pixel = [](const FramebufferTextureFormat fmt) -> uint32_t {
+                    switch (fmt) {
+                        case FramebufferTextureFormat::RGBA8:
+                            return 4;
+                        case FramebufferTextureFormat::RED_INTEGER:
+                            return 4;
+                        case FramebufferTextureFormat::DEPTH24STENCIL8:
+                            return 4;
+                        case FramebufferTextureFormat::None:
+                        default:
+                            return 4;
+                    }
+                };
+
+                struct TransientPassTargetCandidate {
+                    FGPassHandle pass_index = k_invalid_pass;
+                    FGPassHandle first_use = k_invalid_pass;
+                    FGPassHandle last_use = k_invalid_pass;
+
+                    uint32_t width = 0;
+                    uint32_t height = 0;
+                    uint32_t samples = 1;
+
+                    std::vector<FramebufferTextureSpecification> attachments;
+                    std::vector<FGResourceHandle> resources;
+
+                    uint64_t approx_bytes = 0;
+                };
+
                 struct PhysicalAllocation {
                     uint32_t width = 0;
                     uint32_t height = 0;
                     uint32_t samples = 1;
                     std::vector<FramebufferTextureSpecification> attachments;
                     Ref<Framebuffer> framebuffer;
-                    std::vector<FGResourceHandle> resources;
+                    std::vector<size_t> assigned_candidate_indices;
 
-                    bool compatible_with(const FGCompiledResource& r) const {
-                        if (r.type != FGResourceType::Texture)
+                    bool compatible_with(const TransientPassTargetCandidate& c) const {
+                        if (c.width != width || c.height != height)
                             return false;
-                        if (r.resolved_width != width || r.resolved_height != height)
+                        if (c.samples != samples)
                             return false;
-                        if (r.texture.samples != samples)
+                        if (c.attachments.size() != attachments.size())
                             return false;
-                        if (attachments.size() != 1)
-                            return false;
-                        return attachments[0].texture_format == r.texture.format;
+
+                        for (size_t i = 0; i < attachments.size(); ++i) {
+                            if (attachments[i].texture_format != c.attachments[i].texture_format)
+                                return false;
+                        }
+
+                        return true;
                     }
                 };
 
-                auto lifetimes_overlap = [&](const FGCompiledResource& a, const FGCompiledResource& b) {
-                    if (a.first_use == k_invalid_pass || a.last_use == k_invalid_pass)
+                auto lifetimes_overlap = [&](const FGPassHandle a_first,
+                                             const FGPassHandle a_last,
+                                             const FGPassHandle b_first,
+                                             const FGPassHandle b_last)
+                {
+                    if (a_first == k_invalid_pass || a_last == k_invalid_pass)
                         return false;
-                    if (b.first_use == k_invalid_pass || b.last_use == k_invalid_pass)
+                    if (b_first == k_invalid_pass || b_last == k_invalid_pass)
                         return false;
-                    return !(a.last_use < b.first_use || b.last_use < a.first_use);
+                    return !(a_last < b_first || b_last < a_first);
                 };
 
+                for (auto& r : compiled->m_resources) {
+                    if (r.type == FGResourceType::Texture) {
+                        r.physical_allocation = k_invalid_physical;
+                        r.framebuffer.reset();
+                    }
+                }
+
+                for (auto& pass : compiled->m_passes) {
+                    pass.physical_allocation = k_invalid_physical;
+                }
+
+                std::vector<TransientPassTargetCandidate> candidates;
+                candidates.reserve(compiled->m_passes.size());
+
+                for (FGPassHandle pass_idx = 0; pass_idx < compiled->m_passes.size(); ++pass_idx) {
+                    auto& pass = compiled->m_passes[pass_idx];
+
+                    if (pass.targets_swapchain)
+                        continue;
+                    if (pass.target_framebuffer)
+                        continue; // imported external target already resolved.
+
+                    TransientPassTargetCandidate candidate{};
+                    candidate.pass_index = pass_idx;
+
+                    bool have_dimensions = false;
+                    uint32_t bytes_per_pixel_sum = 0;
+
+                    for (const auto h : pass.writes) {
+                        if (h >= compiled->m_resources.size())
+                            continue;
+
+                        const auto& r = compiled->m_resources[h];
+                        if (r.type != FGResourceType::Texture)
+                            continue;
+
+                        candidate.resources.push_back(h);
+                        candidate.attachments.emplace_back(r.texture.format);
+                        bytes_per_pixel_sum += estimate_format_bytes_per_pixel(r.texture.format);
+
+                        if (!have_dimensions) {
+                            candidate.width = r.resolved_width;
+                            candidate.height = r.resolved_height;
+                            candidate.samples = r.texture.samples;
+                            have_dimensions = true;
+                        } else {
+                            if (r.resolved_width != candidate.width || r.resolved_height != candidate.height) {
+                                out_diagnostics.add_error(
+                                    "Pass writes textures with mismatched resolved sizes",
+                                    pass.name);
+                            }
+                            if (r.texture.samples != candidate.samples) {
+                                out_diagnostics.add_error(
+                                    "Pass writes textures with mismatched sample counts",
+                                    pass.name);
+                            }
+                        }
+
+                        if (candidate.first_use == k_invalid_pass || r.first_use < candidate.first_use)
+                            candidate.first_use = r.first_use;
+                        if (candidate.last_use == k_invalid_pass || r.last_use > candidate.last_use)
+                            candidate.last_use = r.last_use;
+                    }
+
+                    if (candidate.resources.empty()) {
+                        out_diagnostics.add_warning(
+                            "Pass does not target swapchain and no framebuffer target was resolved",
+                            pass.name);
+                        continue;
+                    }
+
+                    if (candidate.width == 0 || candidate.height == 0) {
+                        out_diagnostics.add_error(
+                            "Cannot allocate pass framebuffer with zero dimensions",
+                            pass.name);
+                        continue;
+                    }
+
+                    if (candidate.first_use == k_invalid_pass)
+                        candidate.first_use = pass_idx;
+                    if (candidate.last_use == k_invalid_pass)
+                        candidate.last_use = pass_idx;
+
+                    candidate.approx_bytes =
+                        static_cast<uint64_t>(candidate.width) *
+                        static_cast<uint64_t>(candidate.height) *
+                        static_cast<uint64_t>(candidate.samples) *
+                        static_cast<uint64_t>(std::max(1u, bytes_per_pixel_sum));
+
+                    candidates.emplace_back(std::move(candidate));
+                }
+
                 std::vector<PhysicalAllocation> physical_allocations;
+                std::vector<uint32_t> candidate_to_physical(candidates.size(), k_invalid_physical);
 
-                for (FGResourceHandle h = 0; h < compiled->m_resources.size(); ++h) {
-                    auto& r = compiled->m_resources[h];
+                std::vector<size_t> candidate_order(candidates.size());
+                for (size_t i = 0; i < candidates.size(); ++i)
+                    candidate_order[i] = i;
 
-                    if (r.type != FGResourceType::Texture)
-                        continue;
-                    if (r.first_use == k_invalid_pass)
-                        continue;
+                std::sort(candidate_order.begin(), candidate_order.end(), [&](const size_t lhs, const size_t rhs) {
+                    const auto& a = candidates[lhs];
+                    const auto& b = candidates[rhs];
+
+                    if (a.approx_bytes != b.approx_bytes)
+                        return a.approx_bytes > b.approx_bytes; // large-first packing
+                    if (a.first_use != b.first_use)
+                        return a.first_use < b.first_use;
+                    return a.pass_index < b.pass_index;
+                });
+
+                for (const size_t candidate_index : candidate_order) {
+                    const auto& c = candidates[candidate_index];
 
                     uint32_t chosen = k_invalid_physical;
                     for (uint32_t i = 0; i < physical_allocations.size(); ++i) {
-                        auto& alloc = physical_allocations[i];
-                        if (!alloc.compatible_with(r))
+                        const auto& alloc = physical_allocations[i];
+                        if (!alloc.compatible_with(c))
                             continue;
 
                         bool overlaps = false;
-                        for (const auto other_h : alloc.resources) {
-                            if (other_h >= compiled->m_resources.size())
+                        for (const auto other_candidate_index : alloc.assigned_candidate_indices) {
+                            if (other_candidate_index >= candidates.size())
                                 continue;
-                            const auto& other = compiled->m_resources[other_h];
-                            if (lifetimes_overlap(r, other)) {
+
+                            const auto& other = candidates[other_candidate_index];
+                            if (lifetimes_overlap(c.first_use, c.last_use, other.first_use, other.last_use)) {
                                 overlaps = true;
                                 break;
                             }
@@ -784,16 +925,16 @@ namespace Honey {
 
                     if (chosen == k_invalid_physical) {
                         PhysicalAllocation alloc{};
-                        alloc.width = r.resolved_width;
-                        alloc.height = r.resolved_height;
-                        alloc.samples = r.texture.samples;
-                        alloc.attachments.emplace_back(r.texture.format);
+                        alloc.width = c.width;
+                        alloc.height = c.height;
+                        alloc.samples = c.samples;
+                        alloc.attachments = c.attachments;
                         physical_allocations.emplace_back(std::move(alloc));
                         chosen = static_cast<uint32_t>(physical_allocations.size() - 1);
                     }
 
-                    r.physical_allocation = chosen;
-                    physical_allocations[chosen].resources.push_back(h);
+                    candidate_to_physical[candidate_index] = chosen;
+                    physical_allocations[chosen].assigned_candidate_indices.push_back(candidate_index);
                 }
 
                 for (auto& alloc : physical_allocations) {
@@ -810,62 +951,38 @@ namespace Honey {
                     }
                 }
 
-                for (auto& r : compiled->m_resources) {
-                    if (r.type != FGResourceType::Texture)
+                for (size_t candidate_index = 0; candidate_index < candidates.size(); ++candidate_index) {
+                    const auto physical_index = candidate_to_physical[candidate_index];
+                    if (physical_index == k_invalid_physical || physical_index >= physical_allocations.size())
                         continue;
-                    if (r.physical_allocation == k_invalid_physical)
-                        continue;
-                    if (r.physical_allocation >= physical_allocations.size())
-                        continue;
-                    r.framebuffer = physical_allocations[r.physical_allocation].framebuffer;
-                }
 
-                for (auto& pass : compiled->m_passes) {
-                    if (pass.targets_swapchain)
+                    const auto& c = candidates[candidate_index];
+                    if (c.pass_index >= compiled->m_passes.size())
                         continue;
-                    if (pass.target_framebuffer)
-                        continue; // imported external target already resolved.
 
-                    uint32_t chosen_alloc = k_invalid_physical;
-                    for (const auto h : pass.writes) {
+                    auto& pass = compiled->m_passes[c.pass_index];
+                    pass.physical_allocation = physical_index;
+                    pass.target_framebuffer = physical_allocations[physical_index].framebuffer;
+
+                    for (const auto h : c.resources) {
                         if (h >= compiled->m_resources.size())
                             continue;
-
-                        const auto& r = compiled->m_resources[h];
-                        if (r.type != FGResourceType::Texture)
-                            continue;
-
-                        if (chosen_alloc == k_invalid_physical) {
-                            chosen_alloc = r.physical_allocation;
-                        } else if (chosen_alloc != r.physical_allocation) {
-                            out_diagnostics.add_error(
-                                "Pass writes textures mapped to different physical allocations",
-                                pass.name);
-                        }
+                        auto& r = compiled->m_resources[h];
+                        r.physical_allocation = physical_index;
+                        r.framebuffer = physical_allocations[physical_index].framebuffer;
                     }
+                }
 
-                    if (chosen_alloc != k_invalid_physical && chosen_alloc < physical_allocations.size()) {
-                        pass.physical_allocation = chosen_alloc;
-                        pass.target_framebuffer = physical_allocations[chosen_alloc].framebuffer;
-                    }
-
-                    if (!pass.target_framebuffer) {
+                for (const auto& pass : compiled->m_passes) {
+                    if (!pass.targets_swapchain && !pass.target_framebuffer) {
                         out_diagnostics.add_warning(
                             "Pass does not target swapchain and no framebuffer target was resolved",
                             pass.name);
                     }
                 }
 
-                uint32_t logical_allocations = 0;
-                for (const auto& pass : compiled->m_passes) {
-                    if (pass.targets_swapchain)
-                        continue;
-                    if (pass.target_framebuffer)
-                        ++logical_allocations;
-                }
-
                 compiled->m_physical_framebuffer_allocations = static_cast<uint32_t>(physical_allocations.size());
-                compiled->m_logical_framebuffer_allocations = logical_allocations;
+                compiled->m_logical_framebuffer_allocations = static_cast<uint32_t>(candidates.size());
             }
         }
 

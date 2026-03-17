@@ -15,6 +15,8 @@
 #include "platform/vulkan/vk_framebuffer.h"
 #include "platform/vulkan/vk_renderer_api.h"
 
+#include <unordered_map>
+
 static const std::filesystem::path asset_root = ASSET_ROOT;
 
 namespace Honey {
@@ -119,15 +121,12 @@ namespace Honey {
         CameraData camera_buffer;
         Ref<UniformBuffer> camera_uniform_buffer;
 
-        struct VkPipelinePair {
-            void* renderPassNative = nullptr; // VkRenderPass
-            Ref<Pipeline> normal;
-            Ref<Pipeline> debugPick;
-        };
+        std::unordered_map<void*, Ref<Pipeline>> vk_quad_offscreen_color_pipelines;
+        std::unordered_map<void*, Ref<Pipeline>> vk_quad_offscreen_debug_pipelines;
+        std::unordered_map<void*, Ref<Pipeline>> vk_quad_swapchain_pipelines;
 
-        VkPipelinePair vk_offscreen_pipelines_quad{};
-        VkPipelinePair vk_offscreen_pipelines_circle{};
-        VkPipelinePair vk_offscreen_pipelines_line{};
+        std::unordered_map<void*, Ref<Pipeline>> vk_circle_pipelines;
+        std::unordered_map<void*, Ref<Pipeline>> vk_line_pipelines;
 
         std::vector<VulkanRendererAPI::GlobalsState> vk_globals_stack;
 
@@ -162,78 +161,59 @@ namespace Honey {
     {
         HN_CORE_ASSERT(renderPassNative, "get_or_create_vk_offscreen_pipeline: renderPassNative is null");
 
-        // Recreate cached pipelines if render pass changed (framebuffer resized etc.)
-        if (s_data->vk_offscreen_pipelines_quad.renderPassNative != renderPassNative) {
-            s_data->vk_offscreen_pipelines_quad = {};
-            s_data->vk_offscreen_pipelines_quad.renderPassNative = renderPassNative;
+        auto& cache = debugPick
+            ? s_data->vk_quad_offscreen_debug_pipelines
+            : s_data->vk_quad_offscreen_color_pipelines;
+
+        auto it = cache.find(renderPassNative);
+        if (it == cache.end()) {
+            const auto shader_path = debugPick
+                ? (asset_root / "shaders" / "Renderer2D_DebugPick.glsl")
+                : (asset_root / "shaders" / "Renderer2D_Quad.glsl");
+            it = cache.emplace(renderPassNative, Pipeline::create(shader_path, renderPassNative)).first;
         }
 
-        auto& pair = s_data->vk_offscreen_pipelines_quad;
-
-        if (!debugPick) {
-            if (!pair.normal) {
-                pair.normal = Pipeline::create(asset_root / "shaders" / "Renderer2D_Quad.glsl", renderPassNative);
-            }
-            return pair.normal;
-        } else {
-            if (!pair.debugPick) {
-                pair.debugPick = Pipeline::create(asset_root / "shaders" / "Renderer2D_DebugPick.glsl", renderPassNative);
-            }
-            return pair.debugPick;
-        }
+        return it->second;
     }
 
     static Ref<Pipeline> get_or_create_vk_quad_pipeline(void* renderPassNative) {
         HN_CORE_ASSERT(renderPassNative, "get_or_create_vk_pipeline: renderPassNative is null");
 
-        // Recreate cached pipelines if render pass changed (framebuffer resized etc.)
-        if (s_data->vk_offscreen_pipelines_quad.renderPassNative != renderPassNative) {
-            s_data->vk_offscreen_pipelines_quad = {};
-            s_data->vk_offscreen_pipelines_quad.renderPassNative = renderPassNative;
+        auto& cache = s_data->vk_quad_swapchain_pipelines;
+        auto it = cache.find(renderPassNative);
+        if (it == cache.end()) {
+            it = cache.emplace(renderPassNative,
+                               Pipeline::create(asset_root / "shaders" / "Renderer2D_QuadNoPick.glsl", renderPassNative)).first;
         }
-
-        auto& pair = s_data->vk_offscreen_pipelines_quad;
-
-        if (!pair.normal) {
-            pair.normal = Pipeline::create(asset_root / "shaders" / "Renderer2D_QuadNoPick.glsl", renderPassNative);
-        }
-        return pair.normal;
+        return it->second;
     }
 
     static Ref<Pipeline> get_or_create_vk_offscreen_circle_pipeline(void* renderPassNative)
     {
         HN_CORE_ASSERT(renderPassNative, "get_or_create_vk_offscreen_circle_pipeline: renderPassNative is null");
 
-        if (s_data->vk_offscreen_pipelines_circle.renderPassNative != renderPassNative) {
-            s_data->vk_offscreen_pipelines_circle = {};
-            s_data->vk_offscreen_pipelines_circle.renderPassNative = renderPassNative;
+        auto& cache = s_data->vk_circle_pipelines;
+        auto it = cache.find(renderPassNative);
+        if (it == cache.end()) {
+            it = cache.emplace(renderPassNative,
+                               Pipeline::create(asset_root / "shaders" / "Renderer2D_Circle.glsl", renderPassNative)).first;
         }
 
-        auto& pair = s_data->vk_offscreen_pipelines_circle;
-
-        if (!pair.normal) {
-            pair.normal = Pipeline::create(asset_root / "shaders" / "Renderer2D_Circle.glsl", renderPassNative);
-        }
-
-        return pair.normal;
+        return it->second;
     }
 
     static Ref<Pipeline> get_or_create_vk_offscreen_line_pipeline(void* renderPassNative)
     {
         HN_CORE_ASSERT(renderPassNative, "get_or_create_vk_offscreen_line_pipeline: renderPassNative is null");
 
-        if (s_data->vk_offscreen_pipelines_line.renderPassNative != renderPassNative) {
-            s_data->vk_offscreen_pipelines_line = {};
-            s_data->vk_offscreen_pipelines_line.renderPassNative = renderPassNative;
+        auto& cache = s_data->vk_line_pipelines;
+        auto it = cache.find(renderPassNative);
+        if (it == cache.end()) {
+            it = cache.emplace(renderPassNative,
+                               Pipeline::create(asset_root / "shaders" / "Renderer2D_Line.glsl", renderPassNative)).first;
         }
 
-        auto& pair = s_data->vk_offscreen_pipelines_line;
-
-        if (!pair.normal) {
-            pair.normal = Pipeline::create(asset_root / "shaders" / "Renderer2D_Line.glsl", renderPassNative);
-        }
-
-        return pair.normal;
+        return it->second;
     }
 
     void Renderer2D::init() {
@@ -448,6 +428,12 @@ namespace Honey {
         s_data->line_shader.reset();
 
         s_data->camera_uniform_buffer.reset();
+
+        s_data->vk_quad_offscreen_color_pipelines.clear();
+        s_data->vk_quad_offscreen_debug_pipelines.clear();
+        s_data->vk_quad_swapchain_pipelines.clear();
+        s_data->vk_circle_pipelines.clear();
+        s_data->vk_line_pipelines.clear();
 
         for (auto& t : s_data->texture_slots)
             t.reset();

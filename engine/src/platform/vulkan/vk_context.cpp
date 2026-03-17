@@ -1519,6 +1519,10 @@ namespace Honey {
 
         auto bind_pipeline_and_dynamic = [&](VkPipeline pipeline, uint32_t width, uint32_t height) {
             HN_CORE_ASSERT(pipeline != VK_NULL_HANDLE, "Vulkan pipeline is null");
+            if (pipeline == VK_NULL_HANDLE) {
+                HN_CORE_ERROR("BindPipeline skipped: pipeline is null");
+                return;
+            }
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
             VkViewport viewport{};
@@ -1775,7 +1779,14 @@ namespace Honey {
                     const VkPipelineLayout layout = c.bindPipeline.layout;
 
                     bind_pipeline_and_dynamic(pipeline, current_pass_w, current_pass_h);
-                    current_pipeline_layout = layout;
+                    if (pipeline == VK_NULL_HANDLE || layout == VK_NULL_HANDLE) {
+                        HN_CORE_ERROR("BindPipeline failed: pipeline/layout null (pipeline={}, layout={})",
+                                      (void*)pipeline,
+                                      (void*)layout);
+                        current_pipeline_layout = VK_NULL_HANDLE;
+                    } else {
+                        current_pipeline_layout = layout;
+                    }
                     break;
             }
             case FramePacket::CmdType::BindGlobals: {
