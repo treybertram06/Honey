@@ -199,6 +199,11 @@ add_library(engine STATIC
         src/Honey/renderer/pipeline_spec.cpp
         src/Honey/core/task_system.h
         src/Honey/core/task_system.cpp
+        src/Honey/renderer/frame_graph.h
+        src/Honey/renderer/frame_graph_loader.h
+        src/Honey/renderer/frame_graph_loader.cpp
+        src/Honey/renderer/frame_graph.cpp
+        src/Honey/renderer/frame_graph_registry.cpp
 )
 
 # Apply MSVC runtime to engine itself
