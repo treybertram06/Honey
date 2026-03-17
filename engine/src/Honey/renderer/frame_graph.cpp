@@ -6,7 +6,11 @@
 #include "Honey/core/engine.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <glm/glm.hpp>
+#include <queue>
+#include <sstream>
 
 namespace Honey {
     namespace {
@@ -33,6 +37,40 @@ namespace Honey {
                     out_height = std::max(1u, static_cast<uint32_t>(std::round(static_cast<float>(base_h) * sy)));
                     return true;
                 }
+            }
+
+            return false;
+        }
+
+        static bool try_parse_clear_color(const YAML::Node& clear_node, glm::vec4& out_color) {
+            if (!clear_node || !clear_node.IsMap())
+                return false;
+
+            auto parse_rgba = [&](const YAML::Node& n) -> bool {
+                if (!n || !n.IsSequence() || n.size() != 4)
+                    return false;
+
+                try {
+                    out_color = {
+                        n[0].as<float>(),
+                        n[1].as<float>(),
+                        n[2].as<float>(),
+                        n[3].as<float>()
+                    };
+                    return true;
+                } catch (const YAML::BadConversion&) {
+                    return false;
+                }
+            };
+
+            // Preferred explicit key.
+            if (parse_rgba(clear_node["color"]))
+                return true;
+
+            // Fallback: first RGBA-looking sequence under Clear map (e.g., sceneColor: [r,g,b,a]).
+            for (const auto& kv : clear_node) {
+                if (parse_rgba(kv.second))
+                    return true;
             }
 
             return false;
@@ -87,13 +125,39 @@ namespace Honey {
             return;
         }
 
+        const bool collect_timings = execution_context.collect_cpu_timings || execution_context.out_stats;
+        FGExecutionStats* stats_out = execution_context.out_stats;
+
+        if (stats_out) {
+            stats_out->total_cpu_time_ms = 0.0;
+            stats_out->pass_stats.clear();
+            stats_out->pass_stats.reserve(m_passes.size());
+        }
+
+        const auto total_begin = std::chrono::high_resolution_clock::now();
+
         for (auto& pass : m_passes) {
+            FGPassExecutionStat pass_stat{};
+            pass_stat.pass_name = pass.name.empty() ? std::string("<unnamed>") : pass.name;
+
+            glm::vec4 clear_color{};
+            const bool has_clear_color = try_parse_clear_color(pass.clear_node, clear_color);
+            if (has_clear_color) {
+                RenderCommand::set_clear_color(clear_color);
+            }
+
+            const auto pass_begin = std::chrono::high_resolution_clock::now();
+
             if (pass.targets_swapchain) {
                 Renderer::set_render_target(nullptr);
             } else {
                 if (!pass.target_framebuffer) {
                     HN_CORE_WARN("FrameGraphCompiled::execute skipping pass '{0}' - no target framebuffer is assigned yet",
                                  pass.name);
+
+                    pass_stat.skipped = true;
+                    if (stats_out)
+                        stats_out->pass_stats.emplace_back(std::move(pass_stat));
                     continue;
                 }
                 Renderer::set_render_target(pass.target_framebuffer);
@@ -101,10 +165,45 @@ namespace Honey {
 
             Renderer::begin_pass();
 
+            // For OpenGL this performs the actual attachment clear.
+            // For Vulkan clear values are consumed by Begin*Pass commands,
+            // and RenderCommand::clear() is currently a no-op.
+            if (has_clear_color) {
+                RenderCommand::clear();
+            }
+
             FrameGraphPassContext ctx(*this, pass, execution_context);
             pass.executor(ctx);
 
             Renderer::end_pass();
+
+            if (collect_timings) {
+                const auto pass_end = std::chrono::high_resolution_clock::now();
+                pass_stat.cpu_time_ms =
+                    std::chrono::duration<double, std::milli>(pass_end - pass_begin).count();
+            }
+
+            if (execution_context.log_pass_execution) {
+                HN_CORE_INFO("[FrameGraph] Pass '{0}' executed in {1:.3f} ms",
+                             pass_stat.pass_name,
+                             pass_stat.cpu_time_ms);
+            }
+
+            if (stats_out)
+                stats_out->pass_stats.emplace_back(std::move(pass_stat));
+        }
+
+        if (collect_timings) {
+            const auto total_end = std::chrono::high_resolution_clock::now();
+            const double total_ms =
+                std::chrono::duration<double, std::milli>(total_end - total_begin).count();
+
+            if (stats_out)
+                stats_out->total_cpu_time_ms = total_ms;
+
+            if (execution_context.log_pass_execution) {
+                HN_CORE_INFO("[FrameGraph] Total execution CPU time: {0:.3f} ms", total_ms);
+            }
         }
     }
 
@@ -113,6 +212,98 @@ namespace Honey {
         if (it == m_resource_name_to_handle.end())
             return k_invalid_resource;
         return it->second;
+    }
+
+    std::string FrameGraphCompiled::debug_dump() const {
+        std::ostringstream oss;
+
+        oss << "FrameGraphCompiled Dump\n";
+        oss << "Framebuffer allocations: logical=" << m_logical_framebuffer_allocations
+            << " physical=" << m_physical_framebuffer_allocations;
+        if (m_logical_framebuffer_allocations > 0) {
+            const double savings =
+                100.0 * (1.0 - (static_cast<double>(m_physical_framebuffer_allocations) /
+                                 static_cast<double>(m_logical_framebuffer_allocations)));
+            oss << " savings=" << savings << "%";
+        }
+        oss << "\n";
+
+        oss << "Resources (" << m_resources.size() << "):\n";
+        for (FGResourceHandle h = 0; h < m_resources.size(); ++h) {
+            const auto& r = m_resources[h];
+            oss << "  [" << h << "] " << r.name << " | ";
+
+            if (r.type == FGResourceType::Texture) {
+                oss << "Texture " << r.resolved_width << "x" << r.resolved_height
+                    << " samples=" << r.texture.samples;
+            } else {
+                oss << "ImportedTarget kind="
+                    << (r.imported_kind == FGImportedTargetKind::Swapchain ? "Swapchain" : "ExternalFramebuffer");
+            }
+
+            oss << " firstUse=";
+            if (r.first_use == k_invalid_pass) oss << "-"; else oss << r.first_use;
+            oss << " lastUse=";
+            if (r.last_use == k_invalid_pass) oss << "-"; else oss << r.last_use;
+            if (r.physical_allocation == k_invalid_physical) {
+                oss << " phys=-";
+            } else {
+                oss << " phys=" << r.physical_allocation;
+            }
+            oss << " hasFB=" << (r.framebuffer ? "yes" : "no");
+            oss << "\n";
+        }
+
+        oss << "Passes (" << m_passes.size() << "):\n";
+        for (FGPassHandle i = 0; i < m_passes.size(); ++i) {
+            const auto& p = m_passes[i];
+            oss << "  [" << i << "] " << (p.name.empty() ? "<unnamed>" : p.name)
+                << " exec='" << p.executor_id << "'"
+                << " target=" << (p.targets_swapchain ? "Swapchain" : (p.target_framebuffer ? "Framebuffer" : "None"));
+
+            if (p.physical_allocation != k_invalid_physical) {
+                oss << " phys=" << p.physical_allocation;
+            }
+
+            oss
+                << "\n";
+
+            oss << "      Reads: ";
+            if (p.reads.empty()) {
+                oss << "(none)";
+            } else {
+                for (size_t j = 0; j < p.reads.size(); ++j) {
+                    const auto h = p.reads[j];
+                    if (h < m_resources.size())
+                        oss << m_resources[h].name;
+                    else
+                        oss << "<invalid:" << h << ">";
+                    if (j + 1 < p.reads.size()) oss << ", ";
+                }
+            }
+            oss << "\n";
+
+            oss << "      Writes: ";
+            if (p.writes.empty()) {
+                oss << "(none)";
+            } else {
+                for (size_t j = 0; j < p.writes.size(); ++j) {
+                    const auto h = p.writes[j];
+                    if (h < m_resources.size())
+                        oss << m_resources[h].name;
+                    else
+                        oss << "<invalid:" << h << ">";
+                    if (j + 1 < p.writes.size()) oss << ", ";
+                }
+            }
+            oss << "\n";
+        }
+
+        return oss.str();
+    }
+
+    void FrameGraphCompiled::log_debug_dump(std::string_view context_label) const {
+        HN_CORE_INFO("[{0}]\n{1}", context_label, debug_dump());
     }
 
     FrameGraphPassContext::
@@ -296,74 +487,386 @@ namespace Honey {
                     }
                 }
 
-                // Otherwise allocate framebuffer from written texture resources.
+                // Texture targets are resolved later by transient physical allocation planning.
                 if (!pass.target_framebuffer) {
-                    std::vector<FramebufferTextureSpecification> attachments;
-                    uint32_t width = 0;
-                    uint32_t height = 0;
-                    uint32_t samples = 1;
-
+                    bool has_texture_output = false;
                     for (const auto h : pass.writes) {
-                        if (h >= compiled->m_resources.size())
-                            continue;
-
-                        auto& out_res = compiled->m_resources[h];
-                        if (out_res.type != FGResourceType::Texture)
-                            continue;
-
-                        attachments.emplace_back(out_res.texture.format);
-
-                        if (width == 0 && height == 0) {
-                            width = out_res.resolved_width;
-                            height = out_res.resolved_height;
-                            samples = out_res.texture.samples;
-                        } else {
-                            if (out_res.resolved_width != width || out_res.resolved_height != height) {
-                                out_diagnostics.add_error("Pass writes textures with mismatched resolved sizes", pass.name);
-                            }
-                            if (out_res.texture.samples != samples) {
-                                out_diagnostics.add_error("Pass writes textures with mismatched sample counts", pass.name);
-                            }
+                        if (h < compiled->m_resources.size() &&
+                            compiled->m_resources[h].type == FGResourceType::Texture)
+                        {
+                            has_texture_output = true;
+                            break;
                         }
                     }
 
-                    if (!attachments.empty()) {
-                        if (width == 0 || height == 0) {
-                            out_diagnostics.add_error("Cannot allocate pass framebuffer with zero dimensions", pass.name);
-                        } else {
-                            FramebufferSpecification fb_spec{};
-                            fb_spec.width = width;
-                            fb_spec.height = height;
-                            fb_spec.samples = samples;
-                            fb_spec.attachments.attachments = attachments;
-                            fb_spec.swap_chain_target = false;
-
-                            pass.target_framebuffer = Framebuffer::create(fb_spec);
-                            if (!pass.target_framebuffer) {
-                                out_diagnostics.add_error("Failed to allocate pass target framebuffer", pass.name);
-                            } else {
-                                // Bind written texture resources to this pass framebuffer handle.
-                                for (const auto h : pass.writes) {
-                                    if (h >= compiled->m_resources.size())
-                                        continue;
-                                    auto& out_res = compiled->m_resources[h];
-                                    if (out_res.type == FGResourceType::Texture) {
-                                        out_res.framebuffer = pass.target_framebuffer;
-                                    }
-                                }
-                            }
-                        }
+                    if (!has_texture_output) {
+                        out_diagnostics.add_warning(
+                            "Pass does not target swapchain and no framebuffer target was resolved",
+                            pass.name);
                     }
-                }
-
-                if (!pass.target_framebuffer) {
-                    out_diagnostics.add_warning(
-                        "Pass does not target swapchain and no framebuffer target was resolved",
-                        pass.name);
                 }
             }
 
             compiled->m_passes.emplace_back(std::move(pass));
+        }
+
+        // Build dataflow dependencies and validate graph-level invariants.
+        {
+            const uint32_t pass_count = static_cast<uint32_t>(compiled->m_passes.size());
+            const uint32_t resource_count = static_cast<uint32_t>(compiled->m_resources.size());
+
+            std::vector<FGPassHandle> producers(resource_count, k_invalid_pass);
+            std::vector<std::vector<FGPassHandle>> adjacency(pass_count);
+            std::vector<uint32_t> indegree(pass_count, 0);
+
+            auto add_edge = [&](const FGPassHandle from, const FGPassHandle to) {
+                if (from == k_invalid_pass || to == k_invalid_pass || from == to)
+                    return;
+
+                auto& out_edges = adjacency[from];
+                if (std::find(out_edges.begin(), out_edges.end(), to) == out_edges.end()) {
+                    out_edges.push_back(to);
+                    indegree[to]++;
+                }
+            };
+
+            // One producer per resource (v1 policy).
+            for (FGPassHandle pass_idx = 0; pass_idx < pass_count; ++pass_idx) {
+                const auto& pass = compiled->m_passes[pass_idx];
+                const std::string pass_label = pass.name.empty() ? std::string("<unnamed>") : pass.name;
+
+                for (const auto h : pass.writes) {
+                    if (h >= resource_count)
+                        continue;
+
+                    const auto& res = compiled->m_resources[h];
+
+                    if (producers[h] != k_invalid_pass) {
+                        const auto& prev = compiled->m_passes[producers[h]];
+                        const std::string prev_label = prev.name.empty() ? std::string("<unnamed>") : prev.name;
+
+                        out_diagnostics.add_error(
+                            "Resource has multiple writer passes: '" + res.name +
+                            "' written by both '" + prev_label + "' and '" + pass_label + "'",
+                            pass_label);
+                        continue;
+                    }
+
+                    producers[h] = pass_idx;
+                }
+            }
+
+            // Read dependencies + read-before-write checks.
+            for (FGPassHandle pass_idx = 0; pass_idx < pass_count; ++pass_idx) {
+                const auto& pass = compiled->m_passes[pass_idx];
+                const std::string pass_label = pass.name.empty() ? std::string("<unnamed>") : pass.name;
+
+                for (const auto h : pass.reads) {
+                    if (h >= resource_count)
+                        continue;
+
+                    const auto& res = compiled->m_resources[h];
+                    const FGPassHandle producer = producers[h];
+
+                    if (producer == k_invalid_pass) {
+                        if (res.type == FGResourceType::Texture) {
+                            out_diagnostics.add_error(
+                                "Texture resource is read before any pass writes it: '" + res.name + "'",
+                                pass_label);
+                        }
+                        // Imported resources may be externally produced (swapchain/external framebuffer),
+                        // so no hard error for v1.
+                        continue;
+                    }
+
+                    add_edge(producer, pass_idx);
+                }
+            }
+
+            // Topological sort.
+            std::queue<FGPassHandle> zero_indegree;
+            for (FGPassHandle i = 0; i < pass_count; ++i) {
+                if (indegree[i] == 0)
+                    zero_indegree.push(i);
+            }
+
+            std::vector<FGPassHandle> topo_order;
+            topo_order.reserve(pass_count);
+
+            while (!zero_indegree.empty()) {
+                const FGPassHandle u = zero_indegree.front();
+                zero_indegree.pop();
+
+                topo_order.push_back(u);
+
+                for (const FGPassHandle v : adjacency[u]) {
+                    HN_CORE_ASSERT(v < indegree.size(), "FrameGraph topo: edge target out of range");
+                    if (--indegree[v] == 0)
+                        zero_indegree.push(v);
+                }
+            }
+
+            if (topo_order.size() != pass_count) {
+                std::string cycle_nodes;
+                for (FGPassHandle i = 0; i < pass_count; ++i) {
+                    if (indegree[i] == 0)
+                        continue;
+
+                    if (!cycle_nodes.empty())
+                        cycle_nodes += ", ";
+                    const auto& p = compiled->m_passes[i];
+                    cycle_nodes += p.name.empty() ? std::string("<unnamed>") : p.name;
+                }
+
+                out_diagnostics.add_error(
+                    "Frame graph contains a cyclic dependency between passes" +
+                    (cycle_nodes.empty() ? std::string() : std::string(": ") + cycle_nodes));
+            } else {
+                // Reorder passes to dependency-respecting order.
+                std::vector<FGCompiledPass> sorted_passes;
+                sorted_passes.reserve(pass_count);
+                for (const FGPassHandle i : topo_order) {
+                    sorted_passes.emplace_back(std::move(compiled->m_passes[i]));
+                }
+                compiled->m_passes = std::move(sorted_passes);
+
+                // Dead-pass culling by requested outputs.
+                {
+                    std::vector<bool> needed_resources(resource_count, false);
+
+                    const bool has_explicit_outputs = options && !options->requested_output_resources.empty();
+                    if (has_explicit_outputs) {
+                        for (const auto& output_name : options->requested_output_resources) {
+                            const FGResourceHandle h = compiled->find_resource_handle(output_name);
+                            if (h == k_invalid_resource || h >= resource_count) {
+                                out_diagnostics.add_error(
+                                    "Requested output resource not found: '" + output_name + "'");
+                                continue;
+                            }
+                            needed_resources[h] = true;
+                        }
+                    } else {
+                        // Default outputs = imported targets.
+                        for (FGResourceHandle h = 0; h < resource_count; ++h) {
+                            const auto& res = compiled->m_resources[h];
+                            if (res.type == FGResourceType::ImportedTarget)
+                                needed_resources[h] = true;
+                        }
+                    }
+
+                    const bool any_needed = std::ranges::any_of(needed_resources, [](const bool b) { return b; });
+                    if (!any_needed) {
+                        out_diagnostics.add_warning("No requested outputs resolved; skipping dead-pass culling");
+                    } else {
+                        std::vector<bool> keep_pass(compiled->m_passes.size(), false);
+
+                        for (int32_t i = static_cast<int32_t>(compiled->m_passes.size()) - 1; i >= 0; --i) {
+                            const auto& pass = compiled->m_passes[static_cast<size_t>(i)];
+
+                            bool writes_needed = false;
+                            for (const auto h : pass.writes) {
+                                if (h < resource_count && needed_resources[h]) {
+                                    writes_needed = true;
+                                    break;
+                                }
+                            }
+
+                            if (!writes_needed)
+                                continue;
+
+                            keep_pass[static_cast<size_t>(i)] = true;
+                            for (const auto h : pass.reads) {
+                                if (h < resource_count)
+                                    needed_resources[h] = true;
+                            }
+                        }
+
+                        std::vector<FGCompiledPass> culled_passes;
+                        culled_passes.reserve(compiled->m_passes.size());
+                        for (size_t i = 0; i < compiled->m_passes.size(); ++i) {
+                            if (!keep_pass[i]) {
+                                const auto& p = compiled->m_passes[i];
+                                out_diagnostics.add_info(
+                                    "Culled dead pass: '" + (p.name.empty() ? std::string("<unnamed>") : p.name) + "'");
+                                continue;
+                            }
+                            culled_passes.emplace_back(std::move(compiled->m_passes[i]));
+                        }
+                        compiled->m_passes = std::move(culled_passes);
+                    }
+                }
+
+                // Update first/last use tracking in execution order.
+                for (auto& res : compiled->m_resources) {
+                    res.first_use = k_invalid_pass;
+                    res.last_use = k_invalid_pass;
+                }
+
+                for (FGPassHandle pass_idx = 0; pass_idx < compiled->m_passes.size(); ++pass_idx) {
+                    const auto& pass = compiled->m_passes[pass_idx];
+
+                    auto mark_use = [&](const FGResourceHandle h) {
+                        if (h >= compiled->m_resources.size())
+                            return;
+                        auto& res = compiled->m_resources[h];
+                        if (res.first_use == k_invalid_pass)
+                            res.first_use = pass_idx;
+                        res.last_use = pass_idx;
+                    };
+
+                    for (const auto h : pass.reads)
+                        mark_use(h);
+                    for (const auto h : pass.writes)
+                        mark_use(h);
+                }
+
+                struct PhysicalAllocation {
+                    uint32_t width = 0;
+                    uint32_t height = 0;
+                    uint32_t samples = 1;
+                    std::vector<FramebufferTextureSpecification> attachments;
+                    Ref<Framebuffer> framebuffer;
+                    std::vector<FGResourceHandle> resources;
+
+                    bool compatible_with(const FGCompiledResource& r) const {
+                        if (r.type != FGResourceType::Texture)
+                            return false;
+                        if (r.resolved_width != width || r.resolved_height != height)
+                            return false;
+                        if (r.texture.samples != samples)
+                            return false;
+                        if (attachments.size() != 1)
+                            return false;
+                        return attachments[0].texture_format == r.texture.format;
+                    }
+                };
+
+                auto lifetimes_overlap = [&](const FGCompiledResource& a, const FGCompiledResource& b) {
+                    if (a.first_use == k_invalid_pass || a.last_use == k_invalid_pass)
+                        return false;
+                    if (b.first_use == k_invalid_pass || b.last_use == k_invalid_pass)
+                        return false;
+                    return !(a.last_use < b.first_use || b.last_use < a.first_use);
+                };
+
+                std::vector<PhysicalAllocation> physical_allocations;
+
+                for (FGResourceHandle h = 0; h < compiled->m_resources.size(); ++h) {
+                    auto& r = compiled->m_resources[h];
+
+                    if (r.type != FGResourceType::Texture)
+                        continue;
+                    if (r.first_use == k_invalid_pass)
+                        continue;
+
+                    uint32_t chosen = k_invalid_physical;
+                    for (uint32_t i = 0; i < physical_allocations.size(); ++i) {
+                        auto& alloc = physical_allocations[i];
+                        if (!alloc.compatible_with(r))
+                            continue;
+
+                        bool overlaps = false;
+                        for (const auto other_h : alloc.resources) {
+                            if (other_h >= compiled->m_resources.size())
+                                continue;
+                            const auto& other = compiled->m_resources[other_h];
+                            if (lifetimes_overlap(r, other)) {
+                                overlaps = true;
+                                break;
+                            }
+                        }
+
+                        if (!overlaps) {
+                            chosen = i;
+                            break;
+                        }
+                    }
+
+                    if (chosen == k_invalid_physical) {
+                        PhysicalAllocation alloc{};
+                        alloc.width = r.resolved_width;
+                        alloc.height = r.resolved_height;
+                        alloc.samples = r.texture.samples;
+                        alloc.attachments.emplace_back(r.texture.format);
+                        physical_allocations.emplace_back(std::move(alloc));
+                        chosen = static_cast<uint32_t>(physical_allocations.size() - 1);
+                    }
+
+                    r.physical_allocation = chosen;
+                    physical_allocations[chosen].resources.push_back(h);
+                }
+
+                for (auto& alloc : physical_allocations) {
+                    FramebufferSpecification fb_spec{};
+                    fb_spec.width = alloc.width;
+                    fb_spec.height = alloc.height;
+                    fb_spec.samples = alloc.samples;
+                    fb_spec.attachments.attachments = alloc.attachments;
+                    fb_spec.swap_chain_target = false;
+
+                    alloc.framebuffer = Framebuffer::create(fb_spec);
+                    if (!alloc.framebuffer) {
+                        out_diagnostics.add_error("Failed to allocate transient physical framebuffer");
+                    }
+                }
+
+                for (auto& r : compiled->m_resources) {
+                    if (r.type != FGResourceType::Texture)
+                        continue;
+                    if (r.physical_allocation == k_invalid_physical)
+                        continue;
+                    if (r.physical_allocation >= physical_allocations.size())
+                        continue;
+                    r.framebuffer = physical_allocations[r.physical_allocation].framebuffer;
+                }
+
+                for (auto& pass : compiled->m_passes) {
+                    if (pass.targets_swapchain)
+                        continue;
+                    if (pass.target_framebuffer)
+                        continue; // imported external target already resolved.
+
+                    uint32_t chosen_alloc = k_invalid_physical;
+                    for (const auto h : pass.writes) {
+                        if (h >= compiled->m_resources.size())
+                            continue;
+
+                        const auto& r = compiled->m_resources[h];
+                        if (r.type != FGResourceType::Texture)
+                            continue;
+
+                        if (chosen_alloc == k_invalid_physical) {
+                            chosen_alloc = r.physical_allocation;
+                        } else if (chosen_alloc != r.physical_allocation) {
+                            out_diagnostics.add_error(
+                                "Pass writes textures mapped to different physical allocations",
+                                pass.name);
+                        }
+                    }
+
+                    if (chosen_alloc != k_invalid_physical && chosen_alloc < physical_allocations.size()) {
+                        pass.physical_allocation = chosen_alloc;
+                        pass.target_framebuffer = physical_allocations[chosen_alloc].framebuffer;
+                    }
+
+                    if (!pass.target_framebuffer) {
+                        out_diagnostics.add_warning(
+                            "Pass does not target swapchain and no framebuffer target was resolved",
+                            pass.name);
+                    }
+                }
+
+                uint32_t logical_allocations = 0;
+                for (const auto& pass : compiled->m_passes) {
+                    if (pass.targets_swapchain)
+                        continue;
+                    if (pass.target_framebuffer)
+                        ++logical_allocations;
+                }
+
+                compiled->m_physical_framebuffer_allocations = static_cast<uint32_t>(physical_allocations.size());
+                compiled->m_logical_framebuffer_allocations = logical_allocations;
+            }
         }
 
         if (out_diagnostics.has_errors())

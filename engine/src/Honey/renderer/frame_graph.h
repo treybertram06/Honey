@@ -21,6 +21,7 @@ namespace Honey {
 
     static constexpr FGResourceHandle k_invalid_resource = UINT32_MAX;
     static constexpr FGPassHandle     k_invalid_pass     = UINT32_MAX;
+    static constexpr uint32_t         k_invalid_physical = UINT32_MAX;
 
     enum class FGResourceType : uint8_t {
         Texture,
@@ -116,11 +117,30 @@ namespace Honey {
         // Resource-name -> externally owned framebuffer binding.
         // Used by ImportedTarget resources with kind ExternalFramebuffer.
         std::unordered_map<std::string, Ref<Framebuffer>> external_framebuffers;
+
+        // Optional explicit list of output resources to keep alive.
+        // If empty, compiler treats all ImportedTarget resources as outputs.
+        std::vector<std::string> requested_output_resources;
+    };
+
+    struct FGPassExecutionStat {
+        std::string pass_name;
+        double cpu_time_ms = 0.0;
+        bool skipped = false;
+    };
+
+    struct FGExecutionStats {
+        double total_cpu_time_ms = 0.0;
+        std::vector<FGPassExecutionStat> pass_stats;
     };
 
     struct FGExecutionContext {
         uint32_t frame_index = 0;
         void* user_context = nullptr;
+
+        bool collect_cpu_timings = false;
+        bool log_pass_execution = false;
+        FGExecutionStats* out_stats = nullptr;
     };
 
     // -------------------------------------------------------------------------
@@ -142,6 +162,10 @@ namespace Honey {
 
         Ref<Framebuffer> framebuffer;
 
+        // Transient physical framebuffer allocation index for texture resources.
+        // Multiple logical resources may alias the same physical allocation.
+        uint32_t physical_allocation = k_invalid_physical;
+
         FGPassHandle first_use = k_invalid_pass;
         FGPassHandle last_use  = k_invalid_pass;
     };
@@ -160,12 +184,18 @@ namespace Honey {
 
         bool targets_swapchain = false;
         Ref<Framebuffer> target_framebuffer;
+
+        // Physical framebuffer allocation used by this pass when writing transient textures.
+        uint32_t physical_allocation = k_invalid_physical;
     };
 
     class FrameGraphCompiled {
     public:
         bool valid() const;
         void execute(const FGExecutionContext& execution_context = {});
+
+        std::string debug_dump() const;
+        void log_debug_dump(std::string_view context_label = "FrameGraph") const;
 
         const std::vector<FGCompiledPass>& passes() const { return m_passes; }
         const std::vector<FGCompiledResource>& resources() const { return m_resources; }
@@ -179,6 +209,9 @@ namespace Honey {
         std::vector<FGCompiledPass> m_passes;
         std::vector<FGCompiledResource> m_resources;
         std::unordered_map<std::string, FGResourceHandle> m_resource_name_to_handle;
+
+        uint32_t m_logical_framebuffer_allocations = 0;
+        uint32_t m_physical_framebuffer_allocations = 0;
     };
 
     class FrameGraphPassContext {
