@@ -14,6 +14,122 @@
 
 namespace Honey {
     namespace {
+        static std::string_view queue_domain_label(const FGQueueDomain q) {
+            switch (q) {
+                case FGQueueDomain::Graphics: return "Graphics";
+                case FGQueueDomain::Compute:  return "Compute";
+                case FGQueueDomain::Transfer: return "Transfer";
+            }
+            return "Unknown";
+        }
+
+        static std::string_view resource_usage_label(const FGResourceUsage usage) {
+            switch (usage) {
+                case FGResourceUsage::Unknown:         return "Unknown";
+                case FGResourceUsage::Sampled:         return "Sampled";
+                case FGResourceUsage::Uniform:         return "Uniform";
+                case FGResourceUsage::Indirect:        return "Indirect";
+                case FGResourceUsage::VertexBuffer:    return "VertexBuffer";
+                case FGResourceUsage::IndexBuffer:     return "IndexBuffer";
+                case FGResourceUsage::TransferSrc:     return "TransferSrc";
+                case FGResourceUsage::ColorAttachment: return "ColorAttachment";
+                case FGResourceUsage::DepthAttachment: return "DepthAttachment";
+                case FGResourceUsage::StorageWrite:    return "StorageWrite";
+                case FGResourceUsage::TransferDst:     return "TransferDst";
+                case FGResourceUsage::StorageRead:     return "StorageRead";
+                case FGResourceUsage::StorageReadWrite:return "StorageReadWrite";
+            }
+            return "Unknown";
+        }
+
+        static bool is_read_usage(const FGResourceUsage usage) {
+            switch (usage) {
+                case FGResourceUsage::Sampled:
+                case FGResourceUsage::Uniform:
+                case FGResourceUsage::Indirect:
+                case FGResourceUsage::VertexBuffer:
+                case FGResourceUsage::IndexBuffer:
+                case FGResourceUsage::TransferSrc:
+                case FGResourceUsage::StorageRead:
+                case FGResourceUsage::StorageReadWrite:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        static bool is_write_usage(const FGResourceUsage usage) {
+            switch (usage) {
+                case FGResourceUsage::ColorAttachment:
+                case FGResourceUsage::DepthAttachment:
+                case FGResourceUsage::StorageWrite:
+                case FGResourceUsage::TransferDst:
+                case FGResourceUsage::StorageReadWrite:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        static bool usage_is_valid_for_resource(const FGResourceType type, const FGResourceUsage usage) {
+            if (usage == FGResourceUsage::Unknown)
+                return true;
+
+            switch (type) {
+                case FGResourceType::Texture:
+                case FGResourceType::ImportedTarget:
+                    return usage == FGResourceUsage::Sampled ||
+                           usage == FGResourceUsage::ColorAttachment ||
+                           usage == FGResourceUsage::DepthAttachment ||
+                           usage == FGResourceUsage::StorageRead ||
+                           usage == FGResourceUsage::StorageWrite ||
+                           usage == FGResourceUsage::StorageReadWrite ||
+                           usage == FGResourceUsage::TransferSrc ||
+                           usage == FGResourceUsage::TransferDst;
+                case FGResourceType::Buffer:
+                    return usage == FGResourceUsage::Uniform ||
+                           usage == FGResourceUsage::Indirect ||
+                           usage == FGResourceUsage::VertexBuffer ||
+                           usage == FGResourceUsage::IndexBuffer ||
+                           usage == FGResourceUsage::StorageRead ||
+                           usage == FGResourceUsage::StorageWrite ||
+                           usage == FGResourceUsage::StorageReadWrite ||
+                           usage == FGResourceUsage::TransferSrc ||
+                           usage == FGResourceUsage::TransferDst;
+            }
+            return false;
+        }
+
+        static FGCompiledResourceBinding infer_read_binding(const FGCompiledResource& res, const FGResourceHandle h) {
+            FGCompiledResourceBinding b{};
+            b.handle = h;
+            switch (res.type) {
+                case FGResourceType::Texture:
+                case FGResourceType::ImportedTarget:
+                    b.usage = FGResourceUsage::Sampled;
+                    break;
+                case FGResourceType::Buffer:
+                    b.usage = FGResourceUsage::StorageRead;
+                    break;
+            }
+            return b;
+        }
+
+        static FGCompiledResourceBinding infer_write_binding(const FGCompiledResource& res, const FGResourceHandle h) {
+            FGCompiledResourceBinding b{};
+            b.handle = h;
+            switch (res.type) {
+                case FGResourceType::Texture:
+                case FGResourceType::ImportedTarget:
+                    b.usage = FGResourceUsage::ColorAttachment;
+                    break;
+                case FGResourceType::Buffer:
+                    b.usage = FGResourceUsage::StorageWrite;
+                    break;
+            }
+            return b;
+        }
+
         static bool try_resolve_dimensions(const FGTextureDesc& desc,
                                            uint32_t& out_width,
                                            uint32_t& out_height)
@@ -236,6 +352,8 @@ namespace Honey {
             if (r.type == FGResourceType::Texture) {
                 oss << "Texture " << r.resolved_width << "x" << r.resolved_height
                     << " samples=" << r.texture.samples;
+            } else if (r.type == FGResourceType::Buffer) {
+                oss << "Buffer size=" << r.buffer.size << " usageFlags=" << r.buffer.usage_flags;
             } else {
                 oss << "ImportedTarget kind="
                     << (r.imported_kind == FGImportedTargetKind::Swapchain ? "Swapchain" : "ExternalFramebuffer");
@@ -259,6 +377,7 @@ namespace Honey {
             const auto& p = m_passes[i];
             oss << "  [" << i << "] " << (p.name.empty() ? "<unnamed>" : p.name)
                 << " exec='" << p.executor_id << "'"
+                << " queue=" << queue_domain_label(p.queue_domain)
                 << " target=" << (p.targets_swapchain ? "Swapchain" : (p.target_framebuffer ? "Framebuffer" : "None"));
 
             if (p.physical_allocation != k_invalid_physical) {
@@ -297,6 +416,34 @@ namespace Honey {
                 }
             }
             oss << "\n";
+
+            if (!p.read_bindings.empty()) {
+                oss << "      ReadBindings: ";
+                for (size_t j = 0; j < p.read_bindings.size(); ++j) {
+                    const auto& b = p.read_bindings[j];
+                    if (b.handle < m_resources.size())
+                        oss << m_resources[b.handle].name;
+                    else
+                        oss << "<invalid:" << b.handle << ">";
+                    oss << "(" << resource_usage_label(b.usage) << ")";
+                    if (j + 1 < p.read_bindings.size()) oss << ", ";
+                }
+                oss << "\n";
+            }
+
+            if (!p.write_bindings.empty()) {
+                oss << "      WriteBindings: ";
+                for (size_t j = 0; j < p.write_bindings.size(); ++j) {
+                    const auto& b = p.write_bindings[j];
+                    if (b.handle < m_resources.size())
+                        oss << m_resources[b.handle].name;
+                    else
+                        oss << "<invalid:" << b.handle << ">";
+                    oss << "(" << resource_usage_label(b.usage) << ")";
+                    if (j + 1 < p.write_bindings.size()) oss << ", ";
+                }
+                oss << "\n";
+            }
         }
 
         return oss.str();
@@ -384,6 +531,7 @@ namespace Honey {
             res.name = res_desc.name;
             res.type = res_desc.type;
             res.texture = res_desc.texture;
+            res.buffer = res_desc.buffer;
             res.imported_kind = res_desc.imported_kind;
 
             if (res.type == FGResourceType::Texture) {
@@ -393,6 +541,10 @@ namespace Honey {
                 } else {
                     res.resolved_width = rw;
                     res.resolved_height = rh;
+                }
+            } else if (res.type == FGResourceType::Buffer) {
+                if (res.buffer.size == 0) {
+                    out_diagnostics.add_error("Buffer resource has zero size", res.name);
                 }
             } else if (res.type == FGResourceType::ImportedTarget) {
                 if (res.imported_kind == FGImportedTargetKind::ExternalFramebuffer) {
@@ -423,6 +575,7 @@ namespace Honey {
             FGCompiledPass pass{};
             pass.name = pass_desc.name;
             pass.executor_id = pass_desc.executor_id;
+            pass.queue_domain = pass_desc.queue_domain;
             pass.clear_node = pass_desc.clear_node;
             pass.params_node = pass_desc.params_node;
 
@@ -455,6 +608,91 @@ namespace Honey {
                     continue;
                 }
                 pass.writes.push_back(h);
+            }
+
+            // Resolve explicit usage bindings when present; otherwise infer from legacy Reads/Writes.
+            if (!pass_desc.read_bindings.empty()) {
+                for (const auto& b : pass_desc.read_bindings) {
+                    const FGResourceHandle h = compiled->find_resource_handle(b.resource_name);
+                    if (h == k_invalid_resource) {
+                        out_diagnostics.add_error("Pass ReadBindings resource not found", b.resource_name);
+                        continue;
+                    }
+
+                    if (std::find(pass.reads.begin(), pass.reads.end(), h) == pass.reads.end()) {
+                        out_diagnostics.add_error("Pass ReadBindings references resource not declared in Reads", b.resource_name);
+                        continue;
+                    }
+
+                    pass.read_bindings.push_back({ h, b.usage });
+                }
+            } else {
+                for (const auto h : pass.reads) {
+                    if (h >= compiled->m_resources.size())
+                        continue;
+                    pass.read_bindings.push_back(infer_read_binding(compiled->m_resources[h], h));
+                }
+            }
+
+            if (!pass_desc.write_bindings.empty()) {
+                for (const auto& b : pass_desc.write_bindings) {
+                    const FGResourceHandle h = compiled->find_resource_handle(b.resource_name);
+                    if (h == k_invalid_resource) {
+                        out_diagnostics.add_error("Pass WriteBindings resource not found", b.resource_name);
+                        continue;
+                    }
+
+                    if (std::find(pass.writes.begin(), pass.writes.end(), h) == pass.writes.end()) {
+                        out_diagnostics.add_error("Pass WriteBindings references resource not declared in Writes", b.resource_name);
+                        continue;
+                    }
+
+                    pass.write_bindings.push_back({ h, b.usage });
+                }
+            } else {
+                for (const auto h : pass.writes) {
+                    if (h >= compiled->m_resources.size())
+                        continue;
+                    pass.write_bindings.push_back(infer_write_binding(compiled->m_resources[h], h));
+                }
+            }
+
+            for (const auto& b : pass.read_bindings) {
+                if (b.handle >= compiled->m_resources.size())
+                    continue;
+                const auto& res = compiled->m_resources[b.handle];
+
+                if (!is_read_usage(b.usage)) {
+                    out_diagnostics.add_error(
+                        "Read binding has non-read usage '" + std::string(resource_usage_label(b.usage)) + "'",
+                        pass.name);
+                }
+
+                if (!usage_is_valid_for_resource(res.type, b.usage)) {
+                    out_diagnostics.add_error(
+                        "Read binding usage '" + std::string(resource_usage_label(b.usage)) +
+                        "' is invalid for resource type",
+                        pass.name);
+                }
+            }
+
+            for (const auto& b : pass.write_bindings) {
+                if (b.handle >= compiled->m_resources.size())
+                    continue;
+                const auto& res = compiled->m_resources[b.handle];
+
+                if (!is_write_usage(b.usage)) {
+                    out_diagnostics.add_error(
+                        "Write binding has non-write usage '" + std::string(resource_usage_label(b.usage)) + "'",
+                        pass.name);
+                }
+
+                if (!usage_is_valid_for_resource(res.type, b.usage)) {
+                    out_diagnostics.add_error(
+                        "Write binding usage '" + std::string(resource_usage_label(b.usage)) +
+                        "' is invalid for resource type",
+                        pass.name);
+                }
             }
 
             // Minimal v1 target mapping:
@@ -492,7 +730,8 @@ namespace Honey {
                     bool has_texture_output = false;
                     for (const auto h : pass.writes) {
                         if (h < compiled->m_resources.size() &&
-                            compiled->m_resources[h].type == FGResourceType::Texture)
+                            (compiled->m_resources[h].type == FGResourceType::Texture ||
+                             compiled->m_resources[h].type == FGResourceType::ImportedTarget))
                         {
                             has_texture_output = true;
                             break;
@@ -572,6 +811,10 @@ namespace Honey {
                         if (res.type == FGResourceType::Texture) {
                             out_diagnostics.add_error(
                                 "Texture resource is read before any pass writes it: '" + res.name + "'",
+                                pass_label);
+                        } else if (res.type == FGResourceType::Buffer) {
+                            out_diagnostics.add_error(
+                                "Buffer resource is read before any pass writes it: '" + res.name + "'",
                                 pass_label);
                         }
                         // Imported resources may be externally produced (swapchain/external framebuffer),

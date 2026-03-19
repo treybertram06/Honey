@@ -25,7 +25,36 @@ namespace Honey {
 
     enum class FGResourceType : uint8_t {
         Texture,
+        Buffer,
         ImportedTarget
+    };
+
+    enum class FGQueueDomain : uint8_t {
+        Graphics,
+        Compute,
+        Transfer
+    };
+
+    enum class FGResourceUsage : uint8_t {
+        Unknown,
+
+        // Generic read-style usages
+        Sampled,
+        Uniform,
+        Indirect,
+        VertexBuffer,
+        IndexBuffer,
+        TransferSrc,
+
+        // Generic write-style usages
+        ColorAttachment,
+        DepthAttachment,
+        StorageWrite,
+        TransferDst,
+
+        // Read+write
+        StorageRead,
+        StorageReadWrite
     };
 
     enum class FGImportedTargetKind : uint8_t {
@@ -64,12 +93,25 @@ namespace Honey {
         uint32_t samples = 1;
     };
 
+    struct FGBufferDesc {
+        uint64_t size = 0;
+        uint32_t usage_flags = 0;
+    };
+
+    struct FGResourceBindingDesc {
+        std::string resource_name;
+        FGResourceUsage usage = FGResourceUsage::Unknown;
+    };
+
     struct FGResourceDesc {
         std::string name;
         FGResourceType type = FGResourceType::Texture;
 
         // Type == Texture
         FGTextureDesc texture{};
+
+        // Type == Buffer
+        FGBufferDesc buffer{};
 
         // Type == ImportedTarget
         FGImportedTargetKind imported_kind = FGImportedTargetKind::Swapchain;
@@ -79,8 +121,12 @@ namespace Honey {
         std::string name;
         std::string executor_id;
 
+        FGQueueDomain queue_domain = FGQueueDomain::Graphics;
+
         std::vector<std::string> reads;
         std::vector<std::string> writes;
+        std::vector<FGResourceBindingDesc> read_bindings;
+        std::vector<FGResourceBindingDesc> write_bindings;
 
         // Optional free-form YAML data available to runtime/executor code.
         YAML::Node clear_node;
@@ -155,6 +201,7 @@ namespace Honey {
         FGResourceType type = FGResourceType::Texture;
 
         FGTextureDesc texture{};
+        FGBufferDesc buffer{};
         FGImportedTargetKind imported_kind = FGImportedTargetKind::Swapchain;
 
         uint32_t resolved_width = 0;
@@ -170,14 +217,23 @@ namespace Honey {
         FGPassHandle last_use  = k_invalid_pass;
     };
 
+    struct FGCompiledResourceBinding {
+        FGResourceHandle handle = k_invalid_resource;
+        FGResourceUsage usage = FGResourceUsage::Unknown;
+    };
+
     struct FGCompiledPass {
         std::string name;
 
         std::string executor_id;
         FGPassExecutor executor;
 
+        FGQueueDomain queue_domain = FGQueueDomain::Graphics;
+
         std::vector<FGResourceHandle> reads;
         std::vector<FGResourceHandle> writes;
+        std::vector<FGCompiledResourceBinding> read_bindings;
+        std::vector<FGCompiledResourceBinding> write_bindings;
 
         YAML::Node clear_node;
         YAML::Node params_node;

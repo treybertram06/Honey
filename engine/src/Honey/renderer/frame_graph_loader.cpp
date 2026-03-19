@@ -36,6 +36,10 @@ namespace Honey {
                 out = FGResourceType::Texture;
                 return true;
             }
+            if (iequals(v, "buffer")) {
+                out = FGResourceType::Buffer;
+                return true;
+            }
             if (iequals(v, "importedtarget") || iequals(v, "imported_target")) {
                 out = FGResourceType::ImportedTarget;
                 return true;
@@ -43,6 +47,114 @@ namespace Honey {
 
             diags.add_error("Unknown resource Type: " + v, scope);
             return false;
+        }
+
+        static bool parse_queue_domain(const YAML::Node& n,
+                                       FGQueueDomain& out,
+                                       FGCompileDiagnostics& diags,
+                                       std::string_view scope)
+        {
+            if (!n || !n.IsScalar()) {
+                diags.add_error("Queue must be a scalar string", scope);
+                return false;
+            }
+
+            const std::string v = n.as<std::string>();
+            if (iequals(v, "graphics")) {
+                out = FGQueueDomain::Graphics;
+                return true;
+            }
+            if (iequals(v, "compute")) {
+                out = FGQueueDomain::Compute;
+                return true;
+            }
+            if (iequals(v, "transfer")) {
+                out = FGQueueDomain::Transfer;
+                return true;
+            }
+
+            diags.add_error("Unknown Queue domain: " + v, scope);
+            return false;
+        }
+
+        static bool parse_resource_usage(const YAML::Node& n,
+                                         FGResourceUsage& out,
+                                         FGCompileDiagnostics& diags,
+                                         std::string_view scope)
+        {
+            if (!n || !n.IsScalar()) {
+                diags.add_error("Usage must be a scalar string", scope);
+                return false;
+            }
+
+            const std::string v = n.as<std::string>();
+
+            if (iequals(v, "sampled")) { out = FGResourceUsage::Sampled; return true; }
+            if (iequals(v, "uniform")) { out = FGResourceUsage::Uniform; return true; }
+            if (iequals(v, "indirect")) { out = FGResourceUsage::Indirect; return true; }
+            if (iequals(v, "vertexbuffer") || iequals(v, "vertex_buffer")) { out = FGResourceUsage::VertexBuffer; return true; }
+            if (iequals(v, "indexbuffer") || iequals(v, "index_buffer")) { out = FGResourceUsage::IndexBuffer; return true; }
+            if (iequals(v, "transfersrc") || iequals(v, "transfer_src")) { out = FGResourceUsage::TransferSrc; return true; }
+
+            if (iequals(v, "colorattachment") || iequals(v, "color_attachment")) { out = FGResourceUsage::ColorAttachment; return true; }
+            if (iequals(v, "depthattachment") || iequals(v, "depth_attachment")) { out = FGResourceUsage::DepthAttachment; return true; }
+            if (iequals(v, "storagewrite") || iequals(v, "storage_write")) { out = FGResourceUsage::StorageWrite; return true; }
+            if (iequals(v, "transferdst") || iequals(v, "transfer_dst")) { out = FGResourceUsage::TransferDst; return true; }
+
+            if (iequals(v, "storageread") || iequals(v, "storage_read")) { out = FGResourceUsage::StorageRead; return true; }
+            if (iequals(v, "storagereadwrite") || iequals(v, "storage_read_write") || iequals(v, "storage_rw")) {
+                out = FGResourceUsage::StorageReadWrite;
+                return true;
+            }
+
+            diags.add_error("Unknown Usage: " + v, scope);
+            return false;
+        }
+
+        static bool parse_binding_sequence(const YAML::Node& node,
+                                           std::vector<FGResourceBindingDesc>& out,
+                                           std::string_view field_name,
+                                           FGCompileDiagnostics& diags,
+                                           std::string_view scope)
+        {
+            if (!node)
+                return true;
+
+            if (!node.IsSequence()) {
+                diags.add_error(std::string(field_name) + " must be a sequence", scope);
+                return false;
+            }
+
+            for (const auto& entry : node) {
+                FGResourceBindingDesc binding{};
+
+                if (entry.IsScalar()) {
+                    binding.resource_name = entry.as<std::string>();
+                } else if (entry.IsMap()) {
+                    const auto name_node = entry["Name"] ? entry["Name"] : entry["Resource"];
+                    if (!name_node || !name_node.IsScalar()) {
+                        diags.add_error(std::string(field_name) + " entry is missing Name/Resource", scope);
+                        continue;
+                    }
+                    binding.resource_name = name_node.as<std::string>();
+
+                    if (const auto usage_node = entry["Usage"]) {
+                        parse_resource_usage(usage_node, binding.usage, diags, scope);
+                    }
+                } else {
+                    diags.add_error(std::string(field_name) + " contains unsupported entry type", scope);
+                    continue;
+                }
+
+                if (binding.resource_name.empty()) {
+                    diags.add_error(std::string(field_name) + " contains empty resource name", scope);
+                    continue;
+                }
+
+                out.push_back(std::move(binding));
+            }
+
+            return true;
         }
 
         static bool parse_imported_kind(const YAML::Node& n,
@@ -284,6 +396,28 @@ namespace Honey {
                             out_diagnostics.add_error("Samples must be an integer", scope);
                         }
                     }
+                } else if (resource.type == FGResourceType::Buffer) {
+                    const auto size_node = body["Size"];
+                    if (!size_node) {
+                        out_diagnostics.add_error("Buffer resource requires Size", scope);
+                    } else {
+                        try {
+                            resource.buffer.size = size_node.as<uint64_t>();
+                            if (resource.buffer.size == 0) {
+                                out_diagnostics.add_error("Buffer Size must be > 0", scope);
+                            }
+                        } catch (const YAML::BadConversion&) {
+                            out_diagnostics.add_error("Buffer Size must be an integer", scope);
+                        }
+                    }
+
+                    if (const auto usage_flags = body["UsageFlags"]) {
+                        try {
+                            resource.buffer.usage_flags = usage_flags.as<uint32_t>();
+                        } catch (const YAML::BadConversion&) {
+                            out_diagnostics.add_error("Buffer UsageFlags must be an integer", scope);
+                        }
+                    }
                 } else if (resource.type == FGResourceType::ImportedTarget) {
                     parse_imported_kind(body["Kind"], resource.imported_kind, out_diagnostics, scope);
                 }
@@ -318,8 +452,30 @@ namespace Honey {
                     out_diagnostics.add_error("Pass is missing Executor", scope);
                 }
 
+                if (const auto queue = pass_node["Queue"]) {
+                    parse_queue_domain(queue, pass.queue_domain, out_diagnostics, scope);
+                }
+
                 parse_string_sequence(pass_node["Reads"], pass.reads, "Reads", out_diagnostics, scope);
                 parse_string_sequence(pass_node["Writes"], pass.writes, "Writes", out_diagnostics, scope);
+
+                parse_binding_sequence(pass_node["ReadBindings"], pass.read_bindings, "ReadBindings", out_diagnostics, scope);
+                parse_binding_sequence(pass_node["WriteBindings"], pass.write_bindings, "WriteBindings", out_diagnostics, scope);
+
+                // If explicit binding records are present, they are the source of truth.
+                if (!pass.read_bindings.empty()) {
+                    pass.reads.clear();
+                    pass.reads.reserve(pass.read_bindings.size());
+                    for (const auto& b : pass.read_bindings)
+                        pass.reads.push_back(b.resource_name);
+                }
+
+                if (!pass.write_bindings.empty()) {
+                    pass.writes.clear();
+                    pass.writes.reserve(pass.write_bindings.size());
+                    for (const auto& b : pass.write_bindings)
+                        pass.writes.push_back(b.resource_name);
+                }
 
                 if (pass.writes.empty()) {
                     out_diagnostics.add_error("Pass must define at least one output in Writes", scope);
