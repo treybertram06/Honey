@@ -216,6 +216,28 @@ namespace Honey {
         return it->second;
     }
 
+    static void emit_vulkan_globals_for_2d_draw() {
+        HN_CORE_ASSERT(s_data, "emit_vulkan_globals_for_2d_draw: renderer data is null");
+
+        // Always push camera + at least slot 0 (white) so set 0 is validly bound for the draw.
+        VulkanRendererAPI::submit_camera_view_projection(s_data->camera_buffer.view_projection);
+
+        std::array<void*, VulkanRendererAPI::k_max_texture_slots> vk_textures{};
+        const uint32_t count = std::min<uint32_t>(
+            std::max<uint32_t>(1u, s_data->texture_slot_index),
+            VulkanRendererAPI::k_max_texture_slots
+        );
+
+        for (uint32_t i = 0; i < count; ++i) {
+            Ref<Texture2D> tex = s_data->texture_slots[i] ? s_data->texture_slots[i] : s_data->white_texture;
+            HN_CORE_ASSERT(tex, "emit_vulkan_globals_for_2d_draw: texture slot {} is null and no fallback white texture exists", i);
+            vk_textures[i] = tex.get();
+        }
+
+        VulkanRendererAPI::submit_bound_textures(vk_textures, count);
+        VulkanRendererAPI::flush_globals();
+    }
+
     void Renderer2D::init() {
         HN_PROFILE_FUNCTION();
 
@@ -456,14 +478,15 @@ namespace Honey {
 
         HN_CORE_ASSERT(s_data, "Renderer2D not initialized before calling begin_scene");
 
+        s_data->camera_buffer.view_projection = cam.get_view_projection_matrix();
+
         if (Renderer::get_api() != RendererAPI::API::vulkan) {
             RenderCommand::set_blend_for_attachment(1, false);
 
-            s_data->camera_buffer.view_projection = cam.get_view_projection_matrix();
             s_data->camera_uniform_buffer->set_data(sizeof(Renderer2DData::CameraData), &s_data->camera_buffer);
         } else {
             s_data->vk_globals_stack.push_back(VulkanRendererAPI::get_globals_state());
-            VulkanRendererAPI::submit_camera_view_projection(cam.get_view_projection_matrix());
+            VulkanRendererAPI::submit_camera_view_projection(s_data->camera_buffer.view_projection);
         }
 
         s_data->quad_instances.clear();
@@ -478,13 +501,13 @@ namespace Honey {
         reset_stats();
 
         glm::mat4 view_proj = camera.get_projection_matrix() * glm::inverse(transform);
+        s_data->camera_buffer.view_projection = view_proj;
 
         if (Renderer::get_api() != RendererAPI::API::vulkan) {
-            s_data->camera_buffer.view_projection = view_proj;
             s_data->camera_uniform_buffer->set_data(sizeof(Renderer2DData::CameraData), &s_data->camera_buffer);
         } else {
             s_data->vk_globals_stack.push_back(VulkanRendererAPI::get_globals_state());
-            VulkanRendererAPI::submit_camera_view_projection(view_proj);
+            VulkanRendererAPI::submit_camera_view_projection(s_data->camera_buffer.view_projection);
         }
 
         s_data->quad_instances.clear();
@@ -499,11 +522,11 @@ namespace Honey {
         reset_stats();
 
         glm::mat4 vp = camera.get_view_projection_matrix(); // EngineClip
+        s_data->camera_buffer.view_projection = vp;
         //HN_CORE_INFO("Engine VP:\n{}", glm::to_string(vp));
 
         if (Renderer::get_api() != RendererAPI::API::vulkan) {
             // OpenGL (or any future GL-style API) consumes EngineClip directly.
-            s_data->camera_buffer.view_projection = vp;
             s_data->camera_uniform_buffer->set_data(
                 sizeof(Renderer2DData::CameraData),
                 &s_data->camera_buffer
@@ -513,7 +536,7 @@ namespace Honey {
             state.source = VulkanRendererAPI::GlobalsState::Source::Renderer2D;
             s_data->vk_globals_stack.push_back(state);
             // Vulkan backend will convert EngineClip to VulkanClip.
-            VulkanRendererAPI::submit_camera_view_projection(vp);
+            VulkanRendererAPI::submit_camera_view_projection(s_data->camera_buffer.view_projection);
         }
 
         s_data->quad_instances.clear();
@@ -562,19 +585,8 @@ namespace Honey {
             void* rpNative = vk_fb->get_render_pass();
             Ref<Pipeline> pipe = get_or_create_vk_offscreen_line_pipeline(rpNative);
 
-            if (s_data->texture_slot_index > 1) {
-                std::array<void*, VulkanRendererAPI::k_max_texture_slots> vk_textures{};
-                const uint32_t count = std::min<uint32_t>(
-                    s_data->texture_slot_index,
-                    VulkanRendererAPI::k_max_texture_slots
-                );
-                for (uint32_t i = 0; i < count; ++i) {
-                    vk_textures[i] = s_data->texture_slots[i].get();
-                }
-                VulkanRendererAPI::submit_bound_textures(vk_textures, count);
-            }
-
             RenderCommand::bind_pipeline(pipe);
+            emit_vulkan_globals_for_2d_draw();
 
             s_data->line_vertex_array->bind();
             RenderCommand::draw_indexed_instanced(
@@ -651,19 +663,8 @@ namespace Honey {
             void* rpNative = vk_fb->get_render_pass();
             Ref<Pipeline> pipe = get_or_create_vk_offscreen_circle_pipeline(rpNative);
 
-            if (s_data->texture_slot_index > 1) {
-                std::array<void*, VulkanRendererAPI::k_max_texture_slots> vk_textures{};
-                const uint32_t count = std::min<uint32_t>(
-                    s_data->texture_slot_index,
-                    VulkanRendererAPI::k_max_texture_slots
-                );
-                for (uint32_t i = 0; i < count; ++i) {
-                    vk_textures[i] = s_data->texture_slots[i].get();
-                }
-                VulkanRendererAPI::submit_bound_textures(vk_textures, count);
-            }
-
             RenderCommand::bind_pipeline(pipe);
+            emit_vulkan_globals_for_2d_draw();
 
             s_data->circle_vertex_array->bind();
             RenderCommand::draw_indexed_instanced(
@@ -742,19 +743,8 @@ namespace Honey {
                 pipe = get_or_create_vk_quad_pipeline(rpNative);
             }
 
-            /*if (s_data->texture_slot_index > 1)*/ {
-                std::array<void*, VulkanRendererAPI::k_max_texture_slots> vk_textures{};
-                const uint32_t count = std::min<uint32_t>(
-                    s_data->texture_slot_index,
-                    VulkanRendererAPI::k_max_texture_slots
-                );
-                for (uint32_t i = 0; i < count; ++i) {
-                    vk_textures[i] = s_data->texture_slots[i].get();
-                }
-                VulkanRendererAPI::submit_bound_textures(vk_textures, count);
-            }
-
             RenderCommand::bind_pipeline(pipe);
+            emit_vulkan_globals_for_2d_draw();
 
             s_data->quad_vertex_array->bind();
 
