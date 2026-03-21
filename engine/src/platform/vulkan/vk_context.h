@@ -5,6 +5,7 @@
 #include "Honey/renderer/graphics_context.h"
 #include "Honey/renderer/vertex_array.h"
 #include <glm/glm.hpp>
+#include <functional>
 
 #include "vk_pipeline.h"
 
@@ -51,7 +52,18 @@ namespace Honey {
         VkDescriptorSetLayout get_global_set_layout() const { return m_global_set_layout; }
 
         uint32_t get_graphics_queue_family() const { return m_graphics_queue_family; }
+        uint32_t get_compute_queue_family() const { return m_compute_queue_family; }
         VkQueue get_graphics_queue() const { return m_graphics_queue; }
+        VkQueue get_compute_queue() const { return m_compute_queue; }
+        bool has_dedicated_compute_queue() const { return m_has_dedicated_compute_queue; }
+        bool supports_timeline_semaphore() const { return m_supports_timeline_semaphore; }
+        VkSemaphore get_frame_graph_timeline_semaphore() const { return m_frame_graph_timeline_semaphore; }
+        uint64_t get_frame_graph_timeline_value() const { return m_frame_graph_timeline_value; }
+        uint64_t signal_frame_graph_timeline_cpu();
+        bool wait_frame_graph_timeline_cpu(uint64_t value, uint64_t timeout_ns = UINT64_MAX);
+        bool submit_one_time_graphics(const std::function<void(VkCommandBuffer)>& record);
+        bool submit_one_time_compute(const std::function<void(VkCommandBuffer)>& record);
+        bool submit_one_time_transfer(const std::function<void(VkCommandBuffer)>& record);
         VkCommandPool get_command_pool() const { return m_command_pool; }
         VkRenderPass get_render_pass() const { return m_render_pass; }
 
@@ -219,6 +231,15 @@ namespace Honey {
         void create_global_descriptor_resources();
         void cleanup_global_descriptor_resources();
 
+        bool submit_one_time_on_queue(
+            VkQueue queue,
+            uint32_t queue_family,
+            std::mutex* submit_mutex,
+            VkCommandPool& inout_command_pool,
+            VkFence& inout_fence,
+            const std::function<void(VkCommandBuffer)>& record,
+            const char* debug_label);
+
         inline void assert_render_thread() const {
 #if defined(BUILD_DEBUG)
             HN_CORE_ASSERT(std::this_thread::get_id() == m_render_thread_id,
@@ -240,9 +261,17 @@ namespace Honey {
         VkSurfaceKHR m_surface = nullptr;
 
         uint32_t m_graphics_queue_family = UINT32_MAX;
+        uint32_t m_compute_queue_family = UINT32_MAX;
         uint32_t m_present_queue_family = UINT32_MAX;
         VkQueue m_graphics_queue = nullptr;
+        VkQueue m_compute_queue = nullptr;
         VkQueue m_present_queue = nullptr;
+
+        bool m_has_dedicated_compute_queue = false;
+        bool m_supports_timeline_semaphore = false;
+
+        VkSemaphore m_frame_graph_timeline_semaphore = VK_NULL_HANDLE;
+        uint64_t m_frame_graph_timeline_value = 0;
 
         VkSwapchainKHR m_swapchain = nullptr;
         std::vector<void*> m_swapchain_images;
@@ -273,6 +302,10 @@ namespace Honey {
         bool m_last_bound_textures_valid[k_max_frames_in_flight]{};
 
         VkCommandPool m_command_pool = nullptr;
+        VkCommandPool m_async_graphics_command_pool = nullptr;
+        VkCommandPool m_async_compute_command_pool = nullptr;
+        VkFence m_async_graphics_fence = nullptr;
+        VkFence m_async_compute_fence = nullptr;
         std::vector<VkCommandBuffer> m_command_buffers;
 
         // Per-frame secondary command pools.

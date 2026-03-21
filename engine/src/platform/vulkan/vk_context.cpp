@@ -614,9 +614,43 @@ namespace Honey {
         m_physical_device = m_backend->physical_device();
 
         m_graphics_queue_family = m_queue_lease.graphicsFamily;
+        m_compute_queue_family = m_queue_lease.computeFamily;
         m_present_queue_family = m_queue_lease.presentFamily;
         m_graphics_queue = m_queue_lease.graphicsQueue;
+        m_compute_queue = m_queue_lease.computeQueue;
         m_present_queue = m_queue_lease.presentQueue;
+
+        m_has_dedicated_compute_queue = m_queue_lease.hasDedicatedCompute;
+        m_supports_timeline_semaphore = m_backend->supports_timeline_semaphore();
+
+        if (m_supports_timeline_semaphore && !m_frame_graph_timeline_semaphore) {
+            VkSemaphoreTypeCreateInfo timeline_ci{};
+            timeline_ci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO;
+            timeline_ci.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+            timeline_ci.initialValue = 0;
+
+            VkSemaphoreCreateInfo sem_ci{};
+            sem_ci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+            sem_ci.pNext = &timeline_ci;
+
+            VkSemaphore timeline = VK_NULL_HANDLE;
+            VkResult timeline_res = vkCreateSemaphore(reinterpret_cast<VkDevice>(m_device),
+                                                      &sem_ci,
+                                                      nullptr,
+                                                      &timeline);
+            HN_CORE_ASSERT(timeline_res == VK_SUCCESS,
+                           "Failed to create frame-graph timeline semaphore: {0}",
+                           vk_result_to_string(timeline_res));
+            m_frame_graph_timeline_semaphore = timeline;
+            m_frame_graph_timeline_value = 0;
+        }
+
+        HN_CORE_INFO("VulkanContext queue config: gfxFamily={0}, computeFamily={1}, presentFamily={2}, dedicatedCompute={3}, timelineSemaphore={4}",
+                     m_graphics_queue_family,
+                     m_compute_queue_family,
+                     m_present_queue_family,
+                     m_has_dedicated_compute_queue,
+                     m_supports_timeline_semaphore);
 
         create_global_descriptor_resources();
 
@@ -913,6 +947,260 @@ namespace Honey {
         if (!m_device)
             return;
         vkDeviceWaitIdle(reinterpret_cast<VkDevice>(m_device));
+    }
+
+    uint64_t VulkanContext::signal_frame_graph_timeline_cpu() {
+        assert_render_thread();
+
+        if (!m_supports_timeline_semaphore || !m_frame_graph_timeline_semaphore || !m_device)
+            return 0;
+
+        const uint64_t next_value = m_frame_graph_timeline_value + 1;
+
+        VkSemaphoreSignalInfo signal_info{};
+        signal_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO;
+        signal_info.semaphore = reinterpret_cast<VkSemaphore>(m_frame_graph_timeline_semaphore);
+        signal_info.value = next_value;
+
+        const VkResult r = vkSignalSemaphore(reinterpret_cast<VkDevice>(m_device), &signal_info);
+        HN_CORE_ASSERT(r == VK_SUCCESS, "vkSignalSemaphore(frame-graph timeline) failed: {0}", vk_result_to_string(r));
+
+        if (r == VK_SUCCESS) {
+            m_frame_graph_timeline_value = next_value;
+            return m_frame_graph_timeline_value;
+        }
+
+        return 0;
+    }
+
+    bool VulkanContext::wait_frame_graph_timeline_cpu(const uint64_t value, const uint64_t timeout_ns) {
+        assert_render_thread();
+
+        if (!m_supports_timeline_semaphore || !m_frame_graph_timeline_semaphore || !m_device)
+            return false;
+
+        VkSemaphoreWaitInfo wait_info{};
+        wait_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO;
+        wait_info.flags = 0;
+        wait_info.semaphoreCount = 1;
+
+        VkSemaphore sem = reinterpret_cast<VkSemaphore>(m_frame_graph_timeline_semaphore);
+        wait_info.pSemaphores = &sem;
+        wait_info.pValues = &value;
+
+        const VkResult r = vkWaitSemaphores(reinterpret_cast<VkDevice>(m_device), &wait_info, timeout_ns);
+        HN_CORE_ASSERT(r == VK_SUCCESS || r == VK_TIMEOUT,
+                       "vkWaitSemaphores(frame-graph timeline) failed: {0}",
+                       vk_result_to_string(r));
+
+        if (r == VK_SUCCESS) {
+            if (value > m_frame_graph_timeline_value)
+                m_frame_graph_timeline_value = value;
+            return true;
+        }
+
+        return false;
+    }
+
+    bool VulkanContext::submit_one_time_on_queue(
+        VkQueue queue,
+        uint32_t queue_family,
+        std::mutex* submit_mutex,
+        VkCommandPool& inout_command_pool,
+        VkFence& inout_fence,
+        const std::function<void(VkCommandBuffer)>& record,
+        const char* debug_label)
+    {
+        assert_render_thread();
+
+        if (!m_device || !queue || !record)
+            return false;
+
+        if (inout_command_pool == VK_NULL_HANDLE) {
+            VkCommandPoolCreateInfo pool_ci{};
+            pool_ci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+            pool_ci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+            pool_ci.queueFamilyIndex = queue_family;
+
+            VkResult r = vkCreateCommandPool(reinterpret_cast<VkDevice>(m_device),
+                                             &pool_ci,
+                                             nullptr,
+                                             &inout_command_pool);
+            HN_CORE_ASSERT(r == VK_SUCCESS,
+                           "submit_one_time_on_queue: vkCreateCommandPool failed ({0})",
+                           vk_result_to_string(r));
+
+            if (debug_label) {
+                set_debug_name(reinterpret_cast<VkDevice>(m_device),
+                               VK_OBJECT_TYPE_COMMAND_POOL,
+                               reinterpret_cast<uint64_t>(inout_command_pool),
+                               debug_label);
+            }
+        }
+
+        if (inout_fence == VK_NULL_HANDLE) {
+            VkFenceCreateInfo fence_ci{};
+            fence_ci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+            fence_ci.flags = 0;
+
+            VkResult r = vkCreateFence(reinterpret_cast<VkDevice>(m_device),
+                                       &fence_ci,
+                                       nullptr,
+                                       &inout_fence);
+            HN_CORE_ASSERT(r == VK_SUCCESS,
+                           "submit_one_time_on_queue: vkCreateFence failed ({0})",
+                           vk_result_to_string(r));
+        }
+
+        VkCommandBufferAllocateInfo alloc{};
+        alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        alloc.commandPool = reinterpret_cast<VkCommandPool>(inout_command_pool);
+        alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        alloc.commandBufferCount = 1;
+
+        VkCommandBuffer cmd = VK_NULL_HANDLE;
+        VkResult r = vkAllocateCommandBuffers(reinterpret_cast<VkDevice>(m_device), &alloc, &cmd);
+        HN_CORE_ASSERT(r == VK_SUCCESS,
+                       "submit_one_time_on_queue: vkAllocateCommandBuffers failed ({0})",
+                       vk_result_to_string(r));
+
+        VkCommandBufferBeginInfo begin{};
+        begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+        r = vkBeginCommandBuffer(cmd, &begin);
+        HN_CORE_ASSERT(r == VK_SUCCESS,
+                       "submit_one_time_on_queue: vkBeginCommandBuffer failed ({0})",
+                       vk_result_to_string(r));
+
+        record(cmd);
+
+        r = vkEndCommandBuffer(cmd);
+        HN_CORE_ASSERT(r == VK_SUCCESS,
+                       "submit_one_time_on_queue: vkEndCommandBuffer failed ({0})",
+                       vk_result_to_string(r));
+
+        vkResetFences(reinterpret_cast<VkDevice>(m_device), 1, &inout_fence);
+
+        VkSubmitInfo submit{};
+        submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submit.commandBufferCount = 1;
+        submit.pCommandBuffers = &cmd;
+
+        VkSemaphore wait_semaphores[1]{};
+        VkPipelineStageFlags wait_stages[1]{ VK_PIPELINE_STAGE_ALL_COMMANDS_BIT };
+        uint64_t wait_values[1]{};
+
+        VkSemaphore signal_semaphores[1]{};
+        uint64_t signal_values[1]{};
+
+        VkTimelineSemaphoreSubmitInfo timeline_submit{};
+
+        const bool has_timeline =
+            m_supports_timeline_semaphore &&
+            m_frame_graph_timeline_semaphore != VK_NULL_HANDLE;
+
+        uint64_t submitted_signal_value = 0;
+        if (has_timeline) {
+            const uint64_t wait_value = m_frame_graph_timeline_value;
+            const uint64_t signal_value = wait_value + 1;
+
+            uint32_t wait_count = 0;
+            if (wait_value > 0) {
+                wait_semaphores[0] = reinterpret_cast<VkSemaphore>(m_frame_graph_timeline_semaphore);
+                wait_values[0] = wait_value;
+                wait_count = 1;
+            }
+
+            signal_semaphores[0] = reinterpret_cast<VkSemaphore>(m_frame_graph_timeline_semaphore);
+            signal_values[0] = signal_value;
+
+            timeline_submit.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
+            timeline_submit.waitSemaphoreValueCount = wait_count;
+            timeline_submit.pWaitSemaphoreValues = (wait_count > 0) ? wait_values : nullptr;
+            timeline_submit.signalSemaphoreValueCount = 1;
+            timeline_submit.pSignalSemaphoreValues = signal_values;
+
+            submit.pNext = &timeline_submit;
+            submit.waitSemaphoreCount = wait_count;
+            submit.pWaitSemaphores = (wait_count > 0) ? wait_semaphores : nullptr;
+            submit.pWaitDstStageMask = (wait_count > 0) ? wait_stages : nullptr;
+            submit.signalSemaphoreCount = 1;
+            submit.pSignalSemaphores = signal_semaphores;
+
+            submitted_signal_value = signal_value;
+        }
+
+        VkResult submit_res = VK_SUCCESS;
+        if (submit_mutex) {
+            std::scoped_lock lk(*submit_mutex);
+            submit_res = vkQueueSubmit(reinterpret_cast<VkQueue>(queue), 1, &submit, inout_fence);
+        } else {
+            submit_res = vkQueueSubmit(reinterpret_cast<VkQueue>(queue), 1, &submit, inout_fence);
+        }
+
+        HN_CORE_ASSERT(submit_res == VK_SUCCESS,
+                       "submit_one_time_on_queue: vkQueueSubmit failed ({0})",
+                       vk_result_to_string(submit_res));
+
+        r = vkWaitForFences(reinterpret_cast<VkDevice>(m_device), 1, &inout_fence, VK_TRUE, UINT64_MAX);
+        HN_CORE_ASSERT(r == VK_SUCCESS,
+                       "submit_one_time_on_queue: vkWaitForFences failed ({0})",
+                       vk_result_to_string(r));
+
+        vkFreeCommandBuffers(reinterpret_cast<VkDevice>(m_device),
+                             reinterpret_cast<VkCommandPool>(inout_command_pool),
+                             1,
+                             &cmd);
+
+        if (submitted_signal_value > m_frame_graph_timeline_value)
+            m_frame_graph_timeline_value = submitted_signal_value;
+
+        return true;
+    }
+
+    bool VulkanContext::submit_one_time_graphics(const std::function<void(VkCommandBuffer)>& record) {
+        return submit_one_time_on_queue(
+            reinterpret_cast<VkQueue>(m_graphics_queue),
+            m_graphics_queue_family,
+            (m_queue_lease.sharedGraphics ? m_queue_lease.graphicsSubmitMutex : nullptr),
+            m_async_graphics_command_pool,
+            m_async_graphics_fence,
+            record,
+            "ContextAsyncGraphicsCommandPool");
+    }
+
+    bool VulkanContext::submit_one_time_compute(const std::function<void(VkCommandBuffer)>& record) {
+        const bool use_compute_queue = (m_compute_queue != VK_NULL_HANDLE);
+
+        VkQueue queue = use_compute_queue
+            ? reinterpret_cast<VkQueue>(m_compute_queue)
+            : reinterpret_cast<VkQueue>(m_graphics_queue);
+
+        const uint32_t family = use_compute_queue
+            ? m_compute_queue_family
+            : m_graphics_queue_family;
+
+        std::mutex* submit_mutex = nullptr;
+        if (use_compute_queue) {
+            submit_mutex = m_queue_lease.sharedCompute ? m_queue_lease.computeSubmitMutex : nullptr;
+        } else {
+            submit_mutex = m_queue_lease.sharedGraphics ? m_queue_lease.graphicsSubmitMutex : nullptr;
+        }
+
+        return submit_one_time_on_queue(
+            queue,
+            family,
+            submit_mutex,
+            m_async_compute_command_pool,
+            m_async_compute_fence,
+            record,
+            "ContextAsyncComputeCommandPool");
+    }
+
+    bool VulkanContext::submit_one_time_transfer(const std::function<void(VkCommandBuffer)>& record) {
+        // Transfer work is submitted on the compute queue when available, otherwise graphics.
+        return submit_one_time_compute(record);
     }
 
 #if defined(BUILD_DEBUG)
@@ -2016,6 +2304,14 @@ namespace Honey {
         if (m_device) {
             vkDeviceWaitIdle(reinterpret_cast<VkDevice>(m_device));
 
+            if (m_frame_graph_timeline_semaphore) {
+                vkDestroySemaphore(reinterpret_cast<VkDevice>(m_device),
+                                   m_frame_graph_timeline_semaphore,
+                                   nullptr);
+                m_frame_graph_timeline_semaphore = VK_NULL_HANDLE;
+                m_frame_graph_timeline_value = 0;
+            }
+
             if (m_timestamp_query_pool) {
                 vkDestroyQueryPool(reinterpret_cast<VkDevice>(m_device),
                                    m_timestamp_query_pool,
@@ -2062,6 +2358,11 @@ namespace Honey {
             m_backend->release_queue_lease(m_queue_lease);
         }
         m_queue_lease = {};
+
+        m_compute_queue = nullptr;
+        m_compute_queue_family = UINT32_MAX;
+        m_has_dedicated_compute_queue = false;
+        m_supports_timeline_semaphore = false;
 
         // DO NOT destroy VkDevice/VkInstance here: backend owns them.
         m_device = nullptr;

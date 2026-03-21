@@ -60,7 +60,15 @@ namespace Honey {
         VkPhysicalDevice get_physical_device() const { return m_physical_device; }
         VkDevice get_device() const { return m_device; }
         uint32_t get_graphics_queue_family_index() const { return m_families.graphicsFamily; }
+        uint32_t get_compute_queue_family_index() const { return m_families.computeFamily; }
         VkQueue get_graphics_queue() const { return !m_graphics_queues.empty() ? m_graphics_queues[0] : VK_NULL_HANDLE; }
+        VkQueue get_compute_queue() const {
+            if (!m_compute_queues.empty())
+                return m_compute_queues[0];
+            return !m_graphics_queues.empty() ? m_graphics_queues[0] : VK_NULL_HANDLE;
+        }
+        bool has_dedicated_compute_queue() const { return m_has_dedicated_compute_queue; }
+        bool supports_timeline_semaphore() const { return m_timeline_semaphore_supported; }
 
         VkDescriptorPool get_imgui_descriptor_pool() const { return m_imgui_descriptor_pool; }
         VkSampler get_imgui_sampler() const { return m_imgui_sampler; }
@@ -154,8 +162,12 @@ namespace Honey {
     private:
         struct QueueFamilyInfo {
             uint32_t graphicsFamily = UINT32_MAX;
+            uint32_t computeFamily = UINT32_MAX;
             uint32_t presentFamily = UINT32_MAX;
             bool sameFamily() const { return graphicsFamily == presentFamily; }
+            bool hasDedicatedCompute() const {
+                return computeFamily != UINT32_MAX && computeFamily != graphicsFamily;
+            }
         };
 
         void create_instance();
@@ -210,15 +222,21 @@ namespace Honey {
 
         // Queues we requested/created
         std::vector<VkQueue> m_graphics_queues;
+        std::vector<VkQueue> m_compute_queues;
         std::vector<VkQueue> m_present_queues;
 
         // Free lists for leasing (indices into vectors)
         std::vector<uint32_t> m_free_graphics_indices;
+        std::vector<uint32_t> m_free_compute_indices;
         std::vector<uint32_t> m_free_present_indices;
 
         std::mutex m_pool_mutex{};
         std::mutex m_shared_graphics_mutex{};
+        std::mutex m_shared_compute_mutex{};
         std::mutex m_shared_present_mutex{};
+
+        bool m_timeline_semaphore_supported = false;
+        bool m_has_dedicated_compute_queue = false;
 
         // Streaming upload context (ring buffer, used only on render thread)
         std::mutex m_upload_mutex{};

@@ -12,14 +12,22 @@ namespace Honey {
         uint32_t graphicsFamily = UINT32_MAX;
         uint32_t graphicsQueueIndex = UINT32_MAX;
 
+        VkQueue computeQueue = nullptr;
+        uint32_t computeFamily = UINT32_MAX;
+        uint32_t computeQueueIndex = UINT32_MAX;
+
         VkQueue presentQueue = nullptr;
         uint32_t presentFamily = UINT32_MAX;
         uint32_t presentQueueIndex = UINT32_MAX;
 
         bool sharedGraphics = true;
+        bool sharedCompute = true;
         bool sharedPresent = true;
 
+        bool hasDedicatedCompute = false;
+
         std::mutex* graphicsSubmitMutex = nullptr;
+        std::mutex* computeSubmitMutex = nullptr;
         std::mutex* presentSubmitMutex = nullptr;
 
         // Non-copyable, movable

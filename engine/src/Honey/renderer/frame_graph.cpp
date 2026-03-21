@@ -4,6 +4,7 @@
 #include "frame_graph_registry.h"
 #include "renderer.h"
 #include "Honey/core/engine.h"
+#include "platform/vulkan/vk_context.h"
 
 #include <algorithm>
 #include <chrono>
@@ -241,6 +242,16 @@ namespace Honey {
             return;
         }
 
+        VulkanContext* vk_context = nullptr;
+        const bool using_vulkan = (Renderer::get_api() == RendererAPI::API::vulkan);
+        if (using_vulkan) {
+            auto* base = Application::get().get_window().get_context();
+            vk_context = dynamic_cast<VulkanContext*>(base);
+            HN_CORE_ASSERT(vk_context, "FrameGraphCompiled::execute expected VulkanContext when Vulkan API is active");
+        }
+
+        bool warned_non_graphics_fallback = false;
+
         const bool collect_timings = execution_context.collect_cpu_timings || execution_context.out_stats;
         FGExecutionStats* stats_out = execution_context.out_stats;
 
@@ -256,6 +267,14 @@ namespace Honey {
             FGPassExecutionStat pass_stat{};
             pass_stat.pass_name = pass.name.empty() ? std::string("<unnamed>") : pass.name;
 
+            const bool non_graphics_pass = (pass.queue_domain != FGQueueDomain::Graphics);
+
+            if (non_graphics_pass && !warned_non_graphics_fallback) {
+                HN_CORE_WARN("FrameGraph: non-graphics queue domains currently use a fallback execution path. "
+                             "Passes still execute serially on the render thread; queue_domain is used for scheduling intent and timeline hooks.");
+                warned_non_graphics_fallback = true;
+            }
+
             glm::vec4 clear_color{};
             const bool has_clear_color = try_parse_clear_color(pass.clear_node, clear_color);
             if (has_clear_color) {
@@ -264,34 +283,39 @@ namespace Honey {
 
             const auto pass_begin = std::chrono::high_resolution_clock::now();
 
-            if (pass.targets_swapchain) {
-                Renderer::set_render_target(nullptr);
-            } else {
-                if (!pass.target_framebuffer) {
-                    HN_CORE_WARN("FrameGraphCompiled::execute skipping pass '{0}' - no target framebuffer is assigned yet",
-                                 pass.name);
+            if (!non_graphics_pass) {
+                if (pass.targets_swapchain) {
+                    Renderer::set_render_target(nullptr);
+                } else {
+                    if (!pass.target_framebuffer) {
+                        HN_CORE_WARN("FrameGraphCompiled::execute skipping pass '{0}' - no target framebuffer is assigned yet",
+                                     pass.name);
 
-                    pass_stat.skipped = true;
-                    if (stats_out)
-                        stats_out->pass_stats.emplace_back(std::move(pass_stat));
-                    continue;
+                        pass_stat.skipped = true;
+                        if (stats_out)
+                            stats_out->pass_stats.emplace_back(std::move(pass_stat));
+                        continue;
+                    }
+                    Renderer::set_render_target(pass.target_framebuffer);
                 }
-                Renderer::set_render_target(pass.target_framebuffer);
+
+                Renderer::begin_pass();
+
+                // For OpenGL this performs the actual attachment clear.
+                // For Vulkan clear values are consumed by Begin*Pass commands,
+                // and RenderCommand::clear() is currently a no-op.
+                if (has_clear_color) {
+                    RenderCommand::clear();
+                }
+
+                FrameGraphPassContext ctx(*this, pass, execution_context);
+                pass.executor(ctx);
+
+                Renderer::end_pass();
+            } else {
+                FrameGraphPassContext ctx(*this, pass, execution_context);
+                pass.executor(ctx);
             }
-
-            Renderer::begin_pass();
-
-            // For OpenGL this performs the actual attachment clear.
-            // For Vulkan clear values are consumed by Begin*Pass commands,
-            // and RenderCommand::clear() is currently a no-op.
-            if (has_clear_color) {
-                RenderCommand::clear();
-            }
-
-            FrameGraphPassContext ctx(*this, pass, execution_context);
-            pass.executor(ctx);
-
-            Renderer::end_pass();
 
             if (collect_timings) {
                 const auto pass_end = std::chrono::high_resolution_clock::now();
@@ -470,6 +494,11 @@ namespace Honey {
         return m_frame_index;
     }
 
+    FGQueueDomain FrameGraphPassContext::queue_domain() const {
+        HN_CORE_ASSERT(m_pass, "FrameGraphPassContext::queue_domain: null pass");
+        return m_pass->queue_domain;
+    }
+
     const YAML::Node& FrameGraphPassContext::params() const {
         HN_CORE_ASSERT(m_pass, "FrameGraphPassContext::params: null pass");
         return m_pass->params_node;
@@ -494,6 +523,67 @@ namespace Honey {
         }
 
         return m_graph->m_resources[h].framebuffer;
+    }
+
+    Ref<Framebuffer> FrameGraphPassContext::get_output_framebuffer(const std::string& resource_name) const {
+        HN_CORE_ASSERT(m_graph, "FrameGraphPassContext::get_output_framebuffer: null graph");
+        HN_CORE_ASSERT(m_pass, "FrameGraphPassContext::get_output_framebuffer: null pass");
+
+        const FGResourceHandle h = m_graph->find_resource_handle(resource_name);
+        if (h == k_invalid_resource || h >= m_graph->m_resources.size())
+            return nullptr;
+
+        if (std::find(m_pass->writes.begin(), m_pass->writes.end(), h) == m_pass->writes.end()) {
+            HN_CORE_WARN("FrameGraphPassContext::get_output_framebuffer: resource '{0}' is not listed as output for pass '{1}'",
+                         resource_name, m_pass->name);
+        }
+
+        return m_graph->m_resources[h].framebuffer;
+    }
+
+    Ref<Framebuffer> FrameGraphPassContext::get_pass_target_framebuffer() const {
+        HN_CORE_ASSERT(m_pass, "FrameGraphPassContext::get_pass_target_framebuffer: null pass");
+        return m_pass->target_framebuffer;
+    }
+
+    bool FrameGraphPassContext::submit_vulkan_compute(const FGVulkanRecordCommands& record) const {
+        HN_CORE_ASSERT(m_pass, "FrameGraphPassContext::submit_vulkan_compute: null pass");
+
+        if (!record) {
+            HN_CORE_WARN("FrameGraphPassContext::submit_vulkan_compute called with empty record callback (pass '{0}')",
+                         m_pass->name);
+            return false;
+        }
+
+        auto* base = Application::get().get_window().get_context();
+        auto* vk_context = dynamic_cast<VulkanContext*>(base);
+        if (!vk_context) {
+            HN_CORE_WARN("FrameGraphPassContext::submit_vulkan_compute requires VulkanContext (pass '{0}')",
+                         m_pass->name);
+            return false;
+        }
+
+        return vk_context->submit_one_time_compute(record);
+    }
+
+    bool FrameGraphPassContext::submit_vulkan_transfer(const FGVulkanRecordCommands& record) const {
+        HN_CORE_ASSERT(m_pass, "FrameGraphPassContext::submit_vulkan_transfer: null pass");
+
+        if (!record) {
+            HN_CORE_WARN("FrameGraphPassContext::submit_vulkan_transfer called with empty record callback (pass '{0}')",
+                         m_pass->name);
+            return false;
+        }
+
+        auto* base = Application::get().get_window().get_context();
+        auto* vk_context = dynamic_cast<VulkanContext*>(base);
+        if (!vk_context) {
+            HN_CORE_WARN("FrameGraphPassContext::submit_vulkan_transfer requires VulkanContext (pass '{0}')",
+                         m_pass->name);
+            return false;
+        }
+
+        return vk_context->submit_one_time_transfer(record);
     }
 
     void* FrameGraphPassContext::user_context() const {
@@ -744,6 +834,12 @@ namespace Honey {
                             pass.name);
                     }
                 }
+            }
+
+            if (pass.queue_domain != FGQueueDomain::Graphics && pass.targets_swapchain) {
+                out_diagnostics.add_error(
+                    "Non-graphics pass cannot target swapchain output",
+                    pass.name);
             }
 
             compiled->m_passes.emplace_back(std::move(pass));

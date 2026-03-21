@@ -14,6 +14,9 @@
 
 namespace Honey {
 
+    typedef struct VkCommandBuffer_T* VkCommandBuffer;
+    using FGVulkanRecordCommands = std::function<void(VkCommandBuffer)>;
+
     // Common handles and enums
 
     using FGResourceHandle = uint32_t;
@@ -276,11 +279,23 @@ namespace Honey {
 
         const std::string& pass_name() const;
         uint32_t frame_index() const;
+        FGQueueDomain queue_domain() const;
+
+        bool is_graphics_queue() const { return queue_domain() == FGQueueDomain::Graphics; }
+        bool is_compute_queue() const { return queue_domain() == FGQueueDomain::Compute; }
+        bool is_transfer_queue() const { return queue_domain() == FGQueueDomain::Transfer; }
 
         const YAML::Node& params() const;
         const YAML::Node& clear() const;
 
         Ref<Framebuffer> get_input_framebuffer(const std::string& resource_name) const;
+        Ref<Framebuffer> get_output_framebuffer(const std::string& resource_name) const;
+        Ref<Framebuffer> get_pass_target_framebuffer() const;
+
+        // Vulkan-only helper for compute/transfer frame-graph passes.
+        // Records and submits a one-time command buffer on the selected queue domain.
+        bool submit_vulkan_compute(const FGVulkanRecordCommands& record) const;
+        bool submit_vulkan_transfer(const FGVulkanRecordCommands& record) const;
 
         void* user_context() const;
 

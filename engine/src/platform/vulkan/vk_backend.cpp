@@ -239,20 +239,26 @@ namespace Honey {
                 }
 
                 m_graphics_queues.clear();
+                m_compute_queues.clear();
                 m_present_queues.clear();
                 m_free_graphics_indices.clear();
+                m_free_compute_indices.clear();
                 m_free_present_indices.clear();
             }
         } else {
             std::scoped_lock lock(m_pool_mutex);
             m_graphics_queues.clear();
+            m_compute_queues.clear();
             m_present_queues.clear();
             m_free_graphics_indices.clear();
+            m_free_compute_indices.clear();
             m_free_present_indices.clear();
         }
 
         m_physical_device = VK_NULL_HANDLE;
         m_families = {};
+        m_timeline_semaphore_supported = false;
+        m_has_dedicated_compute_queue = false;
 
         destroy_debug_messenger();
 
@@ -280,6 +286,7 @@ namespace Honey {
             HN_CORE_ASSERT(surfaceFamilies.presentFamily != UINT32_MAX, "No present family found for surface");
 
             m_families.graphicsFamily = surfaceFamilies.graphicsFamily;
+            m_families.computeFamily = surfaceFamilies.computeFamily;
             m_families.presentFamily = surfaceFamilies.presentFamily;
 
             create_logical_device(m_families, k_desired_queues_per_family);
@@ -301,6 +308,7 @@ namespace Honey {
 
         VulkanQueueLease lease{};
         lease.graphicsFamily = m_families.graphicsFamily;
+        lease.computeFamily = m_families.computeFamily;
 
         // Present family for this surface may differ from the device's initial present family.
         // For now: we only support present from the family we created queues for.
@@ -320,6 +328,32 @@ namespace Honey {
         lease.sharedGraphics = true;
         lease.graphicsSubmitMutex = &m_shared_graphics_mutex;
 
+        lease.hasDedicatedCompute = m_has_dedicated_compute_queue;
+
+        if (m_has_dedicated_compute_queue) {
+            lease.computeFamily = m_families.computeFamily;
+
+            if (!m_free_compute_indices.empty()) {
+                lease.computeQueueIndex = m_free_compute_indices.back();
+                m_free_compute_indices.pop_back();
+                lease.computeQueue = m_compute_queues[lease.computeQueueIndex];
+                lease.sharedCompute = false;
+                lease.computeSubmitMutex = nullptr;
+            } else {
+                lease.computeQueueIndex = 0;
+                lease.computeQueue = m_compute_queues.empty() ? VK_NULL_HANDLE : m_compute_queues[0];
+                lease.sharedCompute = true;
+                lease.computeSubmitMutex = &m_shared_compute_mutex;
+            }
+        } else {
+            // No dedicated compute queue family: compute uses graphics queue.
+            lease.computeFamily = lease.graphicsFamily;
+            lease.computeQueueIndex = lease.graphicsQueueIndex;
+            lease.computeQueue = lease.graphicsQueue;
+            lease.sharedCompute = lease.sharedGraphics;
+            lease.computeSubmitMutex = lease.graphicsSubmitMutex;
+        }
+
         // Try unique present
         if (!m_free_present_indices.empty()) {
             lease.presentQueueIndex = m_free_present_indices.back();
@@ -335,14 +369,21 @@ namespace Honey {
         }
 
         HN_CORE_ASSERT(lease.graphicsQueue, "Failed to acquire graphics queue");
+        HN_CORE_ASSERT(lease.computeQueue, "Failed to acquire compute queue");
         HN_CORE_ASSERT(lease.presentQueue, "Failed to acquire present queue");
 
         HN_CORE_INFO("Queue lease acquired: gfxFamily={0}, gfxIndex={1}, sharedGfx={2}, gfxHandle=0x{3:x}, "
-                     "presentFamily={4}, presentIndex={5}, sharedPresent={6}, presentHandle=0x{7:x}",
+                     "computeFamily={4}, computeIndex={5}, sharedCompute={6}, computeHandle=0x{7:x}, dedicatedCompute={8}, "
+                     "presentFamily={9}, presentIndex={10}, sharedPresent={11}, presentHandle=0x{12:x}",
                      lease.graphicsFamily,
                      lease.graphicsQueueIndex,
                      lease.sharedGraphics,
                      reinterpret_cast<uint64_t>(lease.graphicsQueue),
+                     lease.computeFamily,
+                     lease.computeQueueIndex,
+                     lease.sharedCompute,
+                     reinterpret_cast<uint64_t>(lease.computeQueue),
+                     lease.hasDedicatedCompute,
                      lease.presentFamily,
                      lease.presentQueueIndex,
                      lease.sharedPresent,
@@ -521,6 +562,9 @@ namespace Honey {
 
         if (!lease.sharedGraphics && lease.graphicsQueueIndex != UINT32_MAX) {
             m_free_graphics_indices.push_back(lease.graphicsQueueIndex);
+        }
+        if (!lease.sharedCompute && lease.computeQueueIndex != UINT32_MAX) {
+            m_free_compute_indices.push_back(lease.computeQueueIndex);
         }
         if (!lease.sharedPresent && lease.presentQueueIndex != UINT32_MAX) {
             m_free_present_indices.push_back(lease.presentQueueIndex);
@@ -1377,6 +1421,7 @@ namespace Honey {
         HN_PROFILE_FUNCTION();
         QueueFamilyInfo info{};
         info.graphicsFamily = UINT32_MAX;
+        info.computeFamily = UINT32_MAX;
         info.presentFamily  = UINT32_MAX;
 
         uint32_t queue_family_count = 0;
@@ -1384,9 +1429,23 @@ namespace Honey {
         std::vector<VkQueueFamilyProperties> families(queue_family_count);
         vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_family_count, families.data());
 
+        uint32_t dedicated_compute_candidate = UINT32_MAX;
+        uint32_t fallback_compute_candidate = UINT32_MAX;
+
         for (uint32_t i = 0; i < queue_family_count; i++) {
             if ((families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) && info.graphicsFamily == UINT32_MAX) {
                 info.graphicsFamily = i;
+            }
+
+            if (families[i].queueFlags & VK_QUEUE_COMPUTE_BIT) {
+                if (fallback_compute_candidate == UINT32_MAX)
+                    fallback_compute_candidate = i;
+
+                if ((families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) == 0 &&
+                    dedicated_compute_candidate == UINT32_MAX)
+                {
+                    dedicated_compute_candidate = i;
+                }
             }
 
             VkBool32 present_support = VK_FALSE;
@@ -1394,9 +1453,16 @@ namespace Honey {
             if (present_support && info.presentFamily == UINT32_MAX) {
                 info.presentFamily = i;
             }
+        }
 
-            if (info.graphicsFamily != UINT32_MAX && info.presentFamily != UINT32_MAX)
-                break;
+        if (dedicated_compute_candidate != UINT32_MAX) {
+            info.computeFamily = dedicated_compute_candidate;
+        } else if (fallback_compute_candidate != UINT32_MAX) {
+            info.computeFamily = fallback_compute_candidate;
+        } else {
+            // Last-resort fallback. Validation for true compute capability happens
+            // when compute passes are actually compiled/executed.
+            info.computeFamily = info.graphicsFamily;
         }
 
         return info;
@@ -1418,31 +1484,57 @@ namespace Honey {
             return std::max(1u, std::min(desiredQueuesPerFamily, available));
         };
 
-        const bool same_family = (families.graphicsFamily == families.presentFamily);
+        const uint32_t graphics_family = families.graphicsFamily;
+        const uint32_t present_family = families.presentFamily;
+        const uint32_t compute_family = (families.computeFamily != UINT32_MAX)
+            ? families.computeFamily
+            : graphics_family;
 
-        uint32_t graphics_count = clamp_count(families.graphicsFamily);
-        uint32_t present_count  = same_family ? graphics_count : clamp_count(families.presentFamily);
+        const uint32_t graphics_count = clamp_count(graphics_family);
+        const uint32_t present_count = (present_family == graphics_family)
+            ? graphics_count
+            : clamp_count(present_family);
+        const uint32_t compute_count = (compute_family == graphics_family)
+            ? graphics_count
+            : (compute_family == present_family)
+                ? present_count
+                : clamp_count(compute_family);
 
-        const uint32_t max_count = std::max(graphics_count, present_count);
+        struct FamilyQueueRequest {
+            uint32_t family = UINT32_MAX;
+            uint32_t count = 0;
+        };
+
+        std::vector<FamilyQueueRequest> family_requests;
+        auto add_family_request = [&](uint32_t family, uint32_t count) {
+            for (auto& req : family_requests) {
+                if (req.family == family) {
+                    req.count = std::max(req.count, count);
+                    return;
+                }
+            }
+            family_requests.push_back(FamilyQueueRequest{family, count});
+        };
+
+        add_family_request(graphics_family, graphics_count);
+        add_family_request(compute_family, compute_count);
+        add_family_request(present_family, present_count);
+
+        uint32_t max_count = 1;
+        for (const auto& req : family_requests)
+            max_count = std::max(max_count, req.count);
+
         std::vector<float> priorities(max_count, 1.0f);
 
         std::vector<VkDeviceQueueCreateInfo> queue_infos;
-        queue_infos.reserve(same_family ? 1 : 2);
-
-        VkDeviceQueueCreateInfo q0{};
-        q0.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-        q0.queueFamilyIndex = families.graphicsFamily;
-        q0.queueCount = graphics_count;
-        q0.pQueuePriorities = priorities.data();
-        queue_infos.push_back(q0);
-
-        if (!same_family) {
-            VkDeviceQueueCreateInfo q1{};
-            q1.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-            q1.queueFamilyIndex = families.presentFamily;
-            q1.queueCount = present_count;
-            q1.pQueuePriorities = priorities.data();
-            queue_infos.push_back(q1);
+        queue_infos.reserve(family_requests.size());
+        for (const auto& req : family_requests) {
+            VkDeviceQueueCreateInfo qi{};
+            qi.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+            qi.queueFamilyIndex = req.family;
+            qi.queueCount = req.count;
+            qi.pQueuePriorities = priorities.data();
+            queue_infos.push_back(qi);
         }
 
         VkPhysicalDeviceProperties device_props{};
@@ -1474,6 +1566,8 @@ namespace Honey {
 
         vkGetPhysicalDeviceFeatures2(m_physical_device, &features2);
 
+        m_timeline_semaphore_supported = (timeline_features.timelineSemaphore == VK_TRUE);
+
         // Enable the descriptor indexing features we want (assert support first)
         HN_CORE_ASSERT(indexing_features.runtimeDescriptorArray == VK_TRUE,
                        "Bindless requires runtimeDescriptorArray (VK_EXT_descriptor_indexing)");
@@ -1481,7 +1575,7 @@ namespace Honey {
                        "Bindless requires descriptorBindingPartiallyBound (VK_EXT_descriptor_indexing)");
         HN_CORE_ASSERT(indexing_features.shaderSampledImageArrayNonUniformIndexing == VK_TRUE,
                        "Bindless requires shaderSampledImageArrayNonUniformIndexing (VK_EXT_descriptor_indexing)");
-        HN_CORE_ASSERT(timeline_features.timelineSemaphore == VK_TRUE,
+        HN_CORE_ASSERT(m_timeline_semaphore_supported,
                        "Async upload sync requires timelineSemaphore feature support");
 
         // Optional but commonly used for "true bindless" (variable-sized arrays / update-after-bind)
@@ -1493,7 +1587,7 @@ namespace Honey {
             indexing_features.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
         }
 
-        timeline_features.timelineSemaphore = VK_TRUE;
+        timeline_features.timelineSemaphore = m_timeline_semaphore_supported ? VK_TRUE : VK_FALSE;
 
         // Keep your core features:
         features2.features = features;
@@ -1524,23 +1618,38 @@ namespace Honey {
             m_pipeline_cache.init(m_physical_device, m_device, cache_dir);
         }
 
-        m_graphics_queues.clear();
-        m_graphics_queues.resize(graphics_count, VK_NULL_HANDLE);
+        auto get_family_queues = [&](uint32_t family, uint32_t count) {
+            std::vector<VkQueue> out(count, VK_NULL_HANDLE);
+            for (uint32_t i = 0; i < count; ++i) {
+                vkGetDeviceQueue(m_device, family, i, &out[i]);
+                HN_CORE_ASSERT(out[i], "vkGetDeviceQueue returned null queue");
+            }
+            return out;
+        };
+
+        m_graphics_queues = get_family_queues(graphics_family, graphics_count);
         for (uint32_t i = 0; i < graphics_count; i++) {
-            vkGetDeviceQueue(m_device, families.graphicsFamily, i, &m_graphics_queues[i]);
             HN_CORE_ASSERT(m_graphics_queues[i], "vkGetDeviceQueue returned null graphics queue");
         }
 
-        m_present_queues.clear();
-        if (same_family) {
+        if (present_family == graphics_family) {
             m_present_queues = m_graphics_queues;
         } else {
-            m_present_queues.resize(present_count, VK_NULL_HANDLE);
+            m_present_queues = get_family_queues(present_family, present_count);
             for (uint32_t i = 0; i < present_count; i++) {
-                vkGetDeviceQueue(m_device, families.presentFamily, i, &m_present_queues[i]);
                 HN_CORE_ASSERT(m_present_queues[i], "vkGetDeviceQueue returned null present queue");
             }
         }
+
+        if (compute_family == graphics_family) {
+            m_compute_queues = m_graphics_queues;
+        } else if (compute_family == present_family) {
+            m_compute_queues = m_present_queues;
+        } else {
+            m_compute_queues = get_family_queues(compute_family, compute_count);
+        }
+
+        m_has_dedicated_compute_queue = (compute_family != graphics_family);
 
         m_free_graphics_indices.clear();
         for (uint32_t i = 1; i < m_graphics_queues.size(); i++) {
@@ -1552,8 +1661,19 @@ namespace Honey {
             m_free_present_indices.push_back(i);
         }
 
-        HN_CORE_INFO("Vulkan logical device created. Graphics queues: {0}, Present queues: {1}",
-                     (uint32_t)m_graphics_queues.size(), (uint32_t)m_present_queues.size());
+        m_free_compute_indices.clear();
+        if (m_has_dedicated_compute_queue) {
+            for (uint32_t i = 1; i < m_compute_queues.size(); ++i) {
+                m_free_compute_indices.push_back(i);
+            }
+        }
+
+        HN_CORE_INFO("Vulkan logical device created. Graphics queues: {0}, Compute queues: {1}, Present queues: {2}, dedicatedCompute={3}, timelineSemaphore={4}",
+                     (uint32_t)m_graphics_queues.size(),
+                     (uint32_t)m_compute_queues.size(),
+                     (uint32_t)m_present_queues.size(),
+                     m_has_dedicated_compute_queue,
+                     m_timeline_semaphore_supported);
 
         {
             VkSamplerCreateInfo si{};
