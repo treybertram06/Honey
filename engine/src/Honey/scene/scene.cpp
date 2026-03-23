@@ -447,6 +447,9 @@ namespace Honey {
 
         // render
         Entity primary_camera_entity = get_primary_camera();
+
+        bool parallel_mesh_submit_enabled = Settings::get().renderer.enable_parallel_mesh_submission;
+
         if (primary_camera_entity.is_valid()) {
             auto transform = primary_camera_entity.get_world_transform();
             auto& camera_component = primary_camera_entity.get_component<CameraComponent>();
@@ -478,6 +481,40 @@ namespace Honey {
                 }
 
                 Renderer2D::end_scene();
+
+                Renderer3D::begin_scene(*primary_camera, transform);
+
+                if (!parallel_mesh_submit_enabled) {
+                    for (auto entity : m_registry.view<TransformComponent, MeshRendererComponent>()) {
+                        auto& tc = m_registry.get<TransformComponent>(entity);
+                        auto& mr = m_registry.get<MeshRendererComponent>(entity);
+
+                        if (!mr.mesh)
+                            continue;
+
+                        const glm::mat4 world = tc.get_transform();
+
+                        const auto& submeshes = mr.mesh->get_submeshes();
+                        for (size_t i = 0; i < submeshes.size(); ++i) {
+                            const auto& sm = submeshes[i];
+
+                            Ref<Material> material = sm.material;
+
+                            // Optional: override material if present
+                            if (i < mr.material_overrides.size() && mr.material_overrides[i])
+                                material = mr.material_overrides[i];
+
+                            if (material)
+                                material->set_base_color_factor(mr.color);
+
+                            Renderer3D::draw_mesh(sm.vao, material, world * sm.transform);
+                        }
+                    }
+                } else {
+                    HN_CORE_WARN("Parallel mesh submission is not yet implemented! No meshes will be drawn.");
+                }
+
+                Renderer3D::end_scene();
             }
         }
 
@@ -610,6 +647,7 @@ namespace Honey {
         copy_component<BoxCollider2DComponent>      (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<CircleCollider2DComponent>   (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<AudioSourceComponent>        (dst_scene_registry, src_scene_registry, entt_map);
+        copy_component<MeshRendererComponent>       (dst_scene_registry, src_scene_registry, entt_map);
 
         auto view = src_scene_registry.view<RelationshipComponent>();
         for (auto e : view) {
@@ -660,6 +698,7 @@ namespace Honey {
         copy_component_if_exists<BoxCollider2DComponent>        (new_entity, entity);
         copy_component_if_exists<CircleCollider2DComponent>     (new_entity, entity);
         copy_component_if_exists<AudioSourceComponent>          (new_entity, entity);
+        copy_component_if_exists<MeshRendererComponent>         (new_entity, entity);
 
     }
     //void Scene::create_prefab(const Entity& entity, const std::string& path) {
