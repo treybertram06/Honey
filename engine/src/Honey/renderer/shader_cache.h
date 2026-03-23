@@ -19,6 +19,15 @@ namespace Honey {
         struct SpirvPaths {
             std::filesystem::path vertex;
             std::filesystem::path fragment;
+            std::filesystem::path compute;
+
+            bool has_graphics() const {
+                return !vertex.empty() && !fragment.empty();
+            }
+
+            bool has_compute() const {
+                return !compute.empty();
+            }
         };
 
         SpirvPaths get_or_compile_spirv_paths(const std::filesystem::path& shader_path);
@@ -31,6 +40,7 @@ namespace Honey {
             std::filesystem::path source_path;
             std::filesystem::path vertex_spirv_path;
             std::filesystem::path fragment_spirv_path;
+            std::filesystem::path compute_spirv_path;
             std::filesystem::file_time_type last_modified{};
             Ref<Shader> cached_shader;
         };

@@ -73,22 +73,32 @@ namespace Honey {
         // Disk-first: if the expected SPIR-V cache files exist, reuse them without compiling.
         const auto vert_path = get_spirv_cache_path(shader_path, "vert");
         const auto frag_path = get_spirv_cache_path(shader_path, "frag");
+        const auto comp_path = get_spirv_cache_path(shader_path, "comp");
 
-        if (file_exists_nonempty(vert_path) && file_exists_nonempty(frag_path)) {
+        const bool has_graphics_on_disk = file_exists_nonempty(vert_path) && file_exists_nonempty(frag_path);
+        const bool has_compute_on_disk = file_exists_nonempty(comp_path);
+
+        if (has_graphics_on_disk || has_compute_on_disk) {
             ShaderAsset asset;
             asset.source_path = shader_path;
             asset.vertex_spirv_path = vert_path;
             asset.fragment_spirv_path = frag_path;
+            asset.compute_spirv_path = comp_path;
 
             // Best-effort timestamp (not required for correctness anymore)
             std::error_code ec;
             asset.last_modified = std::filesystem::last_write_time(shader_path, ec);
 
             if (Renderer::get_api() == RendererAPI::API::opengl) {
-                asset.cached_shader = Shader::create_from_spirv_files(vert_path, frag_path);
-                if (!asset.cached_shader) {
-                    HN_CORE_ERROR("Failed to create shader from cached SPIR-V: {0}", shader_path.string());
-                    return nullptr;
+                if (has_graphics_on_disk) {
+                    asset.cached_shader = Shader::create_from_spirv_files(vert_path, frag_path);
+                    if (!asset.cached_shader) {
+                        HN_CORE_ERROR("Failed to create shader from cached SPIR-V: {0}", shader_path.string());
+                        return nullptr;
+                    }
+                } else {
+                    HN_CORE_WARN("OpenGL shader creation requested for compute-only shader '{0}'. Returning null shader handle.",
+                                 shader_path.string());
                 }
             } else {
                 asset.cached_shader = nullptr; // Vulkan: shaders are used via pipeline creation
@@ -108,14 +118,20 @@ namespace Honey {
             asset.source_path = shader_path;
             asset.vertex_spirv_path = vert_path;
             asset.fragment_spirv_path = frag_path;
+            asset.compute_spirv_path = comp_path;
             asset.last_modified = std::filesystem::last_write_time(shader_path);
             asset.cached_shader = nullptr;
 
             if (Renderer::get_api() == RendererAPI::API::opengl) {
-                asset.cached_shader = Shader::create_from_spirv_files(vert_path, frag_path);
-                if (!asset.cached_shader) {
-                    HN_CORE_ERROR("Failed to create shader from SPIR-V: {0}", shader_path.stem().string());
-                    return nullptr;
+                if (file_exists_nonempty(vert_path) && file_exists_nonempty(frag_path)) {
+                    asset.cached_shader = Shader::create_from_spirv_files(vert_path, frag_path);
+                    if (!asset.cached_shader) {
+                        HN_CORE_ERROR("Failed to create shader from SPIR-V: {0}", shader_path.stem().string());
+                        return nullptr;
+                    }
+                } else {
+                    HN_CORE_WARN("OpenGL shader creation requested for compute-only shader '{0}'. Returning null shader handle.",
+                                 shader_path.string());
                 }
             }
 
@@ -131,10 +147,18 @@ namespace Honey {
     ShaderCache::SpirvPaths ShaderCache::get_or_compile_spirv_paths(const std::filesystem::path& shader_path) {
         const auto vert_path = get_spirv_cache_path(shader_path, "vert");
         const auto frag_path = get_spirv_cache_path(shader_path, "frag");
+        const auto comp_path = get_spirv_cache_path(shader_path, "comp");
 
-        if (file_exists_nonempty(vert_path) && file_exists_nonempty(frag_path)) {
+        const bool has_graphics_on_disk = file_exists_nonempty(vert_path) && file_exists_nonempty(frag_path);
+        const bool has_compute_on_disk = file_exists_nonempty(comp_path);
+
+        if (has_graphics_on_disk || has_compute_on_disk) {
             //HN_CORE_INFO("Shader cache hit (SPIR-V only): {0}", shader_path.string());
-            return { vert_path, frag_path };
+            return {
+                has_graphics_on_disk ? vert_path : std::filesystem::path{},
+                has_graphics_on_disk ? frag_path : std::filesystem::path{},
+                has_compute_on_disk ? comp_path : std::filesystem::path{}
+            };
         }
 
         std::string shader_key = shader_path.string();
@@ -148,6 +172,7 @@ namespace Honey {
             asset.source_path = shader_path;
             asset.vertex_spirv_path = vert_path;
             asset.fragment_spirv_path = frag_path;
+            asset.compute_spirv_path = comp_path;
             asset.last_modified = std::filesystem::last_write_time(shader_path);
             asset.cached_shader = nullptr;
 
@@ -156,10 +181,21 @@ namespace Honey {
         }
 
         HN_CORE_ASSERT(it != m_shader_assets.end(), "ShaderCache: failed to create/find shader asset entry");
-        HN_CORE_ASSERT(std::filesystem::exists(it->second.vertex_spirv_path), "Missing cached vertex SPIR-V");
-        HN_CORE_ASSERT(std::filesystem::exists(it->second.fragment_spirv_path), "Missing cached fragment SPIR-V");
+        const bool has_graphics =
+            std::filesystem::exists(it->second.vertex_spirv_path) &&
+            std::filesystem::exists(it->second.fragment_spirv_path);
+        const bool has_compute =
+            !it->second.compute_spirv_path.empty() && std::filesystem::exists(it->second.compute_spirv_path);
 
-        return { it->second.vertex_spirv_path, it->second.fragment_spirv_path };
+        HN_CORE_ASSERT(has_graphics || has_compute,
+                       "ShaderCache: expected either graphics SPIR-V pair or compute SPIR-V for '{0}'",
+                       shader_path.string());
+
+        return {
+            has_graphics ? it->second.vertex_spirv_path : std::filesystem::path{},
+            has_graphics ? it->second.fragment_spirv_path : std::filesystem::path{},
+            has_compute ? it->second.compute_spirv_path : std::filesystem::path{}
+        };
     }
 
     bool ShaderCache::needs_recompilation(const ShaderAsset& asset) {
@@ -184,9 +220,13 @@ namespace Honey {
                 // Ignore directory scan errors and fall back to existing checks
             }
 
-            // Check if SPIR-V files exist
-            if (!std::filesystem::exists(asset.vertex_spirv_path) ||
-                !std::filesystem::exists(asset.fragment_spirv_path)) {
+            const bool has_graphics =
+                std::filesystem::exists(asset.vertex_spirv_path) &&
+                std::filesystem::exists(asset.fragment_spirv_path);
+            const bool has_compute =
+                !asset.compute_spirv_path.empty() && std::filesystem::exists(asset.compute_spirv_path);
+
+            if (!has_graphics && !has_compute) {
                 return true;
             }
 
@@ -208,27 +248,50 @@ namespace Honey {
         // Write SPIR-V files to cache
         auto vert_path = get_spirv_cache_path(shader_path, "vert");
         auto frag_path = get_spirv_cache_path(shader_path, "frag");
+        auto comp_path = get_spirv_cache_path(shader_path, "comp");
 
         try {
-            // Write vertex SPIR-V
-            std::ofstream vert_file(vert_path, std::ios::binary);
-            if (!vert_file) {
-                throw std::runtime_error("Failed to open vertex SPIR-V file for writing");
-            }
-            vert_file.write(reinterpret_cast<const char*>(result.vertex_spirv.data()),
-                           result.vertex_spirv.size() * sizeof(uint32_t));
-            vert_file.close();
+            if (result.has_graphics_stages()) {
+                // Write vertex SPIR-V
+                std::ofstream vert_file(vert_path, std::ios::binary);
+                if (!vert_file) {
+                    throw std::runtime_error("Failed to open vertex SPIR-V file for writing");
+                }
+                vert_file.write(reinterpret_cast<const char*>(result.vertex_spirv.data()),
+                                result.vertex_spirv.size() * sizeof(uint32_t));
+                vert_file.close();
 
-            // Write fragment SPIR-V
-            std::ofstream frag_file(frag_path, std::ios::binary);
-            if (!frag_file) {
-                throw std::runtime_error("Failed to open fragment SPIR-V file for writing");
+                // Write fragment SPIR-V
+                std::ofstream frag_file(frag_path, std::ios::binary);
+                if (!frag_file) {
+                    throw std::runtime_error("Failed to open fragment SPIR-V file for writing");
+                }
+                frag_file.write(reinterpret_cast<const char*>(result.fragment_spirv.data()),
+                                result.fragment_spirv.size() * sizeof(uint32_t));
+                frag_file.close();
+            } else {
+                std::error_code ec;
+                std::filesystem::remove(vert_path, ec);
+                std::filesystem::remove(frag_path, ec);
             }
-            frag_file.write(reinterpret_cast<const char*>(result.fragment_spirv.data()),
-                           result.fragment_spirv.size() * sizeof(uint32_t));
-            frag_file.close();
 
-            HN_CORE_INFO("SPIR-V cache written: {0}, {1}", vert_path.string(), frag_path.string());
+            if (result.has_compute_stage()) {
+                std::ofstream comp_file(comp_path, std::ios::binary);
+                if (!comp_file) {
+                    throw std::runtime_error("Failed to open compute SPIR-V file for writing");
+                }
+                comp_file.write(reinterpret_cast<const char*>(result.compute_spirv.data()),
+                                result.compute_spirv.size() * sizeof(uint32_t));
+                comp_file.close();
+            } else {
+                std::error_code ec;
+                std::filesystem::remove(comp_path, ec);
+            }
+
+            HN_CORE_INFO("SPIR-V cache written: vert={0}, frag={1}, comp={2}",
+                         vert_path.string(),
+                         frag_path.string(),
+                         comp_path.string());
 
         } catch (const std::exception& e) {
             throw std::runtime_error("Failed to write SPIR-V cache: " + std::string(e.what()));

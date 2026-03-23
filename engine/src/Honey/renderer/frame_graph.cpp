@@ -250,7 +250,7 @@ namespace Honey {
             HN_CORE_ASSERT(vk_context, "FrameGraphCompiled::execute expected VulkanContext when Vulkan API is active");
         }
 
-        bool warned_non_graphics_fallback = false;
+        static bool warned_non_graphics_fallback = false;
 
         const bool collect_timings = execution_context.collect_cpu_timings || execution_context.out_stats;
         FGExecutionStats* stats_out = execution_context.out_stats;
@@ -829,9 +829,11 @@ namespace Honey {
                     }
 
                     if (!has_texture_output) {
-                        out_diagnostics.add_warning(
-                            "Pass does not target swapchain and no framebuffer target was resolved",
-                            pass.name);
+                        if (pass.queue_domain == FGQueueDomain::Graphics) {
+                            out_diagnostics.add_warning(
+                                "Pass does not target swapchain and no framebuffer target was resolved",
+                                pass.name);
+                        }
                     }
                 }
             }
@@ -1142,6 +1144,9 @@ namespace Honey {
                 for (FGPassHandle pass_idx = 0; pass_idx < compiled->m_passes.size(); ++pass_idx) {
                     auto& pass = compiled->m_passes[pass_idx];
 
+                    if (pass.queue_domain != FGQueueDomain::Graphics)
+                        continue;
+
                     if (pass.targets_swapchain)
                         continue;
                     if (pass.target_framebuffer)
@@ -1190,9 +1195,8 @@ namespace Honey {
                     }
 
                     if (candidate.resources.empty()) {
-                        out_diagnostics.add_warning(
-                            "Pass does not target swapchain and no framebuffer target was resolved",
-                            pass.name);
+                        // Graphics pass with no texture outputs and no imported target framebuffer.
+                        // Warning is already emitted during initial pass target mapping.
                         continue;
                     }
 
@@ -1309,14 +1313,6 @@ namespace Honey {
                         auto& r = compiled->m_resources[h];
                         r.physical_allocation = physical_index;
                         r.framebuffer = physical_allocations[physical_index].framebuffer;
-                    }
-                }
-
-                for (const auto& pass : compiled->m_passes) {
-                    if (!pass.targets_swapchain && !pass.target_framebuffer) {
-                        out_diagnostics.add_warning(
-                            "Pass does not target swapchain and no framebuffer target was resolved",
-                            pass.name);
                     }
                 }
 

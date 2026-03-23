@@ -147,4 +147,17 @@ namespace Honey {
 
         static Ref<UniformBuffer> create(uint32_t size, uint32_t binding);
     };
+
+    class StorageBuffer {
+    public:
+        virtual ~StorageBuffer() {}
+
+        virtual void bind(uint32_t binding = 0) const = 0;
+        virtual void unbind() const = 0;
+
+        virtual void set_data(const void* data, uint32_t size, uint32_t offset = 0) = 0;
+        virtual uint32_t get_size() const = 0;
+
+        static Ref<StorageBuffer> create(uint32_t size, uint32_t usage_flags = 0);
+    };
 }

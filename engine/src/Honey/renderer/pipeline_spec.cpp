@@ -200,6 +200,7 @@ namespace Honey {
 
         PipelineSpec spec{};
         spec.shaderGLSLPath = path;
+        spec.pipelineKind = PipelineKind::Graphics;
         spec.topology = PrimitiveTopology::Triangles;
         spec.cullMode = rs.cull_mode;
         spec.frontFace = FrontFaceWinding::CounterClockwise;
@@ -214,6 +215,17 @@ namespace Honey {
             spec.passType = RenderPassType::Offscreen;
 
         const auto spirv = Renderer::get_shader_cache()->get_or_compile_spirv_paths(spec.shaderGLSLPath);
+        if (spirv.has_compute()) {
+            spec.pipelineKind = PipelineKind::Compute;
+            spec.vertexBindings.clear();
+            spec.perColorAttachmentBlend.clear();
+            return spec;
+        }
+
+        HN_CORE_ASSERT(spirv.has_graphics(),
+                       "PipelineSpec::from_shader expected graphics SPIR-V for '{0}'",
+                       path.string());
+
         auto bindings = reflect_vertex_input_bindings_from_spirv(spirv.vertex);
 
         spec.vertexBindings.clear();

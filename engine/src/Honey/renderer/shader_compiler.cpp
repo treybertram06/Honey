@@ -25,33 +25,58 @@ ShaderCompiler::CompilationResult ShaderCompiler::compile_glsl_to_spirv(const st
         // Read and parse the shader file
         auto shader_sources = parse_shader_file(shader_path);
 
-        if (shader_sources.vertex_source.empty() || shader_sources.fragment_source.empty()) {
-            std::string empty_sources = "";
-            if (shader_sources.vertex_source.empty()) empty_sources += "vertex ";
-            if (shader_sources.fragment_source.empty()) empty_sources += "fragment ";
+        const bool has_vertex = !shader_sources.vertex_source.empty();
+        const bool has_fragment = !shader_sources.fragment_source.empty();
+        const bool has_compute = !shader_sources.compute_source.empty();
 
-            result.error_message = "Failed to parse vertex or fragment shader from file: " + shader_path.string() + ", empty source(s): " + empty_sources;
+        if (has_compute && (has_vertex || has_fragment)) {
+            result.error_message =
+                "Mixed graphics (#type vertex/#type fragment) and compute (#type compute) stages are not supported in a single shader file yet: " +
+                shader_path.string();
             return result;
         }
 
-        // Compile vertex shader
-        result.vertex_spirv = compile_single_stage(shader_sources.vertex_source, ShaderStage::Vertex);
-        if (result.vertex_spirv.empty()) {
-            result.error_message = "Failed to compile vertex shader stage";
-            return result;
-        }
+        if (has_compute) {
+            result.compute_spirv = compile_single_stage(shader_sources.compute_source, ShaderStage::Compute);
+            if (result.compute_spirv.empty()) {
+                result.error_message = "Failed to compile compute shader stage";
+                return result;
+            }
 
-        // Compile fragment shader
-        result.fragment_spirv = compile_single_stage(shader_sources.fragment_source, ShaderStage::Fragment);
-        if (result.fragment_spirv.empty()) {
-            result.error_message = "Failed to compile fragment shader stage";
-            return result;
-        }
+            if (!validate_spirv(result.compute_spirv)) {
+                result.error_message = "Generated compute SPIR-V failed validation";
+                return result;
+            }
+        } else {
+            if (!has_vertex || !has_fragment) {
+                std::string empty_sources;
+                if (!has_vertex) empty_sources += "vertex ";
+                if (!has_fragment) empty_sources += "fragment ";
+                result.error_message =
+                    "Failed to parse required graphics shader stages from file: " + shader_path.string() +
+                    ", missing source(s): " + empty_sources;
+                return result;
+            }
 
-        // Validate the compiled SPIR-V
-        if (!validate_spirv(result.vertex_spirv) || !validate_spirv(result.fragment_spirv)) {
-            result.error_message = "Generated SPIR-V failed validation";
-            return result;
+            // Compile vertex shader
+            result.vertex_spirv = compile_single_stage(shader_sources.vertex_source, ShaderStage::Vertex);
+            if (result.vertex_spirv.empty()) {
+                result.error_message = "Failed to compile vertex shader stage";
+                return result;
+            }
+
+            // Compile fragment shader
+            result.fragment_spirv = compile_single_stage(shader_sources.fragment_source, ShaderStage::Fragment);
+            if (result.fragment_spirv.empty()) {
+                result.error_message = "Failed to compile fragment shader stage";
+                return result;
+            }
+
+            // Validate the compiled SPIR-V
+            if (!validate_spirv(result.vertex_spirv) || !validate_spirv(result.fragment_spirv)) {
+                result.error_message = "Generated graphics SPIR-V failed validation";
+                return result;
+            }
         }
 
         result.success = true;
@@ -286,6 +311,8 @@ ShaderCompiler::ShaderSource ShaderCompiler::parse_shader_file(const std::filesy
             result.vertex_source = stage_source;
         } else if (markers[i].type == "fragment" || markers[i].type == "pixel") {
             result.fragment_source = stage_source;
+        } else if (markers[i].type == "compute") {
+            result.compute_source = stage_source;
         }
     }
 

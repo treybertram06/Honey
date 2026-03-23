@@ -25,6 +25,11 @@ namespace Honey {
         Clockwise,
     };
 
+    enum class PipelineKind {
+        Graphics,
+        Compute,
+    };
+
     struct AttachmentBlendState {
         bool enabled = false;
         // You can expand later (src/dst factors, ops, separate alpha, etc.)
@@ -57,6 +62,7 @@ namespace Honey {
     struct PipelineSpec {
         // High-level identity
         std::filesystem::path shaderGLSLPath;
+        PipelineKind pipelineKind = PipelineKind::Graphics;
 
         // Vertex input
         std::vector<VertexInputBindingSpec> vertexBindings;
@@ -76,7 +82,8 @@ namespace Honey {
             // if (shaderGLSLPath != other.shaderGLSLPath) return false;
             // if (vertexBindings != other.vertexBindings) return false;
 
-            return topology   == other.topology   &&
+            return pipelineKind == other.pipelineKind &&
+                   topology   == other.topology   &&
                    cullMode   == other.cullMode   &&
                    frontFace  == other.frontFace  &&
                    wireframe  == other.wireframe  &&

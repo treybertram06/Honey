@@ -26,8 +26,17 @@ namespace Honey {
         struct CompilationResult {
             std::vector<uint32_t> vertex_spirv;
             std::vector<uint32_t> fragment_spirv;
+            std::vector<uint32_t> compute_spirv;
             bool success = false;
             std::string error_message;
+
+            bool has_graphics_stages() const {
+                return !vertex_spirv.empty() || !fragment_spirv.empty();
+            }
+
+            bool has_compute_stage() const {
+                return !compute_spirv.empty();
+            }
         };
 
         static CompilationResult compile_glsl_to_spirv(const std::filesystem::path& shader_path);
@@ -45,6 +54,7 @@ namespace Honey {
         struct ShaderSource {
             std::string vertex_source;
             std::string fragment_source;
+            std::string compute_source;
         };
 
         static ShaderSource parse_shader_file(const std::filesystem::path& path);
