@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cmath>
 #include <glm/glm.hpp>
+#include <limits>
 #include <queue>
 #include <sstream>
 
@@ -544,6 +545,62 @@ namespace Honey {
     Ref<Framebuffer> FrameGraphPassContext::get_pass_target_framebuffer() const {
         HN_CORE_ASSERT(m_pass, "FrameGraphPassContext::get_pass_target_framebuffer: null pass");
         return m_pass->target_framebuffer;
+    }
+
+    Ref<StorageBuffer> FrameGraphPassContext::get_buffer(const std::string& resource_name) const {
+        HN_CORE_ASSERT(m_graph, "FrameGraphPassContext::get_buffer: null graph");
+        HN_CORE_ASSERT(m_pass, "FrameGraphPassContext::get_buffer: null pass");
+
+        const FGResourceHandle h = m_graph->find_resource_handle(resource_name);
+        if (h == k_invalid_resource || h >= m_graph->m_resources.size())
+            return nullptr;
+
+        const auto& res = m_graph->m_resources[h];
+        if (res.type != FGResourceType::Buffer) {
+            HN_CORE_WARN("FrameGraphPassContext::get_buffer: resource '{0}' is not a Buffer", resource_name);
+            return nullptr;
+        }
+
+        if (!res.storage_buffer) {
+            HN_CORE_WARN("FrameGraphPassContext::get_buffer: buffer resource '{0}' has no runtime allocation", resource_name);
+            return nullptr;
+        }
+
+        return res.storage_buffer;
+    }
+
+    Ref<StorageBuffer> FrameGraphPassContext::get_input_buffer(const std::string& resource_name) const {
+        HN_CORE_ASSERT(m_graph, "FrameGraphPassContext::get_input_buffer: null graph");
+        HN_CORE_ASSERT(m_pass, "FrameGraphPassContext::get_input_buffer: null pass");
+
+        const FGResourceHandle h = m_graph->find_resource_handle(resource_name);
+        if (h == k_invalid_resource || h >= m_graph->m_resources.size())
+            return nullptr;
+
+        if (std::find(m_pass->reads.begin(), m_pass->reads.end(), h) == m_pass->reads.end()) {
+            HN_CORE_WARN("FrameGraphPassContext::get_input_buffer: resource '{0}' is not listed as input for pass '{1}'",
+                         resource_name,
+                         m_pass->name);
+        }
+
+        return get_buffer(resource_name);
+    }
+
+    Ref<StorageBuffer> FrameGraphPassContext::get_output_buffer(const std::string& resource_name) const {
+        HN_CORE_ASSERT(m_graph, "FrameGraphPassContext::get_output_buffer: null graph");
+        HN_CORE_ASSERT(m_pass, "FrameGraphPassContext::get_output_buffer: null pass");
+
+        const FGResourceHandle h = m_graph->find_resource_handle(resource_name);
+        if (h == k_invalid_resource || h >= m_graph->m_resources.size())
+            return nullptr;
+
+        if (std::find(m_pass->writes.begin(), m_pass->writes.end(), h) == m_pass->writes.end()) {
+            HN_CORE_WARN("FrameGraphPassContext::get_output_buffer: resource '{0}' is not listed as output for pass '{1}'",
+                         resource_name,
+                         m_pass->name);
+        }
+
+        return get_buffer(resource_name);
     }
 
     bool FrameGraphPassContext::submit_vulkan_compute(const FGVulkanRecordCommands& record) const {
@@ -1318,6 +1375,27 @@ namespace Honey {
 
                 compiled->m_physical_framebuffer_allocations = static_cast<uint32_t>(physical_allocations.size());
                 compiled->m_logical_framebuffer_allocations = static_cast<uint32_t>(candidates.size());
+            }
+        }
+
+        // Allocate runtime storage buffers for logical Buffer resources.
+        for (auto& res : compiled->m_resources) {
+            if (res.type != FGResourceType::Buffer)
+                continue;
+
+            if (res.buffer.size == 0)
+                continue;
+
+            if (res.buffer.size > static_cast<uint64_t>(std::numeric_limits<uint32_t>::max())) {
+                out_diagnostics.add_error("Buffer resource exceeds max supported size for runtime allocation", res.name);
+                continue;
+            }
+
+            res.storage_buffer = StorageBuffer::create(static_cast<uint32_t>(res.buffer.size),
+                                                       res.buffer.usage_flags);
+
+            if (!res.storage_buffer) {
+                out_diagnostics.add_error("Failed to create runtime storage buffer resource", res.name);
             }
         }
 

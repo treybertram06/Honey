@@ -143,5 +143,38 @@ namespace Honey {
         glBindBuffer(GL_UNIFORM_BUFFER, 0);
     }
 
+    OpenGLStorageBuffer::OpenGLStorageBuffer(uint32_t size, uint32_t usage_flags)
+        : m_size(size) {
+        HN_CORE_ASSERT(false,
+                       "OpenGLStorageBuffer is currently a stub and is not implemented yet (size={0}, usage_flags={1})",
+                       size,
+                       usage_flags);
+    }
+
+    OpenGLStorageBuffer::~OpenGLStorageBuffer() = default;
+
+    void OpenGLStorageBuffer::bind(uint32_t binding) const {
+        HN_CORE_ASSERT(false,
+                       "OpenGLStorageBuffer::bind is currently a stub and is not implemented yet (binding={0})",
+                       binding);
+    }
+
+    void OpenGLStorageBuffer::unbind() const {
+        HN_CORE_ASSERT(false, "OpenGLStorageBuffer::unbind is currently a stub and is not implemented yet");
+    }
+
+    void OpenGLStorageBuffer::set_data(const void* data, uint32_t size, uint32_t offset) {
+        HN_CORE_ASSERT(false,
+                       "OpenGLStorageBuffer::set_data is currently a stub and is not implemented yet (size={0}, offset={1}, data={2})",
+                       size,
+                       offset,
+                       data != nullptr ? "non-null" : "null");
+    }
+
+    void* OpenGLStorageBuffer::get_native_buffer() const {
+        HN_CORE_ASSERT(false, "OpenGLStorageBuffer::get_native_buffer is currently a stub and is not implemented yet");
+        return nullptr;
+    }
+
 
 }

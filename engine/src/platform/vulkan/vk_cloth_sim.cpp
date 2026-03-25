@@ -70,6 +70,9 @@ namespace Honey {
         m_particle_count = width * height;
         m_read_index = 0;
         m_write_index = 1;
+        m_external_state_buffers[0] = VK_NULL_HANDLE;
+        m_external_state_buffers[1] = VK_NULL_HANDLE;
+        m_use_external_state_buffers = false;
 
         if (!m_device || !m_physical_device) {
             HN_CORE_ERROR("VulkanClothSim::init failed: missing Vulkan device handles");
@@ -105,6 +108,9 @@ namespace Honey {
         m_particle_count = 0;
         m_read_index = 0;
         m_write_index = 1;
+        m_external_state_buffers[0] = VK_NULL_HANDLE;
+        m_external_state_buffers[1] = VK_NULL_HANDLE;
+        m_use_external_state_buffers = false;
         m_initialized = false;
     }
 
@@ -199,46 +205,7 @@ namespace Honey {
         const VkResult alloc_res = vkAllocateDescriptorSets(m_device, &alloc, m_descriptor_sets);
         HN_CORE_ASSERT(alloc_res == VK_SUCCESS, "VulkanClothSim failed to allocate descriptor sets");
 
-        const VkDeviceSize buffer_size = static_cast<VkDeviceSize>(m_particle_count) * sizeof(float) * 8;
-
-        // Set 0: read A, write B
-        // Set 1: read B, write A
-        for (uint32_t set_index = 0; set_index < 2; ++set_index) {
-            const uint32_t read = (set_index == 0) ? 0u : 1u;
-            const uint32_t write = (set_index == 0) ? 1u : 0u;
-
-            VkDescriptorBufferInfo read_info{};
-            read_info.buffer = m_state_buffers[read].buffer;
-            read_info.offset = 0;
-            read_info.range = buffer_size;
-
-            VkDescriptorBufferInfo write_info{};
-            write_info.buffer = m_state_buffers[write].buffer;
-            write_info.offset = 0;
-            write_info.range = buffer_size;
-
-            std::array<VkWriteDescriptorSet, 2> writes{};
-
-            writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[0].dstSet = m_descriptor_sets[set_index];
-            writes[0].dstBinding = 0;
-            writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            writes[0].descriptorCount = 1;
-            writes[0].pBufferInfo = &read_info;
-
-            writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[1].dstSet = m_descriptor_sets[set_index];
-            writes[1].dstBinding = 1;
-            writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            writes[1].descriptorCount = 1;
-            writes[1].pBufferInfo = &write_info;
-
-            vkUpdateDescriptorSets(m_device,
-                                   static_cast<uint32_t>(writes.size()),
-                                   writes.data(),
-                                   0,
-                                   nullptr);
-        }
+        update_descriptor_sets_for_state_buffers();
 
         return true;
     }
@@ -386,6 +353,80 @@ namespace Honey {
         }
     }
 
+    void VulkanClothSim::set_external_state_buffers(const VkBuffer buffer_a, const VkBuffer buffer_b) {
+        const bool use_external = (buffer_a != VK_NULL_HANDLE && buffer_b != VK_NULL_HANDLE);
+
+        m_external_state_buffers[0] = buffer_a;
+        m_external_state_buffers[1] = buffer_b;
+        m_use_external_state_buffers = use_external;
+
+        if ((buffer_a == VK_NULL_HANDLE) != (buffer_b == VK_NULL_HANDLE)) {
+            HN_CORE_WARN("VulkanClothSim::set_external_state_buffers received a partial buffer set; reverting to internal buffers");
+        }
+
+        if (m_initialized)
+            update_descriptor_sets_for_state_buffers();
+    }
+
+    VkBuffer VulkanClothSim::state_buffer_handle(const uint32_t index) const {
+        HN_CORE_ASSERT(index < 2u, "VulkanClothSim::state_buffer_handle index out of range");
+        return m_use_external_state_buffers
+            ? m_external_state_buffers[index]
+            : m_state_buffers[index].buffer;
+    }
+
+    void VulkanClothSim::update_descriptor_sets_for_state_buffers() {
+        if (!m_device || !m_descriptor_sets[0] || !m_descriptor_sets[1])
+            return;
+
+        const VkDeviceSize buffer_size = static_cast<VkDeviceSize>(m_particle_count) * sizeof(float) * 8;
+
+        // Set 0: read A, write B
+        // Set 1: read B, write A
+        for (uint32_t set_index = 0; set_index < 2; ++set_index) {
+            const uint32_t read = (set_index == 0) ? 0u : 1u;
+            const uint32_t write = (set_index == 0) ? 1u : 0u;
+
+            const VkBuffer read_buffer = state_buffer_handle(read);
+            const VkBuffer write_buffer = state_buffer_handle(write);
+
+            HN_CORE_ASSERT(read_buffer != VK_NULL_HANDLE && write_buffer != VK_NULL_HANDLE,
+                           "VulkanClothSim::update_descriptor_sets_for_state_buffers requires valid state buffers");
+
+            VkDescriptorBufferInfo read_info{};
+            read_info.buffer = read_buffer;
+            read_info.offset = 0;
+            read_info.range = buffer_size;
+
+            VkDescriptorBufferInfo write_info{};
+            write_info.buffer = write_buffer;
+            write_info.offset = 0;
+            write_info.range = buffer_size;
+
+            std::array<VkWriteDescriptorSet, 2> writes{};
+
+            writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[0].dstSet = m_descriptor_sets[set_index];
+            writes[0].dstBinding = 0;
+            writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            writes[0].descriptorCount = 1;
+            writes[0].pBufferInfo = &read_info;
+
+            writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[1].dstSet = m_descriptor_sets[set_index];
+            writes[1].dstBinding = 1;
+            writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            writes[1].descriptorCount = 1;
+            writes[1].pBufferInfo = &write_info;
+
+            vkUpdateDescriptorSets(m_device,
+                                   static_cast<uint32_t>(writes.size()),
+                                   writes.data(),
+                                   0,
+                                   nullptr);
+        }
+    }
+
     void VulkanClothSim::record_seed(VkCommandBuffer cmd) const {
         HN_CORE_ASSERT(m_initialized, "VulkanClothSim::record_seed called before init");
         HN_CORE_ASSERT(cmd, "VulkanClothSim::record_seed requires a valid command buffer");
@@ -422,40 +463,66 @@ namespace Honey {
         vkCmdDispatch(cmd, groups_x, groups_y, 1);
     }
 
-    void VulkanClothSim::record_sim(VkCommandBuffer cmd, const float dt, const uint32_t frame_index) const {
+    void VulkanClothSim::record_sim(VkCommandBuffer cmd, const float dt, const uint32_t frame_index, const uint32_t substeps) {
         HN_CORE_ASSERT(m_initialized, "VulkanClothSim::record_sim called before init");
         HN_CORE_ASSERT(cmd, "VulkanClothSim::record_sim requires a valid command buffer");
+        HN_CORE_ASSERT(substeps > 0, "VulkanClothSim::record_sim substeps must be at least 1");
 
         const uint32_t groups_x = (m_width + 15u) / 16u;
         const uint32_t groups_y = (m_height + 15u) / 16u;
-
-        ComputePushConstants pc{};
-        pc.dt = dt;
-        pc.width = m_width;
-        pc.height = m_height;
-        pc.frame_index = frame_index;
+        const float sub_dt = dt / static_cast<float>(substeps);
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_sim_pipeline);
 
-        const uint32_t set_index = active_set_index();
-        const VkDescriptorSet set = m_descriptor_sets[set_index];
-        vkCmdBindDescriptorSets(cmd,
-                                VK_PIPELINE_BIND_POINT_COMPUTE,
-                                m_pipeline_layout,
-                                0,
-                                1,
-                                &set,
-                                0,
-                                nullptr);
+        for (uint32_t s = 0; s < substeps; ++s) {
+            const VkDescriptorSet set = m_descriptor_sets[active_set_index()];
+            vkCmdBindDescriptorSets(cmd,
+                                    VK_PIPELINE_BIND_POINT_COMPUTE,
+                                    m_pipeline_layout,
+                                    0, 1, &set,
+                                    0, nullptr);
 
-        vkCmdPushConstants(cmd,
-                           m_pipeline_layout,
-                           VK_SHADER_STAGE_COMPUTE_BIT,
-                           0,
-                           sizeof(ComputePushConstants),
-                           &pc);
+            ComputePushConstants pc{};
+            pc.dt = sub_dt;
+            pc.width = m_width;
+            pc.height = m_height;
+            pc.frame_index = frame_index * substeps + s;
+            vkCmdPushConstants(cmd,
+                               m_pipeline_layout,
+                               VK_SHADER_STAGE_COMPUTE_BIT,
+                               0,
+                               sizeof(ComputePushConstants),
+                               &pc);
 
-        vkCmdDispatch(cmd, groups_x, groups_y, 1);
+            vkCmdDispatch(cmd, groups_x, groups_y, 1);
+
+            // Between substeps: barrier on the buffer we just wrote, then swap
+            // ping-pong so the next substep reads what we just wrote.
+            // (Skipped after the final substep — the caller's swap_ping_pong()
+            // handles that transition.)
+            if (s < substeps - 1u) {
+                VkBuffer written = state_buffer_handle(m_write_index);
+                std::swap(m_read_index, m_write_index);
+
+                VkBufferMemoryBarrier barrier{};
+                barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+                barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+                barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.buffer = written;
+                barrier.offset = 0;
+                barrier.size = VK_WHOLE_SIZE;
+
+                vkCmdPipelineBarrier(cmd,
+                                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                     0,
+                                     0, nullptr,
+                                     1, &barrier,
+                                     0, nullptr);
+            }
+        }
     }
 
     void VulkanClothSim::reset_ping_pong() {
@@ -468,11 +535,11 @@ namespace Honey {
     }
 
     VkBuffer VulkanClothSim::current_read_buffer() const {
-        return m_state_buffers[m_read_index].buffer;
+        return state_buffer_handle(m_read_index);
     }
 
     VkBuffer VulkanClothSim::current_write_buffer() const {
-        return m_state_buffers[m_write_index].buffer;
+        return state_buffer_handle(m_write_index);
     }
 
     uint32_t VulkanClothSim::active_set_index() const {

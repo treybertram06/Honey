@@ -169,6 +169,10 @@ namespace Honey {
         return CreateRef<OpenGLUniformBuffer>(size, binding);
     }
 
+    Ref<StorageBuffer> OpenGLRendererAPI::create_storage_buffer(uint32_t size, uint32_t usage_flags) {
+        return CreateRef<OpenGLStorageBuffer>(size, usage_flags);
+    }
+
     Ref<Framebuffer> OpenGLRendererAPI::create_framebuffer(const FramebufferSpecification& spec) {
         return CreateRef<OpenGLFramebuffer>(spec);
     }

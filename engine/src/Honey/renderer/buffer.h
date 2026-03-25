@@ -158,6 +158,8 @@ namespace Honey {
         virtual void set_data(const void* data, uint32_t size, uint32_t offset = 0) = 0;
         virtual uint32_t get_size() const = 0;
 
+        virtual void* get_native_buffer() const = 0;
+
         static Ref<StorageBuffer> create(uint32_t size, uint32_t usage_flags = 0);
     };
 }

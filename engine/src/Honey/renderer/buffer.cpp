@@ -27,5 +27,9 @@ namespace Honey {
         return RenderCommand::get_renderer_api()->create_uniform_buffer(size, binding);
     }
 
+    Ref<StorageBuffer> StorageBuffer::create(uint32_t size, uint32_t usage_flags) {
+        return RenderCommand::get_renderer_api()->create_storage_buffer(size, usage_flags);
+    }
+
 
 }

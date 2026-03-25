@@ -315,4 +315,76 @@ namespace Honey {
         upload_to_buffer(m_device_raw, reinterpret_cast<VkDeviceMemory>(m_memory), data, size);
     }
 
+    VulkanStorageBuffer::VulkanStorageBuffer(VkDevice device,
+                                             VkPhysicalDevice phys,
+                                             uint32_t size,
+                                             uint32_t usage_flags)
+        : m_device_raw(device),
+          m_phys_raw(phys) {
+        HN_PROFILE_FUNCTION();
+        HN_CORE_ASSERT(m_device_raw && m_phys_raw, "VulkanStorageBuffer: invalid device/physical device");
+        allocate(size, usage_flags);
+    }
+
+    VulkanStorageBuffer::~VulkanStorageBuffer() {
+        HN_PROFILE_FUNCTION();
+        if (!m_device_raw)
+            return;
+
+        if (m_buffer)
+            vkDestroyBuffer(m_device_raw, reinterpret_cast<VkBuffer>(m_buffer), nullptr);
+        if (m_memory)
+            vkFreeMemory(m_device_raw, reinterpret_cast<VkDeviceMemory>(m_memory), nullptr);
+
+        m_buffer = nullptr;
+        m_memory = nullptr;
+        m_device_raw = nullptr;
+        m_phys_raw = nullptr;
+    }
+
+    void VulkanStorageBuffer::allocate(uint32_t size, uint32_t usage_flags) {
+        HN_PROFILE_FUNCTION();
+        HN_CORE_ASSERT(size > 0, "VulkanStorageBuffer::allocate requires size > 0");
+
+        m_size = size;
+        m_usage_flags = usage_flags;
+
+        // Keep STORAGE_BUFFER usage always enabled. Optional usage_flags are Vulkan usage bits.
+        VkBufferUsageFlags vk_usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                      static_cast<VkBufferUsageFlags>(usage_flags);
+
+        VkBuffer buf = VK_NULL_HANDLE;
+        VkDeviceMemory mem = VK_NULL_HANDLE;
+
+        create_buffer(m_device_raw,
+                      m_phys_raw,
+                      static_cast<VkDeviceSize>(size),
+                      vk_usage,
+                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                      buf,
+                      mem);
+
+        m_buffer = reinterpret_cast<void*>(buf);
+        m_memory = reinterpret_cast<void*>(mem);
+    }
+
+    void VulkanStorageBuffer::set_data(const void* data, uint32_t size, uint32_t offset) {
+        HN_PROFILE_FUNCTION();
+        HN_CORE_ASSERT(data, "VulkanStorageBuffer::set_data data is null");
+        HN_CORE_ASSERT(offset <= m_size, "VulkanStorageBuffer::set_data offset out of range");
+        HN_CORE_ASSERT(size <= (m_size - offset), "VulkanStorageBuffer::set_data range exceeds buffer size");
+
+        void* mapped = nullptr;
+        VkResult r = vkMapMemory(m_device_raw,
+                                 reinterpret_cast<VkDeviceMemory>(m_memory),
+                                 offset,
+                                 size,
+                                 0,
+                                 &mapped);
+        HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanStorageBuffer::set_data vkMapMemory failed");
+
+        std::memcpy(mapped, data, static_cast<size_t>(size));
+        vkUnmapMemory(m_device_raw, reinterpret_cast<VkDeviceMemory>(m_memory));
+    }
+
 } // namespace Honey

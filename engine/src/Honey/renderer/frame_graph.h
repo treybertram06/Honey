@@ -9,6 +9,7 @@
 #include <vector>
 #include <yaml-cpp/yaml.h>
 
+#include "buffer.h"
 #include "framebuffer.h"
 #include "Honey/core/base.h"
 
@@ -218,6 +219,9 @@ namespace Honey {
 
         FGPassHandle first_use = k_invalid_pass;
         FGPassHandle last_use  = k_invalid_pass;
+
+        // API-agnostic runtime backing for Buffer resources.
+        Ref<StorageBuffer> storage_buffer;
     };
 
     struct FGCompiledResourceBinding {
@@ -291,6 +295,11 @@ namespace Honey {
         Ref<Framebuffer> get_input_framebuffer(const std::string& resource_name) const;
         Ref<Framebuffer> get_output_framebuffer(const std::string& resource_name) const;
         Ref<Framebuffer> get_pass_target_framebuffer() const;
+
+        // API-agnostic buffer accessors for frame-graph Buffer resources.
+        Ref<StorageBuffer> get_buffer(const std::string& resource_name) const;
+        Ref<StorageBuffer> get_input_buffer(const std::string& resource_name) const;
+        Ref<StorageBuffer> get_output_buffer(const std::string& resource_name) const;
 
         // Vulkan-only helper for compute/transfer frame-graph passes.
         // Records and submits a one-time command buffer on the selected queue domain.

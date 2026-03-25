@@ -107,7 +107,8 @@ namespace Honey {
                 BindGlobals,        // camera + textures for now
                 PushConstantsMat4,
                 PushConstants,
-                DrawIndexed
+                DrawIndexed,
+                CustomVulkan        // raw Vulkan record callback, index into custom_callbacks
             };
 
             struct CmdBindPipeline {
@@ -159,6 +160,11 @@ namespace Honey {
                 uint32_t vertexBufferCount = 0;
             };
 
+            // Index into custom_callbacks; the callback records raw Vulkan commands.
+            struct CmdCustomVulkan {
+                uint32_t callback_index = 0;
+            };
+
             struct Cmd {
                 CmdType type{};
                 CmdBeginSwapchainPass begin{};
@@ -168,9 +174,12 @@ namespace Honey {
                 CmdPushConstantsMat4 pushMat4{};
                 CmdPushConstants push{};
                 CmdDrawIndexed draw{};
+                CmdCustomVulkan custom{};
             };
 
             std::vector<Cmd> cmds;
+            // Storage for CustomVulkan callbacks; fn(cmd, pass_width, pass_height)
+            std::vector<std::function<void(VkCommandBuffer, uint32_t, uint32_t)>> custom_callbacks;
 
             void begin_frame() {
                 // Keep old fields for now (will be removed once everything is migrated)
@@ -183,6 +192,7 @@ namespace Honey {
                 drawCursor = 0;
 
                 cmds.clear();
+                custom_callbacks.clear();
                 frame_begun = true;
 
                 sourceTag = FramePacket::CmdBindGlobals::Source::Unknown;
@@ -194,6 +204,13 @@ namespace Honey {
 
         FramePacket& frame_packet() { return m_frame_packet; }
         const FramePacket& frame_packet() const { return m_frame_packet; }
+
+        uint32_t get_current_frame() const { return m_current_frame; }
+
+        // Queues a custom Vulkan record callback into the current frame's FramePacket.
+        // The callback fires during record_command_buffer, inside the currently-open render pass.
+        // fn(VkCommandBuffer cmd, uint32_t pass_w, uint32_t pass_h)
+        void queue_custom_vulkan_cmd(std::function<void(VkCommandBuffer, uint32_t, uint32_t)> fn);
 
         uint32_t get_swapchain_image_format() const { return m_swapchain_image_format; }
         uint32_t get_swapchain_extent_width()  const { return m_swapchain_extent_width; }
@@ -247,7 +264,10 @@ namespace Honey {
 #endif
         }
 
+public:
         static constexpr uint32_t k_max_frames_in_flight = 2;
+
+private:
 
         GLFWwindow* m_window_handle = nullptr;
 

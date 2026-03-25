@@ -88,4 +88,30 @@ namespace Honey {
         void* m_memory = nullptr; // VkDeviceMemory
     };
 
+    class VulkanStorageBuffer : public StorageBuffer {
+    public:
+        VulkanStorageBuffer(VkDevice device, VkPhysicalDevice phys, uint32_t size, uint32_t usage_flags = 0);
+        ~VulkanStorageBuffer() override;
+
+        void bind(uint32_t binding = 0) const override {}
+        void unbind() const override {}
+
+        void set_data(const void* data, uint32_t size, uint32_t offset = 0) override;
+        uint32_t get_size() const override { return m_size; }
+
+        void* get_native_buffer() const override { return m_buffer; }
+
+    private:
+        void allocate(uint32_t size, uint32_t usage_flags);
+
+        VkDevice m_device_raw = nullptr;
+        VkPhysicalDevice m_phys_raw = nullptr;
+
+        uint32_t m_size = 0;
+        uint32_t m_usage_flags = 0;
+
+        void* m_buffer = nullptr; // VkBuffer
+        void* m_memory = nullptr; // VkDeviceMemory
+    };
+
 } // namespace Honey

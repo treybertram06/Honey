@@ -1159,6 +1159,19 @@ namespace Honey {
         return true;
     }
 
+    void VulkanContext::queue_custom_vulkan_cmd(
+        std::function<void(VkCommandBuffer, uint32_t, uint32_t)> fn)
+    {
+        auto& p = frame_packet();
+        const uint32_t idx = static_cast<uint32_t>(p.custom_callbacks.size());
+        p.custom_callbacks.push_back(std::move(fn));
+
+        FramePacket::Cmd cmd{};
+        cmd.type = FramePacket::CmdType::CustomVulkan;
+        cmd.custom.callback_index = idx;
+        p.cmds.push_back(cmd);
+    }
+
     bool VulkanContext::submit_one_time_graphics(const std::function<void(VkCommandBuffer)>& record) {
         return submit_one_time_on_queue(
             reinterpret_cast<VkQueue>(m_graphics_queue),
@@ -2133,6 +2146,14 @@ namespace Honey {
                     const uint32_t index_count = (c.draw.indexCount != 0) ? c.draw.indexCount : vk_ib->get_count();
                     const uint32_t instance_count = (c.draw.instanceCount != 0) ? c.draw.instanceCount : 1;
                     vkCmdDrawIndexed(cmd, index_count, instance_count, 0, 0, 0);
+                    break;
+            }
+            case FramePacket::CmdType::CustomVulkan: {
+                    HN_CORE_ASSERT(render_pass_open, "CustomVulkan must occur inside a render pass");
+                    HN_CORE_ASSERT(c.custom.callback_index < p.custom_callbacks.size(),
+                                   "CustomVulkan: callback_index {0} out of range (have {1})",
+                                   c.custom.callback_index, p.custom_callbacks.size());
+                    p.custom_callbacks[c.custom.callback_index](cmd, current_pass_w, current_pass_h);
                     break;
             }
             case FramePacket::CmdType::EndPass: {

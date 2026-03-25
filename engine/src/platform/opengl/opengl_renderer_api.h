@@ -34,6 +34,7 @@ namespace Honey {
         virtual Ref<IndexBuffer> create_index_buffer_u16(uint16_t* indices, uint32_t size) override;
         virtual Ref<VertexArray> create_vertex_array() override;
         virtual Ref<UniformBuffer> create_uniform_buffer(uint32_t size, uint32_t binding) override;
+        virtual Ref<StorageBuffer> create_storage_buffer(uint32_t size, uint32_t usage_flags = 0) override;
         virtual Ref<Framebuffer> create_framebuffer(const FramebufferSpecification& spec) override;
 
     };

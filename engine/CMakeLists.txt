@@ -206,6 +206,8 @@ add_library(engine STATIC
         src/Honey/renderer/frame_graph_registry.cpp
         src/platform/vulkan/vk_cloth_sim.h
         src/platform/vulkan/vk_cloth_sim.cpp
+        src/platform/vulkan/vk_cloth_renderer.h
+        src/platform/vulkan/vk_cloth_renderer.cpp
 )
 
 # Apply MSVC runtime to engine itself
