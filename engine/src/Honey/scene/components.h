@@ -287,6 +287,15 @@ namespace Honey {
         CircleCollider2DComponent(const CircleCollider2DComponent&) = default;
     };
 
+    struct ClothComponent {
+        uint32_t grid_width  = 128;
+        uint32_t grid_height = 128;
+        uint32_t substeps    = 8;
+
+        ClothComponent() = default;
+        ClothComponent(const ClothComponent&) = default;
+    };
+
     struct AudioSourceComponent {
         std::filesystem::path file_path;
         float volume = 1.0f;

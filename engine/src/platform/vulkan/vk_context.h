@@ -212,6 +212,10 @@ namespace Honey {
         // fn(VkCommandBuffer cmd, uint32_t pass_w, uint32_t pass_h)
         void queue_custom_vulkan_cmd(std::function<void(VkCommandBuffer, uint32_t, uint32_t)> fn);
 
+        // Nulls out all pending CustomVulkan callbacks in the current frame packet so they
+        // fire as no-ops. Call this before destroying GPU resources mid-frame (e.g. on_stop).
+        void cancel_pending_custom_vulkan_cmds();
+
         uint32_t get_swapchain_image_format() const { return m_swapchain_image_format; }
         uint32_t get_swapchain_extent_width()  const { return m_swapchain_extent_width; }
         uint32_t get_swapchain_extent_height() const { return m_swapchain_extent_height; }

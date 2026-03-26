@@ -292,6 +292,17 @@ namespace Honey {
 
 
 
+        if (entity.has_component<ClothComponent>()) {
+            out << YAML::Key << "ClothComponent";
+            out << YAML::BeginMap;
+
+            auto& cc = entity.get_component<ClothComponent>();
+            out << YAML::Key << "GridWidth"  << YAML::Value << cc.grid_width;
+            out << YAML::Key << "GridHeight" << YAML::Value << cc.grid_height;
+            out << YAML::Key << "Substeps"   << YAML::Value << cc.substeps;
+            out << YAML::EndMap;
+        }
+
         out <<YAML::EndMap; // Entity
     }
 
@@ -658,6 +669,14 @@ namespace Honey {
             as.pitch = audio_source_node["Pitch"].as<float>();
             as.play_on_scene_start = audio_source_node["PlayOnSceneStart"].as<bool>();
             as.volume = audio_source_node["Volume"].as<float>();
+        }
+
+        auto cloth_node = entity_node["ClothComponent"];
+        if (cloth_node) {
+            auto& cc = deserialized_entity.add_component<ClothComponent>();
+            cc.grid_width  = cloth_node["GridWidth"].as<uint32_t>();
+            cc.grid_height = cloth_node["GridHeight"].as<uint32_t>();
+            cc.substeps    = cloth_node["Substeps"].as<uint32_t>();
         }
 
         return deserialized_entity;

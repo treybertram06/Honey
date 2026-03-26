@@ -131,6 +131,8 @@ add_library(engine STATIC
         src/Honey/scene/components.cpp
         src/Honey/scene/scene_serializer.h
         src/Honey/scene/scene_serializer.cpp
+        src/Honey/scene/cloth_system.h
+        src/Honey/scene/cloth_system.cpp
         src/Honey/utils/platform_utils.h
         src/platform/linux/linux_platform_utils.cpp
         src/platform/windows/windows_platform_utils.cpp

@@ -16,6 +16,7 @@
 #include "Honey/math/math.h"
 #include "Honey/renderer/renderer_3d.h"
 #include "Honey/scripting/script_engine.h"
+#include "cloth_system.h"
 //#include "Honey/scripting/mono_script_engine.h"
 
 namespace Honey {
@@ -46,6 +47,8 @@ namespace Honey {
     }
 
     Scene::Scene() {
+        m_cloth_system = std::make_unique<ClothSystem>();
+        ClothSystem::register_frame_graph_executors();
     }
 
     Scene::~Scene() {
@@ -143,8 +146,10 @@ namespace Honey {
     }
 
     void Scene::on_runtime_start() {
+        s_active_scene = this;
         clear_state();
         on_physics_2D_start();
+        m_cloth_system->on_start(m_registry);
 
         AudioSystem::init();
 
@@ -164,6 +169,7 @@ namespace Honey {
 
     void Scene::on_runtime_stop() {
         on_physics_2D_stop();
+        m_cloth_system->on_stop(m_registry);
         clear_state();
         ScriptEngine::on_runtime_stop();
         AudioSystem::shutdown();
@@ -515,12 +521,16 @@ namespace Honey {
                 }
 
                 Renderer3D::end_scene();
+
+                glm::mat4 vp = primary_camera->get_projection_matrix() * glm::inverse(transform);
+                m_cloth_system->on_render(m_registry, vp);
             }
         }
 
     }
 
     void Scene::on_update_editor(Timestep ts, EditorCamera& camera) {
+        s_active_scene = this;
 
         bool parallel_mesh_submit_enabled = Settings::get().renderer.enable_parallel_mesh_submission;
 
@@ -648,6 +658,7 @@ namespace Honey {
         copy_component<CircleCollider2DComponent>   (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<AudioSourceComponent>        (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<MeshRendererComponent>       (dst_scene_registry, src_scene_registry, entt_map);
+        copy_component<ClothComponent>              (dst_scene_registry, src_scene_registry, entt_map);
 
         auto view = src_scene_registry.view<RelationshipComponent>();
         for (auto e : view) {
@@ -699,6 +710,7 @@ namespace Honey {
         copy_component_if_exists<CircleCollider2DComponent>     (new_entity, entity);
         copy_component_if_exists<AudioSourceComponent>          (new_entity, entity);
         copy_component_if_exists<MeshRendererComponent>         (new_entity, entity);
+        copy_component_if_exists<ClothComponent>                (new_entity, entity);
 
     }
     //void Scene::create_prefab(const Entity& entity, const std::string& path) {

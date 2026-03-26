@@ -1,6 +1,7 @@
 #pragma once
 
 #include <variant>
+#include <memory>
 #include <entt/entt.hpp>
 
 #include "Honey/core/timestep.h"
@@ -11,6 +12,7 @@
 
 namespace Honey {
 
+    class ClothSystem;
     class Entity;
     class Scene {
 
@@ -53,6 +55,8 @@ namespace Honey {
 
         void create_physics_body(Entity entity);
 
+        ClothSystem* get_cloth_system() { return m_cloth_system.get(); }
+
         template<typename... Components>
         auto get_all_entities_with() {
             return m_registry.view<Components...>();
@@ -92,6 +96,7 @@ namespace Honey {
         std::unordered_map<std::string, SceneValue> m_scene_state;
 
         b2WorldId m_world = b2_nullWorldId;
+        std::unique_ptr<ClothSystem> m_cloth_system;
 
         //Entity entity_from_body(b2BodyId body);
 

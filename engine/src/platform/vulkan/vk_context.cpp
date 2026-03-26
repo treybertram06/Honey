@@ -1172,6 +1172,12 @@ namespace Honey {
         p.cmds.push_back(cmd);
     }
 
+    void VulkanContext::cancel_pending_custom_vulkan_cmds() {
+        auto& p = frame_packet();
+        for (auto& fn : p.custom_callbacks)
+            fn = nullptr;
+    }
+
     bool VulkanContext::submit_one_time_graphics(const std::function<void(VkCommandBuffer)>& record) {
         return submit_one_time_on_queue(
             reinterpret_cast<VkQueue>(m_graphics_queue),
@@ -2153,7 +2159,9 @@ namespace Honey {
                     HN_CORE_ASSERT(c.custom.callback_index < p.custom_callbacks.size(),
                                    "CustomVulkan: callback_index {0} out of range (have {1})",
                                    c.custom.callback_index, p.custom_callbacks.size());
-                    p.custom_callbacks[c.custom.callback_index](cmd, current_pass_w, current_pass_h);
+                    const auto& cb = p.custom_callbacks[c.custom.callback_index];
+                    if (cb)
+                        cb(cmd, current_pass_w, current_pass_h);
                     break;
             }
             case FramePacket::CmdType::EndPass: {
