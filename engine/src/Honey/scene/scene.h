@@ -34,6 +34,7 @@ namespace Honey {
 
         void on_update_runtime(Timestep ts);
         void on_update_editor(Timestep ts, EditorCamera& camera);
+        void on_update_simulation(Timestep ts, EditorCamera& camera);
 
         Entity get_primary_camera() const;
 
@@ -88,6 +89,11 @@ namespace Honey {
 
 
     private:
+
+        void on_update_scripts(Timestep ts);
+        void on_update_audio(Timestep ts);
+        void on_update_physics_2d(Timestep ts);
+        void on_update_render(const glm::mat4& view_proj);
 
         void update_streamed_assets();
 

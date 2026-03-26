@@ -263,267 +263,20 @@ namespace Honey {
     void Scene::on_update_runtime(Timestep ts) {
         s_active_scene = this;
 
-        // Scripts
-        {
-            // Lua scripts
-            //auto view = m_registry.view<ScriptComponent>();
-            //for (auto e : view) {
-            //    Entity entity = { e, this };
-            //    auto& sc = entity.get_component<ScriptComponent>();
-            //    if (!sc.initialized) {
-            //        ScriptEngine::on_create_entity(entity);
-            //        sc.initialized = true;
-            //    }
-            //    ScriptEngine::on_update_entity(entity, ts);
-            //}
-            auto view = m_registry.view<ScriptComponent>();
-            std::vector<entt::entity> script_entities;
-            script_entities.reserve(view.size());
+        on_update_scripts(ts);
 
-            for (auto e : view)
-                script_entities.push_back(e);
+        on_update_audio(ts);
 
-            for (auto e : script_entities) {
-                if (!m_registry.valid(e))
-                    continue;
+        on_update_physics_2d(ts);
 
-                Entity entity = { e, this };
-                auto& sc = entity.get_component<ScriptComponent>();
-
-                if (!sc.initialized) {
-                    ScriptEngine::on_create_entity(entity);
-                    sc.initialized = true;
-                }
-
-                ScriptEngine::on_update_entity(entity, ts);
-            }
-
-            // C++ scripts
-            m_registry.view<NativeScriptComponent>().each([this, ts](auto entity, auto& nsc) {
-                if (!nsc.instance) {
-                    nsc.instance = nsc.instantiate_script();
-                    nsc.instance->m_entity = Entity(entity, this);
-                    nsc.instance->on_create();
-                }
-                nsc.instance->on_update(ts);
-            });
-        }
-
-        // Audio sources
-        {
-            auto view = m_registry.view<AudioSourceComponent>();
-            for (auto e : view) {
-                Entity entity = { e, this };
-                auto& audio = entity.get_component<AudioSourceComponent>();
-
-                // If we have a clip and no runtime handle yet, create one.
-                if (!audio.file_path.empty() && !audio.runtime_handle) {
-                    audio.runtime_handle = AudioSystem::create_source(audio.file_path);
-                    if (audio.runtime_handle) {
-                        AudioSystem::set_volume(audio.runtime_handle, audio.volume);
-                        AudioSystem::set_pitch(audio.runtime_handle,  audio.pitch);
-                    }
-                }
-
-                // Update every frame in case values changed
-                if (audio.runtime_handle) {
-                    AudioSystem::set_looping(audio.runtime_handle, audio.loop);
-                    AudioSystem::set_volume(audio.runtime_handle, audio.volume);
-                    AudioSystem::set_pitch(audio.runtime_handle,  audio.pitch);
-                }
-
-                if (audio.runtime_handle && audio.play_on_scene_start) {
-                    AudioSystem::play(audio.runtime_handle);
-                    audio.play_on_scene_start = false;
-                }
-            }
-
-            AudioSystem::on_update(ts);
-        }
-
-        //physics
-        { // Box2D handles its own multithreading
-            auto& physics_settings = Settings::get().physics;
-            if (physics_settings.enabled) {
-                // Sync physics bodies with their transforms if needed
-                for (auto e : m_registry.view<TransformComponent, Rigidbody2DComponent>()) {
-                    Entity entity = { e, this };
-                    auto& tc = entity.get_component<TransformComponent>();
-                    if (tc.dirty) {
-                        auto& rb = entity.get_component<Rigidbody2DComponent>();
-
-                        b2BodyId body;
-                        memcpy(&body, &rb.runtime_body, sizeof(b2BodyId));
-
-                        b2Body_SetTransform(body, { tc.translation.x, tc.translation.y }, b2MakeRot(tc.rotation.z));
-                        tc.dirty = false;
-                    }
-
-                    if (tc.collider_dirty) {
-                        rebuild_colliders(this, entity);
-                        tc.collider_dirty = false;
-                    }
-                }
-
-                const int32_t sub_steps = physics_settings.substeps;
-
-                if (b2World_IsValid(m_world)) {
-                    b2World_Step(m_world, ts, sub_steps);
-                }
-
-                b2ContactEvents events = b2World_GetContactEvents(m_world);
-
-                for (int i = 0; i < events.beginCount; i++) {
-                    b2ContactBeginTouchEvent* evt = &events.beginEvents[i];
-
-                    b2BodyId body_a = b2Shape_GetBody(evt->shapeIdA);
-                    b2BodyId body_b = b2Shape_GetBody(evt->shapeIdB);
-
-                    UUID uuid_a = (uint64_t)b2Body_GetUserData(body_a);
-                    UUID uuid_b = (uint64_t)b2Body_GetUserData(body_b);
-
-                    Entity entity_a = get_entity(uuid_a);
-                    Entity entity_b = get_entity(uuid_b);
-
-                    if (entity_a.is_valid() && entity_b.is_valid()) {
-                        ScriptEngine::on_collision_begin(entity_a, entity_b); // I could be checking if entity_a has a script component before calling this
-                        ScriptEngine::on_collision_begin(entity_b, entity_a); // Likewise but entity_b
-                    }
-                }
-                for (int i = 0; i < events.endCount; i++) {
-                    b2ContactEndTouchEvent* evt = &events.endEvents[i];
-
-                    b2BodyId body_a = b2Shape_GetBody(evt->shapeIdA);
-                    b2BodyId body_b = b2Shape_GetBody(evt->shapeIdB);
-
-                    UUID uuid_a = (uint64_t)b2Body_GetUserData(body_a);
-                    UUID uuid_b = (uint64_t)b2Body_GetUserData(body_b);
-
-                    Entity entity_a = get_entity(uuid_a);
-                    Entity entity_b = get_entity(uuid_b);
-
-                    if (entity_a.is_valid() && entity_b.is_valid()) {
-                        ScriptEngine::on_collision_end(entity_a, entity_b);
-                        ScriptEngine::on_collision_end(entity_b, entity_a);
-                    }
-                }
-
-                auto view = m_registry.view<Rigidbody2DComponent>();
-                for (auto e : view) {
-                    Entity entity = { e, this };
-                    auto& tc = entity.get_component<TransformComponent>();
-                    auto& rb = entity.get_component<Rigidbody2DComponent>();
-
-                    b2BodyId body;
-                    memcpy(&body, &rb.runtime_body, sizeof(b2BodyId));
-
-                    if (!b2Body_IsValid(body))
-                        continue;
-
-                    b2Transform bt = b2Body_GetTransform(body);
-                    glm::vec3 world_pos(bt.p.x, bt.p.y, tc.translation.z);
-                    float world_rot = b2Rot_GetAngle(bt.q);
-
-                    if (!entity.has_parent()) {
-                        // Root Rigidbody: world == local
-                        tc.translation = world_pos;
-                        tc.rotation.z = world_rot;
-                    } else {
-                        // Child Rigidbody: convert world → local
-                        Entity parent = entity.get_parent();
-                        glm::mat4 parent_world = parent.get_world_transform();
-                        glm::mat4 inv_parent = glm::inverse(parent_world);
-
-                        glm::mat4 world =
-                            glm::translate(glm::mat4(1.0f), world_pos) *
-                            glm::rotate(glm::mat4(1.0f), world_rot, {0,0,1});
-
-                        glm::mat4 local = inv_parent * world;
-
-                        Math::decompose_transform(
-                            local,
-                            tc.translation,
-                            tc.rotation,
-                            tc.scale
-                        );
-                    }
-                }
-            }
-        }
-
-        // render
         Entity primary_camera_entity = get_primary_camera();
-
-        bool parallel_mesh_submit_enabled = Settings::get().renderer.enable_parallel_mesh_submission;
-
         if (primary_camera_entity.is_valid()) {
-            auto transform = primary_camera_entity.get_world_transform();
-            auto& camera_component = primary_camera_entity.get_component<CameraComponent>();
+            auto& cc = primary_camera_entity.get_component<CameraComponent>();
 
-            Camera* primary_camera = camera_component.get_camera();
-
+            Camera* primary_camera = cc.get_camera();
             if (primary_camera) {
-                Renderer2D::begin_scene(*primary_camera, transform);
-
-                auto group = m_registry.group<SpriteRendererComponent>(entt::get<TransformComponent>);
-                for (auto entity : group) {
-                    auto sprite = group.get<SpriteRendererComponent>(entity);
-                    Entity entity_ref = { entity, this };
-                    Renderer2D::draw_sprite(entity_ref.get_world_transform(), sprite, (int)entt::to_integral(entity));
-                }
-
-                auto cicle_group = m_registry.group<CircleRendererComponent>(entt::get<TransformComponent>);
-                for (auto entity : cicle_group) {
-                    auto sprite = cicle_group.get<CircleRendererComponent>(entity);
-                    Entity entity_ref = { entity, this };
-                    Renderer2D::draw_circle_sprite(entity_ref.get_world_transform(), sprite, (int)entt::to_integral(entity));
-                }
-
-                auto line_group = m_registry.group<LineRendererComponent>(entt::get<TransformComponent>);
-                for (auto entity : line_group) {
-                    auto sprite = line_group.get<LineRendererComponent>(entity);
-                    Entity entity_ref = { entity, this };
-                    Renderer2D::draw_line_sprite(entity_ref.get_world_transform(), sprite, (int)entt::to_integral(entity));
-                }
-
-                Renderer2D::end_scene();
-
-                Renderer3D::begin_scene(*primary_camera, transform);
-
-                if (!parallel_mesh_submit_enabled) {
-                    for (auto entity : m_registry.view<TransformComponent, MeshRendererComponent>()) {
-                        auto& tc = m_registry.get<TransformComponent>(entity);
-                        auto& mr = m_registry.get<MeshRendererComponent>(entity);
-
-                        if (!mr.mesh)
-                            continue;
-
-                        const glm::mat4 world = tc.get_transform();
-
-                        const auto& submeshes = mr.mesh->get_submeshes();
-                        for (size_t i = 0; i < submeshes.size(); ++i) {
-                            const auto& sm = submeshes[i];
-
-                            Ref<Material> material = sm.material;
-
-                            // Optional: override material if present
-                            if (i < mr.material_overrides.size() && mr.material_overrides[i])
-                                material = mr.material_overrides[i];
-
-                            if (material)
-                                material->set_base_color_factor(mr.color);
-
-                            Renderer3D::draw_mesh(sm.vao, material, world * sm.transform);
-                        }
-                    }
-                } else {
-                    HN_CORE_WARN("Parallel mesh submission is not yet implemented! No meshes will be drawn.");
-                }
-
-                Renderer3D::end_scene();
-
-                glm::mat4 vp = primary_camera->get_projection_matrix() * glm::inverse(transform);
-                m_cloth_system->on_render(m_registry, vp);
+                glm::mat4 transform = primary_camera_entity.get_world_transform();
+                on_update_render(primary_camera->get_projection_matrix() * glm::inverse(transform));
             }
         }
 
@@ -532,69 +285,25 @@ namespace Honey {
     void Scene::on_update_editor(Timestep ts, EditorCamera& camera) {
         s_active_scene = this;
 
-        bool parallel_mesh_submit_enabled = Settings::get().renderer.enable_parallel_mesh_submission;
-
         update_streamed_assets();
 
+        on_update_render(camera.get_view_projection_matrix());
+    }
+
+    void Scene::on_update_simulation(Timestep ts, EditorCamera& camera) {
+        s_active_scene = this;
+
+        // Scripts
+        on_update_scripts(ts);
+
+        // Audio sources
+        on_update_audio(ts);
+
+        //physics
+        on_update_physics_2d(ts);
+
         // render
-        Renderer2D::begin_scene(camera);
-
-        auto group = m_registry.group<SpriteRendererComponent>(entt::get<TransformComponent>);
-        for (auto entity : group) {
-            auto sprite = group.get<SpriteRendererComponent>(entity);
-            Entity entity_ref = { entity, this };
-            Renderer2D::draw_sprite(entity_ref.get_world_transform(), sprite, (int)entt::to_integral(entity));
-        }
-
-        auto cicle_group = m_registry.group<CircleRendererComponent>(entt::get<TransformComponent>);
-        for (auto entity : cicle_group) {
-            auto sprite = cicle_group.get<CircleRendererComponent>(entity);
-            Entity entity_ref = { entity, this };
-            Renderer2D::draw_circle_sprite(entity_ref.get_world_transform(), sprite, (int)entt::to_integral(entity));
-        }
-
-        auto line_group = m_registry.group<LineRendererComponent>(entt::get<TransformComponent>);
-        for (auto entity : line_group) {
-            auto sprite = line_group.get<LineRendererComponent>(entity);
-            Entity entity_ref = { entity, this };
-            Renderer2D::draw_line_sprite(entity_ref.get_world_transform(), sprite, (int)entt::to_integral(entity));
-        }
-
-        Renderer2D::end_scene();
-
-        Renderer3D::begin_scene(camera);
-
-        if (!parallel_mesh_submit_enabled) {
-            for (auto entity : m_registry.view<TransformComponent, MeshRendererComponent>()) {
-                auto& tc = m_registry.get<TransformComponent>(entity);
-                auto& mr = m_registry.get<MeshRendererComponent>(entity);
-
-                if (!mr.mesh)
-                    continue;
-
-                const glm::mat4 world = tc.get_transform();
-
-                const auto& submeshes = mr.mesh->get_submeshes();
-                for (size_t i = 0; i < submeshes.size(); ++i) {
-                    const auto& sm = submeshes[i];
-
-                    Ref<Material> material = sm.material;
-
-                    // Optional: override material if present
-                    if (i < mr.material_overrides.size() && mr.material_overrides[i])
-                        material = mr.material_overrides[i];
-
-                    if (material)
-                        material->set_base_color_factor(mr.color);
-
-                    Renderer3D::draw_mesh(sm.vao, material, world * sm.transform);
-                }
-            }
-        } else {
-            HN_CORE_WARN("Parallel mesh submission is not yet implemented! No meshes will be drawn.");
-        }
-
-        Renderer3D::end_scene();
+        on_update_render(camera.get_view_projection_matrix());
     }
 
     void Scene::on_viewport_resize(uint32_t width, uint32_t height) {
@@ -881,6 +590,258 @@ namespace Honey {
                 mr.async_load_handle.reset();
             }
         }
+    }
+
+    void Scene::on_update_scripts(Timestep ts) {
+        // Lua scripts
+        //auto view = m_registry.view<ScriptComponent>();
+        //for (auto e : view) {
+        //    Entity entity = { e, this };
+        //    auto& sc = entity.get_component<ScriptComponent>();
+        //    if (!sc.initialized) {
+        //        ScriptEngine::on_create_entity(entity);
+        //        sc.initialized = true;
+        //    }
+        //    ScriptEngine::on_update_entity(entity, ts);
+        //}
+        auto view = m_registry.view<ScriptComponent>();
+        std::vector<entt::entity> script_entities;
+        script_entities.reserve(view.size());
+
+        for (auto e : view)
+            script_entities.push_back(e);
+
+        for (auto e : script_entities) {
+            if (!m_registry.valid(e))
+                continue;
+
+            Entity entity = { e, this };
+            auto& sc = entity.get_component<ScriptComponent>();
+
+            if (!sc.initialized) {
+                ScriptEngine::on_create_entity(entity);
+                sc.initialized = true;
+            }
+
+            ScriptEngine::on_update_entity(entity, ts);
+        }
+
+        // C++ scripts
+        m_registry.view<NativeScriptComponent>().each([this, ts](auto entity, auto& nsc) {
+            if (!nsc.instance) {
+                nsc.instance = nsc.instantiate_script();
+                nsc.instance->m_entity = Entity(entity, this);
+                nsc.instance->on_create();
+            }
+            nsc.instance->on_update(ts);
+        });
+    }
+
+    void Scene::on_update_audio(Timestep ts) {
+        auto view = m_registry.view<AudioSourceComponent>();
+        for (auto e : view) {
+            Entity entity = { e, this };
+            auto& audio = entity.get_component<AudioSourceComponent>();
+
+            // If we have a clip and no runtime handle yet, create one.
+            if (!audio.file_path.empty() && !audio.runtime_handle) {
+                audio.runtime_handle = AudioSystem::create_source(audio.file_path);
+                if (audio.runtime_handle) {
+                    AudioSystem::set_volume(audio.runtime_handle, audio.volume);
+                    AudioSystem::set_pitch(audio.runtime_handle,  audio.pitch);
+                }
+            }
+
+            // Update every frame in case values changed
+            if (audio.runtime_handle) {
+                AudioSystem::set_looping(audio.runtime_handle, audio.loop);
+                AudioSystem::set_volume(audio.runtime_handle, audio.volume);
+                AudioSystem::set_pitch(audio.runtime_handle,  audio.pitch);
+            }
+
+            if (audio.runtime_handle && audio.play_on_scene_start) {
+                AudioSystem::play(audio.runtime_handle);
+                audio.play_on_scene_start = false;
+            }
+        }
+
+        AudioSystem::on_update(ts);
+    }
+
+    void Scene::on_update_physics_2d(Timestep ts) {
+        // Box2D handles its own multithreading
+        auto& physics_settings = Settings::get().physics;
+        if (physics_settings.enabled) {
+            // Sync physics bodies with their transforms if needed
+            for (auto e : m_registry.view<TransformComponent, Rigidbody2DComponent>()) {
+                Entity entity = { e, this };
+                auto& tc = entity.get_component<TransformComponent>();
+                if (tc.dirty) {
+                    auto& rb = entity.get_component<Rigidbody2DComponent>();
+
+                    b2BodyId body;
+                    memcpy(&body, &rb.runtime_body, sizeof(b2BodyId));
+
+                    b2Body_SetTransform(body, { tc.translation.x, tc.translation.y }, b2MakeRot(tc.rotation.z));
+                    tc.dirty = false;
+                }
+
+                if (tc.collider_dirty) {
+                    rebuild_colliders(this, entity);
+                    tc.collider_dirty = false;
+                }
+            }
+
+            const int32_t sub_steps = physics_settings.substeps;
+
+            if (b2World_IsValid(m_world)) {
+                b2World_Step(m_world, ts, sub_steps);
+            }
+
+            b2ContactEvents events = b2World_GetContactEvents(m_world);
+
+            for (int i = 0; i < events.beginCount; i++) {
+                b2ContactBeginTouchEvent* evt = &events.beginEvents[i];
+
+                b2BodyId body_a = b2Shape_GetBody(evt->shapeIdA);
+                b2BodyId body_b = b2Shape_GetBody(evt->shapeIdB);
+
+                UUID uuid_a = (uint64_t)b2Body_GetUserData(body_a);
+                UUID uuid_b = (uint64_t)b2Body_GetUserData(body_b);
+
+                Entity entity_a = get_entity(uuid_a);
+                Entity entity_b = get_entity(uuid_b);
+
+                if (entity_a.is_valid() && entity_b.is_valid()) {
+                    ScriptEngine::on_collision_begin(entity_a, entity_b); // I could be checking if entity_a has a script component before calling this
+                    ScriptEngine::on_collision_begin(entity_b, entity_a); // Likewise but entity_b
+                }
+            }
+            for (int i = 0; i < events.endCount; i++) {
+                b2ContactEndTouchEvent* evt = &events.endEvents[i];
+
+                b2BodyId body_a = b2Shape_GetBody(evt->shapeIdA);
+                b2BodyId body_b = b2Shape_GetBody(evt->shapeIdB);
+
+                UUID uuid_a = (uint64_t)b2Body_GetUserData(body_a);
+                UUID uuid_b = (uint64_t)b2Body_GetUserData(body_b);
+
+                Entity entity_a = get_entity(uuid_a);
+                Entity entity_b = get_entity(uuid_b);
+
+                if (entity_a.is_valid() && entity_b.is_valid()) {
+                    ScriptEngine::on_collision_end(entity_a, entity_b);
+                    ScriptEngine::on_collision_end(entity_b, entity_a);
+                }
+            }
+
+            auto view = m_registry.view<Rigidbody2DComponent>();
+            for (auto e : view) {
+                Entity entity = { e, this };
+                auto& tc = entity.get_component<TransformComponent>();
+                auto& rb = entity.get_component<Rigidbody2DComponent>();
+
+                b2BodyId body;
+                memcpy(&body, &rb.runtime_body, sizeof(b2BodyId));
+
+                if (!b2Body_IsValid(body))
+                    continue;
+
+                b2Transform bt = b2Body_GetTransform(body);
+                glm::vec3 world_pos(bt.p.x, bt.p.y, tc.translation.z);
+                float world_rot = b2Rot_GetAngle(bt.q);
+
+                if (!entity.has_parent()) {
+                    // Root Rigidbody: world == local
+                    tc.translation = world_pos;
+                    tc.rotation.z = world_rot;
+                } else {
+                    // Child Rigidbody: convert world → local
+                    Entity parent = entity.get_parent();
+                    glm::mat4 parent_world = parent.get_world_transform();
+                    glm::mat4 inv_parent = glm::inverse(parent_world);
+
+                    glm::mat4 world =
+                        glm::translate(glm::mat4(1.0f), world_pos) *
+                        glm::rotate(glm::mat4(1.0f), world_rot, {0,0,1});
+
+                    glm::mat4 local = inv_parent * world;
+
+                    Math::decompose_transform(
+                        local,
+                        tc.translation,
+                        tc.rotation,
+                        tc.scale
+                    );
+                }
+            }
+        }
+    }
+
+    void Scene::on_update_render(const glm::mat4& view_proj) {
+        bool parallel_mesh_submit_enabled = Settings::get().renderer.enable_parallel_mesh_submission;
+
+        Renderer2D::begin_scene(view_proj);
+
+        auto group = m_registry.group<SpriteRendererComponent>(entt::get<TransformComponent>);
+        for (auto entity : group) {
+            auto sprite = group.get<SpriteRendererComponent>(entity);
+            Entity entity_ref = { entity, this };
+            Renderer2D::draw_sprite(entity_ref.get_world_transform(), sprite, (int)entt::to_integral(entity));
+        }
+
+        auto cicle_group = m_registry.group<CircleRendererComponent>(entt::get<TransformComponent>);
+        for (auto entity : cicle_group) {
+            auto sprite = cicle_group.get<CircleRendererComponent>(entity);
+            Entity entity_ref = { entity, this };
+            Renderer2D::draw_circle_sprite(entity_ref.get_world_transform(), sprite, (int)entt::to_integral(entity));
+        }
+
+        auto line_group = m_registry.group<LineRendererComponent>(entt::get<TransformComponent>);
+        for (auto entity : line_group) {
+            auto sprite = line_group.get<LineRendererComponent>(entity);
+            Entity entity_ref = { entity, this };
+            Renderer2D::draw_line_sprite(entity_ref.get_world_transform(), sprite, (int)entt::to_integral(entity));
+        }
+
+        Renderer2D::end_scene();
+
+        Renderer3D::begin_scene(view_proj);
+
+        if (!parallel_mesh_submit_enabled) {
+            for (auto entity : m_registry.view<TransformComponent, MeshRendererComponent>()) {
+                auto& tc = m_registry.get<TransformComponent>(entity);
+                auto& mr = m_registry.get<MeshRendererComponent>(entity);
+
+                if (!mr.mesh)
+                    continue;
+
+                const glm::mat4 world = tc.get_transform();
+
+                const auto& submeshes = mr.mesh->get_submeshes();
+                for (size_t i = 0; i < submeshes.size(); ++i) {
+                    const auto& sm = submeshes[i];
+
+                    Ref<Material> material = sm.material;
+
+                    // Optional: override material if present
+                    if (i < mr.material_overrides.size() && mr.material_overrides[i])
+                        material = mr.material_overrides[i];
+
+                    if (material)
+                        material->set_base_color_factor(mr.color);
+
+                    Renderer3D::draw_mesh(sm.vao, material, world * sm.transform);
+                }
+            }
+        } else {
+            HN_CORE_WARN("Parallel mesh submission is not yet implemented! No meshes will be drawn.");
+        }
+
+        Renderer3D::end_scene();
+
+        //glm::mat4 vp = ;
+        m_cloth_system->on_render(m_registry, view_proj);
     }
 
     void Scene::update_streamed_assets() {
