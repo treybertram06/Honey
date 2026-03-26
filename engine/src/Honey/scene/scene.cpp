@@ -168,6 +168,7 @@ namespace Honey {
     }
 
     void Scene::on_runtime_stop() {
+        s_active_scene = nullptr;
         on_physics_2D_stop();
         m_cloth_system->on_stop(m_registry);
         clear_state();
@@ -260,14 +261,14 @@ namespace Honey {
         }
     }
 
-    void Scene::on_update_runtime(Timestep ts) {
+    void Scene::on_update_runtime(Timestep ts, bool paused) {
         s_active_scene = this;
 
-        on_update_scripts(ts);
-
-        on_update_audio(ts);
-
-        on_update_physics_2d(ts);
+        if (!paused) {
+            on_update_scripts(ts);
+            on_update_audio(ts);
+            on_update_physics_2d(ts);
+        }
 
         Entity primary_camera_entity = get_primary_camera();
         if (primary_camera_entity.is_valid()) {
@@ -290,19 +291,15 @@ namespace Honey {
         on_update_render(camera.get_view_projection_matrix());
     }
 
-    void Scene::on_update_simulation(Timestep ts, EditorCamera& camera) {
+    void Scene::on_update_simulation(Timestep ts, EditorCamera& camera, bool paused) {
         s_active_scene = this;
 
-        // Scripts
-        on_update_scripts(ts);
+        if (!paused) {
+            on_update_scripts(ts);
+            on_update_audio(ts);
+            on_update_physics_2d(ts);
+        }
 
-        // Audio sources
-        on_update_audio(ts);
-
-        //physics
-        on_update_physics_2d(ts);
-
-        // render
         on_update_render(camera.get_view_projection_matrix());
     }
 

@@ -189,7 +189,7 @@ namespace Honey {
 
         // Inject per-call variables into the script environment.
         inst->env["self"] = entity;
-        inst->env["dt"]   = ts;
+        inst->env["dt"]   = (float)ts;
         if (inst->properties.valid())
             inst->env["Properties"] = inst->properties;
         else

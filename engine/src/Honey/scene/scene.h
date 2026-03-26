@@ -32,9 +32,9 @@ namespace Honey {
         void on_runtime_start();
         void on_runtime_stop();
 
-        void on_update_runtime(Timestep ts);
+        void on_update_runtime(Timestep ts, bool paused = false);
         void on_update_editor(Timestep ts, EditorCamera& camera);
-        void on_update_simulation(Timestep ts, EditorCamera& camera);
+        void on_update_simulation(Timestep ts, EditorCamera& camera, bool paused = false);
 
         Entity get_primary_camera() const;
 
