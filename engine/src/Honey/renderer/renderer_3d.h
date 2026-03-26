@@ -22,6 +22,8 @@ namespace Honey {
 		static void begin_scene(const PerspectiveCamera& camera);
 		static void begin_scene(const EditorCamera& camera);
 		static void begin_scene(const Camera& camera, const glm::mat4& transform);
+		static void begin_scene(const glm::mat4& view_proj);
+
 		static void end_scene();
 
 		// Basic 3D primitives

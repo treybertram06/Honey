@@ -546,6 +546,34 @@ namespace Honey {
         s_data->texture_slot_index = 1; // keep white bound at 0
     }
 
+    void Renderer2D::begin_scene(const glm::mat4& view_proj) {
+        HN_PROFILE_FUNCTION();
+        reset_stats();
+
+        s_data->camera_buffer.view_projection = view_proj;
+        //HN_CORE_INFO("Engine VP:\n{}", glm::to_string(vp));
+
+        if (Renderer::get_api() != RendererAPI::API::vulkan) {
+            // OpenGL (or any future GL-style API) consumes EngineClip directly.
+            s_data->camera_uniform_buffer->set_data(
+                sizeof(Renderer2DData::CameraData),
+                &s_data->camera_buffer
+            );
+        } else {
+            auto state = VulkanRendererAPI::get_globals_state();
+            state.source = VulkanRendererAPI::GlobalsState::Source::Renderer2D;
+            s_data->vk_globals_stack.push_back(state);
+            // Vulkan backend will convert EngineClip to VulkanClip.
+            VulkanRendererAPI::submit_camera_view_projection(s_data->camera_buffer.view_projection);
+        }
+
+        s_data->quad_instances.clear();
+        s_data->circle_instances.clear();
+        s_data->line_instances.clear();
+
+        s_data->texture_slot_index = 1; // keep white bound at 0
+    }
+
     void Renderer2D::end_scene() {
         HN_PROFILE_FUNCTION();
         quad_end_scene();
