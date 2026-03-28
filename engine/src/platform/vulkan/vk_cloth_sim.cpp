@@ -435,10 +435,10 @@ namespace Honey {
         const uint32_t groups_y = (m_height + 15u) / 16u;
 
         ComputePushConstants pc{};
-        pc.dt = 0.0f;
-        pc.width = m_width;
+        pc.dt     = 0.0f;
+        pc.width  = m_width;
         pc.height = m_height;
-        pc.frame_index = 0;
+        pc.phase  = 0;
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_seed_pipeline);
 
@@ -463,64 +463,73 @@ namespace Honey {
         vkCmdDispatch(cmd, groups_x, groups_y, 1);
     }
 
-    void VulkanClothSim::record_sim(VkCommandBuffer cmd, const float dt, const uint32_t frame_index, const uint32_t substeps) {
+    void VulkanClothSim::record_sim(VkCommandBuffer cmd, const float dt, const uint32_t /*frame_index*/, const uint32_t substeps) {
         HN_CORE_ASSERT(m_initialized, "VulkanClothSim::record_sim called before init");
         HN_CORE_ASSERT(cmd, "VulkanClothSim::record_sim requires a valid command buffer");
         HN_CORE_ASSERT(substeps > 0, "VulkanClothSim::record_sim substeps must be at least 1");
 
-        const uint32_t groups_x = (m_width + 15u) / 16u;
+        const uint32_t groups_x = (m_width  + 15u) / 16u;
         const uint32_t groups_y = (m_height + 15u) / 16u;
-        const float sub_dt = dt / static_cast<float>(substeps);
+        const float    sub_dt   = dt / static_cast<float>(substeps);
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_sim_pipeline);
 
+        // Red-Black Gauss-Seidel: each substep is split into two phases.
+        //   Phase 0: update particles where (x+y)%2==0 ("black"), copy the rest.
+        //   Phase 1: update particles where (x+y)%2==1 ("red") — using the
+        //            now-updated black positions from phase 0 (Gauss-Seidel order).
+        // Each phase requires its own barrier+swap so the next phase reads the
+        // freshly written buffer.  After the final phase of the final substep,
+        // the caller's swap_ping_pong() advances the read buffer for rendering.
         for (uint32_t s = 0; s < substeps; ++s) {
-            const VkDescriptorSet set = m_descriptor_sets[active_set_index()];
-            vkCmdBindDescriptorSets(cmd,
-                                    VK_PIPELINE_BIND_POINT_COMPUTE,
-                                    m_pipeline_layout,
-                                    0, 1, &set,
-                                    0, nullptr);
+            for (uint32_t phase = 0; phase < 2u; ++phase) {
+                const VkDescriptorSet set = m_descriptor_sets[active_set_index()];
+                vkCmdBindDescriptorSets(cmd,
+                                        VK_PIPELINE_BIND_POINT_COMPUTE,
+                                        m_pipeline_layout,
+                                        0, 1, &set,
+                                        0, nullptr);
 
-            ComputePushConstants pc{};
-            pc.dt = sub_dt;
-            pc.width = m_width;
-            pc.height = m_height;
-            pc.frame_index = frame_index * substeps + s;
-            vkCmdPushConstants(cmd,
-                               m_pipeline_layout,
-                               VK_SHADER_STAGE_COMPUTE_BIT,
-                               0,
-                               sizeof(ComputePushConstants),
-                               &pc);
+                ComputePushConstants pc{};
+                pc.dt     = sub_dt;
+                pc.width  = m_width;
+                pc.height = m_height;
+                pc.phase  = phase;
+                vkCmdPushConstants(cmd,
+                                   m_pipeline_layout,
+                                   VK_SHADER_STAGE_COMPUTE_BIT,
+                                   0,
+                                   sizeof(ComputePushConstants),
+                                   &pc);
 
-            vkCmdDispatch(cmd, groups_x, groups_y, 1);
+                vkCmdDispatch(cmd, groups_x, groups_y, 1);
 
-            // Between substeps: barrier on the buffer we just wrote, then swap
-            // ping-pong so the next substep reads what we just wrote.
-            // (Skipped after the final substep — the caller's swap_ping_pong()
-            // handles that transition.)
-            if (s < substeps - 1u) {
-                VkBuffer written = state_buffer_handle(m_write_index);
-                std::swap(m_read_index, m_write_index);
+                // Barrier + swap after phase 0 (so phase 1 reads updated black),
+                // and after phase 1 of every substep except the last (so the next
+                // substep reads the fully-updated buffer).
+                const bool need_barrier = (phase == 0u) || (s < substeps - 1u);
+                if (need_barrier) {
+                    VkBuffer written = state_buffer_handle(m_write_index);
+                    std::swap(m_read_index, m_write_index);
 
-                VkBufferMemoryBarrier barrier{};
-                barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-                barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-                barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-                barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                barrier.buffer = written;
-                barrier.offset = 0;
-                barrier.size = VK_WHOLE_SIZE;
+                    VkBufferMemoryBarrier barrier{};
+                    barrier.sType               = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+                    barrier.srcAccessMask       = VK_ACCESS_SHADER_WRITE_BIT;
+                    barrier.dstAccessMask       = VK_ACCESS_SHADER_READ_BIT;
+                    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    barrier.buffer              = written;
+                    barrier.offset              = 0;
+                    barrier.size                = VK_WHOLE_SIZE;
 
-                vkCmdPipelineBarrier(cmd,
-                                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                                     0,
-                                     0, nullptr,
-                                     1, &barrier,
-                                     0, nullptr);
+                    vkCmdPipelineBarrier(cmd,
+                                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                         0,
+                                         0, nullptr,
+                                         1, &barrier,
+                                         0, nullptr);
+                }
             }
         }
     }

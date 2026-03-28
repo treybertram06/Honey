@@ -173,8 +173,12 @@ namespace Honey {
             const float dt        = m_impl->current_dt;
             const uint32_t fi     = ctx.frame_index();
 
-            const bool submitted = ctx.submit_vulkan_compute([&](VkCommandBuffer cmd) {
-                handle.sim->record_sim(cmd, dt, fi);
+            uint32_t substeps = 8;
+            if (auto* scene = Scene::get_active_scene())
+                substeps = scene->get_registry().get<ClothComponent>(e).substeps;
+
+            const bool submitted = ctx.submit_vulkan_compute([&, substeps](VkCommandBuffer cmd) {
+                handle.sim->record_sim(cmd, dt, fi, substeps);
             });
 
             if (submitted) {

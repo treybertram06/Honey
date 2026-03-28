@@ -45,10 +45,10 @@ namespace Honey {
         };
 
         struct ComputePushConstants {
-            float dt = 0.0f;
-            uint32_t width = 0;
+            float    dt     = 0.0f;
+            uint32_t width  = 0;
             uint32_t height = 0;
-            uint32_t frame_index = 0;
+            uint32_t phase  = 0; // 0 = update (x+y)%2==0, 1 = update (x+y)%2==1
         };
 
         bool create_storage_buffers();
