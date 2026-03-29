@@ -42,7 +42,9 @@ namespace Honey {
         cmd.type = VulkanContext::FramePacket::CmdType::BindGlobals;
 
         cmd.globals.hasCamera = p.hasCamera;
-        cmd.globals.viewProjection = p.viewProjection;
+        cmd.globals.cameraUBO = p.cameraUBO;
+
+        cmd.globals.lightUBO = p.lightUBO;
 
         cmd.globals.hasTextures = p.hasTextures;
         cmd.globals.textures = p.textures;
@@ -278,10 +280,10 @@ namespace Honey {
         return CreateRef<VulkanFramebuffer>(spec, &Application::get().get_vulkan_backend());
     }
 
-    void VulkanRendererAPI::submit_camera_view_projection(const glm::mat4& view_projection) {
+    void VulkanRendererAPI::submit_camera(const CameraUBO& camera) {
         require_frame_begun();
         auto& p = pkt();
-        p.viewProjection = view_projection;
+        p.cameraUBO = camera;
         p.hasCamera = true;
     }
 
@@ -362,13 +364,21 @@ namespace Honey {
         return true;
     }
 
+    void VulkanRendererAPI::submit_lights(const LightsUBO& lights) {
+        require_frame_begun();
+        auto& p = pkt();
+        p.lightUBO = lights;
+    }
+
     VulkanRendererAPI::GlobalsState VulkanRendererAPI::get_globals_state() {
         require_frame_begun();
         const auto& p = pkt();
 
         GlobalsState s{};
-        s.viewProjection = p.viewProjection;
+        s.cameraUBO = p.cameraUBO;
         s.hasCamera = p.hasCamera;
+
+        s.lightUBO = p.lightUBO;
 
         s.textures = p.textures;
         s.textureCount = p.textureCount;
@@ -383,8 +393,10 @@ namespace Honey {
         require_frame_begun();
         auto& p = pkt();
 
-        p.viewProjection = state.viewProjection;
+        p.cameraUBO = state.cameraUBO;
         p.hasCamera = state.hasCamera;
+
+        p.lightUBO = state.lightUBO;
 
         p.textures = state.textures;
         p.textureCount = state.textureCount;

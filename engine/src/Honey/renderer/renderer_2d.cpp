@@ -219,8 +219,12 @@ namespace Honey {
     static void emit_vulkan_globals_for_2d_draw() {
         HN_CORE_ASSERT(s_data, "emit_vulkan_globals_for_2d_draw: renderer data is null");
 
+        CameraUBO camera_ubo{};
+        camera_ubo.view_proj = s_data->camera_buffer.view_projection;
+        //TODO: pass in camera pos for lighting(?)
+
         // Always push camera + at least slot 0 (white) so set 0 is validly bound for the draw.
-        VulkanRendererAPI::submit_camera_view_projection(s_data->camera_buffer.view_projection);
+        VulkanRendererAPI::submit_camera(camera_ubo);
 
         std::array<void*, VulkanRendererAPI::k_max_texture_slots> vk_textures{};
         const uint32_t count = std::min<uint32_t>(
@@ -486,7 +490,12 @@ namespace Honey {
             s_data->camera_uniform_buffer->set_data(sizeof(Renderer2DData::CameraData), &s_data->camera_buffer);
         } else {
             s_data->vk_globals_stack.push_back(VulkanRendererAPI::get_globals_state());
-            VulkanRendererAPI::submit_camera_view_projection(s_data->camera_buffer.view_projection);
+            CameraUBO camera_ubo{};
+            camera_ubo.view_proj = s_data->camera_buffer.view_projection;
+            //TODO: pass in camera pos for lighting(?)
+
+            // Always push camera + at least slot 0 (white) so set 0 is validly bound for the draw.
+            VulkanRendererAPI::submit_camera(camera_ubo);
         }
 
         s_data->quad_instances.clear();
@@ -507,7 +516,12 @@ namespace Honey {
             s_data->camera_uniform_buffer->set_data(sizeof(Renderer2DData::CameraData), &s_data->camera_buffer);
         } else {
             s_data->vk_globals_stack.push_back(VulkanRendererAPI::get_globals_state());
-            VulkanRendererAPI::submit_camera_view_projection(s_data->camera_buffer.view_projection);
+            CameraUBO camera_ubo{};
+            camera_ubo.view_proj = s_data->camera_buffer.view_projection;
+            //TODO: pass in camera pos for lighting(?)
+
+            // Always push camera + at least slot 0 (white) so set 0 is validly bound for the draw.
+            VulkanRendererAPI::submit_camera(camera_ubo);
         }
 
         s_data->quad_instances.clear();
@@ -536,8 +550,12 @@ namespace Honey {
             state.source = VulkanRendererAPI::GlobalsState::Source::Renderer2D;
             s_data->vk_globals_stack.push_back(state);
             // Vulkan backend will convert EngineClip to VulkanClip.
-            VulkanRendererAPI::submit_camera_view_projection(s_data->camera_buffer.view_projection);
-        }
+            CameraUBO camera_ubo{};
+            camera_ubo.view_proj = s_data->camera_buffer.view_projection;
+            //TODO: pass in camera pos for lighting(?)
+
+            // Always push camera + at least slot 0 (white) so set 0 is validly bound for the draw.
+            VulkanRendererAPI::submit_camera(camera_ubo);        }
 
         s_data->quad_instances.clear();
         s_data->circle_instances.clear();
@@ -564,8 +582,12 @@ namespace Honey {
             state.source = VulkanRendererAPI::GlobalsState::Source::Renderer2D;
             s_data->vk_globals_stack.push_back(state);
             // Vulkan backend will convert EngineClip to VulkanClip.
-            VulkanRendererAPI::submit_camera_view_projection(s_data->camera_buffer.view_projection);
-        }
+            CameraUBO camera_ubo{};
+            camera_ubo.view_proj = s_data->camera_buffer.view_projection;
+            //TODO: pass in camera pos for lighting(?)
+
+            // Always push camera + at least slot 0 (white) so set 0 is validly bound for the draw.
+            VulkanRendererAPI::submit_camera(camera_ubo);        }
 
         s_data->quad_instances.clear();
         s_data->circle_instances.clear();

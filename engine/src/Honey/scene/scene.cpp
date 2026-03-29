@@ -17,6 +17,8 @@
 #include "Honey/renderer/renderer_3d.h"
 #include "Honey/scripting/script_engine.h"
 #include "cloth_system.h"
+#include "platform/vulkan/vk_renderer_api.h"
+#include "platform/vulkan/vk_types.h"
 //#include "Honey/scripting/mono_script_engine.h"
 
 namespace Honey {
@@ -273,11 +275,12 @@ namespace Honey {
         Entity primary_camera_entity = get_primary_camera();
         if (primary_camera_entity.is_valid()) {
             auto& cc = primary_camera_entity.get_component<CameraComponent>();
+            auto& tc = primary_camera_entity.get_component<TransformComponent>();
 
             Camera* primary_camera = cc.get_camera();
             if (primary_camera) {
                 glm::mat4 transform = primary_camera_entity.get_world_transform();
-                on_update_render(primary_camera->get_projection_matrix() * glm::inverse(transform));
+                on_update_render(primary_camera->get_projection_matrix() * glm::inverse(transform), tc.translation);
             }
         }
 
@@ -288,7 +291,7 @@ namespace Honey {
 
         update_streamed_assets();
 
-        on_update_render(camera.get_view_projection_matrix());
+        on_update_render(camera.get_view_projection_matrix(), camera.get_position());
     }
 
     void Scene::on_update_simulation(Timestep ts, EditorCamera& camera, bool paused) {
@@ -300,7 +303,7 @@ namespace Honey {
             on_update_physics_2d(ts);
         }
 
-        on_update_render(camera.get_view_projection_matrix());
+        on_update_render(camera.get_view_projection_matrix(), camera.get_position());
     }
 
     void Scene::on_viewport_resize(uint32_t width, uint32_t height) {
@@ -365,6 +368,9 @@ namespace Honey {
         copy_component<AudioSourceComponent>        (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<MeshRendererComponent>       (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<ClothComponent>              (dst_scene_registry, src_scene_registry, entt_map);
+        copy_component<PointLightComponent>         (dst_scene_registry, src_scene_registry, entt_map);
+        copy_component<DirectionalLightComponent>   (dst_scene_registry, src_scene_registry, entt_map);
+        copy_component<SpotLightComponent>          (dst_scene_registry, src_scene_registry, entt_map);
 
         auto view = src_scene_registry.view<RelationshipComponent>();
         for (auto e : view) {
@@ -417,6 +423,9 @@ namespace Honey {
         copy_component_if_exists<AudioSourceComponent>          (new_entity, entity);
         copy_component_if_exists<MeshRendererComponent>         (new_entity, entity);
         copy_component_if_exists<ClothComponent>                (new_entity, entity);
+        copy_component_if_exists<DirectionalLightComponent>     (new_entity, entity);
+        copy_component_if_exists<PointLightComponent>           (new_entity, entity);
+        copy_component_if_exists<SpotLightComponent>            (new_entity, entity);
 
     }
     //void Scene::create_prefab(const Entity& entity, const std::string& path) {
@@ -775,7 +784,7 @@ namespace Honey {
         }
     }
 
-    void Scene::on_update_render(const glm::mat4& view_proj) {
+    void Scene::on_update_render(const glm::mat4& view_proj, const glm::vec3& camera_pos) {
         bool parallel_mesh_submit_enabled = Settings::get().renderer.enable_parallel_mesh_submission;
 
         Renderer2D::begin_scene(view_proj);
@@ -803,7 +812,47 @@ namespace Honey {
 
         Renderer2D::end_scene();
 
-        Renderer3D::begin_scene(view_proj);
+        // Gather and submit lights before draw
+        LightsUBO lights_ubo{};
+
+        auto directional_light_group = m_registry.group<DirectionalLightComponent>(entt::get<TransformComponent>);
+        for (auto entity : directional_light_group) {
+            auto& dl = directional_light_group.get<DirectionalLightComponent>(entity);
+            auto& tc = directional_light_group.get<TransformComponent>(entity);
+            if (!dl.enabled) continue;
+
+            lights_ubo.directional_light.color = dl.color;
+            lights_ubo.directional_light.intensity = dl.intensity;
+            lights_ubo.directional_light.direction = glm::normalize(glm::vec3(tc.get_transform() *
+              glm::vec4(0, -1, 0, 0)));
+            break;
+        }
+
+        auto point_light_group = m_registry.group<PointLightComponent>(entt::get<TransformComponent>);
+        for (auto entity : point_light_group) {
+            auto& pl = point_light_group.get<PointLightComponent>(entity);
+            auto& tc = point_light_group.get<TransformComponent>(entity);
+            if (!pl.enabled) continue;
+
+            if (lights_ubo.directional_light.point_light_count < 32) {
+                int index = lights_ubo.directional_light.point_light_count;
+                lights_ubo.point_lights[index].color = pl.color;
+                lights_ubo.point_lights[index].intensity = pl.intensity;
+                lights_ubo.point_lights[index].position = tc.translation;
+                lights_ubo.point_lights[index].range = pl.range;
+                lights_ubo.directional_light.point_light_count++;
+                // point_light_count belongs to directional_light to ensure structure
+                // is 16 byte aligned without wasting space for padding
+            } else {
+                HN_CORE_WARN("Maximum point light count (32) exceeded! Ignoring additional point light.");
+            }
+        }
+
+        //TODO: Spot lights!
+
+
+        Renderer3D::submit_lights(lights_ubo);
+        Renderer3D::begin_scene(view_proj, camera_pos);
 
         if (!parallel_mesh_submit_enabled) {
             for (auto entity : m_registry.view<TransformComponent, MeshRendererComponent>()) {

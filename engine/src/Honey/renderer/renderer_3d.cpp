@@ -98,12 +98,14 @@ namespace Honey {
         HN_PROFILE_FUNCTION();
         reset_stats();
 
-        glm::mat4 vp = camera.get_view_projection_matrix(); // EngineClip (GL style)
+        CameraUBO camera_ubo{};
+        camera_ubo.position = camera.get_position();
+        camera_ubo.view_proj = camera.get_view_projection_matrix();
 
         auto state = VulkanRendererAPI::get_globals_state();
         state.source = VulkanRendererAPI::GlobalsState::Source::Renderer3D;
         s_data->vk_globals_stack.push_back(state);
-        VulkanRendererAPI::submit_camera_view_projection(vp); // Converts to VulkanClip internally
+        VulkanRendererAPI::submit_camera(camera_ubo);
 
         // Reset frame texture table (keep white bound at slot 0)
         s_data->texture_slot_index = 1;
@@ -118,12 +120,14 @@ namespace Honey {
         HN_PROFILE_FUNCTION();
         reset_stats();
 
-        glm::mat4 view_proj = camera.get_projection_matrix() * glm::inverse(transform);
+        CameraUBO camera_ubo{};
+        camera_ubo.position = camera.get_position();
+        camera_ubo.view_proj = camera.get_view_projection_matrix();
 
         auto state = VulkanRendererAPI::get_globals_state();
         state.source = VulkanRendererAPI::GlobalsState::Source::Renderer3D;
         s_data->vk_globals_stack.push_back(state);
-        VulkanRendererAPI::submit_camera_view_projection(view_proj); // Converts to VulkanClip internally
+        VulkanRendererAPI::submit_camera(camera_ubo);
 
         // Reset frame texture table (keep white bound at slot 0)
         s_data->texture_slot_index = 1;
@@ -134,14 +138,18 @@ namespace Honey {
         s_data->unique_meshes_this_frame.clear();
     }
 
-    void Renderer3D::begin_scene(const glm::mat4& view_proj) {
+    void Renderer3D::begin_scene(const glm::mat4& view_proj, const glm::vec3& position) {
         HN_PROFILE_FUNCTION();
         reset_stats();
+
+        CameraUBO camera_ubo{};
+        camera_ubo.position = position;
+        camera_ubo.view_proj = view_proj;
 
         auto state = VulkanRendererAPI::get_globals_state();
         state.source = VulkanRendererAPI::GlobalsState::Source::Renderer3D;
         s_data->vk_globals_stack.push_back(state);
-        VulkanRendererAPI::submit_camera_view_projection(view_proj); // Converts to VulkanClip internally
+        VulkanRendererAPI::submit_camera(camera_ubo);
 
         // Reset frame texture table (keep white bound at slot 0)
         s_data->texture_slot_index = 1;
@@ -371,6 +379,15 @@ namespace Honey {
         VulkanRendererAPI::set_globals_state(s_data->vk_globals_stack.back());
         s_data->vk_globals_stack.pop_back();
 
+    }
+
+    void Renderer3D::submit_lights(const LightsUBO& lights) {
+        HN_PROFILE_FUNCTION();
+        if (Renderer::get_api() != RendererAPI::API::vulkan) {
+            HN_CORE_WARN("Renderer3D::submit_lights: only Vulkan path implemented");
+            return;
+        }
+        VulkanRendererAPI::submit_lights(lights);
     }
 
     void Renderer3D::draw_mesh(const Ref<VertexArray>& vertex_array, const glm::mat4& transform) {

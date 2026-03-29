@@ -93,7 +93,7 @@ namespace Honey {
         void on_update_scripts(Timestep ts);
         void on_update_audio(Timestep ts);
         void on_update_physics_2d(Timestep ts);
-        void on_update_render(const glm::mat4& view_proj);
+        void on_update_render(const glm::mat4& view_proj, const glm::vec3& camera_pos);
 
         void update_streamed_assets();
 

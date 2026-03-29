@@ -7,6 +7,8 @@
 #include <glm/glm.hpp>
 #include <array>
 
+#include "vk_types.h"
+
 namespace Honey {
 
     class VulkanContext;
@@ -55,8 +57,8 @@ namespace Honey {
         // Called by VulkanContext while recording the frame
         static void set_recording_context(VulkanContext* ctx);
 
-        static void submit_camera_view_projection(const glm::mat4& view_projection);
-        static bool consume_camera_view_projection(glm::mat4& out_view_projection);
+        static void submit_camera(const CameraUBO& camera);
+        static void submit_lights(const LightsUBO& lights);
 
         static void submit_push_constants_mat4(const glm::mat4& value);
         static void submit_push_constants(const void* data, uint32_t size, uint32_t offset = 0, VkShaderStageFlags stageFlags = VK_SHADER_STAGE_ALL);
@@ -68,10 +70,11 @@ namespace Honey {
 
         static void flush_globals();
 
-
         struct GlobalsState {
-            glm::mat4 viewProjection{1.0f};
+            CameraUBO cameraUBO{};
             bool hasCamera = false;
+
+            LightsUBO lightUBO{};
 
             std::array<void*, k_max_texture_slots> textures{};
             uint32_t textureCount = 0;

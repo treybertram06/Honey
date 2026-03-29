@@ -290,8 +290,6 @@ namespace Honey {
             out << YAML::EndMap;
         }
 
-
-
         if (entity.has_component<ClothComponent>()) {
             out << YAML::Key << "ClothComponent";
             out << YAML::BeginMap;
@@ -300,6 +298,53 @@ namespace Honey {
             out << YAML::Key << "GridWidth"  << YAML::Value << cc.grid_width;
             out << YAML::Key << "GridHeight" << YAML::Value << cc.grid_height;
             out << YAML::Key << "Substeps"   << YAML::Value << cc.substeps;
+            out << YAML::EndMap;
+        }
+
+        if (entity.has_component<PointLightComponent>()) {
+            out << YAML::Key << "PointLightComponent";
+            out << YAML::BeginMap;
+
+            auto& plc = entity.get_component<PointLightComponent>();
+            out << YAML::Key << "Color" << YAML::Value << plc.color;
+            out << YAML::Key << "Intensity" << YAML::Value << plc.intensity;
+            out << YAML::Key << "Range" << YAML::Value << plc.range;
+
+            out << YAML::Key << "Enabled" << YAML::Value << plc.enabled;
+            out << YAML::Key << "Shadows" << YAML::Value << plc.shadows;
+
+            out << YAML::EndMap;
+        }
+
+        if (entity.has_component<DirectionalLightComponent>()) {
+            out << YAML::Key << "DirectionalLightComponent";
+            out << YAML::BeginMap;
+
+            auto& dlc = entity.get_component<DirectionalLightComponent>();
+            out << YAML::Key << "Color" << YAML::Value << dlc.color;
+            out << YAML::Key << "Intensity" << YAML::Value << dlc.intensity;
+
+            out << YAML::Key << "Enabled" << YAML::Value << dlc.enabled;
+            out << YAML::Key << "Shadows" << YAML::Value << dlc.shadows;
+
+            out << YAML::EndMap;
+        }
+
+        if (entity.has_component<SpotLightComponent>()) {
+            out << YAML::Key << "SpotLightComponent";
+            out << YAML::BeginMap;
+
+            auto& slc = entity.get_component<SpotLightComponent>();
+            out << YAML::Key << "Color" << YAML::Value << slc.color;
+            out << YAML::Key << "Intensity" << YAML::Value << slc.intensity;
+            out << YAML::Key << "Range" << YAML::Value << slc.range;
+
+            out << YAML::Key << "InnerAngle" << YAML::Value << slc.inner_angle;
+            out << YAML::Key << "OuterAngle" << YAML::Value << slc.outer_angle;
+
+            out << YAML::Key << "Enabled" << YAML::Value << slc.enabled;
+            out << YAML::Key << "Shadows" << YAML::Value << slc.shadows;
+
             out << YAML::EndMap;
         }
 
@@ -677,6 +722,41 @@ namespace Honey {
             cc.grid_width  = cloth_node["GridWidth"].as<uint32_t>();
             cc.grid_height = cloth_node["GridHeight"].as<uint32_t>();
             cc.substeps    = cloth_node["Substeps"].as<uint32_t>();
+        }
+
+        auto point_light_node = entity_node["PointLightComponent"];
+        if (point_light_node) {
+            auto& plc = deserialized_entity.add_component<PointLightComponent>();
+            plc.color = point_light_node["Color"].as<glm::vec3>();
+            plc.intensity = point_light_node["Intensity"].as<float>();
+            plc.range = point_light_node["Range"].as<float>();
+
+            plc.enabled = point_light_node["Enabled"].as<bool>();
+            plc.shadows = point_light_node["Shadows"].as<bool>();
+        }
+
+        auto directional_light_node = entity_node["DirectionalLightComponent"];
+        if (directional_light_node) {
+            auto& plc = deserialized_entity.add_component<DirectionalLightComponent>();
+            plc.color = directional_light_node["Color"].as<glm::vec3>();
+            plc.intensity = directional_light_node["Intensity"].as<float>();
+
+            plc.enabled = directional_light_node["Enabled"].as<bool>();
+            plc.shadows = directional_light_node["Shadows"].as<bool>();
+        }
+
+        auto spot_light_node = entity_node["SpotLightComponent"];
+        if (spot_light_node) {
+            auto& plc = deserialized_entity.add_component<SpotLightComponent>();
+            plc.color = spot_light_node["Color"].as<glm::vec3>();
+            plc.intensity = spot_light_node["Intensity"].as<float>();
+            plc.range = spot_light_node["Range"].as<float>();
+
+            plc.inner_angle = spot_light_node["InnerAngle"].as<float>();
+            plc.outer_angle = spot_light_node["OuterAngle"].as<float>();
+
+            plc.enabled = spot_light_node["Enabled"].as<bool>();
+            plc.shadows = spot_light_node["Shadows"].as<bool>();
         }
 
         return deserialized_entity;

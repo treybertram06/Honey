@@ -11,6 +11,7 @@
 
 #include "editor_camera.h"
 #include "material.h"
+#include "platform/vulkan/vk_types.h"
 
 namespace Honey {
 
@@ -22,9 +23,11 @@ namespace Honey {
 		static void begin_scene(const PerspectiveCamera& camera);
 		static void begin_scene(const EditorCamera& camera);
 		static void begin_scene(const Camera& camera, const glm::mat4& transform);
-		static void begin_scene(const glm::mat4& view_proj);
+		static void begin_scene(const glm::mat4& view_proj, const glm::vec3& position);
 
 		static void end_scene();
+
+		static void submit_lights(const LightsUBO& lights);
 
 		// Basic 3D primitives
 		static void draw_cube(const glm::vec3& position, const glm::vec3& size, const glm::vec4& color = glm::vec4(1.0f));

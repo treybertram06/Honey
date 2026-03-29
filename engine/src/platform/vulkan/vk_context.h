@@ -8,6 +8,7 @@
 #include <functional>
 
 #include "vk_pipeline.h"
+#include "vk_types.h"
 
 struct GLFWwindow;
 
@@ -86,8 +87,10 @@ namespace Honey {
             // One-shot per-frame flags/data
             bool clearRequested = false;
 
-            glm::mat4 viewProjection{1.0f};
+            CameraUBO cameraUBO{};
             bool hasCamera = false;
+
+            LightsUBO lightUBO{};
 
             std::array<void*, 32> textures{};
             uint32_t textureCount = 0;
@@ -127,8 +130,10 @@ namespace Honey {
             };
 
             struct CmdBindGlobals {
-                glm::mat4 viewProjection{1.0f};
+                CameraUBO cameraUBO{};
                 bool hasCamera = false;
+
+                LightsUBO lightUBO{};
 
                 std::array<void*, 32> textures{};
                 uint32_t textureCount = 0;
@@ -320,6 +325,10 @@ private:
         void* m_camera_ubos[k_max_frames_in_flight]{};        // VkBuffer
         void* m_camera_ubo_memories[k_max_frames_in_flight]{}; // VkDeviceMemory
         uint32_t m_camera_ubo_size = 0;
+
+        void* m_lights_ubos[k_max_frames_in_flight]{};        // VkBuffer
+        void* m_lights_ubo_memories[k_max_frames_in_flight]{}; // VkDeviceMemory
+        uint32_t m_lights_ubo_size = 0;
 
         std::array<void*, 32> m_last_bound_textures[k_max_frames_in_flight]{};
         uint32_t m_last_bound_texture_count[k_max_frames_in_flight]{};

@@ -309,5 +309,34 @@ namespace Honey {
         AudioSourceComponent(const AudioSourceComponent&) = default;
     };
 
+    struct PointLightComponent {
+        glm::vec3 color = {1.0f, 1.0f, 1.0f};
+        float intensity = 1.0f;
+        float range = 10.0f;
+
+        bool enabled = true;
+        bool shadows = true;
+    };
+
+    struct DirectionalLightComponent {
+        glm::vec3 color = {1.0f, 1.0f, 1.0f};
+        float intensity = 1.0f;
+
+        bool enabled = true;
+        bool shadows = true;
+    };
+
+    struct SpotLightComponent {
+        glm::vec3 color = {1.0f, 1.0f, 1.0f};
+        float intensity = 1.0f;
+        float range = 10.0f;
+
+        float inner_angle = 15.0f;
+        float outer_angle = 30.0f;
+
+        bool enabled = true;
+        bool shadows = true;
+    };
+
 }
 
