@@ -192,10 +192,36 @@ namespace Honey {
 
             const tinygltf::Image& img = model.images[(size_t)gt.source];
 
-            // For milestone 1: only support images with URI on disk. TODO: make this support more formats!
-            if (img.uri.empty()) {
-                HN_CORE_WARN("glTF: image source has no uri (embedded images not supported yet). Using white.");
-                mat->set_base_color_texture(nullptr);
+            if (img.uri.empty() || img.uri.rfind("data:", 0) == 0) {
+                if (img.image.empty() || img.width <= 0 || img.height <= 0) {
+                    HN_CORE_WARN("glTF: embedded image has no decoded pixel data. Using white.");
+                    mat->set_base_color_texture(nullptr);
+                    return mat;
+                }
+
+                const int w = img.width, h = img.height, comp = img.component;
+                const int bits = img.bits > 0 ? img.bits : 8;
+                if (bits != 8) {
+                    HN_CORE_WARN("glTF: embedded image has {} bits/channel (only 8-bit supported). Using white.", bits);
+                    mat->set_base_color_texture(nullptr);
+                    return mat;
+                }
+
+                // Expand to RGBA8
+                std::vector<uint8_t> rgba(w * h * 4);
+                for (int i = 0; i < w * h; ++i) {
+                    const uint8_t* src = img.image.data() + i * comp;
+                    rgba[i*4+0] = comp >= 1 ? src[0] : 0;
+                    rgba[i*4+1] = comp >= 2 ? src[1] : (comp == 1 ? src[0] : 0);
+                    // grey→RGB
+                    rgba[i*4+2] = comp >= 3 ? src[2] : (comp == 1 ? src[0] : 0);
+                    rgba[i*4+3] = comp == 4 ? src[3] : 255;
+                }
+
+                Ref<Texture2D> tex = Texture2D::create((uint32_t)w, (uint32_t)h);
+                tex->set_data(rgba.data(), (uint32_t)rgba.size());
+                textureCacheByImageIndex[gt.source] = tex;
+                mat->set_base_color_texture(tex);
                 return mat;
             }
 
@@ -375,9 +401,15 @@ namespace Honey {
                 set_default_layout_pnuv(vb);
                 vao->add_vertex_buffer(vb);
 
-                // Index buffer (u16 or u32)
+                // Index buffer (u8, u16, or u32)
                 Ref<IndexBuffer> ib;
-                if (idxAcc->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
+                if (idxAcc->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) {
+                    // Expand u8 → u16
+                    std::vector<uint16_t> indices(idxAcc->count);
+                    for (size_t i = 0; i < indices.size(); ++i)
+                        indices[i] = static_cast<uint16_t>(*(idxBase + i * idxStride));
+                    ib = IndexBuffer::create(indices.data(), (uint32_t)indices.size());
+                } else if (idxAcc->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
                     std::vector<uint16_t> indices(idxAcc->count);
                     for (size_t i = 0; i < indices.size(); ++i) {
                         const uint16_t* v = reinterpret_cast<const uint16_t*>(idxBase + i * idxStride);
