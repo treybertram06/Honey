@@ -166,6 +166,11 @@ namespace Honey {
                 return mat;
             }
 
+            // metallicFactor
+            mat->set_metallic_factor((float)gm.pbrMetallicRoughness.metallicFactor);
+            // roughnessFactor
+            mat->set_roughness_factor((float)gm.pbrMetallicRoughness.roughnessFactor);
+
             // baseColorTexture (URI-based only for v1)
             const tinygltf::TextureInfo& ti = gm.pbrMetallicRoughness.baseColorTexture;
             if (ti.index < 0 || ti.index >= (int)model.textures.size()) {
@@ -187,7 +192,7 @@ namespace Honey {
 
             const tinygltf::Image& img = model.images[(size_t)gt.source];
 
-            // For milestone 1: only support images with URI on disk.
+            // For milestone 1: only support images with URI on disk. TODO: make this support more formats!
             if (img.uri.empty()) {
                 HN_CORE_WARN("glTF: image source has no uri (embedded images not supported yet). Using white.");
                 mat->set_base_color_texture(nullptr);

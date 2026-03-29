@@ -1,4 +1,5 @@
 #pragma once
+#include <glm/glm.hpp>
 
 namespace Honey {
 
@@ -31,5 +32,14 @@ namespace Honey {
         glm::vec3 position{};
         float _pad0 = 0;
     };
+
+    struct GPUMaterial {
+        glm::vec4 base_color = {1.0f, 1.0f, 1.0f, 1.0f};
+        float metallic = 0.0f;
+        float roughness = 0.0f;
+        int32_t base_color_tex_id = 0;
+        int32_t _pad0 = 0;
+    };
+    static_assert(sizeof(GPUMaterial) == 32, "GPUMaterial layout mismatch");
 
 }

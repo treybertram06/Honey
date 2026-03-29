@@ -293,6 +293,9 @@ namespace Honey {
         ensure_instance_buffer_capacity((uint32_t)packed.size());
         s_data->instance_vb->set_data(packed.data(), (uint32_t)(packed.size() * sizeof(glm::mat4)));
 
+        std::vector<GPUMaterial> materials;
+        materials.reserve(s_data->batches.size());
+
         // --- Emit draws, each referencing a slice of the packed buffer via byte offset ---
         for (auto& [key, batch] : s_data->batches) {
             if (batch.transforms.empty())
@@ -301,36 +304,16 @@ namespace Honey {
             const uint32_t base_color_tex_index =
                 batch.material ? material_texture_slots[batch.material.get()] : 0;
 
-            const glm::vec4 base_color_factor =
-                batch.material ? batch.material->get_base_color_factor() : glm::vec4(1.0f);
+            GPUMaterial material{};
+            material.base_color        = batch.material ? batch.material->get_base_color_factor() : glm::vec4(1.0f);
+            material.base_color_tex_id = (int32_t)base_color_tex_index;
+            material.metallic          = batch.material ? batch.material->get_metallic_factor()   : 0.0f;
+            material.roughness         = batch.material ? batch.material->get_roughness_factor()  : 0.5f;
 
-            struct MaterialPC {
-                glm::vec4 baseColorFactor;
-                int32_t   baseColorTexIndex;
-                int32_t   _pad0;
-                int32_t   _pad1;
-                int32_t   _pad2;
-            };
-
-            MaterialPC pc{};
-            pc.baseColorFactor   = base_color_factor;
-            pc.baseColorTexIndex = (int32_t)base_color_tex_index;
-            pc._pad0 = pc._pad1 = pc._pad2 = 0;
-
-            std::array<std::byte, 128> push_block{};
-            static_assert(sizeof(MaterialPC) <= 128, "MaterialPC exceeds push constant block size");
-            std::memcpy(push_block.data(), &pc, sizeof(MaterialPC));
-
-            VulkanRendererAPI::submit_push_constants(
-                push_block.data(),
-                (uint32_t)push_block.size(),
-                0,
-                VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT
-            );
-            s_data->stats.push_constant_updates++;
+            const int32_t material_index = (int32_t)materials.size();
+            materials.push_back(material);
 
             // Find start index for this batch (linear search; batches are usually not huge).
-            // If you want, we can swap this to an unordered_map later.
             uint32_t start_index = 0;
             bool found = false;
             for (const auto& [kptr, start] : starts) {
@@ -347,11 +330,15 @@ namespace Honey {
 
             HN_CORE_ASSERT((byte_offset % 16u) == 0u, "Renderer3D: instance byte offset must be 16-byte aligned");
 
-            // Safety: ensure range fits in the uploaded packed buffer.
             const uint32_t end_index = start_index + instance_count;
             HN_CORE_ASSERT(end_index <= (uint32_t)packed.size(),
                            "Renderer3D: instance range out of packed bounds (end={}, packed={})",
                            end_index, packed.size());
+
+            struct MaterialPC { int32_t material_index; int32_t _pad[3]; };
+            static_assert(sizeof(MaterialPC) <= 128, "MaterialPC too large");
+            MaterialPC pc{ material_index };
+            VulkanRendererAPI::submit_push_constants(&pc, sizeof(MaterialPC));
 
             VulkanRendererAPI::submit_instanced_draw(
                 batch.va,
@@ -363,6 +350,7 @@ namespace Honey {
 
             s_data->stats.draw_calls++;
         }
+        VulkanRendererAPI::submit_materials(materials);
     }
 
     void Renderer3D::end_scene() {

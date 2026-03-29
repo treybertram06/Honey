@@ -401,14 +401,21 @@ namespace Honey {
         lights_ubo_binding.descriptorCount = 1;
         lights_ubo_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-        // binding 2 => sampler (fragment)
+        // binding 2 => materials SSBO
+        VkDescriptorSetLayoutBinding material_ssbo_binding{};
+        material_ssbo_binding.binding = binding_index++;
+        material_ssbo_binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        material_ssbo_binding.descriptorCount = 1;
+        material_ssbo_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        // binding 3 => sampler (fragment)
         VkDescriptorSetLayoutBinding sampler_binding{};
         sampler_binding.binding = binding_index++;
         sampler_binding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
         sampler_binding.descriptorCount = 1;
         sampler_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-        // binding 3 => texture array (sampled images, fragment)
+        // binding 4 => texture array (sampled images, fragment)
         // With variable descriptor count: descriptorCount here is the MAX.
         VkDescriptorSetLayoutBinding tex_binding{};
         tex_binding.binding = binding_index++;
@@ -419,16 +426,18 @@ namespace Honey {
         VkDescriptorSetLayoutBinding bindings[] = {
             camera_ubo_binding,
             lights_ubo_binding,
+            material_ssbo_binding,
             sampler_binding,
             tex_binding
         };
 
         // ---- Descriptor indexing / bindless binding flags (variable descriptor count) ----
-        VkDescriptorBindingFlags binding_flags[4]{};
+        VkDescriptorBindingFlags binding_flags[5]{};
         binding_flags[0] = 0; // Camera UBO
         binding_flags[1] = 0; // Lights UBO
-        binding_flags[2] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT; // sampler
-        binding_flags[3] = // tex
+        binding_flags[2] = 0; // Material SSBO
+        binding_flags[3] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT; // sampler
+        binding_flags[4] = // tex
             VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
             VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT |
             VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
@@ -456,7 +465,7 @@ namespace Honey {
             m_global_set_layout = reinterpret_cast<VkDescriptorSetLayout>(set_layout);
 
             // Descriptor pool sized for frames-in-flight:
-            VkDescriptorPoolSize pool_sizes[4]{};
+            VkDescriptorPoolSize pool_sizes[5]{};
             HN_CORE_ASSERT(sizeof(pool_sizes) / sizeof(VkDescriptorPoolSize) == binding_index,
                 "Inconsistency in descriptor pool size!");
 
@@ -468,14 +477,18 @@ namespace Honey {
             pool_sizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             pool_sizes[1].descriptorCount = k_max_frames_in_flight;
 
-            // Samplers (binding 2)
-            pool_sizes[2].type = VK_DESCRIPTOR_TYPE_SAMPLER;
+            // Matierals SSBO (binding 2)
+            pool_sizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             pool_sizes[2].descriptorCount = k_max_frames_in_flight;
 
-            // Sampled images (binding 3)
+            // Samplers (binding 3)
+            pool_sizes[3].type = VK_DESCRIPTOR_TYPE_SAMPLER;
+            pool_sizes[3].descriptorCount = k_max_frames_in_flight;
+
+            // Sampled images (binding 4)
             // Pool must cover the MAX possible descriptors you may allocate across sets.
-            pool_sizes[3].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-            pool_sizes[3].descriptorCount = k_max_frames_in_flight * VulkanRendererAPI::k_max_texture_slots;
+            pool_sizes[4].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            pool_sizes[4].descriptorCount = k_max_frames_in_flight * VulkanRendererAPI::k_max_texture_slots;
 
             VkDescriptorPoolCreateInfo pool_ci{};
             pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -496,6 +509,7 @@ namespace Honey {
         // Create per-frame UBO + allocate per-frame descriptor sets
         m_camera_ubo_size = sizeof(CameraUBO);
         m_lights_ubo_size = sizeof(LightsUBO);
+        m_materials_ssbo_size = sizeof(GPUMaterial) * 1024;
 
         VkDescriptorSetLayout layouts[k_max_frames_in_flight]{};
         for (uint32_t i = 0; i < k_max_frames_in_flight; ++i)
@@ -522,12 +536,19 @@ namespace Honey {
             VkResult r = vkAllocateDescriptorSets(reinterpret_cast<VkDevice>(m_device), &alloc, sets);
             HN_CORE_ASSERT(r == VK_SUCCESS, "vkAllocateDescriptorSets failed");
 
-            auto create_ubo_for_frame = [&](std::string name, uint32_t frame, void** ubos, void** ubo_memories, uint32_t ubo_size, uint32_t dst_binding) {
-                // Create UBO for this frame
+            auto create_buffer_for_frame = [&](std::string name,
+                uint32_t frame,
+                void** ubos,
+                void** ubo_memories,
+                uint32_t ubo_size,
+                uint32_t dst_binding,
+                VkBufferUsageFlags usage,
+                VkDescriptorType descriptor_type) {
+                // Create buffer for this frame
                 VkBufferCreateInfo bi{};
                 bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
                 bi.size = ubo_size;
-                bi.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+                bi.usage = usage;
                 bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
                 VkBuffer ubo = VK_NULL_HANDLE;
@@ -570,7 +591,7 @@ namespace Honey {
                 write_ubo.dstSet = reinterpret_cast<VkDescriptorSet>(m_global_descriptor_sets[frame]);
                 write_ubo.dstBinding = dst_binding;
                 write_ubo.dstArrayElement = 0;
-                write_ubo.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+                write_ubo.descriptorType = descriptor_type;
                 write_ubo.descriptorCount = 1;
                 write_ubo.pBufferInfo = &dbi;
 
@@ -580,8 +601,12 @@ namespace Honey {
             for (uint32_t frame = 0; frame < k_max_frames_in_flight; ++frame) {
                 m_global_descriptor_sets[frame] = reinterpret_cast<VkDescriptorSet>(sets[frame]);
 
-                create_ubo_for_frame("camera", frame, m_camera_ubos, m_camera_ubo_memories, m_camera_ubo_size, 0);
-                create_ubo_for_frame("lights", frame, m_lights_ubos, m_lights_ubo_memories, m_lights_ubo_size, 1);
+                create_buffer_for_frame("camera", frame, m_camera_ubos, m_camera_ubo_memories,
+                    m_camera_ubo_size, 0, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+                create_buffer_for_frame("lights", frame, m_lights_ubos, m_lights_ubo_memories,
+                    m_lights_ubo_size, 1, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+                create_buffer_for_frame("materials", frame, m_materials_ssbo, m_materials_ssbo_memories,
+                    m_materials_ssbo_size, 2, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
             }
         }
     }
@@ -608,11 +633,21 @@ namespace Honey {
                 vkFreeMemory(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkDeviceMemory>(m_lights_ubo_memories[frame]), nullptr);
                 m_lights_ubo_memories[frame] = nullptr;
             }
+
+            if (m_materials_ssbo[frame]) {
+                vkDestroyBuffer(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkBuffer>(m_materials_ssbo[frame]), nullptr);
+                m_materials_ssbo[frame] = nullptr;
+            }
+            if (m_materials_ssbo_memories[frame]) {
+                vkFreeMemory(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkDeviceMemory>(m_materials_ssbo_memories[frame]), nullptr);
+                m_materials_ssbo_memories[frame] = nullptr;
+            }
             m_global_descriptor_sets[frame] = nullptr;
         }
 
         m_camera_ubo_size = 0;
         m_lights_ubo_size = 0;
+        m_materials_ssbo_size = 0;
 
         if (m_descriptor_pool) {
             vkDestroyDescriptorPool(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkDescriptorPool>(m_descriptor_pool), nullptr);
@@ -1918,13 +1953,29 @@ namespace Honey {
                 void* mapped = nullptr;
                 VkResult mr = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
 
-            reinterpret_cast<VkDeviceMemory>(m_lights_ubo_memories[frame]),
+                reinterpret_cast<VkDeviceMemory>(m_lights_ubo_memories[frame]),
                                           0, m_lights_ubo_size, 0, &mapped);
                 HN_CORE_ASSERT(mr == VK_SUCCESS, "vkMapMemory lights ubo failed");
                 std::memcpy(mapped, &g.lightUBO, sizeof(LightsUBO));
                 vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
 
-            reinterpret_cast<VkDeviceMemory>(m_lights_ubo_memories[frame]));
+                reinterpret_cast<VkDeviceMemory>(m_lights_ubo_memories[frame]));
+            }
+
+            // Materials SSBO
+            if (m_materials_ssbo_memories[frame] && m_materials_ssbo_size == sizeof(GPUMaterial) * 1024) {
+                void* mapped = nullptr;
+                VkResult mr = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
+                reinterpret_cast<VkDeviceMemory>(m_materials_ssbo_memories[frame]),
+                                      0, m_materials_ssbo_size, 0, &mapped);
+                HN_CORE_ASSERT(mr == VK_SUCCESS, "vkMapMemory materials ssbo failed");
+                const uint32_t copy_size = (uint32_t)(g.materials.size() * sizeof(GPUMaterial));
+                std::memcpy(mapped, g.materials.data(), copy_size);
+                vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
+
+                reinterpret_cast<VkDeviceMemory>(m_materials_ssbo_memories[frame]));
+            } else {
+                HN_CORE_ERROR("apply_globals: materials ssbo is null or there's a size mismatch");
             }
 
             // Sampler + texture descriptors
@@ -1961,7 +2012,7 @@ namespace Honey {
                 VkWriteDescriptorSet write_sampler{};
                 write_sampler.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
                 write_sampler.dstSet = ds;
-                write_sampler.dstBinding = 2;
+                write_sampler.dstBinding = 3;
                 write_sampler.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
                 write_sampler.descriptorCount = 1;
                 write_sampler.pImageInfo = &sampler_info;
@@ -2001,7 +2052,7 @@ namespace Honey {
                 VkWriteDescriptorSet write_images{};
                 write_images.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
                 write_images.dstSet = ds;
-                write_images.dstBinding = 3;
+                write_images.dstBinding = 4;
                 write_images.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
                 write_images.descriptorCount = write_count;
                 write_images.pImageInfo = infos.data();

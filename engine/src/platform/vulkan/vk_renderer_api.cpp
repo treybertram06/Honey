@@ -46,6 +46,8 @@ namespace Honey {
 
         cmd.globals.lightUBO = p.lightUBO;
 
+        cmd.globals.materials = p.materials;
+
         cmd.globals.hasTextures = p.hasTextures;
         cmd.globals.textures = p.textures;
         cmd.globals.textureCount = p.textureCount;
@@ -368,6 +370,12 @@ namespace Honey {
         require_frame_begun();
         auto& p = pkt();
         p.lightUBO = lights;
+    }
+
+    void VulkanRendererAPI::submit_materials(const std::vector<GPUMaterial>& materials) {
+        require_frame_begun();
+        auto& p = pkt();
+        p.materials = materials;
     }
 
     VulkanRendererAPI::GlobalsState VulkanRendererAPI::get_globals_state() {
