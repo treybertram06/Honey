@@ -36,8 +36,8 @@ namespace Honey {
 		static void draw_sphere(const glm::vec3& position, float radius, const glm::vec4& color = glm::vec4(1.0f));
 
 		// Generic mesh rendering
-		static void draw_mesh(const Ref<VertexArray>& vertex_array, const glm::mat4& transform);
-		static void draw_mesh(const Ref<VertexArray>& vertex_array, const Ref<Material>& material, const glm::mat4& transform);
+		static void draw_mesh(const Ref<VertexArray>& vertex_array, const glm::mat4& transform, int entity_id = -1);
+		static void draw_mesh(const Ref<VertexArray>& vertex_array, const Ref<Material>& material, const glm::mat4& transform, int entity_id = -1);
 
 		static void prewarm_pipelines(void* native_render_pass);
 
@@ -65,6 +65,7 @@ namespace Honey {
 			Ref<VertexArray> va;
 			Ref<Material> material;
 			std::vector<glm::mat4> transforms;
+			std::vector<int32_t>   entity_ids;
 		};
 
 		struct BatchKey {

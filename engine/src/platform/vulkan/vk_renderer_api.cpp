@@ -187,7 +187,7 @@ namespace Honey {
         HN_CORE_ASSERT(vertex_array, "submit_instanced_draw: vertex_array is null");
         HN_CORE_ASSERT(instance_vb, "submit_instanced_draw: instance_vb is null");
         HN_CORE_ASSERT(instance_count > 0, "submit_instanced_draw: instance_count must be > 0");
-        HN_CORE_ASSERT((instance_byte_offset % 16u) == 0u, "submit_instanced_draw: instance_byte_offset must be 16-byte aligned");
+        HN_CORE_ASSERT((instance_byte_offset % 4u) == 0u, "submit_instanced_draw: instance_byte_offset must be 4-byte aligned");
 
         VulkanContext::FramePacket::Cmd cmd{};
         cmd.type = VulkanContext::FramePacket::CmdType::DrawIndexed;

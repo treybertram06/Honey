@@ -877,7 +877,7 @@ namespace Honey {
                     if (material)
                         material->set_base_color_factor(mr.color);
 
-                    Renderer3D::draw_mesh(sm.vao, material, world * sm.transform);
+                    Renderer3D::draw_mesh(sm.vao, material, world * sm.transform, (int)entity);
                 }
             }
         } else {

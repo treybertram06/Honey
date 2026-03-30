@@ -160,6 +160,14 @@ namespace Honey {
         s_data->unique_meshes_this_frame.clear();
     }
 
+    // Per-instance data uploaded to the vertex buffer.
+    // Layout must match the vertex shader inputs at locations 3-7.
+    struct InstanceData {
+        glm::mat4 model;       // locations 3-6 (4 x vec4)
+        int32_t   entity_id;   // location 7 (int)
+    };
+    static_assert(sizeof(InstanceData) == 68, "InstanceData size mismatch");
+
     static void ensure_instance_buffer_capacity(uint32_t required_instances) {
         HN_CORE_ASSERT(s_data, "Renderer3D: s_data null");
 
@@ -173,14 +181,15 @@ namespace Honey {
 
             s_data->instance_vb_capacity = new_cap;
 
-            const uint32_t bytes = s_data->instance_vb_capacity * sizeof(glm::mat4);
+            const uint32_t bytes = s_data->instance_vb_capacity * sizeof(InstanceData);
             s_data->instance_vb = VertexBuffer::create(bytes);
 
             s_data->instance_vb->set_layout({
-                { ShaderDataType::Float4, "a_iModel0", false, true },
-                { ShaderDataType::Float4, "a_iModel1", false, true },
-                { ShaderDataType::Float4, "a_iModel2", false, true },
-                { ShaderDataType::Float4, "a_iModel3", false, true },
+                { ShaderDataType::Float4, "a_iModel0",   false, true },
+                { ShaderDataType::Float4, "a_iModel1",   false, true },
+                { ShaderDataType::Float4, "a_iModel2",   false, true },
+                { ShaderDataType::Float4, "a_iModel3",   false, true },
+                { ShaderDataType::Int,    "a_iEntityID", false, true },
             });
         }
     }
@@ -221,7 +230,7 @@ namespace Honey {
         if (total_instances == 0)
             return;
 
-        std::vector<glm::mat4> packed;
+        std::vector<InstanceData> packed;
         packed.reserve(total_instances);
 
         // Keep start index per batch, in the SAME iteration order used for packing
@@ -242,7 +251,12 @@ namespace Honey {
 
             const uint32_t start_index = (uint32_t)packed.size();
             starts.emplace_back(&key, start_index);
-            packed.insert(packed.end(), batch.transforms.begin(), batch.transforms.end());
+            for (size_t i = 0; i < batch.transforms.size(); ++i) {
+                InstanceData inst{};
+                inst.model     = batch.transforms[i];
+                inst.entity_id = (i < batch.entity_ids.size()) ? batch.entity_ids[i] : -1;
+                packed.push_back(inst);
+            }
 
             ordered_batches.emplace_back(OrderedBatch{&key, &batch, start_index});
         }
@@ -253,7 +267,7 @@ namespace Honey {
 
         // Upload ONCE for the whole frame
         ensure_instance_buffer_capacity((uint32_t)packed.size());
-        s_data->instance_vb->set_data(packed.data(), (uint32_t)(packed.size() * sizeof(glm::mat4)));
+        s_data->instance_vb->set_data(packed.data(), (uint32_t)(packed.size() * sizeof(InstanceData)));
 
         // One pipeline bind for all batches (same forward shader for now)
         RenderCommand::bind_pipeline(pipe);
@@ -322,9 +336,9 @@ namespace Honey {
             // Emit draws for this chunk
             for (uint32_t i = chunk_begin; i < chunk_end; i++) {
                 const int32_t material_index = (int32_t)(global_mat_offset + (i - chunk_begin));
-                const uint32_t byte_offset = ordered_batches[i].start_index * (uint32_t)sizeof(glm::mat4);
+                const uint32_t byte_offset = ordered_batches[i].start_index * (uint32_t)sizeof(InstanceData);
 
-                HN_CORE_ASSERT((byte_offset % 16u) == 0u, "Renderer3D: instance byte offset must be 16-byte aligned");
+                HN_CORE_ASSERT((byte_offset % 4u) == 0u, "Renderer3D: instance byte offset must be 4-byte aligned");
 
                 MaterialPC pc{material_index};
                 VulkanRendererAPI::submit_push_constants(&pc, sizeof(MaterialPC));
@@ -369,11 +383,11 @@ namespace Honey {
         VulkanRendererAPI::submit_lights(lights);
     }
 
-    void Renderer3D::draw_mesh(const Ref<VertexArray>& vertex_array, const glm::mat4& transform) {
-        draw_mesh(vertex_array, s_data->default_material, transform);
+    void Renderer3D::draw_mesh(const Ref<VertexArray>& vertex_array, const glm::mat4& transform, int entity_id) {
+        draw_mesh(vertex_array, s_data->default_material, transform, entity_id);
     }
 
-    void Renderer3D::draw_mesh(const Ref<VertexArray>& vertex_array, const Ref<Material>& material, const glm::mat4& transform) {
+    void Renderer3D::draw_mesh(const Ref<VertexArray>& vertex_array, const Ref<Material>& material, const glm::mat4& transform, int entity_id) {
         HN_PROFILE_FUNCTION();
         HN_CORE_ASSERT(vertex_array, "Renderer3D::draw_mesh: vertex_array is null");
         HN_CORE_ASSERT(material, "Renderer3D::draw_mesh: material is null");
@@ -394,10 +408,12 @@ namespace Honey {
             v.va = vertex_array;
             v.material = material;
             v.transforms.reserve(128);
+            v.entity_ids.reserve(128);
             it = s_data->batches.emplace(key, std::move(v)).first;
         }
 
         it->second.transforms.push_back(transform);
+        it->second.entity_ids.push_back(entity_id);
     }
 
     void Renderer3D::prewarm_pipelines(void* native_render_pass) {
