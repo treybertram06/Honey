@@ -47,6 +47,7 @@ namespace Honey {
         cmd.globals.lightUBO = p.lightUBO;
 
         cmd.globals.materials = p.materials;
+        cmd.globals.materials_ssbo_offset = p.materials_ssbo_offset;
 
         cmd.globals.hasTextures = p.hasTextures;
         cmd.globals.textures = p.textures;
@@ -372,10 +373,11 @@ namespace Honey {
         p.lightUBO = lights;
     }
 
-    void VulkanRendererAPI::submit_materials(const std::vector<GPUMaterial>& materials) {
+    void VulkanRendererAPI::submit_materials(const std::vector<GPUMaterial>& materials, uint32_t materials_ssbo_offset) {
         require_frame_begun();
         auto& p = pkt();
         p.materials = materials;
+        p.materials_ssbo_offset = materials_ssbo_offset;
     }
 
     VulkanRendererAPI::GlobalsState VulkanRendererAPI::get_globals_state() {

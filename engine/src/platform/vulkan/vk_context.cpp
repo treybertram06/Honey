@@ -471,28 +471,28 @@ namespace Honey {
 
             // Camera UBO (binding 0)
             pool_sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            pool_sizes[0].descriptorCount = k_max_frames_in_flight;
+            pool_sizes[0].descriptorCount = k_max_frames_in_flight * k_max_chunks_per_frame;
 
             // Lights UBO (binding 1)
             pool_sizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            pool_sizes[1].descriptorCount = k_max_frames_in_flight;
+            pool_sizes[1].descriptorCount = k_max_frames_in_flight * k_max_chunks_per_frame;
 
             // Matierals SSBO (binding 2)
             pool_sizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            pool_sizes[2].descriptorCount = k_max_frames_in_flight;
+            pool_sizes[2].descriptorCount = k_max_frames_in_flight * k_max_chunks_per_frame;
 
             // Samplers (binding 3)
             pool_sizes[3].type = VK_DESCRIPTOR_TYPE_SAMPLER;
-            pool_sizes[3].descriptorCount = k_max_frames_in_flight;
+            pool_sizes[3].descriptorCount = k_max_frames_in_flight * k_max_chunks_per_frame;
 
             // Sampled images (binding 4)
             // Pool must cover the MAX possible descriptors you may allocate across sets.
             pool_sizes[4].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-            pool_sizes[4].descriptorCount = k_max_frames_in_flight * VulkanRendererAPI::k_max_texture_slots;
+            pool_sizes[4].descriptorCount = k_max_frames_in_flight * k_max_chunks_per_frame * VulkanRendererAPI::k_max_texture_slots;
 
             VkDescriptorPoolCreateInfo pool_ci{};
             pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-            pool_ci.maxSets = k_max_frames_in_flight;
+            pool_ci.maxSets = k_max_frames_in_flight * k_max_chunks_per_frame;
             pool_ci.poolSizeCount = sizeof(pool_sizes) / sizeof(VkDescriptorPoolSize);
             pool_ci.pPoolSizes = pool_sizes;
             pool_ci.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
@@ -509,32 +509,35 @@ namespace Honey {
         // Create per-frame UBO + allocate per-frame descriptor sets
         m_camera_ubo_size = sizeof(CameraUBO);
         m_lights_ubo_size = sizeof(LightsUBO);
-        m_materials_ssbo_size = sizeof(GPUMaterial) * 1024;
+        m_materials_ssbo_size = sizeof(GPUMaterial) * k_max_material_count;
 
-        VkDescriptorSetLayout layouts[k_max_frames_in_flight]{};
-        for (uint32_t i = 0; i < k_max_frames_in_flight; ++i)
-            layouts[i] = reinterpret_cast<VkDescriptorSetLayout>(m_global_set_layout);
+        const uint32_t total_sets = k_max_frames_in_flight * k_max_chunks_per_frame;
 
-        // Track allocated descriptor capacity for binding 2 (per frame)
-        static uint32_t s_global_texture_capacity_per_frame[k_max_frames_in_flight]{};
-        for (uint32_t i = 0; i < k_max_frames_in_flight; ++i)
-            s_global_texture_capacity_per_frame[i] = VulkanRendererAPI::k_max_texture_slots;
+        std::vector<VkDescriptorSetLayout> layouts(total_sets,
+            reinterpret_cast<VkDescriptorSetLayout>(m_global_set_layout));
+
+        std::vector<uint32_t> tex_capacities(total_sets, VulkanRendererAPI::k_max_texture_slots);
 
         VkDescriptorSetVariableDescriptorCountAllocateInfo var_alloc{};
         var_alloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO;
-        var_alloc.descriptorSetCount = k_max_frames_in_flight;
-        var_alloc.pDescriptorCounts = s_global_texture_capacity_per_frame;
+        var_alloc.descriptorSetCount = total_sets;
+        var_alloc.pDescriptorCounts = tex_capacities.data();
 
         VkDescriptorSetAllocateInfo alloc{};
         alloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
         alloc.pNext = &var_alloc;
         alloc.descriptorPool = reinterpret_cast<VkDescriptorPool>(m_descriptor_pool);
-        alloc.descriptorSetCount = k_max_frames_in_flight;
-        alloc.pSetLayouts = layouts;
+        alloc.descriptorSetCount = total_sets;
+        alloc.pSetLayouts = layouts.data();
         {
-            VkDescriptorSet sets[k_max_frames_in_flight]{};
-            VkResult r = vkAllocateDescriptorSets(reinterpret_cast<VkDevice>(m_device), &alloc, sets);
+            std::vector<VkDescriptorSet> sets(total_sets);
+            VkResult r = vkAllocateDescriptorSets(reinterpret_cast<VkDevice>(m_device), &alloc, sets.data());
             HN_CORE_ASSERT(r == VK_SUCCESS, "vkAllocateDescriptorSets failed");
+
+            // Store allocated sets into the 2D per-frame/per-chunk array
+            for (uint32_t f = 0; f < k_max_frames_in_flight; ++f)
+                for (uint32_t c = 0; c < k_max_chunks_per_frame; ++c)
+                    m_global_descriptor_sets[f][c] = sets[f * k_max_chunks_per_frame + c];
 
             auto create_buffer_for_frame = [&](std::string name,
                 uint32_t frame,
@@ -553,8 +556,7 @@ namespace Honey {
 
                 VkBuffer ubo = VK_NULL_HANDLE;
                 r = vkCreateBuffer(reinterpret_cast<VkDevice>(m_device), &bi, nullptr, &ubo);
-                std::string err_string = "vkCreateBuffer (" + name + " ubo) failed";
-                HN_CORE_ASSERT(r == VK_SUCCESS, err_string);
+                HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateBuffer ({0} ubo) failed", name);
 
                 VkMemoryRequirements req{};
                 vkGetBufferMemoryRequirements(reinterpret_cast<VkDevice>(m_device), ubo, &req);
@@ -570,17 +572,17 @@ namespace Honey {
 
                 VkDeviceMemory mem = VK_NULL_HANDLE;
                 r = vkAllocateMemory(reinterpret_cast<VkDevice>(m_device), &ai, nullptr, &mem);
-                err_string = "vkAllocateMemory (" + name + " ubo) failed";
-                HN_CORE_ASSERT(r == VK_SUCCESS, err_string);
+                HN_CORE_ASSERT(r == VK_SUCCESS, "vkAllocateMemory ({0} ubo) failed", name);
 
                 r = vkBindBufferMemory(reinterpret_cast<VkDevice>(m_device), ubo, mem, 0);
-                err_string = "vkBindBufferMemory (" + name + " ubo) failed";
-                HN_CORE_ASSERT(r == VK_SUCCESS, err_string);
+                HN_CORE_ASSERT(r == VK_SUCCESS, "vkBindBufferMemory ({0} ubo) failed", name);
 
                 ubos[frame] = reinterpret_cast<void*>(ubo);
                 ubo_memories[frame] = reinterpret_cast<void*>(mem);
 
-                // Write binding 0 (UBO) now; bindings 1 & 2 will be updated later.
+                // Write this buffer binding to ALL chunk sets for this frame.
+                // Camera, lights, and materials are per-frame buffers shared across
+                // all chunks — every chunk descriptor set must point at the same buffer.
                 VkDescriptorBufferInfo dbi{};
                 dbi.buffer = ubo;
                 dbi.offset = 0;
@@ -588,19 +590,19 @@ namespace Honey {
 
                 VkWriteDescriptorSet write_ubo{};
                 write_ubo.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                write_ubo.dstSet = reinterpret_cast<VkDescriptorSet>(m_global_descriptor_sets[frame]);
                 write_ubo.dstBinding = dst_binding;
                 write_ubo.dstArrayElement = 0;
                 write_ubo.descriptorType = descriptor_type;
                 write_ubo.descriptorCount = 1;
                 write_ubo.pBufferInfo = &dbi;
 
-                vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(m_device), 1, &write_ubo, 0, nullptr);
+                for (uint32_t c = 0; c < k_max_chunks_per_frame; ++c) {
+                    write_ubo.dstSet = m_global_descriptor_sets[frame][c];
+                    vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(m_device), 1, &write_ubo, 0, nullptr);
+                }
             };
 
             for (uint32_t frame = 0; frame < k_max_frames_in_flight; ++frame) {
-                m_global_descriptor_sets[frame] = reinterpret_cast<VkDescriptorSet>(sets[frame]);
-
                 create_buffer_for_frame("camera", frame, m_camera_ubos, m_camera_ubo_memories,
                     m_camera_ubo_size, 0, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
                 create_buffer_for_frame("lights", frame, m_lights_ubos, m_lights_ubo_memories,
@@ -642,7 +644,8 @@ namespace Honey {
                 vkFreeMemory(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkDeviceMemory>(m_materials_ssbo_memories[frame]), nullptr);
                 m_materials_ssbo_memories[frame] = nullptr;
             }
-            m_global_descriptor_sets[frame] = nullptr;
+            for (uint32_t c = 0; c < k_max_chunks_per_frame; ++c)
+                m_global_descriptor_sets[frame][c] = VK_NULL_HANDLE;
         }
 
         m_camera_ubo_size = 0;
@@ -773,6 +776,7 @@ namespace Honey {
         m_last_bound_textures_valid[m_current_frame] = false;
         m_last_bound_texture_count[m_current_frame] = 0;
         m_last_bound_textures[m_current_frame] = {};
+        m_chunk_ds_index[m_current_frame] = 0;
 
         VkFence in_flight = m_in_flight_fences[m_current_frame];
         VkResult wait_res = vkWaitForFences(reinterpret_cast<VkDevice>(m_device), 1, &in_flight, VK_TRUE, UINT64_MAX);
@@ -1924,7 +1928,10 @@ namespace Honey {
             HN_CORE_ASSERT(activeLayout != VK_NULL_HANDLE, "apply_globals: active pipeline layout is null");
 
             const uint32_t frame = m_current_frame;
-            VkDescriptorSet ds = reinterpret_cast<VkDescriptorSet>(m_global_descriptor_sets[frame]);
+            HN_CORE_ASSERT(m_chunk_ds_index[frame] < k_max_chunks_per_frame,
+                           "Renderer3D: exceeded k_max_chunks_per_frame ({0}) — increase it in vk_context.h",
+                           k_max_chunks_per_frame);
+            VkDescriptorSet ds = m_global_descriptor_sets[frame][m_chunk_ds_index[frame]++];
 
             // Camera UBO
             if (g.hasCamera && m_camera_ubo_memories[frame] && m_camera_ubo_size == sizeof(CameraUBO)) {
@@ -1963,14 +1970,20 @@ namespace Honey {
             }
 
             // Materials SSBO
-            if (m_materials_ssbo_memories[frame] && m_materials_ssbo_size == sizeof(GPUMaterial) * 1024) {
+            if (m_materials_ssbo_memories[frame] && m_materials_ssbo_size == sizeof(GPUMaterial) * k_max_material_count) {
                 void* mapped = nullptr;
                 VkResult mr = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
                 reinterpret_cast<VkDeviceMemory>(m_materials_ssbo_memories[frame]),
                                       0, m_materials_ssbo_size, 0, &mapped);
                 HN_CORE_ASSERT(mr == VK_SUCCESS, "vkMapMemory materials ssbo failed");
                 const uint32_t copy_size = (uint32_t)(g.materials.size() * sizeof(GPUMaterial));
-                std::memcpy(mapped, g.materials.data(), copy_size);
+                uint8_t* dest = static_cast<uint8_t*>(mapped) + (g.materials_ssbo_offset * sizeof(GPUMaterial));
+                HN_CORE_ASSERT(
+                    g.materials_ssbo_offset + (uint32_t)g.materials.size() <= k_max_material_count,
+                    "Materials SSBO overflow: offset {0} + count {1} exceeds capacity {2}",
+                    g.materials_ssbo_offset, g.materials.size(), k_max_material_count
+                );
+                std::memcpy(dest, g.materials.data(), copy_size);
                 vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
 
                 reinterpret_cast<VkDeviceMemory>(m_materials_ssbo_memories[frame]));

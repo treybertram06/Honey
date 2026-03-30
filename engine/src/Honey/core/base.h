@@ -57,16 +57,16 @@
         }                                                                     \
     } while (0)
 
-#define HN_CORE_ASSERT(x, ...)                                               \
-    do {                                                                      \
-        if (!(x)) {                                                           \
-            if constexpr (sizeof(#__VA_ARGS__) > 1) {                         \
-                HN_CORE_ERROR("Assertion Failed: {0}", __VA_ARGS__);          \
-            } else {                                                          \
-                HN_CORE_ERROR("Assertion Failed: {0}", #x);                   \
-            }                                                                 \
-            HN_DEBUGBREAK();                                                  \
-        }                                                                     \
+#define HN_CORE_ASSERT(x, ...)                                                     \
+    do {                                                                            \
+        if (!(x)) {                                                                 \
+            if constexpr (sizeof(#__VA_ARGS__) > 1) {                               \
+                HN_CORE_ERROR("Assertion Failed: {0}", fmt::format(__VA_ARGS__));   \
+            } else {                                                                \
+                HN_CORE_ERROR("Assertion Failed: {0}", #x);                         \
+            }                                                                       \
+            HN_DEBUGBREAK();                                                        \
+        }                                                                           \
     } while (0)
 
 

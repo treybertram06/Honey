@@ -59,7 +59,7 @@ namespace Honey {
 
         static void submit_camera(const CameraUBO& camera);
         static void submit_lights(const LightsUBO& lights);
-        static void submit_materials(const std::vector<GPUMaterial>& materials);
+        static void submit_materials(const std::vector<GPUMaterial>& materials, uint32_t materials_ssbo_offset);
 
         static void submit_push_constants_mat4(const glm::mat4& value);
         static void submit_push_constants(const void* data, uint32_t size, uint32_t offset = 0, VkShaderStageFlags stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);

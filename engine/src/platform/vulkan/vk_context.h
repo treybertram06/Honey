@@ -93,6 +93,7 @@ namespace Honey {
             LightsUBO lightUBO{};
 
             std::vector<GPUMaterial> materials{};
+            uint32_t materials_ssbo_offset = 0;
 
             std::array<void*, 32> textures{};
             uint32_t textureCount = 0;
@@ -138,6 +139,7 @@ namespace Honey {
                 LightsUBO lightUBO{};
 
                 std::vector<GPUMaterial> materials{};
+                uint32_t materials_ssbo_offset = 0;
 
                 std::array<void*, 32> textures{};
                 uint32_t textureCount = 0;
@@ -279,6 +281,8 @@ namespace Honey {
 
 public:
         static constexpr uint32_t k_max_frames_in_flight = 2;
+        static constexpr uint32_t k_max_chunks_per_frame = 32;
+        static constexpr uint32_t k_max_material_count   = 16384;
 
 private:
 
@@ -324,7 +328,8 @@ private:
 
         VkDescriptorSetLayout m_global_set_layout = nullptr;
         VkDescriptorPool m_descriptor_pool = nullptr;
-        VkDescriptorSet m_global_descriptor_sets[k_max_frames_in_flight]{};
+        VkDescriptorSet m_global_descriptor_sets[k_max_frames_in_flight][k_max_chunks_per_frame]{};
+        uint32_t m_chunk_ds_index[k_max_frames_in_flight]{};
 
         void* m_camera_ubos[k_max_frames_in_flight]{};        // VkBuffer
         void* m_camera_ubo_memories[k_max_frames_in_flight]{}; // VkDeviceMemory
