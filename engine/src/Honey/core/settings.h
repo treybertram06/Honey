@@ -5,6 +5,15 @@
 
 namespace Honey {
 
+    struct WindowSettings {
+        std::string title = "Honey Engine";
+        uint32_t width = 1280;
+        uint32_t height = 720;
+        int pos_x = -1;
+        int pos_y = -1;
+        bool fullscreen = false;
+    };
+
     struct RendererSettings {
 
         enum class TextureFilter {
@@ -40,6 +49,7 @@ namespace Honey {
     struct EngineSettings {
         RendererSettings renderer;
         PhysicsSettings physics;
+        WindowSettings window;
     };
 
     class Settings {

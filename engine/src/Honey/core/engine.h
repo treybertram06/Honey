@@ -23,7 +23,7 @@ namespace Honey {
     class Application
     {
     public:
-        Application(const std::string& name = "Honey Application", int width = 1280, int height = 720);
+        Application();
         virtual ~Application();
 
         void run();

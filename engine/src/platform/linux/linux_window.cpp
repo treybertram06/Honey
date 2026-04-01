@@ -105,6 +105,11 @@ namespace Honey {
             break;
         }
 
+        if (props.fullscreen)
+            glfwMaximizeWindow(m_window);
+        else if (props.pos_x >= 0 && props.pos_y >= 0)
+            glfwSetWindowPos(m_window, (int)props.pos_x, (int)props.pos_y);
+
         glfwSetWindowUserPointer(m_window, &m_data);
 
         // set glfw callbacks

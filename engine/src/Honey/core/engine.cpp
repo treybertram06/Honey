@@ -19,7 +19,7 @@ namespace Honey {
 
 
 
-    Application::Application(const std::string& name, int width, int height) {
+    Application::Application() {
         HN_PROFILE_FUNCTION();
 
         HN_CORE_ASSERT(!s_instance, "Application already exists!");
@@ -47,10 +47,17 @@ namespace Honey {
             m_vulkan_backend->init();
         }
 
-        m_window = Window::create(WindowProps(name, width, height));
+        auto& window_settings = Settings::get().window;
+        auto props = WindowProps(window_settings.title, window_settings.width, window_settings.height,
+            window_settings.pos_x, window_settings.pos_y, window_settings.fullscreen);
+        m_window = Window::create(props);
+
+
 
         m_window->set_event_callback([this](auto && PH1) { on_event(std::forward<decltype(PH1)>(PH1)); });
         m_window->set_vsync(renderer_settings.vsync);
+
+
 
         Renderer::init();
 
@@ -67,6 +74,20 @@ namespace Honey {
 
         HN_CORE_INFO("Application::~Application");
 
+        auto* native = (GLFWwindow*)m_window->get_native_window();
+        int w, h, x, y;
+        glfwGetWindowSize(native, &w, &h);
+        glfwGetWindowPos(native, &x, &y);
+        int fullscreen = glfwGetWindowAttrib(native, GLFW_MAXIMIZED);
+
+        auto& window_settings = Settings::get().window;
+        window_settings.fullscreen = fullscreen == GLFW_TRUE;
+        if (!window_settings.fullscreen) {
+            window_settings.width = w;
+            window_settings.height = h;
+            window_settings.pos_x = x;
+            window_settings.pos_y = y;
+        }
 
         if (RendererAPI::get_api() == RendererAPI::API::vulkan) {
             auto* ctx = m_window ? m_window->get_context() : nullptr;
@@ -88,6 +109,8 @@ namespace Honey {
             m_vulkan_backend->shutdown();
             m_vulkan_backend.reset();
         }
+
+        Settings::save_to_file(std::filesystem::path(ASSET_ROOT) / ".." / "config" / "settings.yaml");
 
         TaskSystem::shutdown();
     }

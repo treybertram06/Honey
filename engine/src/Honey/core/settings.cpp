@@ -162,6 +162,28 @@ namespace Honey {
             }
         }
 
+        // ---------------- Window -----------------
+        if (auto window_node = root["Window"]) {
+            if (auto n = window_node["Title"])
+                s.window.title = n.as<std::string>(s.window.title);
+
+            if (auto n = window_node["Width"])
+                s.window.width = n.as<uint32_t>(s.window.width);
+
+            if (auto n = window_node["Height"])
+                s.window.height = n.as<uint32_t>(s.window.height);
+
+            if (auto n = window_node["PosX"])
+                s.window.pos_x = n.as<uint32_t>(s.window.pos_x);
+
+            if (auto n = window_node["PosY"])
+                s.window.pos_y = n.as<uint32_t>(s.window.pos_y);
+
+            if (auto n = window_node["Fullscreen"])
+                s.window.fullscreen = n.as<bool>(s.window.fullscreen);
+
+        }
+
         HN_CORE_INFO("Loaded settings from {}", filepath.string());
         return true;
     }
@@ -203,6 +225,21 @@ namespace Honey {
         out << YAML::Key << "Substeps" << YAML::Value << s.physics.substeps;
 
         out << YAML::EndMap; // Physics
+
+        // --------------- Window -----------------
+        out << YAML::Key << "Window" << YAML::Value;
+        out << YAML::BeginMap;
+
+        out << YAML::Key << "Title" << YAML::Value << s.window.title;
+        out << YAML::Key << "Width" << YAML::Value << s.window.width;
+        out << YAML::Key << "Height" << YAML::Value << s.window.height;
+        out << YAML::Key << "PosX" << YAML::Value << s.window.pos_x;
+        out << YAML::Key << "PosY" << YAML::Value << s.window.pos_y;
+        out << YAML::Key << "Fullscreen" << YAML::Value << s.window.fullscreen;
+
+        out << YAML::EndMap; // Window
+
+
 
         out << YAML::EndMap; // root
 
