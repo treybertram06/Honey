@@ -219,8 +219,23 @@ namespace Honey {
                     rgba[i*4+3] = comp == 4 ? src[3] : 255;
                 }
 
-                Ref<Texture2D> tex = Texture2D::create((uint32_t)w, (uint32_t)h);
-                tex->set_data(rgba.data(), (uint32_t)rgba.size());
+                Ref<Texture2D> tex;
+                if (async) {
+                    // Create a white 1x1 placeholder immediately; defer GPU upload to main thread.
+                    tex = Texture2D::create(1, 1);
+                    uint32_t white = 0xFFFFFFFFu;
+                    tex->set_data(&white, sizeof(white));
+
+                    auto pixels = std::make_shared<std::vector<uint8_t>>(std::move(rgba));
+                    const uint32_t tw = (uint32_t)w, th = (uint32_t)h;
+                    TaskSystem::enqueue_main([tex, pixels, tw, th]() {
+                        tex->resize(tw, th);
+                        tex->set_data_streaming(pixels->data(), tw * th * 4);
+                    });
+                } else {
+                    tex = Texture2D::create((uint32_t)w, (uint32_t)h);
+                    tex->set_data(rgba.data(), (uint32_t)rgba.size());
+                }
                 textureCacheByImageIndex[gt.source] = tex;
                 mat->set_base_color_texture(tex);
                 return mat;
