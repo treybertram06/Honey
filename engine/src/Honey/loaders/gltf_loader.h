@@ -7,12 +7,20 @@
 #include <filesystem>
 #include <string>
 
+#include "gltf_scene_tree.h"
+
 namespace Honey {
 
     struct MeshAsyncHandle {
         std::atomic<bool> done{false};
         std::atomic<bool> failed{false};
         Ref<Mesh> mesh;
+    };
+
+    struct GltfSceneTreeAsyncHandle {
+        std::atomic<bool> done{false};
+        std::atomic<bool> failed{false};
+        GltfSceneTree tree;
     };
 
 
@@ -27,7 +35,9 @@ namespace Honey {
     // Loads the first scene's referenced meshes (or all meshes if scenes are empty) into a Mesh (Submesh per primitive).
     // Returns nullptr on failure.
     Ref<Mesh> load_gltf_mesh(const std::filesystem::path& path, const GltfLoadOptions& options = {}, bool async = true);
+    GltfSceneTree load_gltf_scene_tree(const std::filesystem::path& path, const GltfLoadOptions& options = {});
 
     Ref<MeshAsyncHandle> load_gltf_mesh_async(const std::filesystem::path& path, const GltfLoadOptions& options = {});
+    Ref<GltfSceneTreeAsyncHandle> load_gltf_scene_tree_async(const std::filesystem::path& path, const GltfLoadOptions& options = {});
 
 } // namespace Honey

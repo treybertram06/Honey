@@ -95,6 +95,8 @@ namespace Honey {
             out << YAML::Key << "Color" << YAML::Value << mr.color;
             out << YAML::Key << "MeshPath" << YAML::Value
                 << (mr.mesh_path.empty() ? "" : mr.mesh_path.string());
+            out << YAML::Key << "GltfSourcePath" << YAML::Value << mr.gltf_source_path;
+            out << YAML::Key << "GltfNodeName" << YAML::Value << mr.gltf_node_name;
 
             // Optionally: material overrides here
 
@@ -514,12 +516,19 @@ namespace Honey {
             mr.color = mesh_node["Color"].as<glm::vec4>();
 
             std::string mesh_path_str = mesh_node["MeshPath"].as<std::string>("");
-            if (!mesh_path_str.empty()) {
-                mr.mesh_path = std::filesystem::path(mesh_path_str);
+            std::string gltf_source_path_str = mesh_node["GltfSourcePath"].as<std::string>("");
+            std::string gltf_node_name_str = mesh_node["GltfNodeName"].as<std::string>("");
 
-                auto handle = load_gltf_mesh_async(mr.mesh_path); // Temporarily disabled while trying to debug annoying crash
-                mr.async_load_handle = handle;
-                //mr.mesh = load_gltf_mesh(mr.mesh_path, {}, false);
+            if (!gltf_source_path_str.empty() && !gltf_node_name_str.empty()) {
+                mr.gltf_source_path = gltf_source_path_str;
+                mr.gltf_node_name   = gltf_node_name_str;
+
+                if (!m_gltf_tree_cache.contains(gltf_source_path_str))
+                    m_gltf_tree_cache[gltf_source_path_str] = load_gltf_scene_tree_async(gltf_source_path_str);
+                mr.gltf_async_handle = m_gltf_tree_cache.at(gltf_source_path_str);
+            } else if (!mesh_path_str.empty()) {
+                // Legacy flat-mesh import
+                mr.async_load_handle = load_gltf_mesh_async(mesh_path_str);
             }
 
             // Optionally: material overrides

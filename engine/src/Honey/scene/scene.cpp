@@ -575,25 +575,36 @@ namespace Honey {
             for (auto e : view) {
                 auto& mr = view.get<MeshRendererComponent>(e);
 
-                if (!mr.async_load_handle)
-                    continue;
-
-                auto& handle = mr.async_load_handle;
-
-                // If not finished yet, nothing to do.
-                if (!handle->done.load(std::memory_order_acquire))
-                    continue;
-
-                // Finished: either succeeded or failed
-                if (!handle->failed.load(std::memory_order_acquire) && handle->mesh) {
-                    mr.mesh = handle->mesh;
-                } else {
-                    HN_CORE_WARN("Async mesh load failed for '{}'",
-                                 mr.mesh_path.string());
+                // --- flat mesh async handle ---
+                if (mr.async_load_handle) {
+                    auto& handle = mr.async_load_handle;
+                    if (handle->done.load(std::memory_order_acquire)) {
+                        if (!handle->failed.load(std::memory_order_acquire) && handle->mesh) {
+                            mr.mesh = handle->mesh;
+                        } else {
+                            HN_CORE_WARN("Async mesh load failed for '{}'",
+                                         mr.mesh_path.string());
+                        }
+                        mr.async_load_handle.reset();
+                    }
                 }
 
-                // Clear the handle so we don't process again
-                mr.async_load_handle.reset();
+                // --- hierarchical glTF async handle ---
+                if (mr.gltf_async_handle) {
+                    auto& handle = mr.gltf_async_handle;
+                    if (handle->done.load(std::memory_order_acquire)) {
+                        if (!handle->failed.load(std::memory_order_acquire)) {
+                            if (const GltfNode* node = find_node_by_name(handle->tree, mr.gltf_node_name))
+                                mr.mesh = node->mesh;
+                            else
+                                HN_CORE_WARN("gltf_async: node '{}' not found in '{}'",
+                                             mr.gltf_node_name, mr.gltf_source_path.string());
+                        } else {
+                            HN_CORE_WARN("gltf_async: load failed for '{}'", mr.gltf_source_path.string());
+                        }
+                        mr.gltf_async_handle.reset();
+                    }
+                }
             }
         }
     }
@@ -856,13 +867,12 @@ namespace Honey {
 
         if (!parallel_mesh_submit_enabled) {
             for (auto entity : m_registry.view<TransformComponent, MeshRendererComponent>()) {
-                auto& tc = m_registry.get<TransformComponent>(entity);
                 auto& mr = m_registry.get<MeshRendererComponent>(entity);
 
                 if (!mr.mesh)
                     continue;
 
-                const glm::mat4 world = tc.get_transform();
+                const glm::mat4 world = Entity{ entity, this }.get_world_transform();
 
                 const auto& submeshes = mr.mesh->get_submeshes();
                 for (size_t i = 0; i < submeshes.size(); ++i) {

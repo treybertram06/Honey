@@ -211,6 +211,7 @@ add_library(engine STATIC
         src/platform/vulkan/vk_cloth_renderer.h
         src/platform/vulkan/vk_cloth_renderer.cpp
         src/platform/vulkan/vk_types.h
+        src/Honey/loaders/gltf_scene_tree.h
 )
 
 # Apply MSVC runtime to engine itself

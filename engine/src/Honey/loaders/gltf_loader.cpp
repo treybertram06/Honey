@@ -1,5 +1,6 @@
 #include "hnpch.h"
 #include "gltf_loader.h"
+#include "gltf_scene_tree.h"
 
 #include "Honey/core/log.h"
 #include "Honey/renderer/buffer.h"
@@ -496,6 +497,40 @@ namespace Honey {
             }
         }
 
+        static GltfNode build_gltf_node(
+            const tinygltf::Model& model,
+            int node_index,
+            const std::filesystem::path& gltf_dir,
+            const GltfLoadOptions& options,
+            std::unordered_map<int, Ref<Texture2D>>& tex_cache,
+            bool async = true) {
+
+            HN_PROFILE_FUNCTION();
+
+            const tinygltf::Node& n = model.nodes[node_index];
+
+            GltfNode out;
+            out.name = n.name.empty() ? ("Node_" + std::to_string(node_index)) : n.name;
+            out.local_transform = node_local_transform(n);
+
+            if (n.mesh >= 0) {
+                out.mesh = Mesh::create(out.name);
+
+                append_mesh_primitives_as_submeshes(
+                    out.mesh, model, n.mesh, glm::mat4(1.0f), // Transform will be handled by transform component
+                    gltf_dir, options, tex_cache, async);
+
+                if (out.mesh->empty())
+                    out.mesh = nullptr;
+            }
+
+            for (int child_index : n.children) {
+                out.children.push_back(build_gltf_node(model, child_index, gltf_dir, options, tex_cache, async));
+            }
+
+            return out;
+        }
+
     } // namespace
 
     Ref<Mesh> load_gltf_mesh(const std::filesystem::path& path, const GltfLoadOptions& options, bool async) {
@@ -605,4 +640,87 @@ namespace Honey {
 
         return handle;
     }
+
+    Ref<GltfSceneTreeAsyncHandle> load_gltf_scene_tree_async(const std::filesystem::path& path,
+                                                              const GltfLoadOptions& options) {
+        HN_PROFILE_FUNCTION();
+        auto handle = CreateRef<GltfSceneTreeAsyncHandle>();
+        TaskSystem::run_async([handle, path, options]() {
+            GltfSceneTree result = load_gltf_scene_tree(path, options);
+            if (result.roots.empty())
+                handle->failed.store(true, std::memory_order_release);
+            else
+                handle->tree = std::move(result);
+            handle->done.store(true, std::memory_order_release);
+        });
+        return handle;
+    }
+
+    GltfSceneTree load_gltf_scene_tree(const std::filesystem::path& path, const GltfLoadOptions& options) {
+        HN_PROFILE_FUNCTION();
+        if (!std::filesystem::exists(path)) {
+            HN_CORE_ERROR("load_gltf_scene_tree: file does not exist: {}", path.string());
+            return {};
+        }
+
+        GltfSceneTree out;
+        out.name = path.filename().stem().string();
+
+        tinygltf::Model model;
+        tinygltf::TinyGLTF loader;
+
+        std::string err;
+        std::string warn;
+
+        bool ok = false;
+        {
+            HN_PROFILE_SCOPE("load_gltf_scene_tree::loader.LoadBinaryFromFile");
+            const std::string p = path.string();
+            if (has_ext(path, ".glb")) {
+                ok = loader.LoadBinaryFromFile(&model, &err, &warn, p);
+            } else {
+                ok = loader.LoadASCIIFromFile(&model, &err, &warn, p);
+            }
+        }
+
+        if (!warn.empty())
+            HN_CORE_WARN("glTF warn: {}", warn);
+        if (!err.empty())
+            HN_CORE_ERROR("glTF err: {}", err);
+        if (!ok) {
+            HN_CORE_ERROR("Failed to load glTF: {}", path.string());
+            return {};
+        }
+
+        int scene_index = model.defaultScene;
+        if (scene_index < 0 || scene_index >= (int)model.scenes.size()) {
+            scene_index = model.scenes.empty() ? -1 : 0;
+        }
+
+        std::unordered_map<int, Ref<Texture2D>> tex_cache;
+
+        if (scene_index >= 0) {
+            const tinygltf::Scene& scene = model.scenes[(size_t)scene_index];
+
+            for (int root_node : scene.nodes) {
+                out.roots.push_back(build_gltf_node(model, root_node, path.parent_path(), options, tex_cache));
+            }
+        } else {
+            // No scenes — emit all meshes as root nodes
+            HN_CORE_WARN("glTF: model has no scenes; emitting meshes as root nodes.");
+            for (int mi = 0; mi < (int)model.meshes.size(); ++mi) {
+                GltfNode node;
+                node.name = model.meshes[mi].name.empty() ? ("Mesh_" + std::to_string(mi)) : model.meshes[mi].name;
+                node.local_transform = glm::mat4(1.0f);
+                node.mesh = Mesh::create(node.name);
+                append_mesh_primitives_as_submeshes(node.mesh, model, mi, glm::mat4(1.0f), path.parent_path(), options, tex_cache);
+                if (!node.mesh->empty())
+                    out.roots.push_back(std::move(node));
+            }
+        }
+
+        HN_CORE_INFO("load_gltf_scene_tree: loaded {} root nodes from {}", out.roots.size(), path.string());
+        return out;
+    }
+
 } // namespace Honey

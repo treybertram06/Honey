@@ -3,7 +3,10 @@
 #include "entity.h"
 #include "scene.h"
 #include "Honey/core/base.h"
+#include "Honey/loaders/gltf_loader.h"
 #include "yaml-cpp/node/node.h"
+#include <unordered_map>
+#include <string>
 
 namespace Honey {
 
@@ -48,6 +51,7 @@ namespace Honey {
         Ref<Scene> m_scene;
         std::vector<PendingRelationship> m_pending_relationships;
         std::vector<PendingTransform> m_pending_transforms;
+        std::unordered_map<std::string, Ref<GltfSceneTreeAsyncHandle>> m_gltf_tree_cache;
 
         const EditorSceneMeta* m_editor_meta = nullptr;
         EditorSceneMeta m_loaded_editor_meta;

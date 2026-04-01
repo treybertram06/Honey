@@ -161,7 +161,7 @@ namespace Honey {
          }
 
          if (e.is_in_category(event_category_keyboard)) {
-             if (io.WantCaptureKeyboard)
+             if (io.WantTextInput)
                  e.set_handled(true);
          }
 

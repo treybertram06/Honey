@@ -82,10 +82,13 @@ namespace Honey {
 
         Ref<Mesh> mesh;
         std::filesystem::path mesh_path;
+        std::filesystem::path gltf_source_path;
+        std::string           gltf_node_name;
 
         std::vector<Ref<Material>> material_overrides;
 
         Ref<MeshAsyncHandle> async_load_handle;
+        Ref<GltfSceneTreeAsyncHandle> gltf_async_handle;
 
         MeshRendererComponent() = default;
         MeshRendererComponent(const MeshRendererComponent&) = default;
