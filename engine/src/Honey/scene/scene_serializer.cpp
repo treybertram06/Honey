@@ -95,7 +95,7 @@ namespace Honey {
             out << YAML::Key << "Color" << YAML::Value << mr.color;
             out << YAML::Key << "MeshPath" << YAML::Value
                 << (mr.mesh_path.empty() ? "" : mr.mesh_path.string());
-            out << YAML::Key << "GltfSourcePath" << YAML::Value << mr.gltf_source_path;
+            out << YAML::Key << "GltfSourcePath" << YAML::Value << mr.gltf_source_path.string();
             out << YAML::Key << "GltfNodeName" << YAML::Value << mr.gltf_node_name;
 
             // Optionally: material overrides here
