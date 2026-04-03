@@ -142,6 +142,20 @@ namespace Honey {
             out << YAML::EndMap; // LineRendererComponent
         }
 
+        if (entity.has_component<TextRendererComponent>()) {
+            out << YAML::Key << "TextRendererComponent";
+            out << YAML::BeginMap; // TextRendererComponent
+
+            auto& trc = entity.get_component<TextRendererComponent>();
+            out << YAML::Key << "Text"        << YAML::Value << trc.text;
+            out << YAML::Key << "FontPath"    << YAML::Value << (trc.font_path.empty() ? "" : trc.font_path.string());
+            out << YAML::Key << "Color"       << YAML::Value << trc.color;
+            out << YAML::Key << "FontSize"    << YAML::Value << trc.font_size;
+            out << YAML::Key << "LineSpacing" << YAML::Value << trc.line_spacing;
+
+            out << YAML::EndMap; // TextRendererComponent
+        }
+
         if (entity.has_component<CameraComponent>()) {
             out << YAML::Key << "CameraComponent";
             out << YAML::BeginMap; // CameraComponent
@@ -559,6 +573,19 @@ namespace Honey {
                 sprite.texture_path = std::filesystem::path(texture_path_str); // <-- keep it!
                 sprite.texture = Texture2D::create_async(texture_path_str);
             }
+        }
+
+        auto text_node = entity_node["TextRendererComponent"];
+        if (text_node) {
+            auto& trc = deserialized_entity.add_component<TextRendererComponent>();
+            trc.text         = text_node["Text"].as<std::string>("");
+            trc.color        = text_node["Color"].as<glm::vec4>(glm::vec4{1.0f});
+            trc.font_size    = text_node["FontSize"].as<float>(48.0f);
+            trc.line_spacing = text_node["LineSpacing"].as<float>(1.0f);
+
+            std::string font_path_str = text_node["FontPath"].as<std::string>("");
+            if (!font_path_str.empty())
+                trc.font_path = std::filesystem::path(font_path_str);
         }
 
         auto camera_node = entity_node["CameraComponent"];

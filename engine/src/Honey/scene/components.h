@@ -14,6 +14,7 @@
 #include "box2d/id.h"
 #include "Honey/loaders/gltf_loader.h"
 #include "Honey/renderer/mesh.h"
+#include "Honey/renderer/slug_font.h"
 #include "Honey/renderer/sprite.h"
 
 
@@ -75,6 +76,25 @@ namespace Honey {
         SpriteRendererComponent(const glm::vec4& color)
             : color(color) {}
 
+    };
+
+    struct TextRendererComponent {
+        std::string text;
+        std::filesystem::path font_path;
+        glm::vec4 color = {1.0f, 1.0f, 1.0f, 1.0f};
+        float font_size = 48.0f;
+        float line_spacing = 1.0f;
+
+        // Runtime only
+        Ref<SlugFont> font_data;
+    };
+
+    struct IconRendererComponent {
+        std::filesystem::path icon_path;
+        glm::vec4 color = {1.0f, 1.0f, 1.0f, 1.0f};
+
+        // Runtime only
+        // Ref<SlugIconData> icon_data;
     };
 
     struct MeshRendererComponent {

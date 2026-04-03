@@ -498,7 +498,7 @@ namespace Honey {
             pool_ci.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
 
             // Required for UPDATE_AFTER_BIND descriptors/layouts
-            pool_ci.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
+            //pool_ci.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
 
             VkDescriptorPool pool = VK_NULL_HANDLE;
             r = vkCreateDescriptorPool(reinterpret_cast<VkDevice>(m_device), &pool_ci, nullptr, &pool);
@@ -613,6 +613,213 @@ namespace Honey {
         }
     }
 
+    void VulkanContext::create_font_descriptor_resources() {
+        HN_PROFILE_FUNCTION();
+        HN_CORE_ASSERT(m_device && m_physical_device, "create_font_descriptor_resources called without device");
+
+        // Bindings must match Renderer2D_Text.glsl: set=1, binding=1 (band table), binding=2 (curves)
+        static constexpr uint16_t k_font_binding_count = 2;
+
+        // Descriptor set layout: set=1 (for rendered fonts)
+        // binding 1 => BandTableBuffer SSBO (fragment)
+        VkDescriptorSetLayoutBinding band_table_binding{};
+        band_table_binding.binding = 1;
+        band_table_binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        band_table_binding.descriptorCount = 1;
+        band_table_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        // binding 2 => CurveBuffer SSBO (fragment)
+        VkDescriptorSetLayoutBinding curve_binding{};
+        curve_binding.binding = 2;
+        curve_binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        curve_binding.descriptorCount = 1;
+        curve_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        VkDescriptorSetLayoutBinding bindings[] = {
+            band_table_binding,
+            curve_binding
+        };
+
+        VkDescriptorBindingFlags binding_flags[k_font_binding_count]{};
+        binding_flags[0] = 0; // BandTableBuffer
+        binding_flags[1] = 0; // CurveBuffer
+
+        static_assert(sizeof(binding_flags) / sizeof(VkDescriptorBindingFlags) == k_font_binding_count);
+        static_assert(sizeof(bindings) / sizeof(VkDescriptorSetLayoutBinding) == k_font_binding_count);
+
+        VkDescriptorSetLayoutBindingFlagsCreateInfo binding_flags_ci{};
+        binding_flags_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+        binding_flags_ci.bindingCount = k_font_binding_count;
+        binding_flags_ci.pBindingFlags = binding_flags;
+
+        VkDescriptorSetLayoutCreateInfo layout_ci{};
+        layout_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layout_ci.pNext = &binding_flags_ci;
+        layout_ci.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
+        layout_ci.bindingCount = k_font_binding_count;
+        layout_ci.pBindings = bindings;
+
+        {
+            VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
+            VkResult r = vkCreateDescriptorSetLayout(reinterpret_cast<VkDevice>(m_device), &layout_ci, nullptr, &set_layout);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateDescriptorSetLayout (font) failed");
+            m_font_set_layout = reinterpret_cast<VkDescriptorSetLayout>(set_layout);
+
+            VkDescriptorPoolSize pool_sizes[k_font_binding_count]{};
+            static_assert(sizeof(pool_sizes) / sizeof(VkDescriptorPoolSize) == k_font_binding_count);
+
+            // One STORAGE_BUFFER descriptor per set, for each binding
+            pool_sizes[0].type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            pool_sizes[0].descriptorCount = k_max_frames_in_flight * k_max_chunks_per_frame;
+
+            pool_sizes[1].type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            pool_sizes[1].descriptorCount = k_max_frames_in_flight * k_max_chunks_per_frame;
+
+            VkDescriptorPoolCreateInfo pool_ci{};
+            pool_ci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+            pool_ci.maxSets       = k_max_frames_in_flight * k_max_chunks_per_frame;
+            pool_ci.poolSizeCount = sizeof(pool_sizes) / sizeof(VkDescriptorPoolSize);
+            pool_ci.pPoolSizes    = pool_sizes;
+            pool_ci.flags         = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
+
+            VkDescriptorPool pool = VK_NULL_HANDLE;
+            r = vkCreateDescriptorPool(reinterpret_cast<VkDevice>(m_device), &pool_ci, nullptr, &pool);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateDescriptorPool (font) failed");
+            m_font_descriptor_pool = reinterpret_cast<VkDescriptorPool>(pool);
+        }
+
+        // BandEntry = 2 × uint32 = 8 bytes; QuadBezier = 3 × vec2 = 24 bytes
+        m_band_table_ubo_size = k_max_font_band_entries * 8u;
+        m_curve_ubo_size      = k_max_font_curves       * 24u;
+
+        const uint32_t total_sets = k_max_frames_in_flight * k_max_chunks_per_frame;
+
+        std::vector<VkDescriptorSetLayout> layouts(total_sets,
+            reinterpret_cast<VkDescriptorSetLayout>(m_font_set_layout));
+
+        // No variable descriptor count bindings, so no VkDescriptorSetVariableDescriptorCountAllocateInfo
+        VkDescriptorSetAllocateInfo alloc{};
+        alloc.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        alloc.descriptorPool     = reinterpret_cast<VkDescriptorPool>(m_font_descriptor_pool);
+        alloc.descriptorSetCount = total_sets;
+        alloc.pSetLayouts        = layouts.data();
+
+        {
+            std::vector<VkDescriptorSet> sets(total_sets);
+            VkResult r = vkAllocateDescriptorSets(reinterpret_cast<VkDevice>(m_device), &alloc, sets.data());
+            HN_CORE_ASSERT(r == VK_SUCCESS, "vkAllocateDescriptorSets (font) failed");
+
+            for (uint32_t f = 0; f < k_max_frames_in_flight; ++f)
+                for (uint32_t c = 0; c < k_max_chunks_per_frame; ++c)
+                    m_fonts_descriptor_sets[f][c] = sets[f * k_max_chunks_per_frame + c];
+
+            // Creates a host-visible STORAGE_BUFFER and writes it into every chunk
+            // descriptor set for this frame (same pattern as camera/lights/materials).
+            auto create_buffer_for_frame = [&](const char* name,
+                uint32_t frame,
+                void** bufs,
+                void** memories,
+                uint32_t buf_size,
+                uint32_t dst_binding) {
+
+                VkBufferCreateInfo bi{};
+                bi.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+                bi.size        = buf_size;
+                bi.usage       = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+                bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+                VkBuffer buf = VK_NULL_HANDLE;
+                r = vkCreateBuffer(reinterpret_cast<VkDevice>(m_device), &bi, nullptr, &buf);
+                HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateBuffer ({0}) failed", name);
+
+                VkMemoryRequirements req{};
+                vkGetBufferMemoryRequirements(reinterpret_cast<VkDevice>(m_device), buf, &req);
+
+                VkMemoryAllocateInfo ai{};
+                ai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+                ai.allocationSize  = req.size;
+                ai.memoryTypeIndex = find_memory_type_local(
+                    reinterpret_cast<VkPhysicalDevice>(m_physical_device),
+                    req.memoryTypeBits,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+                );
+
+                VkDeviceMemory mem = VK_NULL_HANDLE;
+                r = vkAllocateMemory(reinterpret_cast<VkDevice>(m_device), &ai, nullptr, &mem);
+                HN_CORE_ASSERT(r == VK_SUCCESS, "vkAllocateMemory ({0}) failed", name);
+
+                r = vkBindBufferMemory(reinterpret_cast<VkDevice>(m_device), buf, mem, 0);
+                HN_CORE_ASSERT(r == VK_SUCCESS, "vkBindBufferMemory ({0}) failed", name);
+
+                bufs[frame]     = reinterpret_cast<void*>(buf);
+                memories[frame] = reinterpret_cast<void*>(mem);
+
+                // Write this buffer into all chunk sets for this frame
+                VkDescriptorBufferInfo dbi{};
+                dbi.buffer = buf;
+                dbi.offset = 0;
+                dbi.range  = buf_size;
+
+                VkWriteDescriptorSet write{};
+                write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                write.dstBinding      = dst_binding;
+                write.dstArrayElement = 0;
+                write.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                write.descriptorCount = 1;
+                write.pBufferInfo     = &dbi;
+
+                for (uint32_t c = 0; c < k_max_chunks_per_frame; ++c) {
+                    write.dstSet = m_fonts_descriptor_sets[frame][c];
+                    vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(m_device), 1, &write, 0, nullptr);
+                }
+            };
+
+            for (uint32_t frame = 0; frame < k_max_frames_in_flight; ++frame) {
+                create_buffer_for_frame("band_table", frame,
+                    m_band_table_ubos, m_band_table_ubo_memories, m_band_table_ubo_size, 1);
+                create_buffer_for_frame("curves", frame,
+                    m_curve_ubos, m_curve_ubo_memories, m_curve_ubo_size, 2);
+            }
+        }
+    }
+
+    void VulkanContext::upload_font_data(const void* band_table_data, uint32_t band_table_bytes,
+                                         const void* curve_data,       uint32_t curve_bytes) {
+        HN_CORE_ASSERT(band_table_bytes <= m_band_table_ubo_size,
+            "upload_font_data: band table ({0} bytes) exceeds buffer capacity ({1})",
+            band_table_bytes, m_band_table_ubo_size);
+        HN_CORE_ASSERT(curve_bytes <= m_curve_ubo_size,
+            "upload_font_data: curve data ({0} bytes) exceeds buffer capacity ({1})",
+            curve_bytes, m_curve_ubo_size);
+
+        // Font data is static — populate both frames' buffers so whichever frame
+        // is in flight next will always see valid data.
+        for (uint32_t frame = 0; frame < k_max_frames_in_flight; ++frame) {
+            // Band table
+            {
+                void* mapped = nullptr;
+                VkResult r = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
+                    reinterpret_cast<VkDeviceMemory>(m_band_table_ubo_memories[frame]),
+                    0, band_table_bytes, 0, &mapped);
+                HN_CORE_ASSERT(r == VK_SUCCESS, "upload_font_data: vkMapMemory (band table) failed");
+                std::memcpy(mapped, band_table_data, band_table_bytes);
+                vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
+                    reinterpret_cast<VkDeviceMemory>(m_band_table_ubo_memories[frame]));
+            }
+            // Curves
+            {
+                void* mapped = nullptr;
+                VkResult r = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
+                    reinterpret_cast<VkDeviceMemory>(m_curve_ubo_memories[frame]),
+                    0, curve_bytes, 0, &mapped);
+                HN_CORE_ASSERT(r == VK_SUCCESS, "upload_font_data: vkMapMemory (curves) failed");
+                std::memcpy(mapped, curve_data, curve_bytes);
+                vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
+                    reinterpret_cast<VkDeviceMemory>(m_curve_ubo_memories[frame]));
+            }
+        }
+    }
+
     void VulkanContext::cleanup_global_descriptor_resources() {
         HN_PROFILE_FUNCTION();
         if (!m_device) return;
@@ -659,6 +866,45 @@ namespace Honey {
         if (m_global_set_layout) {
             vkDestroyDescriptorSetLayout(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkDescriptorSetLayout>(m_global_set_layout), nullptr);
             m_global_set_layout = nullptr;
+        }
+    }
+
+    void VulkanContext::cleanup_font_descriptor_resources() {
+        HN_PROFILE_FUNCTION();
+        if (!m_device) return;
+
+        for (uint32_t frame = 0; frame < k_max_frames_in_flight; ++frame) {
+            if (m_band_table_ubos[frame]) {
+                vkDestroyBuffer(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkBuffer>(m_band_table_ubos[frame]), nullptr);
+                m_band_table_ubos[frame] = nullptr;
+            }
+            if (m_band_table_ubo_memories[frame]) {
+                vkFreeMemory(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkDeviceMemory>(m_band_table_ubo_memories[frame]), nullptr);
+                m_band_table_ubo_memories[frame] = nullptr;
+            }
+
+            if (m_curve_ubos[frame]) {
+                vkDestroyBuffer(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkBuffer>(m_curve_ubos[frame]), nullptr);
+                m_curve_ubos[frame] = nullptr;
+            }
+            if (m_curve_ubo_memories[frame]) {
+                vkFreeMemory(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkDeviceMemory>(m_curve_ubo_memories[frame]), nullptr);
+                m_curve_ubo_memories[frame] = nullptr;
+            }
+            for (uint32_t c = 0; c < k_max_chunks_per_frame; ++c)
+                m_fonts_descriptor_sets[frame][c] = VK_NULL_HANDLE;
+        }
+
+        m_band_table_ubo_size = 0;
+        m_curve_ubo_size = 0;
+
+        if (m_font_descriptor_pool) {
+            vkDestroyDescriptorPool(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkDescriptorPool>(m_font_descriptor_pool), nullptr);
+            m_font_descriptor_pool = nullptr;
+        }
+        if (m_font_set_layout) {
+            vkDestroyDescriptorSetLayout(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkDescriptorSetLayout>(m_font_set_layout), nullptr);
+            m_font_set_layout = nullptr;
         }
     }
 
@@ -729,6 +975,7 @@ namespace Honey {
                      m_supports_timeline_semaphore);
 
         create_global_descriptor_resources();
+        create_font_descriptor_resources();
 
         create_swapchain();
         create_image_views();
@@ -2484,6 +2731,7 @@ namespace Honey {
             //cleanup_pipeline();
             cleanup_swapchain();
             cleanup_global_descriptor_resources();
+            cleanup_font_descriptor_resources();
             cleanup_secondary_command_pools();
 
             if (m_command_pool) {

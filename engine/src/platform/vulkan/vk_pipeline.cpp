@@ -188,7 +188,8 @@ namespace Honey {
         const std::string& vertexSpirvPath,
         const std::string& fragmentSpirvPath,
         const PipelineSpec& spec,
-        VkPipelineCache pipelineCache
+        VkPipelineCache pipelineCache,
+        VkDescriptorSetLayout extraSetLayout
     ) {
         HN_PROFILE_FUNCTION();
 
@@ -324,8 +325,8 @@ namespace Honey {
 
         VkPipelineLayoutCreateInfo layout_ci{};
         layout_ci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        VkDescriptorSetLayout set_layouts[] = { globalSetLayout };
-        layout_ci.setLayoutCount = 1;
+        VkDescriptorSetLayout set_layouts[] = { globalSetLayout, extraSetLayout };
+        layout_ci.setLayoutCount = extraSetLayout ? 2u : 1u;
         layout_ci.pSetLayouts = set_layouts;
 
         VkPushConstantRange pc_range{};

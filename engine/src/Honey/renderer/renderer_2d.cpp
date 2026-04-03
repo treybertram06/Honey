@@ -57,6 +57,17 @@ namespace Honey {
         int         entity_id;
     };
 
+    struct GlyphInstance {
+        glm::vec3   center;
+        glm::vec2   half_size;
+        glm::vec4   color;
+        glm::vec2   bbox_min;
+        glm::vec2   bbox_size;
+        uint32_t    band_table_offset;
+        uint32_t    num_bands;
+        int         entity_id;
+    };
+
 
     struct QuadVertexStatic {
         glm::vec2 local_pos;   // corners at (±0.5, ±0.5)
@@ -106,6 +117,18 @@ namespace Honey {
         std::vector<LineInstance> line_instances;
         std::vector<LineInstance> line_sorted_instances;
 
+        // Text objects
+        Ref<VertexArray>  glyph_vertex_array;
+        Ref<VertexBuffer> s_glyph_vertex_buffer;   // 4 vertices
+        Ref<VertexBuffer> i_glyph_vertex_buffer; // maxQuads * QuadInstance
+        Ref<IndexBuffer>  glyph_ibo;         // 6 indices
+        Ref<Shader>       glyph_shader;
+
+        std::vector<GlyphInstance> glyph_instances;
+        std::vector<GlyphInstance> glyph_sorted_instances;
+
+        bool fonts_uploaded = false;
+
         // Texture slots
         uint32_t                       max_texture_slots = 0;
         std::vector<Ref<Texture2D>>    texture_slots;
@@ -127,6 +150,7 @@ namespace Honey {
 
         std::unordered_map<void*, Ref<Pipeline>> vk_circle_pipelines;
         std::unordered_map<void*, Ref<Pipeline>> vk_line_pipelines;
+        std::unordered_map<void*, Ref<Pipeline>> vk_glyph_pipelines;
 
         std::vector<VulkanRendererAPI::GlobalsState> vk_globals_stack;
 
@@ -211,6 +235,24 @@ namespace Honey {
         if (it == cache.end()) {
             it = cache.emplace(renderPassNative,
                                Pipeline::create(asset_root / "shaders" / "Renderer2D_Line.glsl", renderPassNative)).first;
+        }
+
+        return it->second;
+    }
+
+    static Ref<Pipeline> get_or_create_vk_offscreen_glyph_pipeline(void* renderPassNative)
+    {
+        HN_CORE_ASSERT(renderPassNative, "get_or_create_vk_offscreen_glyph_pipeline: renderPassNative is null");
+
+        auto& cache = s_data->vk_glyph_pipelines;
+        auto it = cache.find(renderPassNative);
+        if (it == cache.end()) {
+            auto* vk = dynamic_cast<VulkanContext*>(Application::get().get_window().get_context());
+            HN_CORE_ASSERT(vk, "get_or_create_vk_offscreen_glyph_pipeline: expected VulkanContext");
+            void* font_set_layout = vk->get_font_set_layout();
+            it = cache.emplace(renderPassNative,
+                Pipeline::create(asset_root / "shaders" / "Renderer2D_Text.glsl",
+                                 renderPassNative, font_set_layout)).first;
         }
 
         return it->second;
@@ -409,6 +451,47 @@ namespace Honey {
         s_data->line_shader = s_data->shader_cache->get_or_compile_shader(line_shader_path);
 
 
+        ///////////////////// GLYPHS ////////////////////////////////
+        s_data->glyph_vertex_array = VertexArray::create();
+
+        s_data->s_glyph_vertex_buffer = VertexBuffer::create(sizeof(s_static_quad));
+        s_data->s_glyph_vertex_buffer->set_data(s_static_quad, sizeof(s_static_quad));
+        {
+            BufferLayout layout = {
+                { ShaderDataType::Float2, "a_local_pos"  },  // loc 0
+                { ShaderDataType::Float2, "a_local_tex"  },  // loc 1
+            };
+            s_data->s_glyph_vertex_buffer->set_layout(layout);
+            s_data->glyph_vertex_array->add_vertex_buffer(s_data->s_glyph_vertex_buffer);
+        }
+
+        s_data->i_glyph_vertex_buffer = VertexBuffer::create(Renderer2DData::max_quads * sizeof(GlyphInstance));
+        {
+            BufferLayout layout = {
+                { ShaderDataType::Float3, "i_center", false, true }, // loc 2
+                { ShaderDataType::Float2, "i_half_size", false, true }, // loc 3
+                { ShaderDataType::Float4, "i_color", false, true }, // loc 4
+                { ShaderDataType::Float2, "i_bbox_min", false, true }, // loc 5
+                { ShaderDataType::Float2, "i_bbox_size", false, true }, // loc 6
+                { ShaderDataType::Int, "i_band_table_offset", false, true }, // loc 7
+                { ShaderDataType::Int, "i_num_bands", false, true }, // loc 8
+                { ShaderDataType::Int, "i_entity_id", false, true} // loc 9
+            };
+            s_data->i_glyph_vertex_buffer->set_layout(layout);
+            s_data->glyph_vertex_array->add_vertex_buffer(s_data->i_glyph_vertex_buffer);
+        }
+
+        s_data->glyph_ibo = IndexBuffer::create(indices, 6);
+        s_data->glyph_vertex_array->set_index_buffer(s_data->glyph_ibo);
+
+        s_data->glyph_instances.reserve(Renderer2DData::max_quads);
+        s_data->glyph_sorted_instances.reserve(Renderer2DData::max_quads);
+
+        auto glyph_shader_path = asset_root / "shaders" / "Renderer2D_Text.glsl";
+        s_data->glyph_shader = s_data->shader_cache->get_or_compile_shader(glyph_shader_path);
+
+
+
         if (RendererAPI::get_api() == RendererAPI::API::vulkan) {
             HN_CORE_INFO("Renderer2D::init() early return hitting opengl specific shader binding.");
             return;
@@ -420,6 +503,7 @@ namespace Honey {
         s_data->quad_shader->bind();
         s_data->circle_shader->bind();
         s_data->line_shader->bind(); // Are these doing anything?
+        s_data->glyph_shader->bind();
         {
             std::vector<int> samplers(s_data->max_texture_slots);
             std::iota(samplers.begin(), samplers.end(), 0);
@@ -449,9 +533,15 @@ namespace Honey {
         s_data->i_line_vertex_buffer.reset();
         s_data->line_ibo.reset();
 
+        s_data->glyph_vertex_array.reset();
+        s_data->s_glyph_vertex_buffer.reset();
+        s_data->i_glyph_vertex_buffer.reset();
+        s_data->glyph_ibo.reset();
+
         s_data->quad_shader.reset();
         s_data->circle_shader.reset();
         s_data->line_shader.reset();
+        s_data->glyph_shader.reset();
 
         s_data->camera_uniform_buffer.reset();
 
@@ -501,6 +591,7 @@ namespace Honey {
         s_data->quad_instances.clear();
         s_data->circle_instances.clear();
         s_data->line_instances.clear();
+        s_data->glyph_instances.clear();
 
         s_data->texture_slot_index = 1; // keep white bound at 0
     }
@@ -527,6 +618,7 @@ namespace Honey {
         s_data->quad_instances.clear();
         s_data->circle_instances.clear();
         s_data->line_instances.clear();
+        s_data->glyph_instances.clear();
 
         s_data->texture_slot_index = 1; // keep white bound at 0
     }
@@ -560,6 +652,7 @@ namespace Honey {
         s_data->quad_instances.clear();
         s_data->circle_instances.clear();
         s_data->line_instances.clear();
+        s_data->glyph_instances.clear();
 
         s_data->texture_slot_index = 1; // keep white bound at 0
     }
@@ -592,6 +685,7 @@ namespace Honey {
         s_data->quad_instances.clear();
         s_data->circle_instances.clear();
         s_data->line_instances.clear();
+        s_data->glyph_instances.clear();
 
         s_data->texture_slot_index = 1; // keep white bound at 0
     }
@@ -601,6 +695,7 @@ namespace Honey {
         quad_end_scene();
         circle_end_scene();
         line_end_scene();
+        glyph_end_scene();
 
         if (Renderer::get_api() == RendererAPI::API::vulkan) {
             HN_CORE_ASSERT(!s_data->vk_globals_stack.empty(),
@@ -608,6 +703,82 @@ namespace Honey {
             VulkanRendererAPI::set_globals_state(s_data->vk_globals_stack.back());
             s_data->vk_globals_stack.pop_back();
         }
+    }
+
+    void Renderer2D::glyph_end_scene() {
+        HN_PROFILE_FUNCTION();
+        if (s_data->glyph_instances.empty())
+            return;
+
+        if (Renderer::get_api() == RendererAPI::API::vulkan) {
+            s_data->glyph_sorted_instances = s_data->glyph_instances;
+            std::sort(s_data->glyph_sorted_instances.begin(), s_data->glyph_sorted_instances.end(),
+                [](const GlyphInstance& a, const GlyphInstance& b) {
+                    return a.center.z < b.center.z;
+                });
+
+
+            const size_t bytes = s_data->glyph_sorted_instances.size() * sizeof(GlyphInstance);
+            s_data->i_glyph_vertex_buffer->set_data(
+                s_data->glyph_sorted_instances.data(),
+                static_cast<uint32_t>(bytes)
+            );
+
+            auto fb = Renderer::get_render_target();
+            auto* vk_fb = dynamic_cast<VulkanFramebuffer*>(fb.get());
+            HN_CORE_ASSERT(vk_fb, "Renderer2D Vulkan path expects current render target to be a VulkanFramebuffer");
+
+            void* rpNative = vk_fb->get_render_pass();
+            Ref<Pipeline> pipe = get_or_create_vk_offscreen_glyph_pipeline(rpNative);
+
+            RenderCommand::bind_pipeline(pipe);
+            emit_vulkan_globals_for_2d_draw();
+
+            // Bind the font SSBO descriptor set at set 1.
+            // Captured at queue time: frame index + pipeline layout are both stable for this draw.
+            auto* vk = dynamic_cast<VulkanContext*>(Application::get().get_window().get_context());
+            HN_CORE_ASSERT(vk, "glyph_end_scene: expected VulkanContext");
+            uint32_t frame = vk->get_current_frame();
+            VkDescriptorSet font_set = vk->get_font_descriptor_set(frame);
+            VkPipelineLayout pipe_layout = static_cast<VkPipelineLayout>(pipe->get_native_pipeline_layout());
+            vk->queue_custom_vulkan_cmd([font_set, pipe_layout](VkCommandBuffer cmd, uint32_t, uint32_t) {
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    pipe_layout, 1, 1, &font_set, 0, nullptr);
+            });
+
+            s_data->glyph_vertex_array->bind();
+            RenderCommand::draw_indexed_instanced(
+                s_data->glyph_vertex_array,
+                6,
+                static_cast<uint32_t>(s_data->glyph_sorted_instances.size())
+            );
+            s_data->stats.draw_calls++;
+            return;
+        }
+
+        // OpenGL path
+        s_data->glyph_shader->bind();
+
+        s_data->glyph_sorted_instances = s_data->glyph_instances;
+        std::sort(s_data->glyph_sorted_instances.begin(), s_data->glyph_sorted_instances.end(),
+            [](const GlyphInstance& a, const GlyphInstance& b) {
+                return a.center.z < b.center.z;
+            });
+
+        size_t bytes = s_data->glyph_sorted_instances.size() * sizeof(GlyphInstance);
+        s_data->i_glyph_vertex_buffer->set_data(s_data->glyph_sorted_instances.data(), bytes);
+
+        for (uint32_t i = 0; i < s_data->texture_slot_index; ++i)
+            s_data->texture_slots[i]->bind(i);
+
+        s_data->glyph_vertex_array->bind();
+        RenderCommand::draw_indexed_instanced(
+            s_data->glyph_vertex_array,
+            6,
+            static_cast<uint32_t>(s_data->glyph_sorted_instances.size())
+        );
+        s_data->stats.draw_calls++;
+
     }
 
     void Renderer2D::line_end_scene() {
@@ -1202,6 +1373,78 @@ namespace Honey {
         // Vertical edges
         submit_line(left,  { scale.y, thickness }, rotation + glm::half_pi<float>(), nullptr, nullptr, color, 0.0f, -1);
         submit_line(right, { scale.y, thickness }, rotation + glm::half_pi<float>(), nullptr, nullptr, color, 0.0f, -1);
+    }
+
+    void Renderer2D::draw_text(const glm::mat4& transform, TextRendererComponent& trc, int entity_id) {
+        if (trc.text.empty()) return;
+
+        // Lazy-load font from disk
+        if (!trc.font_data) {
+            if (trc.font_path.empty()) return;
+            trc.font_data = CreateRef<SlugFont>(trc.font_path);
+        }
+
+        glm::vec3 position;
+        glm::vec2 scale;
+        float rotation;
+        decompose_transform(transform, position, scale, rotation);
+
+        // Upload font SSBOs to GPU once per font load
+        if (!s_data->fonts_uploaded) {
+            auto& font = *trc.font_data;
+            auto* base = Application::get().get_window().get_context();
+            auto* vk_ctx = dynamic_cast<VulkanContext*>(base);
+            if (vk_ctx) {
+                vk_ctx->upload_font_data(
+                    font.get_band_table().data(),
+                    (uint32_t)(font.get_band_table().size() * sizeof(BandEntry)),
+                    font.get_curves().data(),
+                    (uint32_t)(font.get_curves().size() * sizeof(QuadBezier))
+                );
+                s_data->fonts_uploaded = true;
+            }
+        }
+
+        const SlugFont& font = *trc.font_data;
+        float font_scale = font.get_scale(trc.font_size);
+        float line_height = (font.get_ascent() - font.get_descent() + font.get_line_gap()) * font_scale;
+
+        float cursor_x = position.x;
+        float cursor_y = position.y;
+        for (char c : trc.text) {
+            if (c == '\n') {
+                cursor_x = position.x;
+                cursor_y -= line_height * trc.line_spacing;
+                continue;
+            }
+            const GlyphData* glyph = font.get_glyph(c);
+            if (!glyph) continue;
+
+            // bbox in world space (scaled)
+            glm::vec2 bbox_size = (glyph->bbox_max - glyph->bbox_min) * font_scale;
+            if (bbox_size.x <= 0.0f || bbox_size.y <= 0.0f) {
+                cursor_x += glyph->advance * font_scale;
+                continue;
+            }
+
+            float glyph_center_x = cursor_x + (glyph->left_bearing + (glyph->bbox_max.x - glyph->bbox_min.x) * 0.5f) * font_scale;
+            float glyph_center_y = cursor_y + (glyph->bbox_max.y + glyph->bbox_min.y) * 0.5f * font_scale;
+
+            GlyphInstance inst;
+            inst.center            = { glyph_center_x, glyph_center_y, position.z };
+            inst.half_size         = bbox_size * 0.5f;
+            inst.color             = trc.color;
+            // bbox passed in raw font units — shader uses these to reconstruct the
+            // font-space fragment position for the winding-number test
+            inst.bbox_min          = glyph->bbox_min;
+            inst.bbox_size         = glyph->bbox_max - glyph->bbox_min;
+            inst.band_table_offset = glyph->band_table_offset;
+            inst.num_bands         = glyph->num_bands;
+            inst.entity_id         = entity_id;
+
+            s_data->glyph_instances.push_back(inst);
+            cursor_x += glyph->advance * font_scale;
+        }
     }
 
 

@@ -11,7 +11,8 @@ namespace Honey {
     public:
         VulkanPipelineWrapper(const PipelineSpec& spec,
                               VulkanContext* ctx,
-                              VkRenderPass rp)
+                              VkRenderPass rp,
+                              VkDescriptorSetLayout extra_set_layout = nullptr)
             : m_ctx(ctx)
         {
             HN_CORE_ASSERT(m_ctx, "VulkanPipelineWrapper: ctx is null");
@@ -30,7 +31,8 @@ namespace Honey {
                 spirv.vertex.string(),
                 spirv.fragment.string(),
                 spec,
-                pipeline_cache
+                pipeline_cache,
+                extra_set_layout
             );
         }
 

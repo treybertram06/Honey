@@ -52,15 +52,35 @@ namespace Honey {
                 VkRenderPass rp = static_cast<VkRenderPass>(native_render_pass);
                 HN_CORE_ASSERT(rp, "Pipeline::create: render pass is null");
 
-                // build spec from shader with spirv-reflect
                 auto spec = PipelineSpec::from_shader(path);
-
                 return CreateRef<VulkanPipelineWrapper>(spec, vk, rp);
         }
         case RendererAPI::API::opengl:
         case RendererAPI::API::none:
         default:
-            return CreateRef<NullPipeline>(); // Uses empty spec since it doesn't get used anyway (I think?)
+            return CreateRef<NullPipeline>();
+        }
+    }
+
+    Ref<Pipeline> Pipeline::create(const std::filesystem::path& path, void* native_render_pass,
+                                   void* extra_set_layout) {
+        switch (RendererAPI::get_api()) {
+        case RendererAPI::API::vulkan: {
+                auto* base = Application::get().get_window().get_context();
+                auto* vk = dynamic_cast<VulkanContext*>(base);
+                HN_CORE_ASSERT(vk, "Pipeline::create expected VulkanContext when Vulkan is active");
+
+                VkRenderPass rp = static_cast<VkRenderPass>(native_render_pass);
+                HN_CORE_ASSERT(rp, "Pipeline::create: render pass is null");
+
+                auto spec = PipelineSpec::from_shader(path);
+                auto extra = static_cast<VkDescriptorSetLayout>(extra_set_layout);
+                return CreateRef<VulkanPipelineWrapper>(spec, vk, rp, extra);
+        }
+        case RendererAPI::API::opengl:
+        case RendererAPI::API::none:
+        default:
+            return CreateRef<NullPipeline>();
         }
     }
 }

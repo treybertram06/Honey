@@ -76,10 +76,17 @@ namespace Honey {
                 HN_CORE_ASSERT(vec == 1, "Bool vectors not supported");
                 return ShaderDataType::Bool;
 
-            // If you ever need uint attributes, add ShaderDataType::UInt* or map to Int* explicitly.
+            // UInt mapped to Int — vertex input binding is typeless bytes; signedness is irrelevant here.
             case spirv_cross::SPIRType::UInt:
-                HN_CORE_ASSERT(false, "UInt vertex attributes not supported by ShaderDataType yet (add UInt types or map explicitly)");
-                return ShaderDataType::None;
+                switch (vec) {
+                case 1: return ShaderDataType::Int;
+                case 2: return ShaderDataType::Int2;
+                case 3: return ShaderDataType::Int3;
+                case 4: return ShaderDataType::Int4;
+                default:
+                    HN_CORE_ASSERT(false, "Unsupported uint vector size: {}", vec);
+                    return ShaderDataType::None;
+                }
 
             default:
                 HN_CORE_ASSERT(false, "Unsupported vertex input base type: {}", (int)t.basetype);

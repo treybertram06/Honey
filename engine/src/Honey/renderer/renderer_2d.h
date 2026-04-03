@@ -21,6 +21,7 @@ namespace Honey {
         static void quad_end_scene();
         static void circle_end_scene();
         static void line_end_scene();
+        static void glyph_end_scene();
 
         static void prewarm_pipelines(void* native_render_pass);
 
@@ -88,30 +89,10 @@ namespace Honey {
                                 const Ref<Texture2D>& texture, const glm::vec4& color,
                                 float thickness = 1.0f, float fade = 0.005f);
 
-        // Rotated color circle
-        static void draw_rotated_circle(const glm::vec2& position, const glm::vec2& size,
-                                        float rotation, const glm::vec4& color,
-                                        float thickness = 1.0f, float fade = 0.005f);
-
-        static void draw_rotated_circle(const glm::vec3& position, const glm::vec2& size,
-                                        float rotation, const glm::vec4& color,
-                                        float thickness = 1.0f, float fade = 0.005f);
-
-        // Rotated textured circle
-        static void draw_rotated_circle(const glm::vec3& position, const glm::vec2& size,
-                                        float rotation, const Ref<Texture2D>& texture,
-                                        const glm::vec4& color,
-                                        float thickness = 1.0f, float fade = 0.005f);
-
         // Subtexture support
         static void draw_circle(const glm::vec3& position, const glm::vec2& size,
                                 const Ref<SubTexture2D>& sub_texture, const glm::vec4& color,
                                 float thickness = 1.0f, float fade = 0.005f);
-
-        static void draw_rotated_circle(const glm::vec3& position, const glm::vec2& size,
-                                        float rotation, const Ref<SubTexture2D>& sub_texture,
-                                        const glm::vec4& color,
-                                        float thickness = 1.0f, float fade = 0.005f);
 
         // Using transform matrix
         static void draw_circle(const glm::mat4& transform, const glm::vec4& color,
@@ -127,6 +108,9 @@ namespace Honey {
         static void draw_line_sprite(const glm::mat4& transform, LineRendererComponent& src, int entity_id);
 
         static void draw_rect(const glm::mat4& transform, const glm::vec4& color);
+
+        static void draw_text(const glm::mat4& transform, TextRendererComponent& trc, int entity_id);
+
 
         // Statistics
         struct Statistics {

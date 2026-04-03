@@ -25,7 +25,8 @@ namespace Honey {
             const std::string& vertexSpirvPath,
             const std::string& fragmentSpirvPath,
             const PipelineSpec& spec,
-            VkPipelineCache pipelineCache = nullptr
+            VkPipelineCache pipelineCache  = nullptr,
+            VkDescriptorSetLayout extraSetLayout = nullptr  // optional set 1 layout (e.g. font SSBOs)
         );
 
         void destroy(VkDevice device);

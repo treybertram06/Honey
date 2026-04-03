@@ -366,6 +366,7 @@ namespace Honey {
         copy_component<BoxCollider2DComponent>      (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<CircleCollider2DComponent>   (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<AudioSourceComponent>        (dst_scene_registry, src_scene_registry, entt_map);
+        copy_component<TextRendererComponent>       (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<MeshRendererComponent>       (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<ClothComponent>              (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<PointLightComponent>         (dst_scene_registry, src_scene_registry, entt_map);
@@ -421,6 +422,7 @@ namespace Honey {
         copy_component_if_exists<BoxCollider2DComponent>        (new_entity, entity);
         copy_component_if_exists<CircleCollider2DComponent>     (new_entity, entity);
         copy_component_if_exists<AudioSourceComponent>          (new_entity, entity);
+        copy_component_if_exists<TextRendererComponent>         (new_entity, entity);
         copy_component_if_exists<MeshRendererComponent>         (new_entity, entity);
         copy_component_if_exists<ClothComponent>                (new_entity, entity);
         copy_component_if_exists<DirectionalLightComponent>     (new_entity, entity);
@@ -819,6 +821,13 @@ namespace Honey {
             auto sprite = line_group.get<LineRendererComponent>(entity);
             Entity entity_ref = { entity, this };
             Renderer2D::draw_line_sprite(entity_ref.get_world_transform(), sprite, (int)entt::to_integral(entity));
+        }
+
+        auto text_group = m_registry.group<TextRendererComponent>(entt::get<TransformComponent>);
+        for (auto entity : text_group) {
+            auto& trc = text_group.get<TextRendererComponent>(entity);
+            Entity entity_ref = { entity, this };
+            Renderer2D::draw_text(entity_ref.get_world_transform(), trc, (int)entt::to_integral(entity));
         }
 
         Renderer2D::end_scene();

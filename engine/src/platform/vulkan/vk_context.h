@@ -51,6 +51,9 @@ namespace Honey {
         VkDevice get_device() const { return m_device; }
         VkPhysicalDevice get_physical_device() const { return m_physical_device; }
         VkDescriptorSetLayout get_global_set_layout() const { return m_global_set_layout; }
+        VkDescriptorSetLayout get_font_set_layout()   const { return m_font_set_layout; }
+        // Returns the font SSBO descriptor set for the given frame (all chunk sets are identical).
+        VkDescriptorSet get_font_descriptor_set(uint32_t frame) const { return m_fonts_descriptor_sets[frame][0]; }
 
         uint32_t get_graphics_queue_family() const { return m_graphics_queue_family; }
         uint32_t get_compute_queue_family() const { return m_compute_queue_family; }
@@ -233,6 +236,10 @@ namespace Honey {
 
         void refresh_all_texture_samplers() override;
 
+        // Uploads font curve data into both frames' SSBOs. Call once after loading a font.
+        void upload_font_data(const void* band_table_data, uint32_t band_table_bytes,
+                              const void* curve_data,       uint32_t curve_bytes);
+
     private:
         // Per-window only:
         void create_surface();
@@ -262,6 +269,8 @@ namespace Honey {
 
         void create_global_descriptor_resources();
         void cleanup_global_descriptor_resources();
+        void create_font_descriptor_resources();
+        void cleanup_font_descriptor_resources();
 
         bool submit_one_time_on_queue(
             VkQueue queue,
@@ -280,9 +289,13 @@ namespace Honey {
         }
 
 public:
-        static constexpr uint32_t k_max_frames_in_flight = 2;
-        static constexpr uint32_t k_max_chunks_per_frame = 32;
-        static constexpr uint32_t k_max_material_count   = 16384;
+        static constexpr uint32_t k_max_frames_in_flight  = 2;
+        static constexpr uint32_t k_max_chunks_per_frame  = 32;
+        static constexpr uint32_t k_max_material_count    = 16384;
+        // 8 bands × 95 printable ASCII glyphs (codepoints 32–126)
+        static constexpr uint32_t k_max_font_band_entries = 760;
+        // Upper bound for total curves after per-band replication
+        static constexpr uint32_t k_max_font_curves       = 16384;
 
 private:
 
@@ -325,6 +338,21 @@ private:
         std::vector<VkImage> m_swapchain_depth_images;
         std::vector<VkDeviceMemory> m_swapchain_depth_memories;
         std::vector<VkImageView> m_swapchain_depth_image_views;
+
+        // Fonts
+        VkDescriptorSetLayout m_font_set_layout = nullptr;
+        VkDescriptorPool m_font_descriptor_pool = nullptr;
+        VkDescriptorSet m_fonts_descriptor_sets[k_max_frames_in_flight][k_max_chunks_per_frame]{};
+        //uint32_t m_chunk_ds_index[k_max_frames_in_flight]{};
+
+        void* m_band_table_ubos[k_max_frames_in_flight]{};        // VkBuffer
+        void* m_band_table_ubo_memories[k_max_frames_in_flight]{}; // VkDeviceMemory
+        uint32_t m_band_table_ubo_size = 0;
+
+        void* m_curve_ubos[k_max_frames_in_flight]{};        // VkBuffer
+        void* m_curve_ubo_memories[k_max_frames_in_flight]{}; // VkDeviceMemory
+        uint32_t m_curve_ubo_size = 0;
+
 
         VkDescriptorSetLayout m_global_set_layout = nullptr;
         VkDescriptorPool m_descriptor_pool = nullptr;

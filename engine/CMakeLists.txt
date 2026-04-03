@@ -212,6 +212,12 @@ add_library(engine STATIC
         src/platform/vulkan/vk_cloth_renderer.cpp
         src/platform/vulkan/vk_types.h
         src/Honey/loaders/gltf_scene_tree.h
+        vendor/stb_truetype/stb_truetype.h
+        vendor/stb_truetype/stb_truetype.cpp
+        vendor/nanosvg/nanosvg.cpp
+        vendor/nanosvg/nanosvg.h
+        src/Honey/renderer/slug_font.h
+        src/Honey/renderer/slug_font.cpp
 )
 
 # Apply MSVC runtime to engine itself
@@ -364,6 +370,7 @@ target_include_directories(engine PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/vendor/stb_image
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/stb_truetype
         ${CMAKE_CURRENT_SOURCE_DIR}/vendor/entt/src
         ${CMAKE_CURRENT_BINARY_DIR}
 )
@@ -547,6 +554,8 @@ endif()
 target_include_directories(engine PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/vendor/tinygltf
         ${CMAKE_CURRENT_SOURCE_DIR}/vendor/stb_image
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/stb_truetype
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/nanosvg
 )
 
 # Prefer dynamic for Debug builds on Windows: simplest and avoids CRT static mismatch pain
