@@ -265,6 +265,21 @@ hn_force_msvc_runtime(enkiTS)
 target_link_libraries(engine PRIVATE enkiTS)
 
 # ------------------------------------------------------------------------------
+# meshoptimizer (vendored)
+# ------------------------------------------------------------------------------
+set(HN_MESHOPT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/meshoptimizer" CACHE PATH "Vendored meshoptimizer root")
+
+file(GLOB MESHOPT_SOURCES "${HN_MESHOPT_DIR}/*.cpp")
+
+add_library(meshoptimizer STATIC ${MESHOPT_SOURCES})
+
+target_include_directories(meshoptimizer PUBLIC ${HN_MESHOPT_DIR})
+
+hn_force_msvc_runtime(meshoptimizer)
+
+target_link_libraries(engine PRIVATE meshoptimizer)
+
+# ------------------------------------------------------------------------------
 # Lua (vendored) + sol2 (header-only)
 # Assumes:
 #   - Lua sources are in: ${CMAKE_CURRENT_SOURCE_DIR}/vendor/lua
