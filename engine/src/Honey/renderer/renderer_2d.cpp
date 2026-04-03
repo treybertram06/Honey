@@ -1409,21 +1409,58 @@ namespace Honey {
         float font_scale = font.get_scale(trc.font_size);
         float line_height = (font.get_ascent() - font.get_descent() + font.get_line_gap()) * font_scale;
 
+        // scale.x is the wrap width in world units; 0 means no wrapping
+        float max_width = scale.x;
+
+        // Returns the advance width of text[start..end) in world units (stops at newline)
+        auto measure_span = [&](size_t start, size_t end) -> float {
+            float w = 0.0f;
+            for (size_t k = start; k < end; ++k) {
+                char ch = trc.text[k];
+                if (ch == '\n') break;
+                const GlyphData* g = font.get_glyph(ch);
+                if (g) w += g->advance * font_scale;
+            }
+            return w;
+        };
+
         float cursor_x = position.x;
         float cursor_y = position.y;
-        for (char c : trc.text) {
+        const size_t len = trc.text.size();
+        size_t i = 0;
+        while (i < len) {
+            const char c = trc.text[i];
+
             if (c == '\n') {
                 cursor_x = position.x;
                 cursor_y -= line_height * trc.line_spacing;
+                ++i;
                 continue;
             }
+
+            // Word-wrap: at the start of a non-space word, measure the word and wrap
+            // before it if it won't fit on the current line.
+            if (max_width > 0.0f && c != ' ') {
+                size_t word_end = i;
+                while (word_end < len && trc.text[word_end] != ' ' && trc.text[word_end] != '\n')
+                    ++word_end;
+
+                float word_width = measure_span(i, word_end);
+                bool not_at_line_start = (cursor_x - position.x) > 0.001f;
+                if (not_at_line_start && cursor_x + word_width > position.x + max_width) {
+                    cursor_x = position.x;
+                    cursor_y -= line_height * trc.line_spacing;
+                }
+            }
+
             const GlyphData* glyph = font.get_glyph(c);
-            if (!glyph) continue;
+            if (!glyph) { ++i; continue; }
 
             // bbox in world space (scaled)
             glm::vec2 bbox_size = (glyph->bbox_max - glyph->bbox_min) * font_scale;
             if (bbox_size.x <= 0.0f || bbox_size.y <= 0.0f) {
                 cursor_x += glyph->advance * font_scale;
+                ++i;
                 continue;
             }
 
@@ -1444,6 +1481,7 @@ namespace Honey {
 
             s_data->glyph_instances.push_back(inst);
             cursor_x += glyph->advance * font_scale;
+            ++i;
         }
     }
 
