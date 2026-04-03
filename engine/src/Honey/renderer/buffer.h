@@ -148,6 +148,19 @@ namespace Honey {
         static Ref<UniformBuffer> create(uint32_t size, uint32_t binding);
     };
 
+    enum class StorageBufferUsage : uint32_t {
+        Default   = 0,
+        Dynamic   = 1 << 0,
+        Immutable = 1 << 1,
+        Readback  = 1 << 2
+    };
+
+    inline StorageBufferUsage operator|(StorageBufferUsage a, StorageBufferUsage b) {
+        return static_cast<StorageBufferUsage>(
+            static_cast<uint32_t>(a) | static_cast<uint32_t>(b)
+        );
+    }
+
     class StorageBuffer {
     public:
         virtual ~StorageBuffer() {}
@@ -160,6 +173,28 @@ namespace Honey {
 
         virtual void* get_native_buffer() const = 0;
 
-        static Ref<StorageBuffer> create(uint32_t size, uint32_t usage_flags = 0);
+        static Ref<StorageBuffer> create(uint32_t size,
+                                         StorageBufferUsage usage = StorageBufferUsage::Default);
+
+        template<typename T>
+        static Ref<StorageBuffer> create_from_vector(const std::vector<T>& data,
+                                                     StorageBufferUsage usage = StorageBufferUsage::Immutable)
+        {
+            auto buffer = create(static_cast<uint32_t>(data.size() * sizeof(T)), usage);
+            if (!data.empty())
+                buffer->set_data(data.data(), static_cast<uint32_t>(data.size() * sizeof(T)));
+            return buffer;
+        }
+
+        template<typename T>
+        static Ref<StorageBuffer> create_from_data(const T* data,
+                                                   uint32_t count,
+                                                   StorageBufferUsage usage = StorageBufferUsage::Immutable)
+        {
+            auto buffer = create(count * sizeof(T), usage);
+            if (data && count > 0)
+                buffer->set_data(data, count * sizeof(T));
+            return buffer;
+        }
     };
 }

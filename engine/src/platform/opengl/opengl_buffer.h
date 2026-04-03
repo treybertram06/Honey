@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Honey/renderer/buffer.h"
+#include <glm/glm.hpp>
 
 namespace Honey {
 
@@ -57,7 +58,7 @@ namespace Honey {
 
     class OpenGLStorageBuffer : public StorageBuffer {
     public:
-        OpenGLStorageBuffer(uint32_t size, uint32_t usage_flags = 0);
+        OpenGLStorageBuffer(uint32_t size, StorageBufferUsage usage_flags);
         ~OpenGLStorageBuffer() override;
 
         void bind(uint32_t binding = 0) const override;

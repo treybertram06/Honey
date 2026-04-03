@@ -274,7 +274,7 @@ namespace Honey {
         return CreateRef<VulkanUniformBuffer>(m_device, m_physical_device, size, binding);
     }
 
-    Ref<StorageBuffer> VulkanRendererAPI::create_storage_buffer(uint32_t size, uint32_t usage_flags) {
+    Ref<StorageBuffer> VulkanRendererAPI::create_storage_buffer(uint32_t size, StorageBufferUsage usage_flags) {
         HN_CORE_ASSERT(m_device && m_physical_device, "VulkanRendererAPI not initialized (device not available)");
         return CreateRef<VulkanStorageBuffer>(m_device, m_physical_device, size, usage_flags);
     }

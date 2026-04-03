@@ -245,6 +245,39 @@ namespace Honey {
             return "Unknown";
         }
 
+        static bool parse_storage_buffer_usage(const YAML::Node& n,
+                                       StorageBufferUsage& out,
+                                       FGCompileDiagnostics& diags,
+                                       std::string_view scope)
+        {
+            if (!n || !n.IsScalar()) {
+                diags.add_error("Buffer Usage must be a scalar string", scope);
+                return false;
+            }
+
+            const std::string v = n.as<std::string>();
+
+            if (iequals(v, "default")) {
+                out = StorageBufferUsage::Default;
+                return true;
+            }
+            if (iequals(v, "dynamic")) {
+                out = StorageBufferUsage::Dynamic;
+                return true;
+            }
+            if (iequals(v, "immutable") || iequals(v, "static")) {
+                out = StorageBufferUsage::Immutable;
+                return true;
+            }
+            if (iequals(v, "readback") || iequals(v, "read_back")) {
+                out = StorageBufferUsage::Readback;
+                return true;
+            }
+
+            diags.add_error("Unknown Buffer Usage: " + v, scope);
+            return false;
+        }
+
     } // namespace
 
     bool FrameGraphLoader::load_from_file(const std::filesystem::path& file_path,
@@ -411,12 +444,10 @@ namespace Honey {
                         }
                     }
 
-                    if (const auto usage_flags = body["UsageFlags"]) {
-                        try {
-                            resource.buffer.usage_flags = usage_flags.as<uint32_t>();
-                        } catch (const YAML::BadConversion&) {
-                            out_diagnostics.add_error("Buffer UsageFlags must be an integer", scope);
-                        }
+                    if (const auto usage_node = body["Usage"]) {
+                        parse_storage_buffer_usage(usage_node, resource.buffer.usage, out_diagnostics, scope);
+                    } else {
+                        resource.buffer.usage = StorageBufferUsage::Default;
                     }
                 } else if (resource.type == FGResourceType::ImportedTarget) {
                     parse_imported_kind(body["Kind"], resource.imported_kind, out_diagnostics, scope);

@@ -20,20 +20,30 @@
 #include <vector>
 
 #define GLM_ENABLE_EXPERIMENTAL
+#include "meshoptimizer.h"
 #include "glm/ext/matrix_transform.hpp"
 #include "glm/gtc/type_ptr.hpp"
 #include "glm/gtx/quaternion.hpp"
 #include "Honey/core/task_system.h"
 
 namespace Honey {
-    namespace {
 
+    namespace {
         // Local vertex type matching your current 3D shader expectations.
         // If you already have TestVertex3D exposed in a header, prefer including that instead.
         struct VertexPNUV {
             glm::vec3 position{0.0f};
             glm::vec3 normal{0.0f, 0.0f, 1.0f};
             glm::vec2 uv{0.0f};
+        };
+
+        struct ImportedPrimitiveData {
+            std::string name;
+
+            std::vector<VertexPNUV> vertices;
+            std::vector<uint32_t> indices;
+
+            Ref<Material> material;
         };
 
         static bool has_ext(const std::filesystem::path& p, const char* ext) {
@@ -304,6 +314,196 @@ namespace Honey {
             return glm::vec3(m[3][0], m[3][1], m[3][2]);
         }
 
+        static std::optional<ImportedPrimitiveData> extract_primitive_data(
+            const tinygltf::Model& model,
+            const tinygltf::Mesh& gm,
+            const tinygltf::Primitive& prim,
+            size_t primIndex,
+            const std::filesystem::path& gltfDir,
+            const GltfLoadOptions& options,
+            std::unordered_map<int, Ref<Texture2D>>& textureCacheByImageIndex,
+            bool async = true) {
+            HN_PROFILE_FUNCTION();
+
+            ImportedPrimitiveData out{};
+
+            if (prim.mode != TINYGLTF_MODE_TRIANGLES) {
+                HN_CORE_WARN("glTF: skipping primitive (mode != TRIANGLES)");
+                return std::nullopt;
+            }
+
+            // POSITION
+            auto posIt = prim.attributes.find("POSITION");
+            if (posIt == prim.attributes.end()) {
+                HN_CORE_WARN("glTF: primitive has no POSITION, skipping");
+                return std::nullopt;
+            }
+
+            const tinygltf::Accessor* posAcc = find_accessor(model, posIt->second);
+            if (!posAcc || posAcc->count == 0)
+                return std::nullopt;
+
+            size_t vcount = (size_t)posAcc->count;
+
+            const tinygltf::Accessor* nrmAcc = nullptr;
+            if (auto it = prim.attributes.find("NORMAL"); it != prim.attributes.end())
+                nrmAcc = find_accessor(model, it->second);
+
+            const tinygltf::Accessor* uvAcc = nullptr;
+            if (auto it = prim.attributes.find("TEXCOORD_0"); it != prim.attributes.end())
+                uvAcc = find_accessor(model, it->second);
+
+            std::vector<VertexPNUV> vertices(vcount);
+
+            for (size_t i = 0; i < vcount; ++i) {
+                if (!read_vec3_float(model, *posAcc, i, vertices[i].position))
+                    return std::nullopt;
+
+                if (nrmAcc)
+                    read_vec3_float(model, *nrmAcc, i, vertices[i].normal);
+
+                if (uvAcc)
+                    read_vec2_float(model, *uvAcc, i, vertices[i].uv);
+            }
+
+            // INDICES → ALWAYS uint32_t
+            if (prim.indices < 0) {
+                HN_CORE_WARN("glTF: primitive has no indices, skipping");
+                return std::nullopt;
+            }
+
+            const tinygltf::Accessor* idxAcc = find_accessor(model, prim.indices);
+            if (!idxAcc || idxAcc->count == 0)
+                return std::nullopt;
+
+            size_t idxStride = 0;
+            const uint8_t* idxBase = accessor_data_ptr(model, *idxAcc, idxStride);
+            if (!idxBase)
+                return std::nullopt;
+
+            std::vector<uint32_t> indices(idxAcc->count);
+
+            for (size_t i = 0; i < indices.size(); ++i) {
+                if (idxAcc->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) {
+                    indices[i] = *(idxBase + i * idxStride);
+                } else if (idxAcc->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
+                    indices[i] = *reinterpret_cast<const uint16_t*>(idxBase + i * idxStride);
+                } else if (idxAcc->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT) {
+                    indices[i] = *reinterpret_cast<const uint32_t*>(idxBase + i * idxStride);
+                } else {
+                    HN_CORE_WARN("glTF: unsupported index type");
+                    return std::nullopt;
+                }
+            }
+
+            // MATERIAL
+            out.material = build_material_from_gltf(
+                model,
+                prim.material,
+                gltfDir,
+                options,
+                textureCacheByImageIndex,
+                async
+            );
+
+            out.vertices = std::move(vertices);
+            out.indices  = std::move(indices);
+
+            out.name = gm.name.empty()
+                ? ("Mesh_" + std::to_string(primIndex))
+                : gm.name;
+
+            return out;
+        }
+
+        static std::optional<MeshletGeometry> build_meshlet_geometry(
+    const std::vector<VertexPNUV>& vertices,
+    const std::vector<uint32_t>& indices) {
+            HN_PROFILE_FUNCTION();
+
+            if (vertices.empty() || indices.empty())
+                return std::nullopt;
+
+            constexpr size_t kMaxVertices  = 64;
+            constexpr size_t kMaxTriangles = 124;
+            constexpr float  kConeWeight   = 0.0f;
+
+            const size_t max_meshlets =
+                meshopt_buildMeshletsBound(indices.size(), kMaxVertices, kMaxTriangles);
+
+            std::vector<meshopt_Meshlet> meshlets(max_meshlets);
+            std::vector<uint32_t> meshlet_vertices(max_meshlets * kMaxVertices);
+            std::vector<uint8_t> meshlet_triangles(max_meshlets * kMaxTriangles * 3);
+
+            const float* positions = &vertices[0].position.x;
+            const size_t vertex_stride = sizeof(VertexPNUV);
+
+            const size_t meshlet_count = meshopt_buildMeshlets(
+                meshlets.data(),
+                meshlet_vertices.data(),
+                meshlet_triangles.data(),
+                indices.data(),
+                indices.size(),
+                positions,
+                vertices.size(),
+                vertex_stride,
+                kMaxVertices,
+                kMaxTriangles,
+                kConeWeight
+            );
+
+            if (meshlet_count == 0)
+                return std::nullopt;
+
+            meshlets.resize(meshlet_count);
+
+            size_t used_vertex_refs = 0;
+            size_t used_triangle_bytes = 0;
+
+            for (size_t i = 0; i < meshlet_count; ++i) {
+                const meshopt_Meshlet& m = meshlets[i];
+                used_vertex_refs = std::max(used_vertex_refs, size_t(m.vertex_offset + m.vertex_count));
+                used_triangle_bytes = std::max(
+                    used_triangle_bytes,
+                    size_t(m.triangle_offset + ((m.triangle_count * 3 + 3) & ~3))
+                );
+            }
+
+            meshlet_vertices.resize(used_vertex_refs);
+            meshlet_triangles.resize(used_triangle_bytes);
+
+            std::vector<MeshletBounds> bounds(meshlet_count);
+
+            for (size_t i = 0; i < meshlet_count; ++i) {
+                const meshopt_Meshlet& m = meshlets[i];
+
+                const meshopt_Bounds b = meshopt_computeMeshletBounds(
+                    &meshlet_vertices[m.vertex_offset],
+                    &meshlet_triangles[m.triangle_offset],
+                    m.triangle_count,
+                    positions,
+                    vertices.size(),
+                    vertex_stride
+                );
+
+                bounds[i].center = { b.center[0], b.center[1], b.center[2] };
+                bounds[i].radius = b.radius;
+                bounds[i].cone_axis = { b.cone_axis[0], b.cone_axis[1], b.cone_axis[2] };
+                bounds[i].cone_cutoff = b.cone_cutoff;
+            }
+
+            MeshletGeometry out{};
+            out.meshlets_buffer = StorageBuffer::create_from_vector(meshlets);
+            out.meshlet_vertices_buffer = StorageBuffer::create_from_vector(meshlet_vertices);
+            out.meshlet_triangles_buffer = StorageBuffer::create_from_vector(meshlet_triangles);
+            out.meshlet_bounds_buffer = StorageBuffer::create_from_vector(bounds);
+            out.meshlet_count = static_cast<uint32_t>(meshlet_count);
+            out.max_vertices_per_meshlet = static_cast<uint32_t>(kMaxVertices);
+            out.max_triangles_per_meshlet = static_cast<uint32_t>(kMaxTriangles);
+
+            return out;
+        }
+
         // Extract all primitives for a specific glTF mesh index and append to `out`,
         // tagging each Submesh with the provided world transform.
         static void append_mesh_primitives_as_submeshes(
@@ -362,105 +562,56 @@ namespace Honey {
                     continue;
                 }
 
-                std::vector<VertexPNUV> vertices;
-                vertices.resize(vcount);
-
-                for (size_t i = 0; i < vcount; ++i) {
-                    glm::vec3 p3{};
-                    if (!read_vec3_float(model, *posAcc, i, p3)) {
-                        HN_CORE_WARN("glTF: POSITION read failed, skipping primitive");
-                        vertices.clear();
-                        break;
-                    }
-                    vertices[i].position = p3;
-
-                    if (nrmAcc) {
-                        glm::vec3 n3{};
-                        if (read_vec3_float(model, *nrmAcc, i, n3))
-                            vertices[i].normal = n3;
-                    }
-
-                    if (uvAcc) {
-                        glm::vec2 t2{};
-                        if (read_vec2_float(model, *uvAcc, i, t2))
-                            vertices[i].uv = t2;
-                    }
-                }
-
-                if (vertices.empty())
-                    continue;
-
-                // Indices (required for now)
-                if (prim.indices < 0) {
-                    HN_CORE_WARN("glTF: primitive has no indices (non-indexed not supported yet), skipping");
-                    continue;
-                }
-
-                const tinygltf::Accessor* idxAcc = find_accessor(model, prim.indices);
-                if (!idxAcc || idxAcc->count == 0) {
-                    HN_CORE_WARN("glTF: invalid indices accessor, skipping");
-                    continue;
-                }
-
-                size_t idxStride = 0;
-                const uint8_t* idxBase = accessor_data_ptr(model, *idxAcc, idxStride);
-                if (!idxBase) {
-                    HN_CORE_WARN("glTF: indices base pointer invalid, skipping");
-                    continue;
-                }
-
-                Ref<VertexArray> vao = VertexArray::create();
-
-                // Vertex buffer
-                Ref<VertexBuffer> vb = VertexBuffer::create((uint32_t)(vertices.size() * sizeof(VertexPNUV)));
-                vb->set_data(vertices.data(), (uint32_t)(vertices.size() * sizeof(VertexPNUV)));
-                set_default_layout_pnuv(vb);
-                vao->add_vertex_buffer(vb);
-
-                // Index buffer (u8, u16, or u32)
-                Ref<IndexBuffer> ib;
-                if (idxAcc->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) {
-                    // Expand u8 → u16
-                    std::vector<uint16_t> indices(idxAcc->count);
-                    for (size_t i = 0; i < indices.size(); ++i)
-                        indices[i] = static_cast<uint16_t>(*(idxBase + i * idxStride));
-                    ib = IndexBuffer::create(indices.data(), (uint32_t)indices.size());
-                } else if (idxAcc->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
-                    std::vector<uint16_t> indices(idxAcc->count);
-                    for (size_t i = 0; i < indices.size(); ++i) {
-                        const uint16_t* v = reinterpret_cast<const uint16_t*>(idxBase + i * idxStride);
-                        indices[i] = *v;
-                    }
-                    ib = IndexBuffer::create(indices.data(), (uint32_t)indices.size());
-                } else if (idxAcc->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT) {
-                    std::vector<uint32_t> indices(idxAcc->count);
-                    for (size_t i = 0; i < indices.size(); ++i) {
-                        const uint32_t* v = reinterpret_cast<const uint32_t*>(idxBase + i * idxStride);
-                        indices[i] = *v;
-                    }
-                    ib = IndexBuffer::create(indices.data(), (uint32_t)indices.size());
-                } else {
-                    HN_CORE_WARN("glTF: indices componentType not supported (need UNSIGNED_SHORT/UNSIGNED_INT), skipping");
-                    continue;
-                }
-
-                vao->set_index_buffer(ib);
-
-                // Material
-                Ref<Material> mat = build_material_from_gltf(
+                auto primDataOpt = extract_primitive_data(
                     model,
-                    prim.material,
+                    gm,
+                    prim,
+                    primIndex,
                     gltfDir,
                     options,
                     textureCacheByImageIndex,
                     async
                 );
 
+                if (!primDataOpt)
+                    continue;
+
+                const auto& primData = *primDataOpt;
+
+                // =======================
+                // CLASSIC GEOMETRY BUILD
+                // =======================
+
+                Ref<VertexArray> vao = VertexArray::create();
+
+                // Vertex buffer
+                Ref<VertexBuffer> vb = VertexBuffer::create((uint32_t)(primData.vertices.size() * sizeof(VertexPNUV)));
+                vb->set_data(primData.vertices.data(), (uint32_t)(primData.vertices.size() * sizeof(VertexPNUV)));
+                set_default_layout_pnuv(vb);
+                vao->add_vertex_buffer(vb);
+
+                // Index buffer (convert back to u16/u32 if you want later optimization)
+                Ref<IndexBuffer> ib = IndexBuffer::create(
+                    const_cast<uint32_t*>(primData.indices.data()),
+                    (uint32_t)primData.indices.size()
+                );
+
+                vao->set_index_buffer(ib);
+
                 Submesh sm{};
                 sm.vao = vao;
-                sm.material = mat;
-                sm.name = gm.name.empty() ? ("Mesh_" + std::to_string(gltfMeshIndex) + "_Prim_" + std::to_string(primIndex)) : gm.name;
+                sm.material = primData.material;
+                sm.name = primData.name;
                 sm.transform = worldTransform;
+
+                // Optional meshlet build
+                if (auto meshlets = build_meshlet_geometry(primData.vertices, primData.indices)) {
+                    sm.meshlets = std::move(*meshlets);
+                }
+
+                if (sm.meshlets) {
+                    HN_CORE_INFO("Built {} meshlets for submesh '{}'", sm.meshlets->meshlet_count, sm.name);
+                }
 
                 out->add_submesh(std::move(sm));
             }
@@ -545,6 +696,7 @@ namespace Honey {
 
             return out;
         }
+
 
     } // namespace
 

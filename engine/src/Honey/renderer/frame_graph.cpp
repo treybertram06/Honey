@@ -193,6 +193,16 @@ namespace Honey {
 
             return false;
         }
+
+        static std::string_view storage_buffer_usage_label(const StorageBufferUsage usage) {
+            switch (usage) {
+            case StorageBufferUsage::Default:   return "Default";
+            case StorageBufferUsage::Dynamic:   return "Dynamic";
+            case StorageBufferUsage::Immutable: return "Immutable";
+            case StorageBufferUsage::Readback:  return "Readback";
+            }
+            return "Unknown";
+        }
     }
 
     bool FGCompileDiagnostics::has_errors() const {
@@ -378,7 +388,8 @@ namespace Honey {
                 oss << "Texture " << r.resolved_width << "x" << r.resolved_height
                     << " samples=" << r.texture.samples;
             } else if (r.type == FGResourceType::Buffer) {
-                oss << "Buffer size=" << r.buffer.size << " usageFlags=" << r.buffer.usage_flags;
+                oss << "Buffer size=" << r.buffer.size
+                    << " usage=" << storage_buffer_usage_label(r.buffer.usage);
             } else {
                 oss << "ImportedTarget kind="
                     << (r.imported_kind == FGImportedTargetKind::Swapchain ? "Swapchain" : "ExternalFramebuffer");
@@ -1391,8 +1402,10 @@ namespace Honey {
                 continue;
             }
 
-            res.storage_buffer = StorageBuffer::create(static_cast<uint32_t>(res.buffer.size),
-                                                       res.buffer.usage_flags);
+            res.storage_buffer = StorageBuffer::create(
+                static_cast<uint32_t>(res.buffer.size),
+                res.buffer.usage
+            );
 
             if (!res.storage_buffer) {
                 out_diagnostics.add_error("Failed to create runtime storage buffer resource", res.name);

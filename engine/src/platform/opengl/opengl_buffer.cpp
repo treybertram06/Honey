@@ -143,12 +143,12 @@ namespace Honey {
         glBindBuffer(GL_UNIFORM_BUFFER, 0);
     }
 
-    OpenGLStorageBuffer::OpenGLStorageBuffer(uint32_t size, uint32_t usage_flags)
+    OpenGLStorageBuffer::OpenGLStorageBuffer(uint32_t size, StorageBufferUsage usage_flags)
         : m_size(size) {
         HN_CORE_ASSERT(false,
                        "OpenGLStorageBuffer is currently a stub and is not implemented yet (size={0}, usage_flags={1})",
                        size,
-                       usage_flags);
+                       "0x" + fmt::format("{:X}", static_cast<uint32_t>(usage_flags)));
     }
 
     OpenGLStorageBuffer::~OpenGLStorageBuffer() = default;

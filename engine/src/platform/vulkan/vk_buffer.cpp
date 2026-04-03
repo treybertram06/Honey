@@ -9,7 +9,6 @@
 #include "platform/vulkan/vk_backend.h"
 
 namespace Honey {
-
     static uint32_t find_memory_type(VkPhysicalDevice phys, uint32_t type_filter, VkMemoryPropertyFlags props) {
         HN_PROFILE_FUNCTION();
         VkPhysicalDeviceMemoryProperties mem_props{};
@@ -65,23 +64,23 @@ namespace Honey {
         vkUnmapMemory(dev, mem);
     }
 
-    static void copy_buffer_immediate(VulkanBackend& backend, VkBuffer src, VkBuffer dst, VkDeviceSize size) {
-        HN_PROFILE_FUNCTION();
-        HN_CORE_ASSERT(src && dst && size > 0, "copy_buffer_immediate: invalid args");
-
+    static void copy_buffer_immediate(
+    VulkanBackend& backend,
+    VkBuffer src,
+    VkBuffer dst,
+    VkDeviceSize size,
+    VkAccessFlags dst_access_mask,
+    VkPipelineStageFlags dst_stage_mask)
+    {
         backend.immediate_submit([&](VkCommandBuffer cmd) {
             VkBufferCopy region{};
-            region.srcOffset = 0;
-            region.dstOffset = 0;
             region.size = size;
             vkCmdCopyBuffer(cmd, src, dst, 1, &region);
 
             VkBufferMemoryBarrier barrier{};
             barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
             barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            barrier.dstAccessMask =
-                VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT |
-                VK_ACCESS_INDEX_READ_BIT;
+            barrier.dstAccessMask = dst_access_mask;
             barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier.buffer = dst;
@@ -91,7 +90,7 @@ namespace Honey {
             vkCmdPipelineBarrier(
                 cmd,
                 VK_PIPELINE_STAGE_TRANSFER_BIT,
-                VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+                dst_stage_mask,
                 0,
                 0, nullptr,
                 1, &barrier,
@@ -107,6 +106,8 @@ namespace Honey {
         const void* initial_data,
         VkDeviceSize size,
         VkBufferUsageFlags final_usage,
+        VkAccessFlags dst_access_mask,
+        VkPipelineStageFlags dst_stage_mask,
         VkBuffer& out_buffer,
         VkDeviceMemory& out_memory
     ) {
@@ -136,8 +137,15 @@ namespace Honey {
             out_buffer, out_memory
         );
 
-        // 3) copy
-        copy_buffer_immediate(backend, staging_buf, out_buffer, size);
+        // 3) copy + correct barrier for the eventual consumer
+        copy_buffer_immediate(
+            backend,
+            staging_buf,
+            out_buffer,
+            size,
+            dst_access_mask,
+            dst_stage_mask
+        );
 
         // 4) cleanup staging
         vkDestroyBuffer(dev, staging_buf, nullptr);
@@ -189,15 +197,17 @@ namespace Honey {
         if (initial_data) {
             auto& backend = Application::get().get_vulkan_backend();
             create_device_local_buffer_with_staging(
-                m_device_raw,
-                m_phys_raw,
-                backend,
-                initial_data,
-                size,
-                VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                buf,
-                mem
-            );
+                        m_device_raw,
+                        m_phys_raw,
+                        backend,
+                        initial_data,
+                        size,
+                        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                        VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
+                        VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+                        buf,
+                        mem
+                    );
         } else {
             // No initial data: keep it simple for now (CPU-visible dynamic buffer)
             create_buffer(
@@ -265,6 +275,8 @@ namespace Honey {
             initial_data,
             bytes,
             VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+            VK_ACCESS_INDEX_READ_BIT,
+            VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
             buf,
             mem
         );
@@ -318,73 +330,146 @@ namespace Honey {
     VulkanStorageBuffer::VulkanStorageBuffer(VkDevice device,
                                              VkPhysicalDevice phys,
                                              uint32_t size,
-                                             uint32_t usage_flags)
-        : m_device_raw(device),
-          m_phys_raw(phys) {
-        HN_PROFILE_FUNCTION();
-        HN_CORE_ASSERT(m_device_raw && m_phys_raw, "VulkanStorageBuffer: invalid device/physical device");
-        allocate(size, usage_flags);
+                                             StorageBufferUsage usage)
+        : m_device(device), m_phys(phys), m_usage(usage)
+    {
+        HN_CORE_ASSERT(m_device && m_phys, "VulkanStorageBuffer: invalid device/physical device");
+        allocate(size, usage);
     }
 
     VulkanStorageBuffer::~VulkanStorageBuffer() {
-        HN_PROFILE_FUNCTION();
-        if (!m_device_raw)
+        if (!m_device)
             return;
 
         if (m_buffer)
-            vkDestroyBuffer(m_device_raw, reinterpret_cast<VkBuffer>(m_buffer), nullptr);
-        if (m_memory)
-            vkFreeMemory(m_device_raw, reinterpret_cast<VkDeviceMemory>(m_memory), nullptr);
+            vkDestroyBuffer(m_device, m_buffer, nullptr);
 
-        m_buffer = nullptr;
-        m_memory = nullptr;
-        m_device_raw = nullptr;
-        m_phys_raw = nullptr;
+        if (m_memory)
+            vkFreeMemory(m_device, m_memory, nullptr);
+
+        m_buffer = VK_NULL_HANDLE;
+        m_memory = VK_NULL_HANDLE;
+        m_device = VK_NULL_HANDLE;
+        m_phys = VK_NULL_HANDLE;
     }
 
-    void VulkanStorageBuffer::allocate(uint32_t size, uint32_t usage_flags) {
+    void VulkanStorageBuffer::allocate(uint32_t size, StorageBufferUsage usage) {
         HN_PROFILE_FUNCTION();
-        HN_CORE_ASSERT(size > 0, "VulkanStorageBuffer::allocate requires size > 0");
+
+        HN_CORE_ASSERT(size > 0, "VulkanStorageBuffer::allocate size must be > 0");
 
         m_size = size;
-        m_usage_flags = usage_flags;
+        m_usage = usage;
 
-        // Keep STORAGE_BUFFER usage always enabled. Optional usage_flags are Vulkan usage bits.
-        VkBufferUsageFlags vk_usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                                      static_cast<VkBufferUsageFlags>(usage_flags);
+        VkBufferUsageFlags buffer_usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+        VkMemoryPropertyFlags memory_props = 0;
 
-        VkBuffer buf = VK_NULL_HANDLE;
-        VkDeviceMemory mem = VK_NULL_HANDLE;
+        const bool immutable =
+            usage == StorageBufferUsage::Immutable;
 
-        create_buffer(m_device_raw,
-                      m_phys_raw,
-                      static_cast<VkDeviceSize>(size),
-                      vk_usage,
-                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                      buf,
-                      mem);
+        const bool dynamic =
+            usage == StorageBufferUsage::Dynamic ||
+            usage == StorageBufferUsage::Default;
 
-        m_buffer = reinterpret_cast<void*>(buf);
-        m_memory = reinterpret_cast<void*>(mem);
+        const bool readback =
+            usage == StorageBufferUsage::Readback;
+
+        if (immutable) {
+            buffer_usage |= VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+            memory_props = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+        } else if (dynamic) {
+            memory_props = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                           VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        } else if (readback) {
+            buffer_usage |= VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+                            VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+            memory_props = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                           VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        } else {
+            HN_CORE_ASSERT(false, "Unhandled StorageBufferUsage");
+        }
+
+        create_buffer(
+            m_device,
+            m_phys,
+            size,
+            buffer_usage,
+            memory_props,
+            m_buffer,
+            m_memory
+        );
     }
 
     void VulkanStorageBuffer::set_data(const void* data, uint32_t size, uint32_t offset) {
         HN_PROFILE_FUNCTION();
+
         HN_CORE_ASSERT(data, "VulkanStorageBuffer::set_data data is null");
-        HN_CORE_ASSERT(offset <= m_size, "VulkanStorageBuffer::set_data offset out of range");
-        HN_CORE_ASSERT(size <= (m_size - offset), "VulkanStorageBuffer::set_data range exceeds buffer size");
+        HN_CORE_ASSERT(offset + size <= m_size, "VulkanStorageBuffer::set_data overflow");
 
-        void* mapped = nullptr;
-        VkResult r = vkMapMemory(m_device_raw,
-                                 reinterpret_cast<VkDeviceMemory>(m_memory),
-                                 offset,
-                                 size,
-                                 0,
-                                 &mapped);
-        HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanStorageBuffer::set_data vkMapMemory failed");
+        const bool immutable = (m_usage == StorageBufferUsage::Immutable);
 
-        std::memcpy(mapped, data, static_cast<size_t>(size));
-        vkUnmapMemory(m_device_raw, reinterpret_cast<VkDeviceMemory>(m_memory));
+        if (immutable) {
+            HN_CORE_ASSERT(offset == 0, "Immutable storage buffer partial updates not implemented yet");
+
+            auto& backend = Application::get().get_vulkan_backend();
+
+            VkBuffer staging_buf = VK_NULL_HANDLE;
+            VkDeviceMemory staging_mem = VK_NULL_HANDLE;
+
+            create_buffer(
+                m_device,
+                m_phys,
+                size,
+                VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                staging_buf,
+                staging_mem
+            );
+
+            upload_to_buffer(m_device, staging_mem, data, size);
+
+            backend.immediate_submit([&](VkCommandBuffer cmd) {
+                VkBufferCopy region{};
+                region.srcOffset = 0;
+                region.dstOffset = offset;
+                region.size = size;
+                vkCmdCopyBuffer(cmd, staging_buf, m_buffer, 1, &region);
+
+                VkBufferMemoryBarrier barrier{};
+                barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+                barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                barrier.dstAccessMask =
+                    VK_ACCESS_SHADER_READ_BIT |
+                    VK_ACCESS_SHADER_WRITE_BIT;
+                barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.buffer = m_buffer;
+                barrier.offset = offset;
+                barrier.size = size;
+
+                vkCmdPipelineBarrier(
+                    cmd,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    VK_PIPELINE_STAGE_VERTEX_SHADER_BIT |
+                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    0,
+                    0, nullptr,
+                    1, &barrier,
+                    0, nullptr
+                );
+            });
+
+            vkDestroyBuffer(m_device, staging_buf, nullptr);
+            vkFreeMemory(m_device, staging_mem, nullptr);
+        } else {
+            void* mapped = nullptr;
+            VkResult r = vkMapMemory(m_device, m_memory, offset, size, 0, &mapped);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "vkMapMemory failed for VulkanStorageBuffer");
+
+            std::memcpy(mapped, data, size);
+            vkUnmapMemory(m_device, m_memory);
+        }
     }
 
-} // namespace Honey
+}

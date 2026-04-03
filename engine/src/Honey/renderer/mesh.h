@@ -6,12 +6,39 @@
 
 #include <string>
 #include <vector>
+#include <optional>
 
 namespace Honey {
+
+    enum class GeometryPath : uint8_t {
+        ClassicIndexed,
+        Meshlet
+    };
+
+    struct MeshletBounds {
+        glm::vec3 center{0.0f};
+        float radius = 0.0f;
+
+        glm::vec3 cone_axis{0.0f};
+        float cone_cutoff = 0.0f;
+    };
+
+    struct MeshletGeometry {
+        Ref<StorageBuffer> meshlets_buffer;          // meshopt_Meshlet[]
+        Ref<StorageBuffer> meshlet_vertices_buffer;  // uint32_t[]
+        Ref<StorageBuffer> meshlet_triangles_buffer; // uint8_t[] / packed triangle data
+        Ref<StorageBuffer> meshlet_bounds_buffer;    // optional per-meshlet bounds
+
+        uint32_t meshlet_count = 0;
+        uint32_t max_vertices_per_meshlet = 0;
+        uint32_t max_triangles_per_meshlet = 0;
+    };
 
     struct Submesh {
         Ref<VertexArray> vao;
         Ref<Material> material;
+
+        std::optional<MeshletGeometry> meshlets;
 
         // Optional debug name (useful when inspecting glTF primitives)
         std::string name;
@@ -43,4 +70,4 @@ namespace Honey {
         std::vector<Submesh> m_submeshes;
     };
 
-} // namespace Honey
+}

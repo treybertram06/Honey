@@ -90,7 +90,10 @@ namespace Honey {
 
     class VulkanStorageBuffer : public StorageBuffer {
     public:
-        VulkanStorageBuffer(VkDevice device, VkPhysicalDevice phys, uint32_t size, uint32_t usage_flags = 0);
+        VulkanStorageBuffer(VkDevice device,
+                            VkPhysicalDevice phys,
+                            uint32_t size,
+                            StorageBufferUsage usage);
         ~VulkanStorageBuffer() override;
 
         void bind(uint32_t binding = 0) const override {}
@@ -99,19 +102,20 @@ namespace Honey {
         void set_data(const void* data, uint32_t size, uint32_t offset = 0) override;
         uint32_t get_size() const override { return m_size; }
 
-        void* get_native_buffer() const override { return m_buffer; }
+        void* get_native_buffer() const override { return reinterpret_cast<void*>(m_buffer); }
 
     private:
-        void allocate(uint32_t size, uint32_t usage_flags);
+        void allocate(uint32_t size, StorageBufferUsage usage);
 
-        VkDevice m_device_raw = nullptr;
-        VkPhysicalDevice m_phys_raw = nullptr;
+    private:
+        VkDevice m_device = VK_NULL_HANDLE;
+        VkPhysicalDevice m_phys = VK_NULL_HANDLE;
 
         uint32_t m_size = 0;
-        uint32_t m_usage_flags = 0;
+        StorageBufferUsage m_usage = StorageBufferUsage::Default;
 
-        void* m_buffer = nullptr; // VkBuffer
-        void* m_memory = nullptr; // VkDeviceMemory
+        VkBuffer m_buffer = VK_NULL_HANDLE;
+        VkDeviceMemory m_memory = VK_NULL_HANDLE;
     };
 
 } // namespace Honey

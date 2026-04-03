@@ -99,7 +99,7 @@ namespace Honey {
 
     struct FGBufferDesc {
         uint64_t size = 0;
-        uint32_t usage_flags = 0;
+        StorageBufferUsage usage = StorageBufferUsage::Default;
     };
 
     struct FGResourceBindingDesc {
