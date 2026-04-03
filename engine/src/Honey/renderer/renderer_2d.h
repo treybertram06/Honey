@@ -22,6 +22,7 @@ namespace Honey {
         static void circle_end_scene();
         static void line_end_scene();
         static void glyph_end_scene();
+        static void icon_end_scene();
 
         static void prewarm_pipelines(void* native_render_pass);
 
@@ -110,6 +111,7 @@ namespace Honey {
         static void draw_rect(const glm::mat4& transform, const glm::vec4& color);
 
         static void draw_text(const glm::mat4& transform, TextRendererComponent& trc, int entity_id);
+        static void draw_icon(const glm::mat4& transform, IconRendererComponent& irc, int entity_id = -1);
 
 
         // Statistics

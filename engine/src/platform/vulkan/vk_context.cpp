@@ -689,8 +689,9 @@ namespace Honey {
         }
 
         // BandEntry = 2 × uint32 = 8 bytes; QuadBezier = 3 × vec2 = 24 bytes
-        m_band_table_ubo_size = k_max_font_band_entries * 8u;
-        m_curve_ubo_size      = k_max_font_curves       * 24u;
+        // Combined font + icon capacity (icon data lives at a fixed offset past font data)
+        m_band_table_ubo_size = k_total_band_entries * 8u;
+        m_curve_ubo_size      = k_total_curves       * 24u;
 
         const uint32_t total_sets = k_max_frames_in_flight * k_max_chunks_per_frame;
 
@@ -814,6 +815,45 @@ namespace Honey {
                     0, curve_bytes, 0, &mapped);
                 HN_CORE_ASSERT(r == VK_SUCCESS, "upload_font_data: vkMapMemory (curves) failed");
                 std::memcpy(mapped, curve_data, curve_bytes);
+                vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
+                    reinterpret_cast<VkDeviceMemory>(m_curve_ubo_memories[frame]));
+            }
+        }
+    }
+
+    void VulkanContext::upload_icon_data(const void* band_table_data, uint32_t band_table_bytes,
+                                          uint32_t band_table_byte_offset,
+                                          const void* curve_data,       uint32_t curve_bytes,
+                                          uint32_t curve_byte_offset) {
+        HN_CORE_ASSERT(band_table_byte_offset + band_table_bytes <= m_band_table_ubo_size,
+            "upload_icon_data: band table region [{0}, {0}+{1}) exceeds buffer capacity ({2})",
+            band_table_byte_offset, band_table_bytes, m_band_table_ubo_size);
+        HN_CORE_ASSERT(curve_byte_offset + curve_bytes <= m_curve_ubo_size,
+            "upload_icon_data: curve region [{0}, {0}+{1}) exceeds buffer capacity ({2})",
+            curve_byte_offset, curve_bytes, m_curve_ubo_size);
+
+        for (uint32_t frame = 0; frame < k_max_frames_in_flight; ++frame) {
+            // Band table — map the full buffer and write at the icon-region offset
+            {
+                void* mapped = nullptr;
+                VkResult r = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
+                    reinterpret_cast<VkDeviceMemory>(m_band_table_ubo_memories[frame]),
+                    0, m_band_table_ubo_size, 0, &mapped);
+                HN_CORE_ASSERT(r == VK_SUCCESS, "upload_icon_data: vkMapMemory (band table) failed");
+                std::memcpy(static_cast<uint8_t*>(mapped) + band_table_byte_offset,
+                            band_table_data, band_table_bytes);
+                vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
+                    reinterpret_cast<VkDeviceMemory>(m_band_table_ubo_memories[frame]));
+            }
+            // Curves
+            {
+                void* mapped = nullptr;
+                VkResult r = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
+                    reinterpret_cast<VkDeviceMemory>(m_curve_ubo_memories[frame]),
+                    0, m_curve_ubo_size, 0, &mapped);
+                HN_CORE_ASSERT(r == VK_SUCCESS, "upload_icon_data: vkMapMemory (curves) failed");
+                std::memcpy(static_cast<uint8_t*>(mapped) + curve_byte_offset,
+                            curve_data, curve_bytes);
                 vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
                     reinterpret_cast<VkDeviceMemory>(m_curve_ubo_memories[frame]));
             }

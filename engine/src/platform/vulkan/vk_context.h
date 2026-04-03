@@ -240,6 +240,12 @@ namespace Honey {
         void upload_font_data(const void* band_table_data, uint32_t band_table_bytes,
                               const void* curve_data,       uint32_t curve_bytes);
 
+        // Uploads icon curve data into the icon region of both frames' SSBOs (offset past font data).
+        void upload_icon_data(const void* band_table_data, uint32_t band_table_bytes,
+                              uint32_t band_table_byte_offset,
+                              const void* curve_data,       uint32_t curve_bytes,
+                              uint32_t curve_byte_offset);
+
     private:
         // Per-window only:
         void create_surface();
@@ -296,6 +302,12 @@ public:
         static constexpr uint32_t k_max_font_band_entries = 760;
         // Upper bound for total curves after per-band replication
         static constexpr uint32_t k_max_font_curves       = 16384;
+        // Icon region (lives at offset past the font region in the same SSBOs)
+        static constexpr uint32_t k_max_icon_band_entries = 4096;
+        static constexpr uint32_t k_max_icon_curves       = 32768;
+        // Combined SSBO capacities
+        static constexpr uint32_t k_total_band_entries    = k_max_font_band_entries + k_max_icon_band_entries;
+        static constexpr uint32_t k_total_curves          = k_max_font_curves + k_max_icon_curves;
 
 private:
 

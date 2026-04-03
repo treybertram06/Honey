@@ -60,6 +60,7 @@ namespace Honey {
     struct GlyphInstance {
         glm::vec3   center;
         glm::vec2   half_size;
+        float       rotation;
         glm::vec4   color;
         glm::vec2   bbox_min;
         glm::vec2   bbox_size;
@@ -128,6 +129,21 @@ namespace Honey {
         std::vector<GlyphInstance> glyph_sorted_instances;
 
         bool fonts_uploaded = false;
+
+        // Icon objects (same instance layout as glyphs — reuses GlyphInstance and the Text shader)
+        Ref<VertexArray>  icon_vertex_array;
+        Ref<VertexBuffer> s_icon_vertex_buffer;
+        Ref<VertexBuffer> i_icon_vertex_buffer;
+        Ref<IndexBuffer>  icon_ibo;
+
+        std::vector<GlyphInstance> icon_instances;
+        std::vector<GlyphInstance> icon_sorted_instances;
+
+        bool icons_uploaded = false;
+        uint32_t icon_band_table_offset_bytes = 0;  // byte offset into SSBO where icon region starts
+        uint32_t icon_curve_offset_bytes      = 0;
+
+        std::unordered_map<void*, Ref<Pipeline>> vk_icon_pipelines;
 
         // Texture slots
         uint32_t                       max_texture_slots = 0;
@@ -468,14 +484,15 @@ namespace Honey {
         s_data->i_glyph_vertex_buffer = VertexBuffer::create(Renderer2DData::max_quads * sizeof(GlyphInstance));
         {
             BufferLayout layout = {
-                { ShaderDataType::Float3, "i_center", false, true }, // loc 2
-                { ShaderDataType::Float2, "i_half_size", false, true }, // loc 3
-                { ShaderDataType::Float4, "i_color", false, true }, // loc 4
-                { ShaderDataType::Float2, "i_bbox_min", false, true }, // loc 5
-                { ShaderDataType::Float2, "i_bbox_size", false, true }, // loc 6
-                { ShaderDataType::Int, "i_band_table_offset", false, true }, // loc 7
-                { ShaderDataType::Int, "i_num_bands", false, true }, // loc 8
-                { ShaderDataType::Int, "i_entity_id", false, true} // loc 9
+                { ShaderDataType::Float3, "i_center",            false, true }, // loc 2
+                { ShaderDataType::Float2, "i_half_size",         false, true }, // loc 3
+                { ShaderDataType::Float,  "i_rotation",          false, true }, // loc 4
+                { ShaderDataType::Float4, "i_color",             false, true }, // loc 5
+                { ShaderDataType::Float2, "i_bbox_min",          false, true }, // loc 6
+                { ShaderDataType::Float2, "i_bbox_size",         false, true }, // loc 7
+                { ShaderDataType::Int,    "i_band_table_offset", false, true }, // loc 8
+                { ShaderDataType::Int,    "i_num_bands",         false, true }, // loc 9
+                { ShaderDataType::Int,    "i_entity_id",         false, true }, // loc 10
             };
             s_data->i_glyph_vertex_buffer->set_layout(layout);
             s_data->glyph_vertex_array->add_vertex_buffer(s_data->i_glyph_vertex_buffer);
@@ -490,6 +507,47 @@ namespace Honey {
         auto glyph_shader_path = asset_root / "shaders" / "Renderer2D_Text.glsl";
         s_data->glyph_shader = s_data->shader_cache->get_or_compile_shader(glyph_shader_path);
 
+
+        ///////////////////// ICONS ////////////////////////////////
+        // Pre-compute byte offsets: icon data lives past the font region in the shared SSBOs.
+        s_data->icon_band_table_offset_bytes = VulkanContext::k_max_font_band_entries * 8u;
+        s_data->icon_curve_offset_bytes      = VulkanContext::k_max_font_curves * 24u;
+
+        s_data->icon_vertex_array = VertexArray::create();
+
+        s_data->s_icon_vertex_buffer = VertexBuffer::create(sizeof(s_static_quad));
+        s_data->s_icon_vertex_buffer->set_data(s_static_quad, sizeof(s_static_quad));
+        {
+            BufferLayout layout = {
+                { ShaderDataType::Float2, "a_local_pos" },
+                { ShaderDataType::Float2, "a_local_tex" },
+            };
+            s_data->s_icon_vertex_buffer->set_layout(layout);
+            s_data->icon_vertex_array->add_vertex_buffer(s_data->s_icon_vertex_buffer);
+        }
+
+        s_data->i_icon_vertex_buffer = VertexBuffer::create(Renderer2DData::max_quads * sizeof(GlyphInstance));
+        {
+            BufferLayout layout = {
+                { ShaderDataType::Float3, "i_center",            false, true },
+                { ShaderDataType::Float2, "i_half_size",         false, true },
+                { ShaderDataType::Float,  "i_rotation",          false, true },
+                { ShaderDataType::Float4, "i_color",             false, true },
+                { ShaderDataType::Float2, "i_bbox_min",          false, true },
+                { ShaderDataType::Float2, "i_bbox_size",         false, true },
+                { ShaderDataType::Int,    "i_band_table_offset", false, true },
+                { ShaderDataType::Int,    "i_num_bands",         false, true },
+                { ShaderDataType::Int,    "i_entity_id",         false, true },
+            };
+            s_data->i_icon_vertex_buffer->set_layout(layout);
+            s_data->icon_vertex_array->add_vertex_buffer(s_data->i_icon_vertex_buffer);
+        }
+
+        s_data->icon_ibo = IndexBuffer::create(indices, 6);
+        s_data->icon_vertex_array->set_index_buffer(s_data->icon_ibo);
+
+        s_data->icon_instances.reserve(Renderer2DData::max_quads);
+        s_data->icon_sorted_instances.reserve(Renderer2DData::max_quads);
 
 
         if (RendererAPI::get_api() == RendererAPI::API::vulkan) {
@@ -537,6 +595,12 @@ namespace Honey {
         s_data->s_glyph_vertex_buffer.reset();
         s_data->i_glyph_vertex_buffer.reset();
         s_data->glyph_ibo.reset();
+
+        s_data->icon_vertex_array.reset();
+        s_data->s_icon_vertex_buffer.reset();
+        s_data->i_icon_vertex_buffer.reset();
+        s_data->icon_ibo.reset();
+        s_data->vk_icon_pipelines.clear();
 
         s_data->quad_shader.reset();
         s_data->circle_shader.reset();
@@ -592,6 +656,7 @@ namespace Honey {
         s_data->circle_instances.clear();
         s_data->line_instances.clear();
         s_data->glyph_instances.clear();
+        s_data->icon_instances.clear();
 
         s_data->texture_slot_index = 1; // keep white bound at 0
     }
@@ -619,6 +684,7 @@ namespace Honey {
         s_data->circle_instances.clear();
         s_data->line_instances.clear();
         s_data->glyph_instances.clear();
+        s_data->icon_instances.clear();
 
         s_data->texture_slot_index = 1; // keep white bound at 0
     }
@@ -653,6 +719,7 @@ namespace Honey {
         s_data->circle_instances.clear();
         s_data->line_instances.clear();
         s_data->glyph_instances.clear();
+        s_data->icon_instances.clear();
 
         s_data->texture_slot_index = 1; // keep white bound at 0
     }
@@ -686,6 +753,7 @@ namespace Honey {
         s_data->circle_instances.clear();
         s_data->line_instances.clear();
         s_data->glyph_instances.clear();
+        s_data->icon_instances.clear();
 
         s_data->texture_slot_index = 1; // keep white bound at 0
     }
@@ -696,6 +764,7 @@ namespace Honey {
         circle_end_scene();
         line_end_scene();
         glyph_end_scene();
+        icon_end_scene();
 
         if (Renderer::get_api() == RendererAPI::API::vulkan) {
             HN_CORE_ASSERT(!s_data->vk_globals_stack.empty(),
@@ -779,6 +848,75 @@ namespace Honey {
         );
         s_data->stats.draw_calls++;
 
+    }
+
+    static Ref<Pipeline> get_or_create_vk_offscreen_icon_pipeline(void* renderPassNative)
+    {
+        HN_CORE_ASSERT(renderPassNative, "get_or_create_vk_offscreen_icon_pipeline: renderPassNative is null");
+
+        auto& cache = s_data->vk_icon_pipelines;
+        auto it = cache.find(renderPassNative);
+        if (it == cache.end()) {
+            auto* vk = dynamic_cast<VulkanContext*>(Application::get().get_window().get_context());
+            HN_CORE_ASSERT(vk, "get_or_create_vk_offscreen_icon_pipeline: expected VulkanContext");
+            void* font_set_layout = vk->get_font_set_layout();
+            it = cache.emplace(renderPassNative,
+                Pipeline::create(asset_root / "shaders" / "Renderer2D_Text.glsl",
+                                 renderPassNative, font_set_layout)).first;
+        }
+
+        return it->second;
+    }
+
+    void Renderer2D::icon_end_scene() {
+        HN_PROFILE_FUNCTION();
+        if (s_data->icon_instances.empty())
+            return;
+
+        if (Renderer::get_api() == RendererAPI::API::vulkan) {
+            s_data->icon_sorted_instances = s_data->icon_instances;
+            std::sort(s_data->icon_sorted_instances.begin(), s_data->icon_sorted_instances.end(),
+                [](const GlyphInstance& a, const GlyphInstance& b) {
+                    return a.center.z < b.center.z;
+                });
+
+            const size_t bytes = s_data->icon_sorted_instances.size() * sizeof(GlyphInstance);
+            s_data->i_icon_vertex_buffer->set_data(
+                s_data->icon_sorted_instances.data(),
+                static_cast<uint32_t>(bytes)
+            );
+
+            auto fb = Renderer::get_render_target();
+            auto* vk_fb = dynamic_cast<VulkanFramebuffer*>(fb.get());
+            HN_CORE_ASSERT(vk_fb, "Renderer2D Vulkan path expects current render target to be a VulkanFramebuffer");
+
+            void* rpNative = vk_fb->get_render_pass();
+            Ref<Pipeline> pipe = get_or_create_vk_offscreen_icon_pipeline(rpNative);
+
+            RenderCommand::bind_pipeline(pipe);
+            emit_vulkan_globals_for_2d_draw();
+
+            auto* vk = dynamic_cast<VulkanContext*>(Application::get().get_window().get_context());
+            HN_CORE_ASSERT(vk, "icon_end_scene: expected VulkanContext");
+            uint32_t frame = vk->get_current_frame();
+            VkDescriptorSet font_set = vk->get_font_descriptor_set(frame);
+            VkPipelineLayout pipe_layout = static_cast<VkPipelineLayout>(pipe->get_native_pipeline_layout());
+            vk->queue_custom_vulkan_cmd([font_set, pipe_layout](VkCommandBuffer cmd, uint32_t, uint32_t) {
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    pipe_layout, 1, 1, &font_set, 0, nullptr);
+            });
+
+            s_data->icon_vertex_array->bind();
+            RenderCommand::draw_indexed_instanced(
+                s_data->icon_vertex_array,
+                6,
+                static_cast<uint32_t>(s_data->icon_sorted_instances.size())
+            );
+            s_data->stats.draw_calls++;
+            return;
+        }
+
+        // OpenGL path: icons are Vulkan-only for now
     }
 
     void Renderer2D::line_end_scene() {
@@ -1470,6 +1608,7 @@ namespace Honey {
             GlyphInstance inst;
             inst.center            = { glyph_center_x, glyph_center_y, position.z };
             inst.half_size         = bbox_size * 0.5f;
+            inst.rotation          = rotation;
             inst.color             = trc.color;
             // bbox passed in raw font units — shader uses these to reconstruct the
             // font-space fragment position for the winding-number test
@@ -1482,6 +1621,95 @@ namespace Honey {
             s_data->glyph_instances.push_back(inst);
             cursor_x += glyph->advance * font_scale;
             ++i;
+        }
+    }
+
+
+    void Renderer2D::draw_icon(const glm::mat4& transform, IconRendererComponent& irc, int entity_id) {
+        // Lazy-load icon from disk
+        if (!irc.icon_data) {
+            if (irc.icon_path.empty()) return;
+            irc.icon_data = CreateRef<SlugIcon>(irc.icon_path);
+            if (!irc.icon_data->is_valid()) { irc.icon_data.reset(); return; }
+        }
+
+        // Upload icon SSBOs to GPU once (analogous to fonts_uploaded)
+        if (!s_data->icons_uploaded) {
+            auto* base   = Application::get().get_window().get_context();
+            auto* vk_ctx = dynamic_cast<VulkanContext*>(base);
+            if (vk_ctx) {
+                const SlugIcon& icon = *irc.icon_data;
+
+                // The icon band table entries store curve_offset as a local index within
+                // SlugIcon::m_curves (0-based). In the shared SSBO the icon curve region
+                // starts at element k_max_font_curves, so we must add that base before upload.
+                std::vector<BandEntry> adjusted_band_table = icon.get_band_table();
+                const uint32_t curve_base = VulkanContext::k_max_font_curves;
+                for (auto& entry : adjusted_band_table)
+                    entry.curve_offset += curve_base;
+
+                vk_ctx->upload_icon_data(
+                    adjusted_band_table.data(),
+                    static_cast<uint32_t>(adjusted_band_table.size() * sizeof(BandEntry)),
+                    s_data->icon_band_table_offset_bytes,
+                    icon.get_curves().data(),
+                    static_cast<uint32_t>(icon.get_curves().size() * sizeof(QuadBezier)),
+                    s_data->icon_curve_offset_bytes
+                );
+                s_data->icons_uploaded = true;
+            }
+        }
+
+        glm::vec3 position;
+        glm::vec2 scale;
+        float rotation;
+        decompose_transform(transform, position, scale, rotation);
+
+        const SlugIcon& icon = *irc.icon_data;
+        float svg_w = icon.get_width();
+        float svg_h = icon.get_height();
+        if (svg_w <= 0.0f || svg_h <= 0.0f) return;
+
+        // Pixels-per-world-unit in each axis
+        float px_per_world_x = svg_w / scale.x;
+        float px_per_world_y = svg_h / scale.y;
+
+        // First valid band-table index for icons in the shared SSBO
+        uint32_t band_base = VulkanContext::k_max_font_band_entries;
+
+        for (const auto& shape : icon.get_shapes()) {
+            glm::vec2 bbox_size_svg = shape.bbox_max - shape.bbox_min;
+            if (bbox_size_svg.x <= 0.0f || bbox_size_svg.y <= 0.0f) continue;
+
+            // Center of this shape in SVG space, mapped to world space.
+            // SVG Y is top-down; world Y is up — flip Y relative to the icon canvas center.
+            glm::vec2 svg_center = (shape.bbox_min + shape.bbox_max) * 0.5f;
+            float wx = position.x + (svg_center.x - svg_w * 0.5f) / px_per_world_x;
+            float wy = position.y - (svg_center.y - svg_h * 0.5f) / px_per_world_y;
+
+            glm::vec2 half_size = {
+                bbox_size_svg.x * 0.5f / px_per_world_x,
+                bbox_size_svg.y * 0.5f / px_per_world_y
+            };
+
+            // Tint: component-wise multiply with per-shape fill color
+            glm::vec4 final_color = irc.color * shape.fill_color;
+
+            // The quad is placed with Y flipped (world Y-up vs SVG Y-down).
+            // To keep the winding test correct, flip the bbox Y so the shader
+            // maps v_local_tex.y=0 (world bottom) → bbox_max.y (SVG bottom).
+            GlyphInstance inst;
+            inst.center            = { wx, wy, position.z };
+            inst.half_size         = half_size;
+            inst.rotation          = rotation;
+            inst.color             = final_color;
+            inst.bbox_min          = { shape.bbox_min.x, shape.bbox_max.y };
+            inst.bbox_size         = { bbox_size_svg.x, -bbox_size_svg.y };
+            inst.band_table_offset = band_base + shape.band_table_offset;
+            inst.num_bands         = shape.num_bands;
+            inst.entity_id         = entity_id;
+
+            s_data->icon_instances.push_back(inst);
         }
     }
 

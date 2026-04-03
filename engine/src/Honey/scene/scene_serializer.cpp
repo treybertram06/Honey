@@ -156,6 +156,17 @@ namespace Honey {
             out << YAML::EndMap; // TextRendererComponent
         }
 
+        if (entity.has_component<IconRendererComponent>()) {
+            out << YAML::Key << "IconRendererComponent";
+            out << YAML::BeginMap; // IconRendererComponent
+
+            auto& irc = entity.get_component<IconRendererComponent>();
+            out << YAML::Key << "IconPath" << YAML::Value << (irc.icon_path.empty() ? "" : irc.icon_path.string());
+            out << YAML::Key << "Color"    << YAML::Value << irc.color;
+
+            out << YAML::EndMap; // IconRendererComponent
+        }
+
         if (entity.has_component<CameraComponent>()) {
             out << YAML::Key << "CameraComponent";
             out << YAML::BeginMap; // CameraComponent
@@ -586,6 +597,16 @@ namespace Honey {
             std::string font_path_str = text_node["FontPath"].as<std::string>("");
             if (!font_path_str.empty())
                 trc.font_path = std::filesystem::path(font_path_str);
+        }
+
+        auto icon_node = entity_node["IconRendererComponent"];
+        if (icon_node) {
+            auto& irc = deserialized_entity.add_component<IconRendererComponent>();
+            irc.color = icon_node["Color"].as<glm::vec4>(glm::vec4{1.0f});
+
+            std::string icon_path_str = icon_node["IconPath"].as<std::string>("");
+            if (!icon_path_str.empty())
+                irc.icon_path = std::filesystem::path(icon_path_str);
         }
 
         auto camera_node = entity_node["CameraComponent"];

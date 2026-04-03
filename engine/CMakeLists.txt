@@ -218,6 +218,8 @@ add_library(engine STATIC
         vendor/nanosvg/nanosvg.h
         src/Honey/renderer/slug_font.h
         src/Honey/renderer/slug_font.cpp
+        src/Honey/renderer/slug_icon.h
+        src/Honey/renderer/slug_icon.cpp
 )
 
 # Apply MSVC runtime to engine itself

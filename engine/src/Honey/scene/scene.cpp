@@ -830,6 +830,13 @@ namespace Honey {
             Renderer2D::draw_text(entity_ref.get_world_transform(), trc, (int)entt::to_integral(entity));
         }
 
+        auto icon_group = m_registry.group<IconRendererComponent>(entt::get<TransformComponent>);
+        for (auto entity : icon_group) {
+            auto& irc = icon_group.get<IconRendererComponent>(entity);
+            Entity entity_ref = { entity, this };
+            Renderer2D::draw_icon(entity_ref.get_world_transform(), irc, (int)entt::to_integral(entity));
+        }
+
         Renderer2D::end_scene();
 
         // Gather and submit lights before draw

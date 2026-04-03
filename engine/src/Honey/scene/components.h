@@ -15,6 +15,7 @@
 #include "Honey/loaders/gltf_loader.h"
 #include "Honey/renderer/mesh.h"
 #include "Honey/renderer/slug_font.h"
+#include "Honey/renderer/slug_icon.h"
 #include "Honey/renderer/sprite.h"
 
 
@@ -91,10 +92,10 @@ namespace Honey {
 
     struct IconRendererComponent {
         std::filesystem::path icon_path;
-        glm::vec4 color = {1.0f, 1.0f, 1.0f, 1.0f};
+        glm::vec4 color = {1.0f, 1.0f, 1.0f, 1.0f};  // tint multiplied with per-shape fill colors
 
-        // Runtime only
-        // Ref<SlugIconData> icon_data;
+        // Runtime only — populated on first draw
+        Ref<SlugIcon> icon_data;
     };
 
     struct MeshRendererComponent {
