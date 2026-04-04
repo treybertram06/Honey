@@ -1,5 +1,7 @@
 #pragma once
 #include <glm/glm.hpp>
+
+#include "Honey/renderer/mesh.h"
 #include "Honey/renderer/renderer_api.h"
 #include "Honey/renderer/pipeline_spec.h"
 
@@ -34,7 +36,10 @@ namespace Honey {
         bool show_physics_debug_draw = false;
         float anisotropic_filtering_level = 16.0f; // This overrides what the actual maximum value is, but I don't care.
         CullMode cull_mode = CullMode::Back;
+
+        GeometryPath geometry_path = GeometryPath::Meshlet;
         bool enable_parallel_mesh_submission = false;
+
 
         TextureFilter texture_filter = TextureFilter::nearest;
 

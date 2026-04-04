@@ -11,6 +11,7 @@
 
 #include "editor_camera.h"
 #include "material.h"
+#include "mesh.h"
 #include "platform/vulkan/vk_types.h"
 
 namespace Honey {
@@ -29,17 +30,15 @@ namespace Honey {
 
 		static void submit_lights(const LightsUBO& lights);
 
-		// Basic 3D primitives
-		static void draw_cube(const glm::vec3& position, const glm::vec3& size, const glm::vec4& color = glm::vec4(1.0f));
-		static void draw_cube(const glm::vec3& position, const glm::vec3& size, const Ref<Texture2D>& texture, const glm::vec4& color = glm::vec4(1.0f));
-
-		static void draw_sphere(const glm::vec3& position, float radius, const glm::vec4& color = glm::vec4(1.0f));
-
 		// Generic mesh rendering
 		static void draw_mesh(const Ref<VertexArray>& vertex_array, const glm::mat4& transform, int entity_id = -1);
 		static void draw_mesh(const Ref<VertexArray>& vertex_array, const Ref<Material>& material, const glm::mat4& transform, int entity_id = -1);
+		static void submit_submesh(const Submesh& submesh, const Ref<Material>& material, const glm::mat4& transform, int entity_id = -1);
+		static void submit_meshlet_submesh(const Submesh& submesh, const Ref<Material>& material, const glm::mat4& transform, int entity_id = -1);
 
 		static void prewarm_pipelines(void* native_render_pass);
+
+		static void set_geometry_render_path(GeometryPath path);
 
 		// Statistics
 		struct Statistics {
@@ -74,10 +73,6 @@ namespace Honey {
 
 			bool operator==(const BatchKey& o) const { return va == o.va && mat == o.mat; }
 		};
-
-	private:
-		static void create_cube_geometry();
-		static void create_sphere_geometry();
 
 	};
 

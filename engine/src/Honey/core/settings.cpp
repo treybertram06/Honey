@@ -66,6 +66,22 @@ namespace Honey {
         return CullMode::None;
     }
 
+    static std::string geometry_path_to_string(GeometryPath path) {
+        switch (path) {
+        case GeometryPath::Meshlet: return "Meshlet";
+        case GeometryPath::Classic: return "Classic";
+        }
+        return "Meshlet";
+    }
+
+    static GeometryPath string_to_geometry_path(const std::string& str) {
+        std::string s = str;
+        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
+        if (s == "meshlet") return GeometryPath::Meshlet;
+        if (s == "classic") return GeometryPath::Classic;
+        return GeometryPath::Meshlet;
+    }
+
     bool Settings::load_from_file(const std::filesystem::path& filepath) {
         if (!std::filesystem::exists(filepath)) {
             HN_CORE_WARN("Settings file does not exist: {}", filepath.string());
@@ -124,6 +140,10 @@ namespace Honey {
                 s.renderer.vsync = n.as<bool>(s.renderer.vsync);
             if (auto n = renderer_node["ShowPhysicsDebugDraw"])
                 s.renderer.show_physics_debug_draw = n.as<bool>(s.renderer.show_physics_debug_draw);
+
+            if (auto n = renderer_node["GeometryPath"]) {
+                s.renderer.geometry_path = string_to_geometry_path(n.as<std::string>());
+            }
             if (auto n = renderer_node["ParallelMeshSubmission"])
                 s.renderer.enable_parallel_mesh_submission = n.as<bool>(s.renderer.enable_parallel_mesh_submission);
 
@@ -207,7 +227,10 @@ namespace Honey {
         out << YAML::Key << "Blending"                << YAML::Value << s.renderer.blending;
         out << YAML::Key << "VSync"                   << YAML::Value << s.renderer.vsync;
         out << YAML::Key << "ShowPhysicsDebugDraw"    << YAML::Value << s.renderer.show_physics_debug_draw;
+
+        out << YAML::Key << "GeometryPath"            << YAML::Value << geometry_path_to_string(s.renderer.geometry_path);
         out << YAML::Key << "ParallelMeshSubmission"  << YAML::Value << s.renderer.enable_parallel_mesh_submission;
+
         out << YAML::Key << "AnisotropicFilteringLevel"
             << YAML::Value << s.renderer.anisotropic_filtering_level;
         out << YAML::Key << "TextureFilter"

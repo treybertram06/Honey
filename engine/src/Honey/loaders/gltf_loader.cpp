@@ -417,8 +417,8 @@ namespace Honey {
         }
 
         static std::optional<MeshletGeometry> build_meshlet_geometry(
-    const std::vector<VertexPNUV>& vertices,
-    const std::vector<uint32_t>& indices) {
+            const std::vector<VertexPNUV>& vertices,
+            const std::vector<uint32_t>& indices) {
             HN_PROFILE_FUNCTION();
 
             if (vertices.empty() || indices.empty())
@@ -428,24 +428,43 @@ namespace Honey {
             constexpr size_t kMaxTriangles = 124;
             constexpr float  kConeWeight   = 0.0f;
 
+            // Mutable copies for optimization passes
+            std::vector<uint32_t>  opt_indices  = indices;
+            std::vector<VertexPNUV> opt_vertices = vertices;
+
+            const size_t vertex_stride = sizeof(VertexPNUV);
+
+            // 1. Reorder indices for post-transform vertex cache efficiency
+            meshopt_optimizeVertexCache(
+                opt_indices.data(), opt_indices.data(), opt_indices.size(), opt_vertices.size());
+
+            // 2. Reorder indices to reduce pixel overdraw (threshold 1.05 = slight bias toward cache)
+            meshopt_optimizeOverdraw(
+                opt_indices.data(), opt_indices.data(), opt_indices.size(),
+                &opt_vertices[0].position.x, opt_vertices.size(), vertex_stride, 1.05f);
+
+            // 3. Reorder vertices to match index access order, minimizing vertex fetch overhead
+            meshopt_optimizeVertexFetch(
+                opt_vertices.data(), opt_indices.data(), opt_indices.size(),
+                opt_vertices.data(), opt_vertices.size(), vertex_stride);
+
+            const float* positions = &opt_vertices[0].position.x;
+
             const size_t max_meshlets =
-                meshopt_buildMeshletsBound(indices.size(), kMaxVertices, kMaxTriangles);
+                meshopt_buildMeshletsBound(opt_indices.size(), kMaxVertices, kMaxTriangles);
 
             std::vector<meshopt_Meshlet> meshlets(max_meshlets);
             std::vector<uint32_t> meshlet_vertices(max_meshlets * kMaxVertices);
             std::vector<uint8_t> meshlet_triangles(max_meshlets * kMaxTriangles * 3);
 
-            const float* positions = &vertices[0].position.x;
-            const size_t vertex_stride = sizeof(VertexPNUV);
-
             const size_t meshlet_count = meshopt_buildMeshlets(
                 meshlets.data(),
                 meshlet_vertices.data(),
                 meshlet_triangles.data(),
-                indices.data(),
-                indices.size(),
+                opt_indices.data(),
+                opt_indices.size(),
                 positions,
-                vertices.size(),
+                opt_vertices.size(),
                 vertex_stride,
                 kMaxVertices,
                 kMaxTriangles,
@@ -472,6 +491,17 @@ namespace Honey {
             meshlet_vertices.resize(used_vertex_refs);
             meshlet_triangles.resize(used_triangle_bytes);
 
+            // 4. Optimize vertex/triangle order within each meshlet for vertex cache
+            for (size_t i = 0; i < meshlet_count; ++i) {
+                const meshopt_Meshlet& m = meshlets[i];
+                meshopt_optimizeMeshlet(
+                    &meshlet_vertices[m.vertex_offset],
+                    &meshlet_triangles[m.triangle_offset],
+                    m.triangle_count,
+                    m.vertex_count
+                );
+            }
+
             std::vector<MeshletBounds> bounds(meshlet_count);
 
             for (size_t i = 0; i < meshlet_count; ++i) {
@@ -482,14 +512,16 @@ namespace Honey {
                     &meshlet_triangles[m.triangle_offset],
                     m.triangle_count,
                     positions,
-                    vertices.size(),
+                    opt_vertices.size(),
                     vertex_stride
                 );
 
                 bounds[i].center = { b.center[0], b.center[1], b.center[2] };
                 bounds[i].radius = b.radius;
-                bounds[i].cone_axis = { b.cone_axis[0], b.cone_axis[1], b.cone_axis[2] };
-                bounds[i].cone_cutoff = b.cone_cutoff;
+                bounds[i].cone_axis_s8[0] = b.cone_axis_s8[0];
+                bounds[i].cone_axis_s8[1] = b.cone_axis_s8[1];
+                bounds[i].cone_axis_s8[2] = b.cone_axis_s8[2];
+                bounds[i].cone_cutoff_s8  = b.cone_cutoff_s8;
             }
 
             MeshletGeometry out{};

@@ -14,8 +14,19 @@
 static const std::filesystem::path asset_root = ASSET_ROOT;
 
 namespace Honey {
+
+    struct MeshletDrawCommand {
+        const Submesh* submesh = nullptr;
+        Ref<Material> material;
+        glm::mat4 transform{1.0f};
+        int entity_id = -1;
+    };
+
     struct Renderer3DData {
         static constexpr uint32_t max_textures  = 32;   // keep in sync with shader
+
+        GeometryPath                    geometry_path = GeometryPath::Meshlet;
+        std::vector<MeshletDrawCommand> meshlet_draws;
 
         // Texture slots
         uint32_t                       max_texture_slots = 0;
@@ -55,6 +66,10 @@ namespace Honey {
 
         if (!s_data)
             s_data = new Renderer3DData;
+
+        auto& rs = Settings::get().renderer;
+
+        s_data->geometry_path = rs.geometry_path;
 
         s_data->shader_cache = Renderer::get_shader_cache();
 
@@ -358,11 +373,24 @@ namespace Honey {
         }
     }
 
+    void flush_meshlet_draws() {
+        HN_PROFILE_FUNCTION();
+
+        for (const auto& cmd : s_data->meshlet_draws) {
+            HN_CORE_INFO("Would draw {} meshlets for submesh '{}'",
+                         cmd.submesh->meshlets->meshlet_count,
+                         cmd.submesh->name);
+        }
+        
+        s_data->meshlet_draws.clear();
+    }
+
     void Renderer3D::end_scene() {
         HN_PROFILE_FUNCTION();
 
         if (Renderer::get_api() == RendererAPI::API::vulkan) {
             flush_batches_vulkan();
+            flush_meshlet_draws();
         } else {
             HN_CORE_ASSERT(false, "Renderer3D::end_scene: only Vulkan path implemented");
         }
@@ -416,6 +444,39 @@ namespace Honey {
         it->second.entity_ids.push_back(entity_id);
     }
 
+    void Renderer3D::submit_submesh(const Submesh& submesh, const Ref<Material>& material,
+        const glm::mat4& transform, int entity_id) {
+        HN_PROFILE_FUNCTION();
+        HN_CORE_ASSERT(material, "Renderer3D::submit_submesh: material is null");
+
+        const bool can_use_meshlets =
+            s_data->geometry_path == GeometryPath::Meshlet && submesh.meshlets.has_value();
+
+        if (can_use_meshlets) {
+            submit_meshlet_submesh(submesh, material, transform, entity_id);
+            return;
+        }
+
+        HN_CORE_ASSERT(submesh.vao, "Renderer3D::submit_submesh: submesh.vao is null");
+        draw_mesh(submesh.vao, material, transform, entity_id);
+    }
+
+    void Renderer3D::submit_meshlet_submesh(const Submesh& submesh, const Ref<Material>& material,
+        const glm::mat4& transform, int entity_id) {
+        HN_PROFILE_FUNCTION();
+        HN_CORE_ASSERT(material, "Renderer3D::submit_meshlet_submesh: material is null");
+        HN_CORE_ASSERT(submesh.meshlets.has_value(), "Renderer3D::submit_meshlet_submesh: submesh.meshlets is null");
+
+        s_data->meshlet_draws.push_back(
+            MeshletDrawCommand{
+                .submesh = &submesh,
+                .material = material,
+                .transform = transform,
+                .entity_id = entity_id
+            }
+        );
+    }
+
     void Renderer3D::prewarm_pipelines(void* native_render_pass) {
         HN_PROFILE_FUNCTION();
 
@@ -426,6 +487,10 @@ namespace Honey {
 
         // Force creation via the SAME code path used during rendering.
         //(void)get_or_create_vk_forward3d_pipeline(native_render_pass);
+    }
+
+    void Renderer3D::set_geometry_render_path(GeometryPath path) {
+        s_data->geometry_path = path;
     }
 
     Renderer3D::Statistics Renderer3D::get_stats() {

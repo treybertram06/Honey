@@ -11,7 +11,7 @@
 namespace Honey {
 
     enum class GeometryPath : uint8_t {
-        ClassicIndexed,
+        Classic,
         Meshlet
     };
 
@@ -19,8 +19,8 @@ namespace Honey {
         glm::vec3 center{0.0f};
         float radius = 0.0f;
 
-        glm::vec3 cone_axis{0.0f};
-        float cone_cutoff = 0.0f;
+        int8_t cone_axis_s8[3]{};
+        int8_t cone_cutoff_s8 = 0;
     };
 
     struct MeshletGeometry {
@@ -35,9 +35,9 @@ namespace Honey {
     };
 
     struct Submesh {
-        Ref<VertexArray> vao;
         Ref<Material> material;
 
+        Ref<VertexArray> vao; // TODO: pull out of submesh and replace with a ClassicGeometry type
         std::optional<MeshletGeometry> meshlets;
 
         // Optional debug name (useful when inspecting glTF primitives)
