@@ -20,6 +20,8 @@ namespace Honey {
             std::filesystem::path vertex;
             std::filesystem::path fragment;
             std::filesystem::path compute;
+            std::filesystem::path task;
+            std::filesystem::path mesh;
 
             bool has_graphics() const {
                 return !vertex.empty() && !fragment.empty();
@@ -27,6 +29,14 @@ namespace Honey {
 
             bool has_compute() const {
                 return !compute.empty();
+            }
+
+            bool has_mesh() const {
+                return !mesh.empty() && !fragment.empty();
+            }
+
+            bool has_task() const {
+                return has_mesh() && !task.empty();
             }
         };
 
@@ -41,6 +51,8 @@ namespace Honey {
             std::filesystem::path vertex_spirv_path;
             std::filesystem::path fragment_spirv_path;
             std::filesystem::path compute_spirv_path;
+            std::filesystem::path mesh_spirv_path;
+            std::filesystem::path task_spirv_path;
             std::filesystem::file_time_type last_modified{};
             Ref<Shader> cached_shader;
         };

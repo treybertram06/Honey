@@ -1394,7 +1394,8 @@ namespace Honey {
         vkEnumeratePhysicalDevices(m_instance, &device_count, devices.data());
 
         const std::vector<const char*> required_device_exts = {
-            VK_KHR_SWAPCHAIN_EXTENSION_NAME
+            VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+            VK_EXT_MESH_SHADER_EXTENSION_NAME
         };
 
         VkPhysicalDevice selected = VK_NULL_HANDLE;
@@ -1549,7 +1550,8 @@ namespace Honey {
 
         const std::vector<const char*> device_extensions = {
             VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-            VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME
+            VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
+            VK_EXT_MESH_SHADER_EXTENSION_NAME
         };
 
         // ---- Bindless / descriptor indexing feature chain ----
@@ -1558,7 +1560,13 @@ namespace Honey {
 
         VkPhysicalDeviceTimelineSemaphoreFeatures timeline_features{};
         timeline_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES;
+
+        VkPhysicalDeviceMeshShaderFeaturesEXT mesh_features{};
+        mesh_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT;
+
         indexing_features.pNext = &timeline_features;
+        timeline_features.pNext = &mesh_features;
+        mesh_features.pNext     = nullptr;
 
         VkPhysicalDeviceFeatures2 features2{};
         features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
@@ -1577,6 +1585,8 @@ namespace Honey {
                        "Bindless requires shaderSampledImageArrayNonUniformIndexing (VK_EXT_descriptor_indexing)");
         HN_CORE_ASSERT(m_timeline_semaphore_supported,
                        "Async upload sync requires timelineSemaphore feature support");
+        HN_CORE_ASSERT(mesh_features.meshShader == VK_TRUE,
+                        "VK_EXT_mesh_shader: meshShader feature not supported on this device");
 
         // Optional but commonly used for "true bindless" (variable-sized arrays / update-after-bind)
         // If you don't need them yet, you can leave them disabled and also omit related layout/pool flags.
@@ -1588,6 +1598,11 @@ namespace Honey {
         }
 
         timeline_features.timelineSemaphore = m_timeline_semaphore_supported ? VK_TRUE : VK_FALSE;
+
+        mesh_features.meshShader = VK_TRUE;
+        mesh_features.taskShader = VK_TRUE; // Require for now. TODO: Make task shader support optional at some point?
+        mesh_features.multiviewMeshShader                    = VK_FALSE; // would require multiview to also be enabled
+        mesh_features.primitiveFragmentShadingRateMeshShader = VK_FALSE; // would require primitiveFragmentShadingRate to also be enabled
 
         // Keep your core features:
         features2.features = features;

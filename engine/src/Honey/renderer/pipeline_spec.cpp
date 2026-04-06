@@ -229,6 +229,20 @@ namespace Honey {
             return spec;
         }
 
+        if (spirv.has_mesh()) {
+            spec.pipelineKind = PipelineKind::MeshShading;
+            spec.vertexBindings.clear(); // mesh shaders have no vertex input
+            AttachmentBlendState b0{};
+            b0.enabled = rs.blending;
+            spec.perColorAttachmentBlend.push_back(b0);
+            if (spec.passType == RenderPassType::Offscreen) {
+                AttachmentBlendState b1{};
+                b1.enabled = false;
+                spec.perColorAttachmentBlend.push_back(b1);
+            }
+            return spec;
+        }
+
         HN_CORE_ASSERT(spirv.has_graphics(),
                        "PipelineSpec::from_shader expected graphics SPIR-V for '{0}'",
                        path.string());

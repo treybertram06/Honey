@@ -29,6 +29,8 @@ namespace Honey {
 
         void draw_indexed(const Ref<VertexArray>&, uint32_t) override;
         void draw_indexed_instanced(const Ref<VertexArray>&, uint32_t, uint32_t) override;
+        static void submit_mesh_tasks_draw(uint32_t group_count_x, uint32_t group_count_y = 1, uint32_t group_count_z = 1);
+
         static void submit_instanced_draw(
             const Ref<VertexArray>& vertex_array,
             const Ref<VertexBuffer>& instance_vb,

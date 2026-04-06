@@ -28,6 +28,8 @@ ShaderCompiler::CompilationResult ShaderCompiler::compile_glsl_to_spirv(const st
         const bool has_vertex = !shader_sources.vertex_source.empty();
         const bool has_fragment = !shader_sources.fragment_source.empty();
         const bool has_compute = !shader_sources.compute_source.empty();
+        const bool has_task = !shader_sources.task_source.empty();
+        const bool has_mesh = !shader_sources.mesh_source.empty();
 
         if (has_compute && (has_vertex || has_fragment)) {
             result.error_message =
@@ -47,6 +49,50 @@ ShaderCompiler::CompilationResult ShaderCompiler::compile_glsl_to_spirv(const st
                 result.error_message = "Generated compute SPIR-V failed validation";
                 return result;
             }
+        } else if (has_mesh) {
+
+            if (!has_fragment) {
+                result.error_message = "Mesh shader pipeline requires a fragment shader stage: " + shader_path.string();
+                return result;
+            }
+
+            if (has_task) {
+                result.task_spirv = compile_single_stage(shader_sources.task_source, ShaderStage::Task);
+                if (result.task_spirv.empty()) {
+                    result.error_message = "Failed to compile task shader stage";
+                    return result;
+                }
+
+                if (!validate_spirv(result.task_spirv)) {
+                    result.error_message = "Generated task SPIR-V failed validation";
+                    return result;
+                }
+            } else {
+                HN_CORE_INFO("No task shader found — per-meshlet GPU culling will be skipped. Consider adding a task shader or handling culling on the CPU.");
+            }
+
+            result.mesh_spirv = compile_single_stage(shader_sources.mesh_source, ShaderStage::Mesh);
+            if (result.mesh_spirv.empty()) {
+                result.error_message = "Failed to compile mesh shader stage";
+                return result;
+            }
+
+            if (!validate_spirv(result.mesh_spirv)) {
+                result.error_message = "Generated mesh SPIR-V failed validation";
+                return result;
+            }
+
+            result.fragment_spirv = compile_single_stage(shader_sources.fragment_source, ShaderStage::Fragment);
+            if (result.fragment_spirv.empty()) {
+                result.error_message = "Failed to compile fragment shader stage for mesh shader";
+                return result;
+            }
+
+            if (!validate_spirv(result.fragment_spirv)) {
+                result.error_message = "Generated fragment SPIR-V failed validation";
+                return result;
+            }
+
         } else {
             if (!has_vertex || !has_fragment) {
                 std::string empty_sources;
@@ -111,6 +157,8 @@ std::vector<uint32_t> ShaderCompiler::compile_single_stage(const std::string& so
         case ShaderStage::Geometry:               kind = shaderc_glsl_geometry_shader;      stage_name = "geometry"; break;
         case ShaderStage::TessellationControl:    kind = shaderc_glsl_tess_control_shader;  stage_name = "tess_control"; break;
         case ShaderStage::TessellationEvaluation: kind = shaderc_glsl_tess_evaluation_shader; stage_name = "tess_eval"; break;
+        case ShaderStage::Task:                   kind = shaderc_glsl_task_shader;          stage_name = "task"; break;
+        case ShaderStage::Mesh:                   kind = shaderc_glsl_mesh_shader;          stage_name = "mesh"; break;
         default:                                  kind = shaderc_glsl_infer_from_source;    break;
     }
 
@@ -123,8 +171,8 @@ std::vector<uint32_t> ShaderCompiler::compile_single_stage(const std::string& so
             options.SetTargetSpirv(shaderc_spirv_version_1_3);
             break;
         case RendererAPI::API::vulkan:
-            options.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_0);
-            options.SetTargetSpirv(shaderc_spirv_version_1_0);
+            options.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_4);
+            options.SetTargetSpirv(shaderc_spirv_version_1_4);
             break;
         default:
             options.SetTargetEnvironment(shaderc_target_env_opengl, shaderc_env_version_opengl_4_5);
@@ -313,6 +361,12 @@ ShaderCompiler::ShaderSource ShaderCompiler::parse_shader_file(const std::filesy
             result.fragment_source = stage_source;
         } else if (markers[i].type == "compute") {
             result.compute_source = stage_source;
+        } else if (markers[i].type == "task") {
+            result.task_source = stage_source;
+        } else if (markers[i].type == "mesh") {
+            result.mesh_source = stage_source;
+        } else {
+            HN_CORE_WARN("Unknown shader stage type '{0}' in file {1}", markers[i].type, path.string());
         }
     }
 

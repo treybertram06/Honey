@@ -20,14 +20,26 @@ namespace Honey {
 
         void create(
             VkDevice device,
-            VkRenderPass renderPass,
-            VkDescriptorSetLayout globalSetLayout,
-            const std::string& vertexSpirvPath,
-            const std::string& fragmentSpirvPath,
+            VkRenderPass render_pass,
+            VkDescriptorSetLayout global_set_layout,
+            const std::string& vertex_spirv_path,
+            const std::string& fragment_spirv_path,
             const PipelineSpec& spec,
-            VkPipelineCache pipelineCache  = nullptr,
-            VkDescriptorSetLayout extraSetLayout = nullptr  // optional set 1 layout (e.g. font SSBOs)
+            VkPipelineCache pipeline_cache  = nullptr,
+            VkDescriptorSetLayout extra_set_layout = nullptr  // optional set 1 layout (e.g. font SSBOs)
         );
+
+        void create_mesh(
+            VkDevice device,
+            VkRenderPass render_pass,
+            VkDescriptorSetLayout global_set_layout,
+            const std::string& task_spirv_path,
+            const std::string& mesh_spirv_path,
+            const std::string& fragment_spirv_path,
+            const PipelineSpec& spec,
+            VkPipelineCache pipeline_cache = nullptr,
+            VkDescriptorSetLayout extra_set_layout = nullptr  // optional set 1 layout (e.g. font SSBOs)
+            );
 
         void destroy(VkDevice device);
 
@@ -46,6 +58,8 @@ namespace Honey {
         void* m_layout   = nullptr;     // VkPipelineLayout
         void* m_vert_module = nullptr;  // VkShaderModule
         void* m_frag_module = nullptr;  // VkShaderModule
+        void* m_task_module = nullptr;  // VkShaderModule
+        void* m_mesh_module = nullptr;  // VkShaderModule
     };
 
 } // namespace Honey

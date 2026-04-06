@@ -39,6 +39,7 @@ namespace Honey {
         Ref<ShaderCache> shader_cache;
 
         std::unordered_map<void*, Ref<Pipeline>> vk_forward_pipelines;
+        std::unordered_map<void*, Ref<Pipeline>> vk_meshlet_pipelines;
 
         Ref<Material> default_material;
 
@@ -376,12 +377,64 @@ namespace Honey {
     void flush_meshlet_draws() {
         HN_PROFILE_FUNCTION();
 
-        for (const auto& cmd : s_data->meshlet_draws) {
-            HN_CORE_INFO("Would draw {} meshlets for submesh '{}'",
-                         cmd.submesh->meshlets->meshlet_count,
-                         cmd.submesh->name);
+        if (s_data->meshlet_draws.empty())
+            return;
+
+        auto* base  = Application::get().get_window().get_context();
+        auto* vkCtx = dynamic_cast<Honey::VulkanContext*>(base);
+        HN_CORE_ASSERT(vkCtx, "flush_meshlet_draws: expected VulkanContext");
+
+        void* rpNative = nullptr;
+        if (auto target = Renderer::get_render_target()) {
+            auto* vk_fb = dynamic_cast<VulkanFramebuffer*>(target.get());
+            HN_CORE_ASSERT(vk_fb, "flush_meshlet_draws: render target is not a VulkanFramebuffer");
+            rpNative = vk_fb->get_render_pass();
+        } else {
+            rpNative = vkCtx->get_render_pass();
         }
-        
+        HN_CORE_ASSERT(rpNative, "flush_meshlet_draws: rpNative is null");
+
+        // Get or create the meshlet test pipeline for this render pass
+        Ref<Pipeline> pipe;
+        auto it = s_data->vk_meshlet_pipelines.find(rpNative);
+        if (it == s_data->vk_meshlet_pipelines.end()) {
+            auto pipeline = Pipeline::create(asset_root / "shaders" / "Meshlet_Test.glsl", rpNative);
+            it = s_data->vk_meshlet_pipelines.emplace(rpNative, pipeline).first;
+        }
+        pipe = it->second;
+
+        RenderCommand::bind_pipeline(pipe);
+
+        // Bind globals (camera UBO + textures) so descriptor set 0 is valid
+        CameraUBO saved_camera = VulkanRendererAPI::get_globals_state().cameraUBO;
+        VulkanRendererAPI::submit_camera(saved_camera);
+        VulkanRendererAPI::flush_globals();
+
+        struct MeshletPC {
+            glm::mat4 model;
+            uint32_t  meshlet_count;
+            uint32_t  _pad[3];
+        };
+        static_assert(sizeof(MeshletPC) <= 128, "MeshletPC exceeds push constant limit");
+
+        constexpr VkShaderStageFlags kMeshStages =
+            VK_SHADER_STAGE_TASK_BIT_EXT |
+            VK_SHADER_STAGE_MESH_BIT_EXT |
+            VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        for (const auto& cmd : s_data->meshlet_draws) {
+            const uint32_t meshlet_count = cmd.submesh->meshlets->meshlet_count;
+
+            MeshletPC pc{};
+            pc.model         = cmd.transform;
+            pc.meshlet_count = meshlet_count;
+
+            VulkanRendererAPI::submit_push_constants(&pc, sizeof(MeshletPC), 0, kMeshStages);
+            VulkanRendererAPI::submit_mesh_tasks_draw(meshlet_count);
+
+            s_data->stats.draw_calls++;
+        }
+
         s_data->meshlet_draws.clear();
     }
 

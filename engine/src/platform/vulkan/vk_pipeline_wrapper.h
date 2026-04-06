@@ -24,16 +24,30 @@ namespace Honey {
             VkDescriptorSetLayout global_set_layout = m_ctx->get_global_set_layout();
             VkPipelineCache pipeline_cache = m_ctx->get_pipeline_cache().get();
 
-            m_vk.create(
-                device,
-                rp,
-                global_set_layout,
-                spirv.vertex.string(),
-                spirv.fragment.string(),
-                spec,
-                pipeline_cache,
-                extra_set_layout
-            );
+            if (spirv.has_mesh()) {
+                m_vk.create_mesh(
+                    device,
+                    rp,
+                    global_set_layout,
+                    spirv.task.string(),
+                    spirv.mesh.string(),
+                    spirv.fragment.string(),
+                    spec,
+                    pipeline_cache,
+                    extra_set_layout
+                );
+            } else {
+                m_vk.create(
+                    device,
+                    rp,
+                    global_set_layout,
+                    spirv.vertex.string(),
+                    spirv.fragment.string(),
+                    spec,
+                    pipeline_cache,
+                    extra_set_layout
+                );
+            }
         }
 
         ~VulkanPipelineWrapper() override

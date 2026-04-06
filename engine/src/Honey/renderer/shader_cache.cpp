@@ -74,16 +74,22 @@ namespace Honey {
         const auto vert_path = get_spirv_cache_path(shader_path, "vert");
         const auto frag_path = get_spirv_cache_path(shader_path, "frag");
         const auto comp_path = get_spirv_cache_path(shader_path, "comp");
+        const auto task_path = get_spirv_cache_path(shader_path, "task");
+        const auto mesh_path = get_spirv_cache_path(shader_path, "mesh");
 
         const bool has_graphics_on_disk = file_exists_nonempty(vert_path) && file_exists_nonempty(frag_path);
         const bool has_compute_on_disk = file_exists_nonempty(comp_path);
+        const bool has_mesh_on_disk = file_exists_nonempty(mesh_path) && file_exists_nonempty(frag_path);
+        const bool has_task_on_disk = file_exists_nonempty(task_path) && has_mesh_on_disk;
 
-        if (has_graphics_on_disk || has_compute_on_disk) {
+        if (has_graphics_on_disk || has_compute_on_disk || has_mesh_on_disk || has_task_on_disk) {
             ShaderAsset asset;
             asset.source_path = shader_path;
             asset.vertex_spirv_path = vert_path;
             asset.fragment_spirv_path = frag_path;
             asset.compute_spirv_path = comp_path;
+            asset.mesh_spirv_path = mesh_path;
+            asset.task_spirv_path = task_path;
 
             // Best-effort timestamp (not required for correctness anymore)
             std::error_code ec;
@@ -119,6 +125,8 @@ namespace Honey {
             asset.vertex_spirv_path = vert_path;
             asset.fragment_spirv_path = frag_path;
             asset.compute_spirv_path = comp_path;
+            asset.mesh_spirv_path = mesh_path;
+            asset.task_spirv_path = task_path;
             asset.last_modified = std::filesystem::last_write_time(shader_path);
             asset.cached_shader = nullptr;
 
@@ -148,16 +156,22 @@ namespace Honey {
         const auto vert_path = get_spirv_cache_path(shader_path, "vert");
         const auto frag_path = get_spirv_cache_path(shader_path, "frag");
         const auto comp_path = get_spirv_cache_path(shader_path, "comp");
+        const auto mesh_path = get_spirv_cache_path(shader_path, "mesh");
+        const auto task_path = get_spirv_cache_path(shader_path, "task");
 
         const bool has_graphics_on_disk = file_exists_nonempty(vert_path) && file_exists_nonempty(frag_path);
         const bool has_compute_on_disk = file_exists_nonempty(comp_path);
+        const bool has_mesh_on_disk = file_exists_nonempty(mesh_path) && file_exists_nonempty(frag_path);
+        const bool has_task_on_disk = file_exists_nonempty(task_path) && has_mesh_on_disk;
 
-        if (has_graphics_on_disk || has_compute_on_disk) {
+        if (has_graphics_on_disk || has_compute_on_disk || has_mesh_on_disk || has_task_on_disk) {
             //HN_CORE_INFO("Shader cache hit (SPIR-V only): {0}", shader_path.string());
             return {
                 has_graphics_on_disk ? vert_path : std::filesystem::path{},
-                has_graphics_on_disk ? frag_path : std::filesystem::path{},
-                has_compute_on_disk ? comp_path : std::filesystem::path{}
+                (has_graphics_on_disk || has_mesh_on_disk) ? frag_path : std::filesystem::path{},
+                has_compute_on_disk  ? comp_path  : std::filesystem::path{},
+                has_task_on_disk     ? task_path  : std::filesystem::path{},
+                has_mesh_on_disk     ? mesh_path  : std::filesystem::path{}
             };
         }
 
@@ -173,6 +187,8 @@ namespace Honey {
             asset.vertex_spirv_path = vert_path;
             asset.fragment_spirv_path = frag_path;
             asset.compute_spirv_path = comp_path;
+            asset.mesh_spirv_path = mesh_path;
+            asset.task_spirv_path = task_path;
             asset.last_modified = std::filesystem::last_write_time(shader_path);
             asset.cached_shader = nullptr;
 
@@ -186,15 +202,21 @@ namespace Honey {
             std::filesystem::exists(it->second.fragment_spirv_path);
         const bool has_compute =
             !it->second.compute_spirv_path.empty() && std::filesystem::exists(it->second.compute_spirv_path);
+        const bool has_mesh =
+            std::filesystem::exists(it->second.mesh_spirv_path) && std::filesystem::exists(it->second.fragment_spirv_path);
+        const bool has_task =
+            has_mesh && !it->second.task_spirv_path.empty() && std::filesystem::exists(it->second.task_spirv_path);
 
-        HN_CORE_ASSERT(has_graphics || has_compute,
+        HN_CORE_ASSERT(has_graphics || has_compute || has_mesh || has_task,
                        "ShaderCache: expected either graphics SPIR-V pair or compute SPIR-V for '{0}'",
                        shader_path.string());
 
         return {
-            has_graphics ? it->second.vertex_spirv_path : std::filesystem::path{},
-            has_graphics ? it->second.fragment_spirv_path : std::filesystem::path{},
-            has_compute ? it->second.compute_spirv_path : std::filesystem::path{}
+            has_graphics ? it->second.vertex_spirv_path   : std::filesystem::path{},
+            (has_graphics || has_mesh) ? it->second.fragment_spirv_path : std::filesystem::path{},
+            has_compute  ? it->second.compute_spirv_path  : std::filesystem::path{},
+            has_task     ? it->second.task_spirv_path     : std::filesystem::path{},
+            has_mesh     ? it->second.mesh_spirv_path     : std::filesystem::path{}
         };
     }
 
@@ -225,8 +247,12 @@ namespace Honey {
                 std::filesystem::exists(asset.fragment_spirv_path);
             const bool has_compute =
                 !asset.compute_spirv_path.empty() && std::filesystem::exists(asset.compute_spirv_path);
+            const bool has_mesh =
+                std::filesystem::exists(asset.mesh_spirv_path) && std::filesystem::exists(asset.fragment_spirv_path);
+            const bool has_task =
+                has_mesh && !asset.task_spirv_path.empty() && std::filesystem::exists(asset.task_spirv_path);
 
-            if (!has_graphics && !has_compute) {
+            if (!has_graphics && !has_compute && !has_mesh && !has_task) {
                 return true;
             }
 
@@ -249,6 +275,8 @@ namespace Honey {
         auto vert_path = get_spirv_cache_path(shader_path, "vert");
         auto frag_path = get_spirv_cache_path(shader_path, "frag");
         auto comp_path = get_spirv_cache_path(shader_path, "comp");
+        auto mesh_path = get_spirv_cache_path(shader_path, "mesh");
+        auto task_path = get_spirv_cache_path(shader_path, "task");
 
         try {
             if (result.has_graphics_stages()) {
@@ -288,10 +316,38 @@ namespace Honey {
                 std::filesystem::remove(comp_path, ec);
             }
 
+            if (result.has_mesh_stages()) {
+                std::ofstream mesh_file(mesh_path, std::ios::binary);
+                if (!mesh_file) {
+                    throw std::runtime_error("Failed to open mesh SPIR-V file for writing");
+                }
+                mesh_file.write(reinterpret_cast<const char*>(result.mesh_spirv.data()),
+                                result.mesh_spirv.size() * sizeof(uint32_t));
+                mesh_file.close();
+            } else {
+                std::error_code ec;
+                std::filesystem::remove(mesh_path, ec);
+            }
+
+            if (result.has_task_stage()) {
+                std::ofstream task_file(task_path, std::ios::binary);
+                if (!task_file) {
+                    throw std::runtime_error("Failed to open task SPIR-V file for writing");
+                }
+                task_file.write(reinterpret_cast<const char*>(result.task_spirv.data()),
+                                result.task_spirv.size() * sizeof(uint32_t));
+                task_file.close();
+            } else {
+                std::error_code ec;
+                std::filesystem::remove(task_path, ec);
+            }
+
             HN_CORE_INFO("SPIR-V cache written: vert={0}, frag={1}, comp={2}",
                          vert_path.string(),
                          frag_path.string(),
-                         comp_path.string());
+                         comp_path.string(),
+                         mesh_path.string(),
+                         task_path.string());
 
         } catch (const std::exception& e) {
             throw std::runtime_error("Failed to write SPIR-V cache: " + std::string(e.what()));

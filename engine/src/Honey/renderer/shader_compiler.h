@@ -20,13 +20,17 @@ namespace Honey {
             Compute,
             Geometry,
             TessellationControl,
-            TessellationEvaluation
+            TessellationEvaluation,
+            Task,
+            Mesh
         };
 
         struct CompilationResult {
             std::vector<uint32_t> vertex_spirv;
             std::vector<uint32_t> fragment_spirv;
             std::vector<uint32_t> compute_spirv;
+            std::vector<uint32_t> task_spirv;
+            std::vector<uint32_t> mesh_spirv;
             bool success = false;
             std::string error_message;
 
@@ -36,6 +40,14 @@ namespace Honey {
 
             bool has_compute_stage() const {
                 return !compute_spirv.empty();
+            }
+
+            bool has_mesh_stages() const {
+                return !mesh_spirv.empty() && !fragment_spirv.empty();
+            }
+
+            bool has_task_stage() const {
+                return !task_spirv.empty() && has_mesh_stages();
             }
         };
 
@@ -55,6 +67,8 @@ namespace Honey {
             std::string vertex_source;
             std::string fragment_source;
             std::string compute_source;
+            std::string task_source;
+            std::string mesh_source;
         };
 
         static ShaderSource parse_shader_file(const std::filesystem::path& path);

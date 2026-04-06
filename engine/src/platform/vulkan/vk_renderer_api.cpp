@@ -176,6 +176,24 @@ namespace Honey {
         pkt().cmds.push_back(cmd);
     }
 
+    void VulkanRendererAPI::submit_mesh_tasks_draw(uint32_t group_count_x, uint32_t group_count_y, uint32_t group_count_z) {
+        require_frame_begun();
+
+        auto* ctx = get_vulkan_context();
+        HN_CORE_ASSERT(ctx, "submit_mesh_tasks_draw: no active VulkanContext");
+
+        VkDevice device = ctx->get_device();
+        auto fn = reinterpret_cast<PFN_vkCmdDrawMeshTasksEXT>(
+            vkGetDeviceProcAddr(device, "vkCmdDrawMeshTasksEXT"));
+        HN_CORE_ASSERT(fn, "submit_mesh_tasks_draw: vkCmdDrawMeshTasksEXT not available — is VK_EXT_mesh_shader enabled?");
+
+        ctx->queue_custom_vulkan_cmd([fn, group_count_x, group_count_y, group_count_z]
+            (VkCommandBuffer cmd, uint32_t, uint32_t)
+        {
+            fn(cmd, group_count_x, group_count_y, group_count_z);
+        });
+    }
+
     void VulkanRendererAPI::submit_instanced_draw(
         const Ref<VertexArray>& vertex_array,
         const Ref<VertexBuffer>& instance_vb,

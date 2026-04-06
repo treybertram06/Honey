@@ -28,6 +28,7 @@ namespace Honey {
     enum class PipelineKind {
         Graphics,
         Compute,
+        MeshShading
     };
 
     struct AttachmentBlendState {
