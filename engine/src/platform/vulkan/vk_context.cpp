@@ -392,7 +392,8 @@ namespace Honey {
         camera_ubo_binding.binding = binding_index++;
         camera_ubo_binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         camera_ubo_binding.descriptorCount = 1;
-        camera_ubo_binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        camera_ubo_binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
+                                       | VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT;
 
         // binding 1 => lights UBO
         VkDescriptorSetLayoutBinding lights_ubo_binding{};
@@ -2535,10 +2536,8 @@ namespace Honey {
 
                     for (uint32_t i = 0; i < c.draw.vertexBufferCount; ++i) {
                         HN_CORE_ASSERT(c.draw.vertexBuffers[i], "Vulkan draw: vertex buffer is null");
-                        auto vk_vb = std::dynamic_pointer_cast<VulkanVertexBuffer>(c.draw.vertexBuffers[i]);
-                        HN_CORE_ASSERT(vk_vb, "Vulkan draw: expected VulkanVertexBuffer");
 
-                        buffers[i] = reinterpret_cast<VkBuffer>(vk_vb->get_vk_buffer());
+                        buffers[i] = reinterpret_cast<VkBuffer>(c.draw.vertexBuffers[i]->get_native_vertex_buffer());
                         offsets[i] = static_cast<VkDeviceSize>(c.draw.vertexBufferByteOffsets[i]);
                     }
 

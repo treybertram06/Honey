@@ -58,6 +58,11 @@ namespace Honey {
     	glBufferSubData(GL_ARRAY_BUFFER, 0, size, data);
 	}
 
+    void* OpenGLVertexBuffer::get_native_vertex_buffer() const {
+        HN_CORE_ASSERT(false, "OpenGLVertexBuffer::get_native_vertex_buffer is not implemented yet");
+        return nullptr;
+    }
+
 
     // Index Buffer //////////////////////////////////////////////////////
 
@@ -176,5 +181,8 @@ namespace Honey {
         return nullptr;
     }
 
-
+    Ref<VertexBuffer> OpenGLStorageBuffer::as_vertex_buffer(const BufferLayout& layout) {
+        HN_CORE_ASSERT(false, "OpenGLStorageBuffer::as_vertex_buffer is currently a stub and is not implemented yet");
+        return nullptr;
+    }
 }

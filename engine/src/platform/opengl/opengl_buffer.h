@@ -19,6 +19,8 @@ namespace Honey {
         virtual void set_layout(const BufferLayout& layout) override { m_layout = layout; }
         virtual const BufferLayout& get_layout() const override { return m_layout; }
 
+        virtual void* get_native_vertex_buffer() const override;
+
     private:
         uint32_t m_renderer_id;
         BufferLayout m_layout;
@@ -68,6 +70,7 @@ namespace Honey {
         uint32_t get_size() const override { return m_size; }
 
         void* get_native_buffer() const override;
+        Ref<VertexBuffer> as_vertex_buffer(const BufferLayout& layout) override;
 
     private:
         uint32_t m_renderer_id = 0;

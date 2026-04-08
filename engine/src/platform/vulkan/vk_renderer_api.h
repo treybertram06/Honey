@@ -2,6 +2,7 @@
 
 #include "Honey/core/base.h"
 #include "Honey/renderer/renderer_api.h"
+#include "Honey/renderer/mesh.h"
 #include "vk_context.h"
 
 #include <glm/glm.hpp>
@@ -30,6 +31,12 @@ namespace Honey {
         void draw_indexed(const Ref<VertexArray>&, uint32_t) override;
         void draw_indexed_instanced(const Ref<VertexArray>&, uint32_t, uint32_t) override;
         static void submit_mesh_tasks_draw(uint32_t group_count_x, uint32_t group_count_y = 1, uint32_t group_count_z = 1);
+
+        // Meshlet descriptor management
+        static void* get_or_create_meshlet_set_layout();
+        static void  ensure_meshlet_descriptor_set(MeshletGeometry& geo);
+        static void  submit_set1_descriptor_set(void* descriptor_set, void* pipeline_layout);
+        static void  destroy_meshlet_resources();
 
         static void submit_instanced_draw(
             const Ref<VertexArray>& vertex_array,

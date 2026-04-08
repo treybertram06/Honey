@@ -27,6 +27,8 @@ namespace Honey {
 
         GeometryPath                    geometry_path = GeometryPath::Meshlet;
         std::vector<MeshletDrawCommand> meshlet_draws;
+        void* meshlet_set_layout = nullptr;
+        void* meshlet_desc_pool  = nullptr;
 
         // Texture slots
         uint32_t                       max_texture_slots = 0;
@@ -101,6 +103,9 @@ namespace Honey {
 
     void Renderer3D::shutdown() {
         HN_PROFILE_FUNCTION();
+
+        if (Renderer::get_api() == RendererAPI::API::vulkan)
+            VulkanRendererAPI::destroy_meshlet_resources();
 
         delete s_data;
     }
@@ -394,26 +399,66 @@ namespace Honey {
         }
         HN_CORE_ASSERT(rpNative, "flush_meshlet_draws: rpNative is null");
 
-        // Get or create the meshlet test pipeline for this render pass
+        // Get or create the meshlet pipeline for this render pass (passes set=1 layout for SSBOs)
+        void* extra_layout = VulkanRendererAPI::get_or_create_meshlet_set_layout();
+
         Ref<Pipeline> pipe;
         auto it = s_data->vk_meshlet_pipelines.find(rpNative);
         if (it == s_data->vk_meshlet_pipelines.end()) {
-            auto pipeline = Pipeline::create(asset_root / "shaders" / "Meshlet_Test.glsl", rpNative);
+            auto pipeline = Pipeline::create(asset_root / "shaders" / "Renderer3D_Meshlet.glsl", rpNative, extra_layout);
             it = s_data->vk_meshlet_pipelines.emplace(rpNative, pipeline).first;
         }
         pipe = it->second;
 
         RenderCommand::bind_pipeline(pipe);
 
-        // Bind globals (camera UBO + textures) so descriptor set 0 is valid
+        // --- Build material + texture table for all meshlet draws ---
         CameraUBO saved_camera = VulkanRendererAPI::get_globals_state().cameraUBO;
+
+        std::unordered_map<Texture2D*, uint32_t> tex_slot_map;
+        tex_slot_map[s_data->white_texture.get()] = 0;
+        uint32_t tex_slot_count = 1;
+
+        std::vector<GPUMaterial> gpu_materials;
+        gpu_materials.reserve(s_data->meshlet_draws.size());
+
+        for (const auto& cmd : s_data->meshlet_draws) {
+            auto* mat = cmd.material.get();
+            Texture2D* tex = (mat && mat->get_base_color_texture())
+                ? mat->get_base_color_texture().get()
+                : s_data->white_texture.get();
+
+            if (!tex_slot_map.count(tex)) {
+                if (tex_slot_count < s_data->max_texture_slots)
+                    tex_slot_map[tex] = tex_slot_count++;
+                else
+                    tex_slot_map[tex] = 0; // overflow → fallback to white
+            }
+
+            GPUMaterial gpu_mat{};
+            gpu_mat.base_color        = mat ? mat->get_base_color_factor() : glm::vec4(1.0f);
+            gpu_mat.base_color_tex_id = (int32_t)tex_slot_map.at(tex);
+            gpu_mat.metallic          = mat ? mat->get_metallic_factor()   : 0.0f;
+            gpu_mat.roughness         = mat ? mat->get_roughness_factor()  : 0.5f;
+            gpu_materials.push_back(gpu_mat);
+        }
+
+        std::array<void*, VulkanRendererAPI::k_max_texture_slots> tex_array{};
+        tex_array[0] = s_data->white_texture.get();
+        for (auto& [tex_ptr, slot] : tex_slot_map)
+            tex_array[slot] = tex_ptr;
+
         VulkanRendererAPI::submit_camera(saved_camera);
+        VulkanRendererAPI::submit_bound_textures(tex_array, tex_slot_count);
+        VulkanRendererAPI::submit_materials(gpu_materials, 0);
         VulkanRendererAPI::flush_globals();
 
+        // --- Per-draw struct ---
         struct MeshletPC {
             glm::mat4 model;
             uint32_t  meshlet_count;
-            uint32_t  _pad[3];
+            int32_t   material_index;
+            int32_t   entity_id;
         };
         static_assert(sizeof(MeshletPC) <= 128, "MeshletPC exceeds push constant limit");
 
@@ -422,15 +467,27 @@ namespace Honey {
             VK_SHADER_STAGE_MESH_BIT_EXT |
             VK_SHADER_STAGE_FRAGMENT_BIT;
 
-        for (const auto& cmd : s_data->meshlet_draws) {
-            const uint32_t meshlet_count = cmd.submesh->meshlets->meshlet_count;
+        for (uint32_t i = 0; i < (uint32_t)s_data->meshlet_draws.size(); ++i) {
+            const auto& cmd = s_data->meshlet_draws[i];
+            auto& geo = const_cast<MeshletGeometry&>(*cmd.submesh->meshlets);
+
+            // Lazily allocate and write the per-submesh descriptor set (set=1, 5 SSBOs)
+            VulkanRendererAPI::ensure_meshlet_descriptor_set(geo);
 
             MeshletPC pc{};
-            pc.model         = cmd.transform;
-            pc.meshlet_count = meshlet_count;
+            pc.model          = cmd.transform;
+            pc.meshlet_count  = geo.meshlet_count;
+            pc.material_index = (int32_t)i;
+            pc.entity_id      = cmd.entity_id;
 
             VulkanRendererAPI::submit_push_constants(&pc, sizeof(MeshletPC), 0, kMeshStages);
-            VulkanRendererAPI::submit_mesh_tasks_draw(meshlet_count);
+
+            // Bind this submesh's SSBO descriptor set at set=1 then dispatch
+            VulkanRendererAPI::submit_set1_descriptor_set(
+                geo.descriptor_set,
+                pipe->get_native_pipeline_layout()
+            );
+            VulkanRendererAPI::submit_mesh_tasks_draw(geo.meshlet_count);
 
             s_data->stats.draw_calls++;
         }

@@ -433,4 +433,145 @@ namespace Honey {
         p.sourceTag = static_cast<VulkanContext::FramePacket::CmdBindGlobals::Source>(state.source);
     }
 
+    // ---------------------------------------------------------------------------
+    // Meshlet descriptor set management
+    // ---------------------------------------------------------------------------
+
+    static VkDescriptorSetLayout         s_meshlet_set_layout = VK_NULL_HANDLE;
+    static std::vector<VkDescriptorPool> s_meshlet_desc_pools;
+
+    static constexpr uint32_t k_meshlet_pool_chunk = 512; // sets per pool slab
+
+    static VkDescriptorPool create_meshlet_pool(VkDevice device) {
+        VkDescriptorPoolSize pool_size{};
+        pool_size.type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        pool_size.descriptorCount = k_meshlet_pool_chunk * 5;
+        VkDescriptorPoolCreateInfo pool_ci{};
+        pool_ci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        pool_ci.maxSets       = k_meshlet_pool_chunk;
+        pool_ci.poolSizeCount = 1;
+        pool_ci.pPoolSizes    = &pool_size;
+        VkDescriptorPool pool = VK_NULL_HANDLE;
+        VkResult r = vkCreateDescriptorPool(device, &pool_ci, nullptr, &pool);
+        HN_CORE_ASSERT(r == VK_SUCCESS, "create_meshlet_pool: vkCreateDescriptorPool failed");
+        return pool;
+    }
+
+    void* VulkanRendererAPI::get_or_create_meshlet_set_layout() {
+        if (s_meshlet_set_layout)
+            return s_meshlet_set_layout;
+
+        VkDevice device = get_vulkan_context()->get_device();
+
+        // 5 SSBO bindings at set=1:
+        //   0 = vertex_buffer   (VertexPNUV[])
+        //   1 = meshlets_buffer (meshopt_Meshlet[])
+        //   2 = meshlet_vertices_buffer (uint32_t[])
+        //   3 = meshlet_triangles_buffer (uint8_t[])
+        //   4 = meshlet_bounds_buffer (MeshletBounds[])
+        VkDescriptorSetLayoutBinding bindings[5]{};
+        for (uint32_t i = 0; i < 5; ++i) {
+            bindings[i].binding         = i;
+            bindings[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            bindings[i].descriptorCount = 1;
+            bindings[i].stageFlags      = VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT;
+        }
+        VkDescriptorSetLayoutCreateInfo layout_ci{};
+        layout_ci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layout_ci.bindingCount = 5;
+        layout_ci.pBindings    = bindings;
+        VkResult r = vkCreateDescriptorSetLayout(device, &layout_ci, nullptr, &s_meshlet_set_layout);
+        HN_CORE_ASSERT(r == VK_SUCCESS, "get_or_create_meshlet_set_layout: vkCreateDescriptorSetLayout failed");
+
+        // Allocate first pool slab
+        s_meshlet_desc_pools.push_back(create_meshlet_pool(device));
+
+        return s_meshlet_set_layout;
+    }
+
+    void VulkanRendererAPI::ensure_meshlet_descriptor_set(MeshletGeometry& geo) {
+        if (geo.descriptor_set) return;
+
+        HN_CORE_ASSERT(s_meshlet_set_layout && !s_meshlet_desc_pools.empty(),
+            "ensure_meshlet_descriptor_set: call get_or_create_meshlet_set_layout first");
+
+        VkDevice device = get_vulkan_context()->get_device();
+
+        VkDescriptorSetAllocateInfo alloc{};
+        alloc.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        alloc.descriptorSetCount = 1;
+        alloc.pSetLayouts        = &s_meshlet_set_layout;
+
+        VkDescriptorSet ds = VK_NULL_HANDLE;
+        VkResult r = VK_ERROR_OUT_OF_POOL_MEMORY;
+
+        // Try existing pools newest-first; grow if all are full
+        for (int pi = (int)s_meshlet_desc_pools.size() - 1; pi >= 0 && r != VK_SUCCESS; --pi) {
+            alloc.descriptorPool = s_meshlet_desc_pools[pi];
+            r = vkAllocateDescriptorSets(device, &alloc, &ds);
+        }
+        if (r != VK_SUCCESS) {
+            // All slabs full — allocate a new one
+            s_meshlet_desc_pools.push_back(create_meshlet_pool(device));
+            alloc.descriptorPool = s_meshlet_desc_pools.back();
+            r = vkAllocateDescriptorSets(device, &alloc, &ds);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "ensure_meshlet_descriptor_set: vkAllocateDescriptorSets failed on fresh pool");
+        }
+
+        Ref<StorageBuffer> bufs[5] = {
+            geo.vertex_buffer,
+            geo.meshlets_buffer,
+            geo.meshlet_vertices_buffer,
+            geo.meshlet_triangles_buffer,
+            geo.meshlet_bounds_buffer
+        };
+        VkDescriptorBufferInfo buf_infos[5]{};
+        VkWriteDescriptorSet   writes[5]{};
+        for (uint32_t i = 0; i < 5; ++i) {
+            HN_CORE_ASSERT(bufs[i], "ensure_meshlet_descriptor_set: SSBO buffer {} is null", i);
+            buf_infos[i].buffer = reinterpret_cast<VkBuffer>(bufs[i]->get_native_buffer());
+            buf_infos[i].offset = 0;
+            buf_infos[i].range  = VK_WHOLE_SIZE;
+
+            writes[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i].dstSet          = ds;
+            writes[i].dstBinding      = i;
+            writes[i].descriptorCount = 1;
+            writes[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            writes[i].pBufferInfo     = &buf_infos[i];
+        }
+        vkUpdateDescriptorSets(device, 5, writes, 0, nullptr);
+
+        geo.descriptor_set = ds;
+    }
+
+    void VulkanRendererAPI::submit_set1_descriptor_set(void* descriptor_set, void* pipeline_layout) {
+        require_frame_begun();
+        auto* ctx = get_vulkan_context();
+        HN_CORE_ASSERT(ctx, "submit_set1_descriptor_set: no active VulkanContext");
+
+        auto ds  = reinterpret_cast<VkDescriptorSet>(descriptor_set);
+        auto lay = reinterpret_cast<VkPipelineLayout>(pipeline_layout);
+
+        ctx->queue_custom_vulkan_cmd([ds, lay](VkCommandBuffer cmd, uint32_t, uint32_t) {
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    lay, 1, 1, &ds, 0, nullptr);
+        });
+    }
+
+    void VulkanRendererAPI::destroy_meshlet_resources() {
+        auto* ctx = get_vulkan_context();
+        if (!ctx) return;
+        VkDevice device = ctx->get_device();
+
+        for (VkDescriptorPool pool : s_meshlet_desc_pools)
+            vkDestroyDescriptorPool(device, pool, nullptr);
+        s_meshlet_desc_pools.clear();
+
+        if (s_meshlet_set_layout) {
+            vkDestroyDescriptorSetLayout(device, s_meshlet_set_layout, nullptr);
+            s_meshlet_set_layout = VK_NULL_HANDLE;
+        }
+    }
+
 } // namespace Honey

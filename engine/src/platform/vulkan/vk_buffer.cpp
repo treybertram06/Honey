@@ -353,6 +353,16 @@ namespace Honey {
         m_phys = VK_NULL_HANDLE;
     }
 
+    Ref<VertexBuffer> VulkanStorageBuffer::as_vertex_buffer(const BufferLayout& layout) {
+        HN_CORE_ASSERT(
+                  static_cast<uint32_t>(m_usage) & static_cast<uint32_t>(StorageBufferUsage::VertexBuffer),
+                  "as_vertex_buffer called on StorageBuffer not created with VertexBuffer usage flag"
+              );
+        return CreateRef<VulkanStorageBufferVertexView>(
+            std::static_pointer_cast<StorageBuffer>(shared_from_this()), layout
+        );
+    }
+
     void VulkanStorageBuffer::allocate(uint32_t size, StorageBufferUsage usage) {
         HN_PROFILE_FUNCTION();
 
@@ -364,18 +374,15 @@ namespace Honey {
         VkBufferUsageFlags buffer_usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
         VkMemoryPropertyFlags memory_props = 0;
 
-        const bool immutable =
-            usage == StorageBufferUsage::Immutable;
-
-        const bool dynamic =
-            usage == StorageBufferUsage::Dynamic ||
-            usage == StorageBufferUsage::Default;
-
-        const bool readback =
-            usage == StorageBufferUsage::Readback;
+        const bool immutable  = static_cast<uint32_t>(usage) & static_cast<uint32_t>(StorageBufferUsage::Immutable);
+        const bool readback   = static_cast<uint32_t>(usage) & static_cast<uint32_t>(StorageBufferUsage::Readback);
+        const bool dynamic    = !immutable && !readback;  // Default or Dynamic
+        const bool as_vb      = static_cast<uint32_t>(usage) & static_cast<uint32_t>(StorageBufferUsage::VertexBuffer);
 
         if (immutable) {
             buffer_usage |= VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+            if (as_vb)
+                buffer_usage |= VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
             memory_props = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
         } else if (dynamic) {
             memory_props = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
@@ -406,7 +413,7 @@ namespace Honey {
         HN_CORE_ASSERT(data, "VulkanStorageBuffer::set_data data is null");
         HN_CORE_ASSERT(offset + size <= m_size, "VulkanStorageBuffer::set_data overflow");
 
-        const bool immutable = (m_usage == StorageBufferUsage::Immutable);
+        const bool immutable = static_cast<uint32_t>(m_usage) & static_cast<uint32_t>(StorageBufferUsage::Immutable);
 
         if (immutable) {
             HN_CORE_ASSERT(offset == 0, "Immutable storage buffer partial updates not implemented yet");
@@ -438,9 +445,11 @@ namespace Honey {
                 VkBufferMemoryBarrier barrier{};
                 barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
                 barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                const bool as_vb = static_cast<uint32_t>(m_usage) & static_cast<uint32_t>(StorageBufferUsage::VertexBuffer);
                 barrier.dstAccessMask =
                     VK_ACCESS_SHADER_READ_BIT |
-                    VK_ACCESS_SHADER_WRITE_BIT;
+                    VK_ACCESS_SHADER_WRITE_BIT |
+                    (as_vb ? VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT : 0u);
                 barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
                 barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
                 barrier.buffer = m_buffer;
@@ -452,7 +461,8 @@ namespace Honey {
                     VK_PIPELINE_STAGE_TRANSFER_BIT,
                     VK_PIPELINE_STAGE_VERTEX_SHADER_BIT |
                     VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
-                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
+                    (as_vb ? VK_PIPELINE_STAGE_VERTEX_INPUT_BIT : 0u),
                     0,
                     0, nullptr,
                     1, &barrier,

@@ -273,6 +273,14 @@ namespace Honey {
             });
         }
 
+        static BufferLayout make_pnuv_layout() {
+            return {
+                { ShaderDataType::Float3, "a_position" },
+                { ShaderDataType::Float3, "a_normal"   },
+                { ShaderDataType::Float2, "a_uv"       },
+            };
+        }
+
         static glm::mat4 gltf_mat4_to_glm(const std::vector<double>& m) {
             // Robust conversion: copy to float[16] then use glm::make_mat4 (column-major).
             if (m.size() != 16)
@@ -416,9 +424,16 @@ namespace Honey {
             return out;
         }
 
-        static std::optional<MeshletGeometry> build_meshlet_geometry(
-            const std::vector<VertexPNUV>& vertices,
-            const std::vector<uint32_t>& indices) {
+        struct MeshletBuildResult {
+            MeshletGeometry geometry;
+            std::vector<VertexPNUV> opt_vertices;
+            std::vector<uint32_t>   opt_indices;
+        };
+
+        static std::optional<MeshletBuildResult> build_meshlet_geometry(
+              const std::vector<VertexPNUV>& vertices,
+              const std::vector<uint32_t>& indices)
+        {
             HN_PROFILE_FUNCTION();
 
             if (vertices.empty() || indices.empty())
@@ -524,16 +539,20 @@ namespace Honey {
                 bounds[i].cone_cutoff_s8  = b.cone_cutoff_s8;
             }
 
-            MeshletGeometry out{};
-            out.meshlets_buffer = StorageBuffer::create_from_vector(meshlets);
-            out.meshlet_vertices_buffer = StorageBuffer::create_from_vector(meshlet_vertices);
-            out.meshlet_triangles_buffer = StorageBuffer::create_from_vector(meshlet_triangles);
-            out.meshlet_bounds_buffer = StorageBuffer::create_from_vector(bounds);
-            out.meshlet_count = static_cast<uint32_t>(meshlet_count);
-            out.max_vertices_per_meshlet = static_cast<uint32_t>(kMaxVertices);
-            out.max_triangles_per_meshlet = static_cast<uint32_t>(kMaxTriangles);
+            MeshletBuildResult result{};
+            result.opt_vertices = std::move(opt_vertices);
+            result.opt_indices  = std::move(opt_indices);
 
-            return out;
+            result.geometry.meshlets_buffer         = StorageBuffer::create_from_vector(meshlets);
+            result.geometry.meshlet_vertices_buffer = StorageBuffer::create_from_vector(meshlet_vertices);
+            result.geometry.meshlet_triangles_buffer= StorageBuffer::create_from_vector(meshlet_triangles);
+            result.geometry.meshlet_bounds_buffer   = StorageBuffer::create_from_vector(bounds);
+            result.geometry.meshlet_count           = static_cast<uint32_t>(meshlet_count);
+            result.geometry.max_vertices_per_meshlet= static_cast<uint32_t>(kMaxVertices);
+            result.geometry.max_triangles_per_meshlet=static_cast<uint32_t>(kMaxTriangles);
+            // vertex_buffer is set by the caller using result.opt_vertices
+
+            return result;
         }
 
         // Extract all primitives for a specific glTF mesh index and append to `out`,
@@ -610,39 +629,43 @@ namespace Honey {
 
                 const auto& primData = *primDataOpt;
 
-                // =======================
-                // CLASSIC GEOMETRY BUILD
-                // =======================
-
-                Ref<VertexArray> vao = VertexArray::create();
-
-                // Vertex buffer
-                Ref<VertexBuffer> vb = VertexBuffer::create((uint32_t)(primData.vertices.size() * sizeof(VertexPNUV)));
-                vb->set_data(primData.vertices.data(), (uint32_t)(primData.vertices.size() * sizeof(VertexPNUV)));
-                set_default_layout_pnuv(vb);
-                vao->add_vertex_buffer(vb);
-
-                // Index buffer (convert back to u16/u32 if you want later optimization)
-                Ref<IndexBuffer> ib = IndexBuffer::create(
-                    const_cast<uint32_t*>(primData.indices.data()),
-                    (uint32_t)primData.indices.size()
-                );
-
-                vao->set_index_buffer(ib);
-
                 Submesh sm{};
-                sm.vao = vao;
-                sm.material = primData.material;
-                sm.name = primData.name;
+                sm.material  = primData.material;
+                sm.name      = primData.name;
                 sm.transform = worldTransform;
 
-                // Optional meshlet build
-                if (auto meshlets = build_meshlet_geometry(primData.vertices, primData.indices)) {
-                    sm.meshlets = std::move(*meshlets);
-                }
+                if (auto result = build_meshlet_geometry(primData.vertices, primData.indices)) {
+                    // Single buffer with dual usage — one allocation serves both paths
+                    result->geometry.vertex_buffer = StorageBuffer::create_from_vector(
+                        result->opt_vertices,
+                        StorageBufferUsage::Immutable | StorageBufferUsage::VertexBuffer
+                    );
 
-                if (sm.meshlets) {
-                    HN_CORE_INFO("Built {} meshlets for submesh '{}'", sm.meshlets->meshlet_count, sm.name);
+                    // Classic path: VAO wraps the same VkBuffer, no second allocation
+                    Ref<VertexArray> vao = VertexArray::create();
+                    vao->add_vertex_buffer(result->geometry.vertex_buffer->as_vertex_buffer(make_pnuv_layout()));
+                    vao->set_index_buffer(IndexBuffer::create(
+                        const_cast<uint32_t*>(result->opt_indices.data()),
+                        (uint32_t)result->opt_indices.size()
+                    ));
+                    sm.vao = vao;
+
+                    HN_CORE_INFO("Built {} meshlets for submesh '{}'", result->geometry.meshlet_count, sm.name);
+                    sm.meshlets = std::move(result->geometry);
+                } else {
+                    // No meshlets — classic path only, plain VertexBuffer
+                    Ref<VertexArray> vao = VertexArray::create();
+                    Ref<VertexBuffer> vb = VertexBuffer::create(
+                        (uint32_t)(primData.vertices.size() * sizeof(VertexPNUV)));
+                    vb->set_data(primData.vertices.data(),
+                                 (uint32_t)(primData.vertices.size() * sizeof(VertexPNUV)));
+                    set_default_layout_pnuv(vb);
+                    vao->add_vertex_buffer(vb);
+                    vao->set_index_buffer(IndexBuffer::create(
+                        const_cast<uint32_t*>(primData.indices.data()),
+                        (uint32_t)primData.indices.size()
+                    ));
+                    sm.vao = vao;
                 }
 
                 out->add_submesh(std::move(sm));

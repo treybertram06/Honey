@@ -20,6 +20,7 @@ namespace Honey {
         void set_layout(const BufferLayout& layout) override { m_layout = layout; }
 
         void* get_vk_buffer() const { return m_buffer; }
+        void* get_native_vertex_buffer() const override { return m_buffer; }
 
     private:
         void allocate(uint32_t size, const void* initial_data);
@@ -88,7 +89,8 @@ namespace Honey {
         void* m_memory = nullptr; // VkDeviceMemory
     };
 
-    class VulkanStorageBuffer : public StorageBuffer {
+    class VulkanStorageBuffer : public StorageBuffer,
+                                public std::enable_shared_from_this<VulkanStorageBuffer> {
     public:
         VulkanStorageBuffer(VkDevice device,
                             VkPhysicalDevice phys,
@@ -103,6 +105,8 @@ namespace Honey {
         uint32_t get_size() const override { return m_size; }
 
         void* get_native_buffer() const override { return reinterpret_cast<void*>(m_buffer); }
+        Ref<VertexBuffer> as_vertex_buffer(const BufferLayout& layout);
+
 
     private:
         void allocate(uint32_t size, StorageBufferUsage usage);
@@ -116,6 +120,30 @@ namespace Honey {
 
         VkBuffer m_buffer = VK_NULL_HANDLE;
         VkDeviceMemory m_memory = VK_NULL_HANDLE;
+    };
+
+
+    class VulkanStorageBufferVertexView : public VertexBuffer {
+    public:
+        VulkanStorageBufferVertexView(Ref<StorageBuffer> storage, const BufferLayout& layout)
+            : m_storage(std::move(storage)), m_layout(layout) {}
+        ~VulkanStorageBufferVertexView() override = default;
+
+        void bind() const override {}
+        void unbind() const override {}
+
+        void set_data(const void* data, uint32_t size) override {
+            HN_CORE_ASSERT(false, "VulkanStorageBufferVertexView is read-only");
+        }
+
+        const BufferLayout& get_layout() const override { return m_layout; }
+        void set_layout(const BufferLayout& layout) override { m_layout = layout; }
+
+        void* get_native_vertex_buffer() const override { return m_storage->get_native_buffer(); }
+
+    private:
+        Ref<StorageBuffer> m_storage;
+        BufferLayout m_layout;
     };
 
 } // namespace Honey

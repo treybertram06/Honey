@@ -24,10 +24,13 @@ namespace Honey {
     };
 
     struct MeshletGeometry {
+        Ref<StorageBuffer> vertex_buffer;            // VertexPNUV, also VBO. Only populated if needed?
         Ref<StorageBuffer> meshlets_buffer;          // meshopt_Meshlet[]
         Ref<StorageBuffer> meshlet_vertices_buffer;  // uint32_t[]
         Ref<StorageBuffer> meshlet_triangles_buffer; // uint8_t[] / packed triangle data
         Ref<StorageBuffer> meshlet_bounds_buffer;    // optional per-meshlet bounds
+
+        void* descriptor_set = nullptr; // VkDescriptorSet, unsure of OpenGL implementation...
 
         uint32_t meshlet_count = 0;
         uint32_t max_vertices_per_meshlet = 0;

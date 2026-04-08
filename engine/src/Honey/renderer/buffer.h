@@ -117,6 +117,8 @@ namespace Honey {
         virtual void set_layout(const BufferLayout& layout) = 0;
         virtual const BufferLayout& get_layout() const = 0;
 
+        virtual void* get_native_vertex_buffer() const = 0;
+
         static Ref<VertexBuffer> create(uint32_t size);
         static Ref<VertexBuffer> create(float* vertices, uint32_t size);
 
@@ -152,7 +154,8 @@ namespace Honey {
         Default   = 0,
         Dynamic   = 1 << 0,
         Immutable = 1 << 1,
-        Readback  = 1 << 2
+        Readback  = 1 << 2,
+        VertexBuffer = 1 << 3,
     };
 
     inline StorageBufferUsage operator|(StorageBufferUsage a, StorageBufferUsage b) {
@@ -172,6 +175,7 @@ namespace Honey {
         virtual uint32_t get_size() const = 0;
 
         virtual void* get_native_buffer() const = 0;
+        virtual Ref<VertexBuffer> as_vertex_buffer(const BufferLayout& layout) = 0;
 
         static Ref<StorageBuffer> create(uint32_t size,
                                          StorageBufferUsage usage = StorageBufferUsage::Default);
