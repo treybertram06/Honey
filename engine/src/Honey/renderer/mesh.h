@@ -15,6 +15,16 @@ namespace Honey {
         Meshlet
     };
 
+    struct GlobalMeshletBuffers {
+        Ref<StorageBuffer> vertex_buffer;
+        Ref<StorageBuffer> meshlets_buffer;
+        Ref<StorageBuffer> meshlet_vertices_buffer;
+        Ref<StorageBuffer> meshlet_triangles_buffer;
+        Ref<StorageBuffer> meshlet_bounds_buffer;
+        Ref<StorageBuffer> draw_data_buffer; // per-mesh GPUDrawData[], grown as needed
+        void* descriptor_set = nullptr; // VkDescriptorSet, one per Mesh
+    };
+
     struct MeshletBounds {
         glm::vec3 center{0.0f};
         float radius = 0.0f;
@@ -24,17 +34,15 @@ namespace Honey {
     };
 
     struct MeshletGeometry {
-        Ref<StorageBuffer> vertex_buffer;            // VertexPNUV, also VBO. Only populated if needed?
-        Ref<StorageBuffer> meshlets_buffer;          // meshopt_Meshlet[]
-        Ref<StorageBuffer> meshlet_vertices_buffer;  // uint32_t[]
-        Ref<StorageBuffer> meshlet_triangles_buffer; // uint8_t[] / packed triangle data
-        Ref<StorageBuffer> meshlet_bounds_buffer;    // optional per-meshlet bounds
+        uint32_t vertex_offset              = 0;
+        uint32_t meshlets_offset            = 0;
+        uint32_t meshlet_vertices_offset    = 0;
+        uint32_t meshlet_triangles_offset   = 0;
+        uint32_t bounds_offset              = 0;
 
-        void* descriptor_set = nullptr; // VkDescriptorSet, unsure of OpenGL implementation...
-
-        uint32_t meshlet_count = 0;
-        uint32_t max_vertices_per_meshlet = 0;
-        uint32_t max_triangles_per_meshlet = 0;
+        uint32_t meshlet_count              = 0;
+        uint32_t max_vertices_per_meshlet   = 0;
+        uint32_t max_triangles_per_meshlet  = 0;
     };
 
     struct Submesh {
@@ -67,6 +75,10 @@ namespace Honey {
 
         bool empty() const { return m_submeshes.empty(); }
         size_t submesh_count() const { return m_submeshes.size(); }
+
+        // Populated by the loader after all submeshes are built.
+        // Null if no submesh in this mesh has meshlet geometry.
+        std::optional<GlobalMeshletBuffers> meshlet_buffers;
 
     private:
         std::string m_name;

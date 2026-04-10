@@ -210,7 +210,7 @@ add_library(engine STATIC
         src/platform/vulkan/vk_cloth_sim.cpp
         src/platform/vulkan/vk_cloth_renderer.h
         src/platform/vulkan/vk_cloth_renderer.cpp
-        src/platform/vulkan/vk_types.h
+        src/Honey/renderer/gpu_types.h
         src/Honey/loaders/gltf_scene_tree.h
         vendor/stb_truetype/stb_truetype.h
         vendor/stb_truetype/stb_truetype.cpp

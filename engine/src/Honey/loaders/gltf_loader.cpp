@@ -425,9 +425,13 @@ namespace Honey {
         }
 
         struct MeshletBuildResult {
-            MeshletGeometry geometry;
-            std::vector<VertexPNUV> opt_vertices;
-            std::vector<uint32_t>   opt_indices;
+            MeshletGeometry              geometry;      // counts filled; offsets set by caller
+            std::vector<VertexPNUV>      opt_vertices;
+            std::vector<uint32_t>        opt_indices;
+            std::vector<meshopt_Meshlet> meshlets;
+            std::vector<uint32_t>        meshlet_vertices;
+            std::vector<uint8_t>         meshlet_triangles;
+            std::vector<MeshletBounds>   bounds;
         };
 
         static std::optional<MeshletBuildResult> build_meshlet_geometry(
@@ -540,39 +544,44 @@ namespace Honey {
             }
 
             MeshletBuildResult result{};
-            result.opt_vertices = std::move(opt_vertices);
-            result.opt_indices  = std::move(opt_indices);
+            result.opt_vertices       = std::move(opt_vertices);
+            result.opt_indices        = std::move(opt_indices);
+            result.meshlets           = std::move(meshlets);
+            result.meshlet_vertices   = std::move(meshlet_vertices);
+            result.meshlet_triangles  = std::move(meshlet_triangles);
+            result.bounds             = std::move(bounds);
 
-            result.geometry.meshlets_buffer         = StorageBuffer::create_from_vector(meshlets);
-            result.geometry.meshlet_vertices_buffer = StorageBuffer::create_from_vector(meshlet_vertices);
-            result.geometry.meshlet_triangles_buffer= StorageBuffer::create_from_vector(meshlet_triangles);
-            result.geometry.meshlet_bounds_buffer   = StorageBuffer::create_from_vector(bounds);
-            result.geometry.meshlet_count           = static_cast<uint32_t>(meshlet_count);
-            result.geometry.max_vertices_per_meshlet= static_cast<uint32_t>(kMaxVertices);
-            result.geometry.max_triangles_per_meshlet=static_cast<uint32_t>(kMaxTriangles);
-            // vertex_buffer is set by the caller using result.opt_vertices
+            result.geometry.meshlet_count            = static_cast<uint32_t>(meshlet_count);
+            result.geometry.max_vertices_per_meshlet = static_cast<uint32_t>(kMaxVertices);
+            result.geometry.max_triangles_per_meshlet= static_cast<uint32_t>(kMaxTriangles);
+            // offsets (meshlets_offset etc.) are set by the caller after concatenation
 
             return result;
         }
 
-        // Extract all primitives for a specific glTF mesh index and append to `out`,
-        // tagging each Submesh with the provided world transform.
-        static void append_mesh_primitives_as_submeshes(
-            Ref<Mesh>& out,
+        // Shared PrimResult type used by both single-node and multi-node (load_gltf_mesh) paths.
+        struct PrimResult {
+            Submesh submesh;
+            std::optional<MeshletBuildResult> meshlet_build;
+        };
+
+        // Pass 1: collect PrimResults for a single glTF mesh node (no SSBO creation).
+        static void collect_prims_for_gltf_mesh(
             const tinygltf::Model& model,
             int gltfMeshIndex,
             const glm::mat4& worldTransform,
             const std::filesystem::path& gltfDir,
             const GltfLoadOptions& options,
             std::unordered_map<int, Ref<Texture2D>>& textureCacheByImageIndex,
-            bool async = true
+            bool async,
+            std::vector<PrimResult>& out_prims
         ) {
-            HN_PROFILE_FUNCTION();
             if (gltfMeshIndex < 0 || gltfMeshIndex >= (int)model.meshes.size())
                 return;
 
             const tinygltf::Mesh& gm = model.meshes[(size_t)gltfMeshIndex];
 
+            // --- First pass: build per-primitive geometry ---
             for (size_t primIndex = 0; primIndex < gm.primitives.size(); ++primIndex) {
                 const tinygltf::Primitive& prim = gm.primitives[primIndex];
 
@@ -581,7 +590,6 @@ namespace Honey {
                     continue;
                 }
 
-                // POSITION is required
                 auto posIt = prim.attributes.find("POSITION");
                 if (posIt == prim.attributes.end()) {
                     HN_CORE_WARN("glTF: primitive has no POSITION, skipping");
@@ -593,8 +601,6 @@ namespace Honey {
                     HN_CORE_WARN("glTF: invalid POSITION accessor, skipping");
                     continue;
                 }
-
-                const size_t vcount = (size_t)posAcc->count;
 
                 const tinygltf::Accessor* nrmAcc = nullptr;
                 if (auto it = prim.attributes.find("NORMAL"); it != prim.attributes.end())
@@ -614,46 +620,38 @@ namespace Honey {
                 }
 
                 auto primDataOpt = extract_primitive_data(
-                    model,
-                    gm,
-                    prim,
-                    primIndex,
-                    gltfDir,
-                    options,
-                    textureCacheByImageIndex,
-                    async
-                );
+                    model, gm, prim, primIndex, gltfDir, options, textureCacheByImageIndex, async);
 
                 if (!primDataOpt)
                     continue;
 
                 const auto& primData = *primDataOpt;
 
-                Submesh sm{};
-                sm.material  = primData.material;
-                sm.name      = primData.name;
-                sm.transform = worldTransform;
+                PrimResult pr{};
+                pr.submesh.material  = primData.material;
+                pr.submesh.name      = primData.name;
+                pr.submesh.transform = worldTransform;
 
                 if (auto result = build_meshlet_geometry(primData.vertices, primData.indices)) {
-                    // Single buffer with dual usage — one allocation serves both paths
-                    result->geometry.vertex_buffer = StorageBuffer::create_from_vector(
-                        result->opt_vertices,
-                        StorageBufferUsage::Immutable | StorageBufferUsage::VertexBuffer
-                    );
-
-                    // Classic path: VAO wraps the same VkBuffer, no second allocation
+                    // VAO for classic fallback — plain VB, separate from the meshlet SSBO
                     Ref<VertexArray> vao = VertexArray::create();
-                    vao->add_vertex_buffer(result->geometry.vertex_buffer->as_vertex_buffer(make_pnuv_layout()));
+                    Ref<VertexBuffer> vb = VertexBuffer::create(
+                        (uint32_t)(result->opt_vertices.size() * sizeof(VertexPNUV)));
+                    vb->set_data(result->opt_vertices.data(),
+                                 (uint32_t)(result->opt_vertices.size() * sizeof(VertexPNUV)));
+                    set_default_layout_pnuv(vb);
+                    vao->add_vertex_buffer(vb);
                     vao->set_index_buffer(IndexBuffer::create(
                         const_cast<uint32_t*>(result->opt_indices.data()),
                         (uint32_t)result->opt_indices.size()
                     ));
-                    sm.vao = vao;
+                    pr.submesh.vao = vao;
 
-                    HN_CORE_INFO("Built {} meshlets for submesh '{}'", result->geometry.meshlet_count, sm.name);
-                    sm.meshlets = std::move(result->geometry);
+                    HN_CORE_INFO("Built {} meshlets for submesh '{}'",
+                                 result->geometry.meshlet_count, pr.submesh.name);
+                    pr.submesh.meshlets = result->geometry; // offsets will be filled in second pass
+                    pr.meshlet_build    = std::move(*result);
                 } else {
-                    // No meshlets — classic path only, plain VertexBuffer
                     Ref<VertexArray> vao = VertexArray::create();
                     Ref<VertexBuffer> vb = VertexBuffer::create(
                         (uint32_t)(primData.vertices.size() * sizeof(VertexPNUV)));
@@ -665,56 +663,136 @@ namespace Honey {
                         const_cast<uint32_t*>(primData.indices.data()),
                         (uint32_t)primData.indices.size()
                     ));
-                    sm.vao = vao;
+                    pr.submesh.vao = vao;
                 }
 
-                out->add_submesh(std::move(sm));
+                out_prims.push_back(std::move(pr));
             }
         }
 
-        static void traverse_node_tree_and_emit_meshes(
+        // Pass 2: concatenate all collected PrimResults into Mesh-level global SSBOs.
+        // Sets out->meshlet_buffers and adds all submeshes to out.
+        static void finalize_meshlet_buffers(
+            Ref<Mesh>& out,
+            std::vector<PrimResult>& all_prims
+        ) {
+            bool has_any_meshlets = false;
+            for (const auto& pr : all_prims)
+                if (pr.meshlet_build) { has_any_meshlets = true; break; }
+
+            if (has_any_meshlets) {
+                std::vector<float>           global_vertices;
+                std::vector<meshopt_Meshlet> global_meshlets;
+                std::vector<uint32_t>        global_meshlet_vertices;
+                std::vector<uint8_t>         global_meshlet_triangles;
+                std::vector<MeshletBounds>   global_bounds;
+
+                uint32_t vertex_cursor            = 0;
+                uint32_t meshlets_cursor          = 0;
+                uint32_t meshlet_vertices_cursor  = 0;
+                uint32_t meshlet_triangles_cursor = 0;
+
+                for (auto& pr : all_prims) {
+                    if (!pr.meshlet_build) continue;
+                    auto& mb = *pr.meshlet_build;
+
+                    const uint32_t v_off  = vertex_cursor;
+                    const uint32_t m_off  = meshlets_cursor;
+                    const uint32_t mv_off = meshlet_vertices_cursor;
+                    const uint32_t mt_off = meshlet_triangles_cursor;
+
+                    const float* v_floats = reinterpret_cast<const float*>(mb.opt_vertices.data());
+                    global_vertices.insert(global_vertices.end(),
+                        v_floats, v_floats + mb.opt_vertices.size() * 8);
+                    vertex_cursor += (uint32_t)mb.opt_vertices.size();
+
+                    for (auto m : mb.meshlets) {
+                        m.vertex_offset   += mv_off;
+                        m.triangle_offset += mt_off;
+                        global_meshlets.push_back(m);
+                    }
+                    meshlets_cursor += (uint32_t)mb.meshlets.size();
+
+                    for (uint32_t vi : mb.meshlet_vertices)
+                        global_meshlet_vertices.push_back(vi + v_off);
+                    meshlet_vertices_cursor += (uint32_t)mb.meshlet_vertices.size();
+
+                    global_meshlet_triangles.insert(global_meshlet_triangles.end(),
+                        mb.meshlet_triangles.begin(), mb.meshlet_triangles.end());
+                    meshlet_triangles_cursor += (uint32_t)mb.meshlet_triangles.size();
+
+                    global_bounds.insert(global_bounds.end(),
+                        mb.bounds.begin(), mb.bounds.end());
+
+                    pr.submesh.meshlets->vertex_offset            = v_off;
+                    pr.submesh.meshlets->meshlets_offset          = m_off;
+                    pr.submesh.meshlets->meshlet_vertices_offset  = mv_off;
+                    pr.submesh.meshlets->meshlet_triangles_offset = mt_off;
+                    pr.submesh.meshlets->bounds_offset            = m_off;
+                }
+
+                GlobalMeshletBuffers global_bufs{};
+                global_bufs.vertex_buffer = StorageBuffer::create_from_vector(
+                    global_vertices, StorageBufferUsage::Immutable);
+                global_bufs.meshlets_buffer = StorageBuffer::create_from_vector(
+                    global_meshlets, StorageBufferUsage::Immutable);
+                global_bufs.meshlet_vertices_buffer = StorageBuffer::create_from_vector(
+                    global_meshlet_vertices, StorageBufferUsage::Immutable);
+                global_bufs.meshlet_triangles_buffer = StorageBuffer::create_from_vector(
+                    global_meshlet_triangles, StorageBufferUsage::Immutable);
+                global_bufs.meshlet_bounds_buffer = StorageBuffer::create_from_vector(
+                    global_bounds, StorageBufferUsage::Immutable);
+
+                out->meshlet_buffers = std::move(global_bufs);
+            }
+
+            for (auto& pr : all_prims)
+                out->add_submesh(std::move(pr.submesh));
+        }
+
+        // For build_gltf_node: single-node path — collect and finalize in one shot.
+        static void append_mesh_primitives_as_submeshes(
             Ref<Mesh>& out,
             const tinygltf::Model& model,
-            int nodeIndex,
-            const glm::mat4& parentWorld,
+            int gltfMeshIndex,
+            const glm::mat4& worldTransform,
             const std::filesystem::path& gltfDir,
             const GltfLoadOptions& options,
             std::unordered_map<int, Ref<Texture2D>>& textureCacheByImageIndex,
             bool async = true
         ) {
             HN_PROFILE_FUNCTION();
+            std::vector<PrimResult> prims;
+            collect_prims_for_gltf_mesh(model, gltfMeshIndex, worldTransform,
+                gltfDir, options, textureCacheByImageIndex, async, prims);
+            finalize_meshlet_buffers(out, prims);
+        }
+
+        // For load_gltf_mesh: traverse the full node tree and collect ALL prims without
+        // building SSBOs yet — the caller will call finalize_meshlet_buffers once over all nodes.
+        static void traverse_and_collect_prims(
+            const tinygltf::Model& model,
+            int nodeIndex,
+            const glm::mat4& parentWorld,
+            const std::filesystem::path& gltfDir,
+            const GltfLoadOptions& options,
+            std::unordered_map<int, Ref<Texture2D>>& textureCacheByImageIndex,
+            bool async,
+            std::vector<PrimResult>& out_prims
+        ) {
             if (nodeIndex < 0 || nodeIndex >= (int)model.nodes.size())
                 return;
 
             const tinygltf::Node& node = model.nodes[(size_t)nodeIndex];
+            const glm::mat4 world = parentWorld * node_local_transform(node);
 
-            const glm::mat4 local = node_local_transform(node);
-            const glm::mat4 world = parentWorld * local;
-
-            if (node.mesh >= 0) {
-                append_mesh_primitives_as_submeshes(
-                    out,
-                    model,
-                    node.mesh,
-                    world,
-                    gltfDir,
-                    options,
-                    textureCacheByImageIndex,
-                    async
-                );
-            }
+            if (node.mesh >= 0)
+                collect_prims_for_gltf_mesh(model, node.mesh, world,
+                    gltfDir, options, textureCacheByImageIndex, async, out_prims);
 
             for (int child : node.children) {
-                traverse_node_tree_and_emit_meshes(
-                    out,
-                    model,
-                    child,
-                    world,
-                    gltfDir,
-                    options,
-                    textureCacheByImageIndex,
-                    async
-                );
+                traverse_and_collect_prims(model, child, world,
+                    gltfDir, options, textureCacheByImageIndex, async, out_prims);
             }
         }
 
@@ -800,39 +878,27 @@ namespace Honey {
             sceneIndex = model.scenes.empty() ? -1 : 0;
         }
 
+        // Collect all primitives from all nodes first, then build SSBOs once.
+        // This ensures models with multiple gltf mesh nodes (flight helmet, couch, etc.)
+        // get a single GlobalMeshletBuffers covering all their submeshes.
+        std::vector<PrimResult> all_prims;
         if (sceneIndex >= 0) {
             const tinygltf::Scene& scene = model.scenes[(size_t)sceneIndex];
             const glm::mat4 I(1.0f);
-
             for (int rootNode : scene.nodes) {
-                traverse_node_tree_and_emit_meshes(
-                    out,
-                    model,
-                    rootNode,
-                    I,
-                    gltfDir,
-                    options,
-                    textureCacheByImageIndex,
-                    async
-                );
+                traverse_and_collect_prims(model, rootNode, I,
+                    gltfDir, options, textureCacheByImageIndex, async, all_prims);
             }
         } else {
             // No scenes? Fallback: emit all meshes at identity.
             HN_CORE_WARN("glTF: model has no scenes; emitting meshes with identity transforms.");
             const glm::mat4 I(1.0f);
             for (int mi = 0; mi < (int)model.meshes.size(); ++mi) {
-                append_mesh_primitives_as_submeshes(
-                    out,
-                    model,
-                    mi,
-                    I,
-                    gltfDir,
-                    options,
-                    textureCacheByImageIndex,
-                    async
-                );
+                collect_prims_for_gltf_mesh(model, mi, I,
+                    gltfDir, options, textureCacheByImageIndex, async, all_prims);
             }
         }
+        finalize_meshlet_buffers(out, all_prims);
 
         if (out->empty()) {
             HN_CORE_WARN("load_gltf_mesh: loaded 0 primitives from {}", path.string());

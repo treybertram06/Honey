@@ -1564,9 +1564,13 @@ namespace Honey {
         VkPhysicalDeviceMeshShaderFeaturesEXT mesh_features{};
         mesh_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT;
 
+        VkPhysicalDeviceVulkan11Features vk11_features{};
+        vk11_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+
         indexing_features.pNext = &timeline_features;
         timeline_features.pNext = &mesh_features;
-        mesh_features.pNext     = nullptr;
+        mesh_features.pNext     = &vk11_features;
+        vk11_features.pNext     = nullptr;
 
         VkPhysicalDeviceFeatures2 features2{};
         features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
@@ -1603,6 +1607,8 @@ namespace Honey {
         mesh_features.taskShader = VK_TRUE; // Require for now. TODO: Make task shader support optional at some point?
         mesh_features.multiviewMeshShader                    = VK_FALSE; // would require multiview to also be enabled
         mesh_features.primitiveFragmentShadingRateMeshShader = VK_FALSE; // would require primitiveFragmentShadingRate to also be enabled
+
+        vk11_features.shaderDrawParameters = VK_TRUE; // required for gl_DrawID in task/mesh shaders
 
         // Keep your core features:
         features2.features = features;

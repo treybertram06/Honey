@@ -8,7 +8,7 @@
 #include <glm/glm.hpp>
 #include <array>
 
-#include "vk_types.h"
+#include "../../Honey/renderer/gpu_types.h"
 
 namespace Honey {
 
@@ -31,10 +31,15 @@ namespace Honey {
         void draw_indexed(const Ref<VertexArray>&, uint32_t) override;
         void draw_indexed_instanced(const Ref<VertexArray>&, uint32_t, uint32_t) override;
         static void submit_mesh_tasks_draw(uint32_t group_count_x, uint32_t group_count_y = 1, uint32_t group_count_z = 1);
+        static void submit_mesh_tasks_indirect_count(
+            VkBuffer draw_buffer, VkDeviceSize draw_offset,
+            VkBuffer count_buffer, VkDeviceSize count_offset,
+            uint32_t max_draws, uint32_t stride);
 
         // Meshlet descriptor management
         static void* get_or_create_meshlet_set_layout();
-        static void  ensure_meshlet_descriptor_set(MeshletGeometry& geo);
+        static void  ensure_mesh_descriptor_set(GlobalMeshletBuffers& bufs);
+        static void  update_mesh_draw_data_binding(GlobalMeshletBuffers& bufs, uint32_t draw_count);
         static void  submit_set1_descriptor_set(void* descriptor_set, void* pipeline_layout);
         static void  destroy_meshlet_resources();
 

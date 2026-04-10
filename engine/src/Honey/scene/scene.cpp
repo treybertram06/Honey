@@ -18,7 +18,7 @@
 #include "Honey/scripting/script_engine.h"
 #include "cloth_system.h"
 #include "platform/vulkan/vk_renderer_api.h"
-#include "platform/vulkan/vk_types.h"
+#include "../renderer/gpu_types.h"
 //#include "Honey/scripting/mono_script_engine.h"
 
 namespace Honey {
@@ -903,7 +903,7 @@ namespace Honey {
                     if (material)
                         material->set_base_color_factor(mr.color);
 
-                    Renderer3D::submit_submesh(sm, material, world * sm.transform, (int)entity);
+                    Renderer3D::submit_submesh(sm, material, world * sm.transform, (int)entity, mr.mesh.get());
                 }
             }
         } else {

@@ -17,9 +17,10 @@ namespace Honey {
 
     struct MeshletDrawCommand {
         const Submesh* submesh = nullptr;
-        Ref<Material> material;
-        glm::mat4 transform{1.0f};
-        int entity_id = -1;
+        const Mesh*    mesh    = nullptr;
+        Ref<Material>  material;
+        glm::mat4      transform{1.0f};
+        int            entity_id = -1;
     };
 
     struct Renderer3DData {
@@ -29,6 +30,10 @@ namespace Honey {
         std::vector<MeshletDrawCommand> meshlet_draws;
         void* meshlet_set_layout = nullptr;
         void* meshlet_desc_pool  = nullptr;
+
+        Ref<StorageBuffer> indirect_buffer;     // VkDrawMeshTasksIndirectCommandEXT[]
+        Ref<StorageBuffer> count_buffer;        // uint32_t
+        // draw_data_buffer lives per-mesh inside GlobalMeshletBuffers::draw_data_buffer
 
         // Texture slots
         uint32_t                       max_texture_slots = 0;
@@ -399,7 +404,6 @@ namespace Honey {
         }
         HN_CORE_ASSERT(rpNative, "flush_meshlet_draws: rpNative is null");
 
-        // Get or create the meshlet pipeline for this render pass (passes set=1 layout for SSBOs)
         void* extra_layout = VulkanRendererAPI::get_or_create_meshlet_set_layout();
 
         Ref<Pipeline> pipe;
@@ -412,7 +416,7 @@ namespace Honey {
 
         RenderCommand::bind_pipeline(pipe);
 
-        // --- Build material + texture table for all meshlet draws ---
+        // --- Build global material + texture table (shared across all draws) ---
         CameraUBO saved_camera = VulkanRendererAPI::get_globals_state().cameraUBO;
 
         std::unordered_map<Texture2D*, uint32_t> tex_slot_map;
@@ -432,7 +436,7 @@ namespace Honey {
                 if (tex_slot_count < s_data->max_texture_slots)
                     tex_slot_map[tex] = tex_slot_count++;
                 else
-                    tex_slot_map[tex] = 0; // overflow → fallback to white
+                    tex_slot_map[tex] = 0;
             }
 
             GPUMaterial gpu_mat{};
@@ -453,43 +457,94 @@ namespace Honey {
         VulkanRendererAPI::submit_materials(gpu_materials, 0);
         VulkanRendererAPI::flush_globals();
 
-        // --- Per-draw struct ---
-        struct MeshletPC {
-            glm::mat4 model;
-            uint32_t  meshlet_count;
-            int32_t   material_index;
-            int32_t   entity_id;
-        };
-        static_assert(sizeof(MeshletPC) <= 128, "MeshletPC exceeds push constant limit");
+        // --- Group draws by Mesh, then dispatch one indirect call per Mesh ---
 
-        constexpr VkShaderStageFlags kMeshStages =
-            VK_SHADER_STAGE_TASK_BIT_EXT |
-            VK_SHADER_STAGE_MESH_BIT_EXT |
-            VK_SHADER_STAGE_FRAGMENT_BIT;
-
+        // Collect unique meshes in submission order
+        std::vector<const Mesh*> mesh_order;
+        std::unordered_map<const Mesh*, std::vector<uint32_t>> draws_by_mesh;
         for (uint32_t i = 0; i < (uint32_t)s_data->meshlet_draws.size(); ++i) {
-            const auto& cmd = s_data->meshlet_draws[i];
-            auto& geo = const_cast<MeshletGeometry&>(*cmd.submesh->meshlets);
+            const Mesh* m = s_data->meshlet_draws[i].mesh;
+            if (!draws_by_mesh.count(m))
+                mesh_order.push_back(m);
+            draws_by_mesh[m].push_back(i);
+        }
 
-            // Lazily allocate and write the per-submesh descriptor set (set=1, 5 SSBOs)
-            VulkanRendererAPI::ensure_meshlet_descriptor_set(geo);
+        // Size shared indirect + count buffers (draw_data is now per-mesh)
+        const uint32_t total_draws    = (uint32_t)s_data->meshlet_draws.size();
+        const uint32_t indirect_bytes = total_draws * 12u; // sizeof(VkDrawMeshTasksIndirectCommandEXT)
+        const uint32_t count_bytes    = (uint32_t)mesh_order.size() * sizeof(uint32_t);
 
-            MeshletPC pc{};
-            pc.model          = cmd.transform;
-            pc.meshlet_count  = geo.meshlet_count;
-            pc.material_index = (int32_t)i;
-            pc.entity_id      = cmd.entity_id;
+        if (!s_data->indirect_buffer || s_data->indirect_buffer->get_size() < indirect_bytes)
+            s_data->indirect_buffer = StorageBuffer::create(indirect_bytes,
+                StorageBufferUsage::Dynamic | StorageBufferUsage::Indirect);
 
-            VulkanRendererAPI::submit_push_constants(&pc, sizeof(MeshletPC), 0, kMeshStages);
+        if (!s_data->count_buffer || s_data->count_buffer->get_size() < count_bytes)
+            s_data->count_buffer = StorageBuffer::create(std::max(count_bytes, 4u),
+                StorageBufferUsage::Dynamic | StorageBufferUsage::Indirect);
 
-            // Bind this submesh's SSBO descriptor set at set=1 then dispatch
+        auto indirect_vk = reinterpret_cast<VkBuffer>(s_data->indirect_buffer->get_native_buffer());
+        auto count_vk    = reinterpret_cast<VkBuffer>(s_data->count_buffer->get_native_buffer());
+
+        uint32_t global_draw_offset = 0;
+
+        for (uint32_t mesh_idx = 0; mesh_idx < (uint32_t)mesh_order.size(); ++mesh_idx) {
+            const Mesh* mesh = mesh_order[mesh_idx];
+            const auto& indices = draws_by_mesh.at(mesh);
+            const uint32_t mesh_draw_count = (uint32_t)indices.size();
+
+            HN_CORE_ASSERT(mesh && mesh->meshlet_buffers.has_value(),
+                "flush_meshlet_draws: mesh has no global meshlet buffers");
+            auto& bufs = const_cast<GlobalMeshletBuffers&>(*mesh->meshlet_buffers);
+
+            // Ensure per-mesh draw_data_buffer is large enough (may reset descriptor_set on growth)
+            VulkanRendererAPI::update_mesh_draw_data_binding(bufs, mesh_draw_count);
+            // Ensure descriptor set exists, writing all 6 bindings including draw_data_buffer
+            VulkanRendererAPI::ensure_mesh_descriptor_set(bufs);
+
+            // Build indirect commands and draw data for this mesh's draws
+            std::vector<VkDrawMeshTasksIndirectCommandEXT> indirect_cmds;
+            std::vector<GPUDrawData> draw_data;
+            indirect_cmds.reserve(mesh_draw_count);
+            draw_data.reserve(mesh_draw_count);
+
+            for (uint32_t local_i = 0; local_i < mesh_draw_count; ++local_i) {
+                const auto& cmd = s_data->meshlet_draws[indices[local_i]];
+                const auto& geo = *cmd.submesh->meshlets;
+                indirect_cmds.push_back({ geo.meshlet_count, 1, 1 });
+                draw_data.push_back({
+                    cmd.transform,
+                    geo.meshlets_offset,
+                    geo.meshlet_count,
+                    (int32_t)indices[local_i], // index into gpu_materials (original submission order)
+                    cmd.entity_id
+                });
+            }
+
+            // Upload indirect commands to shared buffer at global offset
+            const uint32_t indirect_byte_off = global_draw_offset * 12u;
+            const uint32_t count_byte_off    = mesh_idx * (uint32_t)sizeof(uint32_t);
+
+            s_data->indirect_buffer->set_data(indirect_cmds.data(),
+                mesh_draw_count * 12u, indirect_byte_off);
+            s_data->count_buffer->set_data(&mesh_draw_count, sizeof(uint32_t), count_byte_off);
+
+            // Upload draw data to per-mesh buffer at offset 0
+            // (gl_DrawID resets to 0 for each indirect call, so draws[gl_DrawID] is correct)
+            bufs.draw_data_buffer->set_data(draw_data.data(),
+                mesh_draw_count * (uint32_t)sizeof(GPUDrawData), 0);
+
+            // Bind this Mesh's descriptor set (set=1), then dispatch
             VulkanRendererAPI::submit_set1_descriptor_set(
-                geo.descriptor_set,
-                pipe->get_native_pipeline_layout()
-            );
-            VulkanRendererAPI::submit_mesh_tasks_draw(geo.meshlet_count);
+                bufs.descriptor_set,
+                pipe->get_native_pipeline_layout());
+
+            VulkanRendererAPI::submit_mesh_tasks_indirect_count(
+                indirect_vk, indirect_byte_off,
+                count_vk,    count_byte_off,
+                mesh_draw_count, 12u);
 
             s_data->stats.draw_calls++;
+            global_draw_offset += mesh_draw_count;
         }
 
         s_data->meshlet_draws.clear();
@@ -555,7 +610,7 @@ namespace Honey {
     }
 
     void Renderer3D::submit_submesh(const Submesh& submesh, const Ref<Material>& material,
-        const glm::mat4& transform, int entity_id) {
+        const glm::mat4& transform, int entity_id, const Mesh* mesh) {
         HN_PROFILE_FUNCTION();
         HN_CORE_ASSERT(material, "Renderer3D::submit_submesh: material is null");
 
@@ -563,7 +618,7 @@ namespace Honey {
             s_data->geometry_path == GeometryPath::Meshlet && submesh.meshlets.has_value();
 
         if (can_use_meshlets) {
-            submit_meshlet_submesh(submesh, material, transform, entity_id);
+            submit_meshlet_submesh(submesh, material, transform, entity_id, mesh);
             return;
         }
 
@@ -572,15 +627,16 @@ namespace Honey {
     }
 
     void Renderer3D::submit_meshlet_submesh(const Submesh& submesh, const Ref<Material>& material,
-        const glm::mat4& transform, int entity_id) {
+        const glm::mat4& transform, int entity_id, const Mesh* mesh) {
         HN_PROFILE_FUNCTION();
         HN_CORE_ASSERT(material, "Renderer3D::submit_meshlet_submesh: material is null");
         HN_CORE_ASSERT(submesh.meshlets.has_value(), "Renderer3D::submit_meshlet_submesh: submesh.meshlets is null");
 
         s_data->meshlet_draws.push_back(
             MeshletDrawCommand{
-                .submesh = &submesh,
-                .material = material,
+                .submesh   = &submesh,
+                .mesh      = mesh,
+                .material  = material,
                 .transform = transform,
                 .entity_id = entity_id
             }

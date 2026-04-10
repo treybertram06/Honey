@@ -182,16 +182,24 @@ namespace Honey {
         auto* ctx = get_vulkan_context();
         HN_CORE_ASSERT(ctx, "submit_mesh_tasks_draw: no active VulkanContext");
 
-        VkDevice device = ctx->get_device();
-        auto fn = reinterpret_cast<PFN_vkCmdDrawMeshTasksEXT>(
-            vkGetDeviceProcAddr(device, "vkCmdDrawMeshTasksEXT"));
+        static PFN_vkCmdDrawMeshTasksEXT fn = reinterpret_cast<PFN_vkCmdDrawMeshTasksEXT>(
+            vkGetDeviceProcAddr(ctx->get_device(), "vkCmdDrawMeshTasksEXT"));
         HN_CORE_ASSERT(fn, "submit_mesh_tasks_draw: vkCmdDrawMeshTasksEXT not available — is VK_EXT_mesh_shader enabled?");
 
-        ctx->queue_custom_vulkan_cmd([fn, group_count_x, group_count_y, group_count_z]
+        ctx->queue_custom_vulkan_cmd([group_count_x, group_count_y, group_count_z]
             (VkCommandBuffer cmd, uint32_t, uint32_t)
         {
             fn(cmd, group_count_x, group_count_y, group_count_z);
         });
+    }
+
+    void VulkanRendererAPI::update_mesh_draw_data_binding(GlobalMeshletBuffers& bufs, uint32_t draw_count) {
+        const uint32_t needed = draw_count * (uint32_t)sizeof(GPUDrawData);
+        if (!bufs.draw_data_buffer || bufs.draw_data_buffer->get_size() < needed) {
+            bufs.draw_data_buffer = StorageBuffer::create(needed, StorageBufferUsage::Dynamic);
+            // Force descriptor recreation so binding 5 points to the new buffer
+            bufs.descriptor_set = nullptr;
+        }
     }
 
     void VulkanRendererAPI::submit_instanced_draw(
@@ -445,7 +453,7 @@ namespace Honey {
     static VkDescriptorPool create_meshlet_pool(VkDevice device) {
         VkDescriptorPoolSize pool_size{};
         pool_size.type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        pool_size.descriptorCount = k_meshlet_pool_chunk * 5;
+        pool_size.descriptorCount = k_meshlet_pool_chunk * 6; // 6 bindings per set
         VkDescriptorPoolCreateInfo pool_ci{};
         pool_ci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         pool_ci.maxSets       = k_meshlet_pool_chunk;
@@ -463,14 +471,15 @@ namespace Honey {
 
         VkDevice device = get_vulkan_context()->get_device();
 
-        // 5 SSBO bindings at set=1:
-        //   0 = vertex_buffer   (VertexPNUV[])
-        //   1 = meshlets_buffer (meshopt_Meshlet[])
-        //   2 = meshlet_vertices_buffer (uint32_t[])
-        //   3 = meshlet_triangles_buffer (uint8_t[])
-        //   4 = meshlet_bounds_buffer (MeshletBounds[])
-        VkDescriptorSetLayoutBinding bindings[5]{};
-        for (uint32_t i = 0; i < 5; ++i) {
+        // 6 SSBO bindings at set=1:
+        //   0 = vertex_buffer            (float[] / VertexPNUV)
+        //   1 = meshlets_buffer          (meshopt_Meshlet[])
+        //   2 = meshlet_vertices_buffer  (uint32_t[])
+        //   3 = meshlet_triangles_buffer (uint8_t[] packed)
+        //   4 = meshlet_bounds_buffer    (MeshletBounds[])
+        //   5 = draw_data_buffer         (GPUDrawData[], per-mesh, written once on descriptor creation)
+        VkDescriptorSetLayoutBinding bindings[6]{};
+        for (uint32_t i = 0; i < 6; ++i) {
             bindings[i].binding         = i;
             bindings[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             bindings[i].descriptorCount = 1;
@@ -478,7 +487,7 @@ namespace Honey {
         }
         VkDescriptorSetLayoutCreateInfo layout_ci{};
         layout_ci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        layout_ci.bindingCount = 5;
+        layout_ci.bindingCount = 6;
         layout_ci.pBindings    = bindings;
         VkResult r = vkCreateDescriptorSetLayout(device, &layout_ci, nullptr, &s_meshlet_set_layout);
         HN_CORE_ASSERT(r == VK_SUCCESS, "get_or_create_meshlet_set_layout: vkCreateDescriptorSetLayout failed");
@@ -489,11 +498,11 @@ namespace Honey {
         return s_meshlet_set_layout;
     }
 
-    void VulkanRendererAPI::ensure_meshlet_descriptor_set(MeshletGeometry& geo) {
-        if (geo.descriptor_set) return;
+    void VulkanRendererAPI::ensure_mesh_descriptor_set(GlobalMeshletBuffers& bufs) {
+        if (bufs.descriptor_set) return;
 
         HN_CORE_ASSERT(s_meshlet_set_layout && !s_meshlet_desc_pools.empty(),
-            "ensure_meshlet_descriptor_set: call get_or_create_meshlet_set_layout first");
+            "ensure_mesh_descriptor_set: call get_or_create_meshlet_set_layout first");
 
         VkDevice device = get_vulkan_context()->get_device();
 
@@ -505,31 +514,33 @@ namespace Honey {
         VkDescriptorSet ds = VK_NULL_HANDLE;
         VkResult r = VK_ERROR_OUT_OF_POOL_MEMORY;
 
-        // Try existing pools newest-first; grow if all are full
         for (int pi = (int)s_meshlet_desc_pools.size() - 1; pi >= 0 && r != VK_SUCCESS; --pi) {
             alloc.descriptorPool = s_meshlet_desc_pools[pi];
             r = vkAllocateDescriptorSets(device, &alloc, &ds);
         }
         if (r != VK_SUCCESS) {
-            // All slabs full — allocate a new one
             s_meshlet_desc_pools.push_back(create_meshlet_pool(device));
             alloc.descriptorPool = s_meshlet_desc_pools.back();
             r = vkAllocateDescriptorSets(device, &alloc, &ds);
-            HN_CORE_ASSERT(r == VK_SUCCESS, "ensure_meshlet_descriptor_set: vkAllocateDescriptorSets failed on fresh pool");
+            HN_CORE_ASSERT(r == VK_SUCCESS, "ensure_mesh_descriptor_set: vkAllocateDescriptorSets failed on fresh pool");
         }
 
-        Ref<StorageBuffer> bufs[5] = {
-            geo.vertex_buffer,
-            geo.meshlets_buffer,
-            geo.meshlet_vertices_buffer,
-            geo.meshlet_triangles_buffer,
-            geo.meshlet_bounds_buffer
+        HN_CORE_ASSERT(bufs.draw_data_buffer,
+            "ensure_mesh_descriptor_set: call update_mesh_draw_data_binding before ensure_mesh_descriptor_set");
+
+        Ref<StorageBuffer> ssbo_bufs[6] = {
+            bufs.vertex_buffer,
+            bufs.meshlets_buffer,
+            bufs.meshlet_vertices_buffer,
+            bufs.meshlet_triangles_buffer,
+            bufs.meshlet_bounds_buffer,
+            bufs.draw_data_buffer
         };
-        VkDescriptorBufferInfo buf_infos[5]{};
-        VkWriteDescriptorSet   writes[5]{};
-        for (uint32_t i = 0; i < 5; ++i) {
-            HN_CORE_ASSERT(bufs[i], "ensure_meshlet_descriptor_set: SSBO buffer {} is null", i);
-            buf_infos[i].buffer = reinterpret_cast<VkBuffer>(bufs[i]->get_native_buffer());
+        VkDescriptorBufferInfo buf_infos[6]{};
+        VkWriteDescriptorSet   writes[6]{};
+        for (uint32_t i = 0; i < 6; ++i) {
+            HN_CORE_ASSERT(ssbo_bufs[i], "ensure_mesh_descriptor_set: SSBO buffer {} is null", i);
+            buf_infos[i].buffer = reinterpret_cast<VkBuffer>(ssbo_bufs[i]->get_native_buffer());
             buf_infos[i].offset = 0;
             buf_infos[i].range  = VK_WHOLE_SIZE;
 
@@ -540,9 +551,31 @@ namespace Honey {
             writes[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             writes[i].pBufferInfo     = &buf_infos[i];
         }
-        vkUpdateDescriptorSets(device, 5, writes, 0, nullptr);
+        vkUpdateDescriptorSets(device, 6, writes, 0, nullptr);
 
-        geo.descriptor_set = ds;
+        bufs.descriptor_set = ds;
+    }
+
+    void VulkanRendererAPI::submit_mesh_tasks_indirect_count(
+        VkBuffer draw_buffer, VkDeviceSize draw_offset,
+        VkBuffer count_buffer, VkDeviceSize count_offset,
+        uint32_t max_draws, uint32_t stride)
+    {
+        require_frame_begun();
+        auto* ctx = get_vulkan_context();
+        HN_CORE_ASSERT(ctx, "submit_mesh_tasks_indirect_count: no active VulkanContext");
+
+        static PFN_vkCmdDrawMeshTasksIndirectCountEXT fn =
+            reinterpret_cast<PFN_vkCmdDrawMeshTasksIndirectCountEXT>(
+                vkGetDeviceProcAddr(ctx->get_device(), "vkCmdDrawMeshTasksIndirectCountEXT"));
+        HN_CORE_ASSERT(fn, "submit_mesh_tasks_indirect_count: vkCmdDrawMeshTasksIndirectCountEXT not available");
+
+        ctx->queue_custom_vulkan_cmd([draw_buffer, draw_offset, count_buffer, count_offset,
+                                      max_draws, stride]
+            (VkCommandBuffer cmd, uint32_t, uint32_t)
+        {
+            fn(cmd, draw_buffer, draw_offset, count_buffer, count_offset, max_draws, stride);
+        });
     }
 
     void VulkanRendererAPI::submit_set1_descriptor_set(void* descriptor_set, void* pipeline_layout) {

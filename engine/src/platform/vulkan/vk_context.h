@@ -8,7 +8,7 @@
 #include <functional>
 
 #include "vk_pipeline.h"
-#include "vk_types.h"
+#include "../../Honey/renderer/gpu_types.h"
 
 struct GLFWwindow;
 

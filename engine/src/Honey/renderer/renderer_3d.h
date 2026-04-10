@@ -12,7 +12,7 @@
 #include "editor_camera.h"
 #include "material.h"
 #include "mesh.h"
-#include "platform/vulkan/vk_types.h"
+#include "gpu_types.h"
 
 namespace Honey {
 
@@ -33,8 +33,8 @@ namespace Honey {
 		// Generic mesh rendering
 		static void draw_mesh(const Ref<VertexArray>& vertex_array, const glm::mat4& transform, int entity_id = -1);
 		static void draw_mesh(const Ref<VertexArray>& vertex_array, const Ref<Material>& material, const glm::mat4& transform, int entity_id = -1);
-		static void submit_submesh(const Submesh& submesh, const Ref<Material>& material, const glm::mat4& transform, int entity_id = -1);
-		static void submit_meshlet_submesh(const Submesh& submesh, const Ref<Material>& material, const glm::mat4& transform, int entity_id = -1);
+		static void submit_submesh(const Submesh& submesh, const Ref<Material>& material, const glm::mat4& transform, int entity_id = -1, const Mesh* mesh = nullptr);
+		static void submit_meshlet_submesh(const Submesh& submesh, const Ref<Material>& material, const glm::mat4& transform, int entity_id = -1, const Mesh* mesh = nullptr);
 
 		static void prewarm_pipelines(void* native_render_pass);
 

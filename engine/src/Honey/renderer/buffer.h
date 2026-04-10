@@ -156,6 +156,7 @@ namespace Honey {
         Immutable = 1 << 1,
         Readback  = 1 << 2,
         VertexBuffer = 1 << 3,
+        Indirect = 1 << 4,
     };
 
     inline StorageBufferUsage operator|(StorageBufferUsage a, StorageBufferUsage b) {

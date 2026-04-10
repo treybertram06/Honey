@@ -200,10 +200,10 @@ namespace Honey {
 
 } // namespace Honey
 
-#define HN_PROFILE 1
+#define HN_PROFILE 0
 #if HN_PROFILE
 #define HN_PROFILE_BEGIN_SESSION(name, filepath) ::Honey::Profiler::get().begin_session(name, filepath)
-#define HN_PROFILE_END_SESSION() ::Honey::Profiler::get().end_session()
+#define HN_PROFILE_END_SESS3ION() ::Honey::Profiler::get().end_session()
 #define HN_PROFILE_SCOPE(name) ::Honey::ProfileTimer timer##__LINE__(name);
 #if defined(_MSC_VER)
 #define HN_FUNCTION_SIG __FUNCSIG__

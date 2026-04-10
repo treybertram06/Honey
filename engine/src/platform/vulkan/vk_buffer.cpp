@@ -378,23 +378,27 @@ namespace Honey {
         const bool readback   = static_cast<uint32_t>(usage) & static_cast<uint32_t>(StorageBufferUsage::Readback);
         const bool dynamic    = !immutable && !readback;  // Default or Dynamic
         const bool as_vb      = static_cast<uint32_t>(usage) & static_cast<uint32_t>(StorageBufferUsage::VertexBuffer);
+        const bool indirect   = static_cast<uint32_t>(usage) & static_cast<uint32_t>(StorageBufferUsage::Indirect);
 
         if (immutable) {
             buffer_usage |= VK_BUFFER_USAGE_TRANSFER_DST_BIT;
             if (as_vb)
                 buffer_usage |= VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
             memory_props = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
-        } else if (dynamic) {
-            memory_props = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                           VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
         } else if (readback) {
             buffer_usage |= VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
                             VK_BUFFER_USAGE_TRANSFER_DST_BIT;
             memory_props = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
                            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
         } else {
-            HN_CORE_ASSERT(false, "Unhandled StorageBufferUsage");
+            // Default / Dynamic
+            memory_props = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                           VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
         }
+
+        // Additive flags — independent of memory type
+        if (as_vb)    buffer_usage |= VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+        if (indirect) buffer_usage |= VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
 
         create_buffer(
             m_device,

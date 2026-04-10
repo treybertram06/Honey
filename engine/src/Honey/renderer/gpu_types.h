@@ -42,4 +42,12 @@ namespace Honey {
     };
     static_assert(sizeof(GPUMaterial) == 32, "GPUMaterial layout mismatch");
 
+    struct GPUDrawData {
+        glm::mat4   model;
+        uint32_t    meshlet_offset; // byte offset into global meshlet buffer
+        uint32_t    meshlet_count;
+        int32_t     material_index;
+        int32_t     entity_id;
+    };
+
 }
