@@ -12,6 +12,7 @@
 
 #include "type_proxies.h"
 #include "Honey/audio/audio_system.h"
+#include "Honey/core/engine.h"
 #include "Honey/scene/scene_serializer.h"
 
 namespace Honey {
@@ -340,6 +341,10 @@ namespace Honey {
         honey.set_function("IsKeyPressed", [](int key){ return Input::is_key_pressed((KeyCode)key); });
         honey.set_function("IsMouseButtonPressed", [](int button){ return Input::is_mouse_button_pressed((MouseButton)button); });
         honey.set_function("GetMousePosition", [](){ return Input::get_mouse_position(); });
+
+        honey.set_function("CaptureMouse",  [](){ Application::get().get_window().set_cursor_captured(true);  });
+        honey.set_function("ReleaseMouse",  [](){ Application::get().get_window().set_cursor_captured(false); });
+        honey.set_function("IsMouseCaptured", [](){ return Application::get().get_window().is_cursor_captured(); });
 
         honey.set_function("Random", [](float a, float b){ return a + static_cast<float>(rand()) / RAND_MAX * (b - a); });
 

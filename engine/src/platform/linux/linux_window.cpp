@@ -256,6 +256,17 @@ namespace Honey {
         glfwSetWindowShouldClose(m_window, GLFW_TRUE);
     }
 
+    void LinuxWindow::set_cursor_captured(bool captured) {
+        if (!m_window)
+            return;
+        glfwSetInputMode(m_window, GLFW_CURSOR,
+            captured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+    }
+
+    bool LinuxWindow::is_cursor_captured() const {
+        return glfwGetInputMode(m_window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED;
+    }
+
 }
 
 #endif

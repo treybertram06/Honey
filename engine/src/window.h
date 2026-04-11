@@ -46,6 +46,9 @@ namespace Honey {
 
         virtual void request_close() = 0;
 
+        virtual void set_cursor_captured(bool captured) = 0;
+        virtual bool is_cursor_captured() const = 0;
+
         static Scope<Window> create(const WindowProps& props = WindowProps());
 
     };

@@ -26,6 +26,8 @@ namespace Honey {
         inline virtual GraphicsContext* get_context() const override { return m_context; }
 
         inline virtual void request_close() override;
+        void set_cursor_captured(bool captured) override;
+        bool is_cursor_captured() const override;
 
     private:
         virtual void init(const WindowProps& props);
