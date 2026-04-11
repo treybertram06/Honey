@@ -287,6 +287,8 @@ namespace Honey {
     }
 
     void Scene::on_update_editor(Timestep ts, EditorCamera& camera) {
+        HN_PROFILE_FUNCTION();
+
         s_active_scene = this;
 
         update_streamed_assets();
@@ -798,119 +800,154 @@ namespace Honey {
     }
 
     void Scene::on_update_render(const glm::mat4& view_proj, const glm::vec3& camera_pos) {
+        HN_PROFILE_FUNCTION();
+
         bool parallel_mesh_submit_enabled = Settings::get().renderer.enable_parallel_mesh_submission;
 
-        Renderer2D::begin_scene(view_proj);
+        {
+            HN_PROFILE_SCOPE("Render2DScene");
+            Renderer2D::begin_scene(view_proj);
 
-        auto group = m_registry.group<SpriteRendererComponent>(entt::get<TransformComponent>);
-        for (auto entity : group) {
-            auto sprite = group.get<SpriteRendererComponent>(entity);
-            Entity entity_ref = { entity, this };
-            Renderer2D::draw_sprite(entity_ref.get_world_transform(), sprite, (int)entt::to_integral(entity));
-        }
-
-        auto cicle_group = m_registry.group<CircleRendererComponent>(entt::get<TransformComponent>);
-        for (auto entity : cicle_group) {
-            auto sprite = cicle_group.get<CircleRendererComponent>(entity);
-            Entity entity_ref = { entity, this };
-            Renderer2D::draw_circle_sprite(entity_ref.get_world_transform(), sprite, (int)entt::to_integral(entity));
-        }
-
-        auto line_group = m_registry.group<LineRendererComponent>(entt::get<TransformComponent>);
-        for (auto entity : line_group) {
-            auto sprite = line_group.get<LineRendererComponent>(entity);
-            Entity entity_ref = { entity, this };
-            Renderer2D::draw_line_sprite(entity_ref.get_world_transform(), sprite, (int)entt::to_integral(entity));
-        }
-
-        auto text_group = m_registry.group<TextRendererComponent>(entt::get<TransformComponent>);
-        for (auto entity : text_group) {
-            auto& trc = text_group.get<TextRendererComponent>(entity);
-            Entity entity_ref = { entity, this };
-            Renderer2D::draw_text(entity_ref.get_world_transform(), trc, (int)entt::to_integral(entity));
-        }
-
-        auto icon_group = m_registry.group<IconRendererComponent>(entt::get<TransformComponent>);
-        for (auto entity : icon_group) {
-            auto& irc = icon_group.get<IconRendererComponent>(entity);
-            Entity entity_ref = { entity, this };
-            Renderer2D::draw_icon(entity_ref.get_world_transform(), irc, (int)entt::to_integral(entity));
-        }
-
-        Renderer2D::end_scene();
-
-        // Gather and submit lights before draw
-        LightsUBO lights_ubo{};
-
-        auto directional_light_group = m_registry.group<DirectionalLightComponent>(entt::get<TransformComponent>);
-        for (auto entity : directional_light_group) {
-            auto& dl = directional_light_group.get<DirectionalLightComponent>(entity);
-            auto& tc = directional_light_group.get<TransformComponent>(entity);
-            if (!dl.enabled) continue;
-
-            lights_ubo.directional_light.color = dl.color;
-            lights_ubo.directional_light.intensity = dl.intensity;
-            lights_ubo.directional_light.direction = glm::normalize(glm::vec3(tc.get_transform() *
-              glm::vec4(0, -1, 0, 0)));
-            break;
-        }
-
-        auto point_light_group = m_registry.group<PointLightComponent>(entt::get<TransformComponent>);
-        for (auto entity : point_light_group) {
-            auto& pl = point_light_group.get<PointLightComponent>(entity);
-            auto& tc = point_light_group.get<TransformComponent>(entity);
-            if (!pl.enabled) continue;
-
-            if (lights_ubo.directional_light.point_light_count < 32) {
-                int index = lights_ubo.directional_light.point_light_count;
-                lights_ubo.point_lights[index].color = pl.color;
-                lights_ubo.point_lights[index].intensity = pl.intensity;
-                lights_ubo.point_lights[index].position = tc.translation;
-                lights_ubo.point_lights[index].range = pl.range;
-                lights_ubo.directional_light.point_light_count++;
-                // point_light_count belongs to directional_light to ensure structure
-                // is 16 byte aligned without wasting space for padding
-            } else {
-                HN_CORE_WARN("Maximum point light count (32) exceeded! Ignoring additional point light.");
+            auto group = m_registry.group<SpriteRendererComponent>(entt::get<TransformComponent>);
+            for (auto entity : group) {
+                auto sprite = group.get<SpriteRendererComponent>(entity);
+                Entity entity_ref = { entity, this };
+                Renderer2D::draw_sprite(entity_ref.get_world_transform(), sprite, (int)entt::to_integral(entity));
             }
+
+            auto cicle_group = m_registry.group<CircleRendererComponent>(entt::get<TransformComponent>);
+            for (auto entity : cicle_group) {
+                auto sprite = cicle_group.get<CircleRendererComponent>(entity);
+                Entity entity_ref = { entity, this };
+                Renderer2D::draw_circle_sprite(entity_ref.get_world_transform(), sprite, (int)entt::to_integral(entity));
+            }
+
+            auto line_group = m_registry.group<LineRendererComponent>(entt::get<TransformComponent>);
+            for (auto entity : line_group) {
+                auto sprite = line_group.get<LineRendererComponent>(entity);
+                Entity entity_ref = { entity, this };
+                Renderer2D::draw_line_sprite(entity_ref.get_world_transform(), sprite, (int)entt::to_integral(entity));
+            }
+
+            auto text_group = m_registry.group<TextRendererComponent>(entt::get<TransformComponent>);
+            for (auto entity : text_group) {
+                auto& trc = text_group.get<TextRendererComponent>(entity);
+                Entity entity_ref = { entity, this };
+                Renderer2D::draw_text(entity_ref.get_world_transform(), trc, (int)entt::to_integral(entity));
+            }
+
+            auto icon_group = m_registry.group<IconRendererComponent>(entt::get<TransformComponent>);
+            for (auto entity : icon_group) {
+                auto& irc = icon_group.get<IconRendererComponent>(entity);
+                Entity entity_ref = { entity, this };
+                Renderer2D::draw_icon(entity_ref.get_world_transform(), irc, (int)entt::to_integral(entity));
+            }
+
+            Renderer2D::end_scene();
         }
 
-        //TODO: Spot lights!
+        {
+            HN_PROFILE_SCOPE("Render3DScene");
+            // Gather and submit lights before draw
+            LightsUBO lights_ubo{};
 
+            auto directional_light_group = m_registry.group<DirectionalLightComponent>(entt::get<TransformComponent>);
+            for (auto entity : directional_light_group) {
+                auto& dl = directional_light_group.get<DirectionalLightComponent>(entity);
+                auto& tc = directional_light_group.get<TransformComponent>(entity);
+                if (!dl.enabled) continue;
 
-        Renderer3D::submit_lights(lights_ubo);
-        Renderer3D::begin_scene(view_proj, camera_pos);
+                lights_ubo.directional_light.color = dl.color;
+                lights_ubo.directional_light.intensity = dl.intensity;
+                lights_ubo.directional_light.direction = glm::normalize(glm::vec3(tc.get_transform() *
+                  glm::vec4(0, -1, 0, 0)));
+                break;
+            }
 
-        if (!parallel_mesh_submit_enabled) {
-            for (auto entity : m_registry.view<TransformComponent, MeshRendererComponent>()) {
-                auto& mr = m_registry.get<MeshRendererComponent>(entity);
+            auto point_light_group = m_registry.group<PointLightComponent>(entt::get<TransformComponent>);
+            for (auto entity : point_light_group) {
+                auto& pl = point_light_group.get<PointLightComponent>(entity);
+                auto& tc = point_light_group.get<TransformComponent>(entity);
+                if (!pl.enabled) continue;
 
-                if (!mr.mesh)
-                    continue;
-
-                const glm::mat4 world = Entity{ entity, this }.get_world_transform();
-
-                const auto& submeshes = mr.mesh->get_submeshes();
-                for (size_t i = 0; i < submeshes.size(); ++i) {
-                    const auto& sm = submeshes[i];
-
-                    Ref<Material> material = sm.material;
-
-                    // Optional: override material if present
-                    if (i < mr.material_overrides.size() && mr.material_overrides[i])
-                        material = mr.material_overrides[i];
-
-                    if (material)
-                        material->set_base_color_factor(mr.color);
-
-                    Renderer3D::submit_submesh(sm, material, world * sm.transform, (int)entity, mr.mesh.get());
+                if (lights_ubo.directional_light.point_light_count < 32) {
+                    int index = lights_ubo.directional_light.point_light_count;
+                    lights_ubo.point_lights[index].color = pl.color;
+                    lights_ubo.point_lights[index].intensity = pl.intensity;
+                    lights_ubo.point_lights[index].position = tc.translation;
+                    lights_ubo.point_lights[index].range = pl.range;
+                    lights_ubo.directional_light.point_light_count++;
+                    // point_light_count belongs to directional_light to ensure structure
+                    // is 16 byte aligned without wasting space for padding
+                } else {
+                    HN_CORE_WARN("Maximum point light count (32) exceeded! Ignoring additional point light.");
                 }
             }
-        } else {
-            HN_CORE_WARN("Parallel mesh submission is not yet implemented! No meshes will be drawn.");
-        }
 
-        Renderer3D::end_scene();
+            //TODO: Spot lights!
+
+
+            Renderer3D::submit_lights(lights_ubo);
+            Renderer3D::begin_scene(view_proj, camera_pos);
+
+            if (!parallel_mesh_submit_enabled) {
+                HN_PROFILE_SCOPE("Render3DScene::MeshSubmissionLoop"); // This loop is INCREDIBLY slow when application is built in debug mode
+                auto mesh_view = m_registry.view<TransformComponent, MeshRendererComponent>();
+
+                // Cache world transforms for this submission pass to avoid repeated
+                // recursive parent traversal in debug builds.
+                std::unordered_map<entt::entity, glm::mat4> world_transform_cache;
+                world_transform_cache.reserve(mesh_view.size_hint());
+
+                std::function<glm::mat4(entt::entity)> get_world_transform_cached = [&](entt::entity entity_handle) -> glm::mat4 {
+                    if (const auto it = world_transform_cache.find(entity_handle); it != world_transform_cache.end())
+                        return it->second;
+
+                    const auto* tc = m_registry.try_get<TransformComponent>(entity_handle);
+                    if (!tc)
+                        return glm::mat4(1.0f);
+
+                    glm::mat4 world = tc->get_transform();
+                    if (const auto* rel = m_registry.try_get<RelationshipComponent>(entity_handle);
+                        rel && rel->parent != entt::null && m_registry.valid(rel->parent)) {
+                        world = get_world_transform_cached(rel->parent) * world;
+                    }
+
+                    world_transform_cache.emplace(entity_handle, world);
+                    return world;
+                };
+
+                for (auto entity : mesh_view) {
+                    auto& mr = mesh_view.get<MeshRendererComponent>(entity);
+
+                    if (!mr.mesh)
+                        continue;
+
+                    const glm::mat4 world = get_world_transform_cached(entity);
+
+                    const auto& submeshes = mr.mesh->get_submeshes();
+                    const auto& overrides = mr.material_overrides;
+                    for (size_t i = 0; i < submeshes.size(); ++i) {
+                        const auto& sm = submeshes[i];
+
+                        Ref<Material> material = sm.material;
+
+                        // Optional: override material if present
+                        if (i < overrides.size() && overrides[i])
+                            material = overrides[i];
+
+                        if (material && material->get_base_color_factor() != mr.color)
+                            material->set_base_color_factor(mr.color);
+
+                        Renderer3D::submit_submesh(sm, material, world * sm.transform, (int)entity, mr.mesh.get());
+                    }
+                }
+            } else {
+                HN_CORE_WARN("Parallel mesh submission is not yet implemented! No meshes will be drawn.");
+            }
+
+            Renderer3D::end_scene();
+        }
 
         //glm::mat4 vp = ;
         m_cloth_system->on_render(m_registry, view_proj);

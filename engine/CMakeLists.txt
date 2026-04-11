@@ -429,6 +429,20 @@ target_compile_definitions(engine PUBLIC
 )
 
 # ------------------------------------------------------------------------------
+# Tracy profiler (optional)
+# ------------------------------------------------------------------------------
+option(HN_TRACY "Enable Tracy profiler instrumentation" OFF)
+if(HN_TRACY)
+    set(TRACY_ENABLE ON CACHE BOOL "" FORCE)
+    add_subdirectory(vendor/tracy)
+    target_link_libraries(engine PUBLIC TracyClient)
+    target_compile_definitions(engine PUBLIC TRACY_ENABLE HN_TRACY_ENABLED)
+    message(STATUS "Tracy profiler: ENABLED")
+else()
+    message(STATUS "Tracy profiler: disabled (pass -DHN_TRACY=ON to enable)")
+endif()
+
+# ------------------------------------------------------------------------------
 # Subprojects (needed early for include dirs / PCH correctness)
 # ------------------------------------------------------------------------------
 add_subdirectory(vendor/GLAD)

@@ -200,23 +200,17 @@ namespace Honey {
 
 } // namespace Honey
 
-#define HN_PROFILE 0
-#if HN_PROFILE
-#define HN_PROFILE_BEGIN_SESSION(name, filepath) ::Honey::Profiler::get().begin_session(name, filepath)
-#define HN_PROFILE_END_SESS3ION() ::Honey::Profiler::get().end_session()
-#define HN_PROFILE_SCOPE(name) ::Honey::ProfileTimer timer##__LINE__(name);
-#if defined(_MSC_VER)
-#define HN_FUNCTION_SIG __FUNCSIG__
-#elif defined(__clang__) || defined(__GNUC__)
-#define HN_FUNCTION_SIG __PRETTY_FUNCTION__
+#if defined(HN_TRACY_ENABLED)
+    #include <tracy/Tracy.hpp>
+    #define HN_PROFILE_BEGIN_SESSION(name, filepath)
+    #define HN_PROFILE_END_SESSION()
+    #define HN_PROFILE_SCOPE(name)   ZoneScoped; ZoneName(name, ::strlen(name))
+    #define HN_PROFILE_FUNCTION()    ZoneScoped
+    #define HN_FRAME_MARK()          FrameMark
 #else
-#define HN_FUNCTION_SIG __func__
-#endif
-
-#define HN_PROFILE_FUNCTION() HN_PROFILE_SCOPE(HN_FUNCTION_SIG)
-#else
-#define HN_PROFILE_BEGIN_SESSION(name, filepath)
-#define HN_PROFILE_END_SESSION()
-#define HN_PROFILE_SCOPE(name)
-#define HN_PROFILE_FUNCTION()
+    #define HN_PROFILE_BEGIN_SESSION(name, filepath)
+    #define HN_PROFILE_END_SESSION()
+    #define HN_PROFILE_SCOPE(name)
+    #define HN_PROFILE_FUNCTION()
+    #define HN_FRAME_MARK()
 #endif

@@ -149,7 +149,8 @@ namespace Honey {
             const std::filesystem::path& gltfDir,
             const GltfLoadOptions& options,
             std::unordered_map<int, Ref<Texture2D>>& textureCacheByImageIndex,
-            bool async = true
+            bool async = true,
+            std::mutex* p_tex_mutex = nullptr
         ) {
             HN_PROFILE_FUNCTION();
             Ref<Material> mat = Material::create();
@@ -195,10 +196,15 @@ namespace Honey {
                 return mat;
             }
 
-            auto it = textureCacheByImageIndex.find(gt.source);
-            if (it != textureCacheByImageIndex.end()) {
-                mat->set_base_color_texture(it->second);
-                return mat;
+            {
+                auto lk = p_tex_mutex
+                    ? std::unique_lock<std::mutex>(*p_tex_mutex)
+                    : std::unique_lock<std::mutex>();
+                auto it = textureCacheByImageIndex.find(gt.source);
+                if (it != textureCacheByImageIndex.end()) {
+                    mat->set_base_color_texture(it->second);
+                    return mat;
+                }
             }
 
             const tinygltf::Image& img = model.images[(size_t)gt.source];
@@ -246,7 +252,12 @@ namespace Honey {
                     tex = Texture2D::create((uint32_t)w, (uint32_t)h);
                     tex->set_data(rgba.data(), (uint32_t)rgba.size());
                 }
-                textureCacheByImageIndex[gt.source] = tex;
+                {
+                    auto lk = p_tex_mutex
+                        ? std::unique_lock<std::mutex>(*p_tex_mutex)
+                        : std::unique_lock<std::mutex>();
+                    textureCacheByImageIndex.emplace(gt.source, tex);
+                }
                 mat->set_base_color_texture(tex);
                 return mat;
             }
@@ -259,7 +270,12 @@ namespace Honey {
             else
                 tex = Texture2D::create(texPath.string());
 
-            textureCacheByImageIndex[gt.source] = tex;
+            {
+                auto lk = p_tex_mutex
+                    ? std::unique_lock<std::mutex>(*p_tex_mutex)
+                    : std::unique_lock<std::mutex>();
+                textureCacheByImageIndex.emplace(gt.source, tex);
+            }
             mat->set_base_color_texture(tex);
 
             return mat;
@@ -330,7 +346,8 @@ namespace Honey {
             const std::filesystem::path& gltfDir,
             const GltfLoadOptions& options,
             std::unordered_map<int, Ref<Texture2D>>& textureCacheByImageIndex,
-            bool async = true) {
+            bool async = true,
+            std::mutex* p_tex_mutex = nullptr) {
             HN_PROFILE_FUNCTION();
 
             ImportedPrimitiveData out{};
@@ -411,7 +428,8 @@ namespace Honey {
                 gltfDir,
                 options,
                 textureCacheByImageIndex,
-                async
+                async,
+                p_tex_mutex
             );
 
             out.vertices = std::move(vertices);
@@ -454,18 +472,27 @@ namespace Honey {
             const size_t vertex_stride = sizeof(VertexPNUV);
 
             // 1. Reorder indices for post-transform vertex cache efficiency
-            meshopt_optimizeVertexCache(
-                opt_indices.data(), opt_indices.data(), opt_indices.size(), opt_vertices.size());
+            {
+                HN_PROFILE_SCOPE("meshopt_optimizeVertexCache");
+                meshopt_optimizeVertexCache(
+                    opt_indices.data(), opt_indices.data(), opt_indices.size(), opt_vertices.size());
+            }
 
             // 2. Reorder indices to reduce pixel overdraw (threshold 1.05 = slight bias toward cache)
-            meshopt_optimizeOverdraw(
-                opt_indices.data(), opt_indices.data(), opt_indices.size(),
-                &opt_vertices[0].position.x, opt_vertices.size(), vertex_stride, 1.05f);
+            {
+                HN_PROFILE_SCOPE("meshopt_optimizeOverdraw");
+                meshopt_optimizeOverdraw(
+                    opt_indices.data(), opt_indices.data(), opt_indices.size(),
+                    &opt_vertices[0].position.x, opt_vertices.size(), vertex_stride, 1.05f);
+            }
 
             // 3. Reorder vertices to match index access order, minimizing vertex fetch overhead
-            meshopt_optimizeVertexFetch(
-                opt_vertices.data(), opt_indices.data(), opt_indices.size(),
-                opt_vertices.data(), opt_vertices.size(), vertex_stride);
+            {
+                HN_PROFILE_SCOPE("meshopt_optimizeVertexFetch");
+                meshopt_optimizeVertexFetch(
+                    opt_vertices.data(), opt_indices.data(), opt_indices.size(),
+                    opt_vertices.data(), opt_vertices.size(), vertex_stride);
+            }
 
             const float* positions = &opt_vertices[0].position.x;
 
@@ -476,19 +503,23 @@ namespace Honey {
             std::vector<uint32_t> meshlet_vertices(max_meshlets * kMaxVertices);
             std::vector<uint8_t> meshlet_triangles(max_meshlets * kMaxTriangles * 3);
 
-            const size_t meshlet_count = meshopt_buildMeshlets(
-                meshlets.data(),
-                meshlet_vertices.data(),
-                meshlet_triangles.data(),
-                opt_indices.data(),
-                opt_indices.size(),
-                positions,
-                opt_vertices.size(),
-                vertex_stride,
-                kMaxVertices,
-                kMaxTriangles,
-                kConeWeight
-            );
+            size_t meshlet_count;
+            {
+                HN_PROFILE_SCOPE("meshopt_buildMeshlets");
+                meshlet_count = meshopt_buildMeshlets(
+                    meshlets.data(),
+                    meshlet_vertices.data(),
+                    meshlet_triangles.data(),
+                    opt_indices.data(),
+                    opt_indices.size(),
+                    positions,
+                    opt_vertices.size(),
+                    vertex_stride,
+                    kMaxVertices,
+                    kMaxTriangles,
+                    kConeWeight
+                );
+            }
 
             if (meshlet_count == 0)
                 return std::nullopt;
@@ -574,8 +605,10 @@ namespace Honey {
             const GltfLoadOptions& options,
             std::unordered_map<int, Ref<Texture2D>>& textureCacheByImageIndex,
             bool async,
-            std::vector<PrimResult>& out_prims
+            std::vector<PrimResult>& out_prims,
+            std::mutex* p_tex_mutex = nullptr
         ) {
+            HN_PROFILE_FUNCTION();
             if (gltfMeshIndex < 0 || gltfMeshIndex >= (int)model.meshes.size())
                 return;
 
@@ -620,7 +653,7 @@ namespace Honey {
                 }
 
                 auto primDataOpt = extract_primitive_data(
-                    model, gm, prim, primIndex, gltfDir, options, textureCacheByImageIndex, async);
+                    model, gm, prim, primIndex, gltfDir, options, textureCacheByImageIndex, async, p_tex_mutex);
 
                 if (!primDataOpt)
                     continue;
@@ -676,6 +709,7 @@ namespace Honey {
             Ref<Mesh>& out,
             std::vector<PrimResult>& all_prims
         ) {
+            HN_PROFILE_FUNCTION();
             bool has_any_meshlets = false;
             for (const auto& pr : all_prims)
                 if (pr.meshlet_build) { has_any_meshlets = true; break; }
@@ -759,12 +793,13 @@ namespace Honey {
             const std::filesystem::path& gltfDir,
             const GltfLoadOptions& options,
             std::unordered_map<int, Ref<Texture2D>>& textureCacheByImageIndex,
-            bool async = true
+            bool async = true,
+            std::mutex* p_tex_mutex = nullptr
         ) {
             HN_PROFILE_FUNCTION();
             std::vector<PrimResult> prims;
             collect_prims_for_gltf_mesh(model, gltfMeshIndex, worldTransform,
-                gltfDir, options, textureCacheByImageIndex, async, prims);
+                gltfDir, options, textureCacheByImageIndex, async, prims, p_tex_mutex);
             finalize_meshlet_buffers(out, prims);
         }
 
@@ -780,6 +815,7 @@ namespace Honey {
             bool async,
             std::vector<PrimResult>& out_prims
         ) {
+            HN_PROFILE_FUNCTION();
             if (nodeIndex < 0 || nodeIndex >= (int)model.nodes.size())
                 return;
 
@@ -802,7 +838,8 @@ namespace Honey {
             const std::filesystem::path& gltf_dir,
             const GltfLoadOptions& options,
             std::unordered_map<int, Ref<Texture2D>>& tex_cache,
-            bool async = true) {
+            bool async = true,
+            std::mutex* p_tex_mutex = nullptr) {
 
             HN_PROFILE_FUNCTION();
 
@@ -814,17 +851,23 @@ namespace Honey {
 
             if (n.mesh >= 0) {
                 out.mesh = Mesh::create(out.name);
-
                 append_mesh_primitives_as_submeshes(
-                    out.mesh, model, n.mesh, glm::mat4(1.0f), // Transform will be handled by transform component
-                    gltf_dir, options, tex_cache, async);
-
+                    out.mesh, model, n.mesh, glm::mat4(1.0f),
+                    gltf_dir, options, tex_cache, async, p_tex_mutex);
                 if (out.mesh->empty())
                     out.mesh = nullptr;
             }
 
-            for (int child_index : n.children) {
-                out.children.push_back(build_gltf_node(model, child_index, gltf_dir, options, tex_cache, async));
+            if (!n.children.empty()) {
+                out.children.resize(n.children.size());
+                auto handle = TaskSystem::parallel_for(
+                    0, (uint32_t)n.children.size(),
+                    [&](uint32_t i) {
+                        out.children[i] = build_gltf_node(
+                            model, n.children[i], gltf_dir, options,
+                            tex_cache, async, p_tex_mutex);
+                    }, 1);
+                TaskSystem::wait(handle);
             }
 
             return out;
@@ -843,12 +886,21 @@ namespace Honey {
         tinygltf::Model model;
         tinygltf::TinyGLTF loader;
 
+        // Store raw compressed bytes during parse; we decode in parallel below.
+        loader.SetImageLoader(
+            [](tinygltf::Image* img, const int, std::string*, std::string*,
+               int, int, const unsigned char* bytes, int size, void*) -> bool {
+                img->image.assign(bytes, bytes + size);
+                img->as_is = true;
+                return true;
+            }, nullptr);
+
         std::string err;
         std::string warn;
 
         bool ok = false;
         {
-            HN_PROFILE_SCOPE("load_gltf_mesh::loader.LoadBinaryFromFile");
+            HN_PROFILE_SCOPE("load_gltf_mesh::tinygltf_parse");
             const std::string p = path.string();
             if (has_ext(path, ".glb")) {
                 ok = loader.LoadBinaryFromFile(&model, &err, &warn, p);
@@ -864,6 +916,29 @@ namespace Honey {
         if (!ok) {
             HN_CORE_ERROR("Failed to load glTF: {}", path.string());
             return nullptr;
+        }
+
+        // Decode all images in parallel (tinygltf stored raw bytes above)
+        if (!model.images.empty()) {
+            HN_PROFILE_SCOPE("load_gltf_mesh::parallel_image_decode");
+            auto img_handle = TaskSystem::parallel_for(
+                0, (uint32_t)model.images.size(),
+                [&](uint32_t i) {
+                    auto& img = model.images[i];
+                    if (!img.as_is || img.image.empty()) return;
+                    int w = 0, h = 0, comp = 0;
+                    unsigned char* px = stbi_load_from_memory(
+                        img.image.data(), (int)img.image.size(), &w, &h, &comp, 0);
+                    if (!px) return;
+                    img.width     = w;
+                    img.height    = h;
+                    img.component = comp;
+                    img.bits      = 8;
+                    img.image.assign(px, px + (size_t)w * h * comp);
+                    img.as_is     = false;
+                    stbi_image_free(px);
+                }, 1);
+            TaskSystem::wait(img_handle);
         }
 
         Ref<Mesh> out = Mesh::create(path.filename().string());
@@ -957,12 +1032,21 @@ namespace Honey {
         tinygltf::Model model;
         tinygltf::TinyGLTF loader;
 
+        // Store raw compressed bytes during parse; decode in parallel below.
+        loader.SetImageLoader(
+            [](tinygltf::Image* img, const int, std::string*, std::string*,
+               int, int, const unsigned char* bytes, int size, void*) -> bool {
+                img->image.assign(bytes, bytes + size);
+                img->as_is = true;
+                return true;
+            }, nullptr);
+
         std::string err;
         std::string warn;
 
         bool ok = false;
         {
-            HN_PROFILE_SCOPE("load_gltf_scene_tree::loader.LoadBinaryFromFile");
+            HN_PROFILE_SCOPE("load_gltf_scene_tree::tinygltf_parse");
             const std::string p = path.string();
             if (has_ext(path, ".glb")) {
                 ok = loader.LoadBinaryFromFile(&model, &err, &warn, p);
@@ -980,18 +1064,43 @@ namespace Honey {
             return {};
         }
 
+        // Decode all images in parallel (tinygltf stored raw bytes above)
+        if (!model.images.empty()) {
+            HN_PROFILE_SCOPE("load_gltf_scene_tree::parallel_image_decode");
+            auto img_handle = TaskSystem::parallel_for(
+                0, (uint32_t)model.images.size(),
+                [&](uint32_t i) {
+                    auto& img = model.images[i];
+                    if (!img.as_is || img.image.empty()) return;
+                    int w = 0, h = 0, comp = 0;
+                    unsigned char* px = stbi_load_from_memory(
+                        img.image.data(), (int)img.image.size(), &w, &h, &comp, 0);
+                    if (!px) return;
+                    img.width     = w;
+                    img.height    = h;
+                    img.component = comp;
+                    img.bits      = 8;
+                    img.image.assign(px, px + (size_t)w * h * comp);
+                    img.as_is     = false;
+                    stbi_image_free(px);
+                }, 1);
+            TaskSystem::wait(img_handle);
+        }
+
         int scene_index = model.defaultScene;
         if (scene_index < 0 || scene_index >= (int)model.scenes.size()) {
             scene_index = model.scenes.empty() ? -1 : 0;
         }
 
         std::unordered_map<int, Ref<Texture2D>> tex_cache;
+        std::mutex tex_mutex;
 
         if (scene_index >= 0) {
             const tinygltf::Scene& scene = model.scenes[(size_t)scene_index];
 
+            HN_PROFILE_SCOPE("load_gltf_scene_tree::build_node_tree");
             for (int root_node : scene.nodes) {
-                out.roots.push_back(build_gltf_node(model, root_node, path.parent_path(), options, tex_cache));
+                out.roots.push_back(build_gltf_node(model, root_node, path.parent_path(), options, tex_cache, true, &tex_mutex));
             }
         } else {
             // No scenes — emit all meshes as root nodes

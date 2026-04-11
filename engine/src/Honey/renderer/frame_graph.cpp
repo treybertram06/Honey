@@ -248,6 +248,8 @@ namespace Honey {
     }
 
     void FrameGraphCompiled::execute(const FGExecutionContext& execution_context) {
+        HN_PROFILE_FUNCTION();
+
         if (!valid()) {
             HN_CORE_WARN("FrameGraphCompiled::execute called with invalid graph");
             return;

@@ -206,6 +206,7 @@ namespace Honey {
             }
 
             m_window->on_update();
+            HN_FRAME_MARK();
         }
     }
 

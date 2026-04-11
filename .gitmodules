@@ -57,3 +57,6 @@
 [submodule "engine/vendor/enkiTS"]
 	path = engine/vendor/enkiTS
 	url = https://github.com/dougbinks/enkiTS.git
+[submodule "engine/vendor/tracy"]
+	path = engine/vendor/tracy
+	url = https://github.com/treybertram06/tracy.git

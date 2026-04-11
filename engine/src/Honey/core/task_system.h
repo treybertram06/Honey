@@ -57,8 +57,8 @@ namespace Honey {
             uint32_t    begin;
             uint32_t    end;
 
-            LambdaTaskSet(Func&& f, uint32_t b, uint32_t e)
-                : func(std::forward<Func>(f)), begin(b), end(e) {}
+            LambdaTaskSet(Func&& f, uint32_t b, uint32_t e, uint32_t setSize)
+                : enki::ITaskSet(setSize), func(std::forward<Func>(f)), begin(b), end(e) {}
 
             void ExecuteRange(enki::TaskSetPartition range, uint32_t) override {
                 // enkiTS gives us [start, end) in the same index space
@@ -78,9 +78,9 @@ namespace Honey {
         const uint32_t partitions = desiredPartitions > 0 ? desiredPartitions : 1u;
 
         // Allocate on the heap; TaskSystem::wait() will delete it.
-        auto* task = new LambdaTaskSet(std::forward<Func>(func), begin, end);
+        auto* task = new LambdaTaskSet(std::forward<Func>(func), begin, end, partitions);
 
-        s_scheduler.AddTaskSetToPipe(task, partitions);
+        s_scheduler.AddTaskSetToPipe(task);
         return TaskHandle{ task };
     }
 
