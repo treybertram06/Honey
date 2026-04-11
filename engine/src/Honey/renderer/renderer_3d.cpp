@@ -24,7 +24,7 @@ namespace Honey {
     };
 
     struct Renderer3DData {
-        static constexpr uint32_t max_textures  = 32;   // keep in sync with shader
+        static constexpr uint32_t max_textures  = 1024;  // keep in sync with VulkanRendererAPI::k_max_texture_slots
 
         GeometryPath                    geometry_path = GeometryPath::Meshlet;
         std::vector<MeshletDrawCommand> meshlet_draws;
@@ -303,84 +303,65 @@ namespace Honey {
         struct MaterialPC { int32_t material_index; int32_t _pad[3]; };
         static_assert(sizeof(MaterialPC) <= 128, "MaterialPC too large");
 
-        uint32_t chunk_begin = 0;
-        uint32_t global_mat_offset = 0;
-        while (chunk_begin < (uint32_t)ordered_batches.size()) {
+        // Build global texture table for all batches (bindless — up to k_max_texture_slots)
+        std::unordered_map<Texture2D*, uint32_t> tex_slot_map;
+        tex_slot_map[s_data->white_texture.get()] = 0;
+        uint32_t tex_slot_count = 1;
 
-            std::unordered_map<Texture2D*, uint32_t> chunk_slot_map;
-            chunk_slot_map[s_data->white_texture.get()] = 0;
-            uint32_t chunk_slot_count = 1;
+        std::vector<GPUMaterial> all_materials;
+        all_materials.reserve(ordered_batches.size());
 
-            uint32_t chunk_end = chunk_begin;
-            while (chunk_end < (uint32_t)ordered_batches.size()) {
-                auto* mat = ordered_batches[chunk_end].batch->material.get();
-                Texture2D* tex = (mat && mat->get_base_color_texture())
-                    ? mat->get_base_color_texture().get()
-                    : s_data->white_texture.get();
+        for (uint32_t i = 0; i < (uint32_t)ordered_batches.size(); i++) {
+            auto* mat = ordered_batches[i].batch->material.get();
+            Texture2D* tex = (mat && mat->get_base_color_texture())
+                             ? mat->get_base_color_texture().get()
+                             : s_data->white_texture.get();
 
-                bool already_known = chunk_slot_map.count(tex) > 0;
-                bool fits = already_known || (chunk_slot_count < s_data->max_texture_slots);
-
-                if (!fits) break;
-
-                if (!already_known)
-                    chunk_slot_map[tex] = chunk_slot_count++;
-
-                chunk_end++;
+            if (!tex_slot_map.count(tex)) {
+                if (tex_slot_count < s_data->max_texture_slots)
+                    tex_slot_map[tex] = tex_slot_count++;
+                else
+                    tex_slot_map[tex] = 0; // hard cap (>1024 unique textures) — fall back to white
             }
 
-            // Build flat texture array
-            std::array<void*, VulkanRendererAPI::k_max_texture_slots> chunk_tex_array{};
-            chunk_tex_array[0] = s_data->white_texture.get();
-            for (auto& [tex_ptr, slot] : chunk_slot_map)
-                chunk_tex_array[slot] = tex_ptr;
+            GPUMaterial gpu_mat{};
+            gpu_mat.base_color        = mat ? mat->get_base_color_factor()  : glm::vec4(1.0f);
+            gpu_mat.base_color_tex_id = (int32_t)tex_slot_map.at(tex);
+            gpu_mat.metallic          = mat ? mat->get_metallic_factor()    : 0.0f;
+            gpu_mat.roughness         = mat ? mat->get_roughness_factor()   : 0.5f;
+            all_materials.push_back(gpu_mat);
+        }
 
-            // Build materials for this chunk
-            std::vector<GPUMaterial> all_materials;
-            all_materials.reserve(ordered_batches.size());
+        // Build flat texture array and submit globals once for the whole frame
+        std::array<void*, VulkanRendererAPI::k_max_texture_slots> tex_array{};
+        tex_array[0] = s_data->white_texture.get();
+        for (auto& [tex_ptr, slot] : tex_slot_map)
+            tex_array[slot] = tex_ptr;
 
-            for (uint32_t i = chunk_begin; i < chunk_end; i++) {
-                auto* mat = ordered_batches[i].batch->material.get();
-                Texture2D* tex = (mat && mat->get_base_color_texture())
-                                 ? mat->get_base_color_texture().get()
-                                 : s_data->white_texture.get();
+        VulkanRendererAPI::submit_camera(saved_camera);
+        VulkanRendererAPI::submit_bound_textures(tex_array, tex_slot_count);
+        VulkanRendererAPI::submit_materials(all_materials, 0);
+        VulkanRendererAPI::flush_globals();
 
-                GPUMaterial gpu_mat{};
-                gpu_mat.base_color        = mat ? mat->get_base_color_factor()  : glm::vec4(1.0f);
-                gpu_mat.base_color_tex_id = (int32_t)chunk_slot_map.at(tex);
-                gpu_mat.metallic          = mat ? mat->get_metallic_factor()    : 0.0f;
-                gpu_mat.roughness         = mat ? mat->get_roughness_factor()   : 0.5f;
-                all_materials.push_back(gpu_mat);
-            }
+        // Emit one draw call per batch
+        for (uint32_t i = 0; i < (uint32_t)ordered_batches.size(); i++) {
+            const int32_t material_index = (int32_t)i;
+            const uint32_t byte_offset = ordered_batches[i].start_index * (uint32_t)sizeof(InstanceData);
 
-            // Submit globals for this chunk
-            VulkanRendererAPI::submit_camera(saved_camera);
-            VulkanRendererAPI::submit_bound_textures(chunk_tex_array, chunk_slot_count);
-            VulkanRendererAPI::submit_materials(all_materials, global_mat_offset);
-            VulkanRendererAPI::flush_globals();
+            HN_CORE_ASSERT((byte_offset % 4u) == 0u, "Renderer3D: instance byte offset must be 4-byte aligned");
 
-            // Emit draws for this chunk
-            for (uint32_t i = chunk_begin; i < chunk_end; i++) {
-                const int32_t material_index = (int32_t)(global_mat_offset + (i - chunk_begin));
-                const uint32_t byte_offset = ordered_batches[i].start_index * (uint32_t)sizeof(InstanceData);
+            MaterialPC pc{material_index};
+            VulkanRendererAPI::submit_push_constants(&pc, sizeof(MaterialPC));
 
-                HN_CORE_ASSERT((byte_offset % 4u) == 0u, "Renderer3D: instance byte offset must be 4-byte aligned");
+            VulkanRendererAPI::submit_instanced_draw(
+                ordered_batches[i].batch->va,
+                s_data->instance_vb,
+                0,
+                (uint32_t)ordered_batches[i].batch->transforms.size(),
+                byte_offset
+            );
 
-                MaterialPC pc{material_index};
-                VulkanRendererAPI::submit_push_constants(&pc, sizeof(MaterialPC));
-
-                VulkanRendererAPI::submit_instanced_draw(
-                    ordered_batches[i].batch->va,
-                    s_data->instance_vb,
-                    0,
-                    (uint32_t)ordered_batches[i].batch->transforms.size(),
-                    byte_offset
-                );
-
-                s_data->stats.draw_calls++;
-            }
-            global_mat_offset += (uint32_t)(chunk_end - chunk_begin);
-            chunk_begin = chunk_end;
+            s_data->stats.draw_calls++;
         }
     }
 
@@ -436,7 +417,7 @@ namespace Honey {
                 if (tex_slot_count < s_data->max_texture_slots)
                     tex_slot_map[tex] = tex_slot_count++;
                 else
-                    tex_slot_map[tex] = 0;
+                    tex_slot_map[tex] = 0; // hard cap (>1024 unique textures) — fall back to white
             }
 
             GPUMaterial gpu_mat{};

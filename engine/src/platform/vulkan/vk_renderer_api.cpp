@@ -344,14 +344,13 @@ namespace Honey {
         HN_CORE_ASSERT(textures[0],
                        "VulkanRendererAPI::submit_bound_textures requires textures[0] to be a valid fallback (e.g. white texture)");
 
-        std::array<void*, k_max_texture_slots> sanitized{};
         void* fallback = textures[0];
 
+        p.textures.resize(texture_count);
         for (uint32_t i = 0; i < texture_count; ++i) {
-            sanitized[i] = textures[i] ? textures[i] : fallback;
+            p.textures[i] = textures[i] ? textures[i] : fallback;
         }
 
-        p.textures = sanitized;
         p.textureCount = texture_count;
         p.hasTextures = true;
     }
@@ -384,11 +383,12 @@ namespace Honey {
         if (!p.hasTextures)
             return false;
 
-        out_textures = p.textures;
         out_texture_count = p.textureCount;
+        for (uint32_t i = 0; i < p.textureCount; ++i)
+            out_textures[i] = p.textures[i];
 
         p.hasTextures = false;
-        p.textures = {};
+        p.textures.clear();
         p.textureCount = 0;
         return true;
     }
