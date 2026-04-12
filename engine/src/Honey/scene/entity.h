@@ -112,7 +112,7 @@ namespace Honey {
         bool has_children() const;
 
         // Transform hierarchy
-        glm::mat4 get_world_transform() const;
+        glm::mat4 get_world_transform();
         void set_world_transform(const glm::mat4& world_transform);
 
         bool is_ancestor_of(Entity other) const;

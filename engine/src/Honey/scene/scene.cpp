@@ -1,4 +1,5 @@
 #include "hnpch.h"
+#include <queue>
 #include "scene.h"
 #include "components.h"
 #include "scriptable_entity.h"
@@ -56,6 +57,12 @@ namespace Honey {
     Scene::~Scene() {
         if (b2World_IsValid(m_world))
             b2DestroyWorld(m_world);
+
+        // Prevent a dangling s_active_scene pointer. The frame graph's cloth
+        // passes read s_active_scene before on_update_editor runs (and thus
+        // before it's refreshed), so destroying the scene must clear it.
+        if (s_active_scene == this)
+            s_active_scene = nullptr;
     }
 
     Entity Scene::create_entity(const std::string &name) {
@@ -272,6 +279,8 @@ namespace Honey {
             on_update_physics_2d(ts);
         }
 
+        update_world_transforms();
+
         Entity primary_camera_entity = get_primary_camera();
         if (primary_camera_entity.is_valid()) {
             auto& cc = primary_camera_entity.get_component<CameraComponent>();
@@ -291,6 +300,8 @@ namespace Honey {
 
         s_active_scene = this;
 
+        update_world_transforms();
+
         update_streamed_assets();
 
         on_update_render(camera.get_view_projection_matrix(), camera.get_position());
@@ -305,6 +316,7 @@ namespace Honey {
             on_update_physics_2d(ts);
         }
 
+        update_world_transforms();
         on_update_render(camera.get_view_projection_matrix(), camera.get_position());
     }
 
@@ -795,6 +807,7 @@ namespace Honey {
                         tc.scale
                     );
                 }
+                tc.dirty = true;
             }
         }
     }
@@ -894,36 +907,13 @@ namespace Honey {
                 HN_PROFILE_SCOPE("Render3DScene::MeshSubmissionLoop"); // This loop is INCREDIBLY slow when application is built in debug mode
                 auto mesh_view = m_registry.view<TransformComponent, MeshRendererComponent>();
 
-                // Cache world transforms for this submission pass to avoid repeated
-                // recursive parent traversal in debug builds.
-                std::unordered_map<entt::entity, glm::mat4> world_transform_cache;
-                world_transform_cache.reserve(mesh_view.size_hint());
-
-                std::function<glm::mat4(entt::entity)> get_world_transform_cached = [&](entt::entity entity_handle) -> glm::mat4 {
-                    if (const auto it = world_transform_cache.find(entity_handle); it != world_transform_cache.end())
-                        return it->second;
-
-                    const auto* tc = m_registry.try_get<TransformComponent>(entity_handle);
-                    if (!tc)
-                        return glm::mat4(1.0f);
-
-                    glm::mat4 world = tc->get_transform();
-                    if (const auto* rel = m_registry.try_get<RelationshipComponent>(entity_handle);
-                        rel && rel->parent != entt::null && m_registry.valid(rel->parent)) {
-                        world = get_world_transform_cached(rel->parent) * world;
-                    }
-
-                    world_transform_cache.emplace(entity_handle, world);
-                    return world;
-                };
-
                 for (auto entity : mesh_view) {
                     auto& mr = mesh_view.get<MeshRendererComponent>(entity);
 
                     if (!mr.mesh)
                         continue;
 
-                    const glm::mat4 world = get_world_transform_cached(entity);
+                    const glm::mat4& world = mesh_view.get<TransformComponent>(entity).world;
 
                     const auto& submeshes = mr.mesh->get_submeshes();
                     const auto& overrides = mr.material_overrides;
@@ -951,6 +941,80 @@ namespace Honey {
 
         //glm::mat4 vp = ;
         m_cloth_system->on_render(m_registry, view_proj);
+    }
+
+    void Scene::rebuild_transform_order() {
+        HN_PROFILE_FUNCTION();
+        m_transform_order.clear();
+
+        auto all = m_registry.view<TransformComponent>();
+        m_transform_order.reserve(all.size());
+
+        // BFS from all roots so parents always precede their children.
+        std::queue<entt::entity> queue;
+        for (auto entity : all) {
+            bool is_root = true;
+            if (m_registry.all_of<RelationshipComponent>(entity)) {
+                const auto& rel = m_registry.get<RelationshipComponent>(entity);
+                if (rel.parent != entt::null && m_registry.valid(rel.parent))
+                    is_root = false;
+            }
+            if (is_root)
+                queue.push(entity);
+        }
+
+        while (!queue.empty()) {
+            entt::entity e = queue.front(); queue.pop();
+            m_transform_order.push_back(e);
+
+            if (m_registry.all_of<RelationshipComponent>(e)) {
+                const auto& rel = m_registry.get<RelationshipComponent>(e);
+                for (auto child : rel.children) {
+                    if (m_registry.valid(child) && m_registry.all_of<TransformComponent>(child))
+                        queue.push(child);
+                }
+            }
+        }
+    }
+
+    void Scene::update_world_transforms() {
+        HN_PROFILE_FUNCTION();
+
+        // Rebuild the sorted order only when the hierarchy changes.
+        if (m_transform_order_version != m_change_version) {
+            rebuild_transform_order();
+            m_transform_order_version = m_change_version;
+        }
+
+        // Single linear pass — parents are always processed before children.
+        // world_dirty is propagated downward: if a parent's world changed,
+        // all children must recompute even if their local transform is clean.
+        for (entt::entity entity : m_transform_order) {
+            if (!m_registry.valid(entity))
+                continue;
+
+            auto& tc = m_registry.get<TransformComponent>(entity);
+
+            bool   parent_world_dirty = false;
+            glm::mat4 parent_world(1.0f);
+
+            if (m_registry.all_of<RelationshipComponent>(entity)) {
+                const auto& rel = m_registry.get<RelationshipComponent>(entity);
+                if (rel.parent != entt::null && m_registry.valid(rel.parent)
+                    && m_registry.all_of<TransformComponent>(rel.parent)) {
+                    const auto& ptc = m_registry.get<TransformComponent>(rel.parent);
+                    parent_world       = ptc.world;
+                    parent_world_dirty = ptc.world_dirty;
+                }
+            }
+
+            if (tc.dirty || parent_world_dirty) {
+                tc.world       = parent_world * tc.get_transform(); // clears tc.dirty
+                tc.world_dirty = true;
+            } else {
+                tc.world_dirty = false;
+            }
+        }
     }
 
     void Scene::update_streamed_assets() {

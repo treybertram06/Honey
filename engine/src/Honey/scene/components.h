@@ -46,20 +46,29 @@ namespace Honey {
         glm::vec3 rotation = {0.0f, 0.0f, 0.0f};
         glm::vec3 scale = {1.0f, 1.0f, 1.0f};
 
-        bool dirty = false;
-        bool collider_dirty = false;
+        // For caching
+        glm::mat4 local = glm::mat4(1.0f);
+        glm::mat4 world = glm::mat4(1.0f);
+
+        bool dirty = true;
+        bool world_dirty = true;
+        bool collider_dirty = true;
 
         TransformComponent() = default;
         TransformComponent(const TransformComponent&) = default;
         TransformComponent(const glm::vec3& translation)
             : translation(translation) {}
 
-        glm::mat4 get_transform() const {
-            glm::mat4 rotation_matrix = glm::toMat4(glm::quat(rotation));
+        glm::mat4 get_transform() {
+            if (dirty) {
+                glm::mat4 rotation_matrix = glm::toMat4(glm::quat(rotation));
 
-            return glm::translate(glm::mat4(1.0f), translation)
-            * rotation_matrix
-            * glm::scale(glm::mat4(1.0f), scale);
+                local = glm::translate(glm::mat4(1.0f), translation)
+                * rotation_matrix
+                * glm::scale(glm::mat4(1.0f), scale);
+                dirty = false;
+            }
+            return local;
         }
     };
 

@@ -94,12 +94,20 @@ namespace Honey {
         void on_update_audio(Timestep ts);
         void on_update_physics_2d(Timestep ts);
         void on_update_render(const glm::mat4& view_proj, const glm::vec3& camera_pos);
+        void update_world_transforms();
 
         void update_streamed_assets();
+        void rebuild_transform_order();
 
         static Scene* s_active_scene;
         entt::registry m_registry;
         std::unordered_map<std::string, SceneValue> m_scene_state;
+
+        // Flat BFS-sorted list of all entities with TransformComponent.
+        // Parents are always before their children, so world transforms
+        // can be computed in one linear pass without recursion.
+        std::vector<entt::entity> m_transform_order;
+        uint64_t m_transform_order_version = UINT64_MAX;
 
         b2WorldId m_world = b2_nullWorldId;
         std::unique_ptr<ClothSystem> m_cloth_system;

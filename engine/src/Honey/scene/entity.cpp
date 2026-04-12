@@ -135,6 +135,8 @@ namespace Honey {
             // Null parent
             rel.parent = entt::null;
         }
+        m_scene->mark_dirty(); // invalidate the transform sort order cache
+
         if (!recompute_world_transform) return;
 
         // Recompute local transform so that world stays the same
@@ -161,6 +163,8 @@ namespace Honey {
             erase_child_handle(parentRel, m_entity_handle);
         }
         rel.parent = entt::null;
+
+        m_scene->mark_dirty(); // invalidate the transform sort order cache
 
         // Apply world as new local (since no parent)
         set_world_transform(world_before);
@@ -233,7 +237,7 @@ namespace Honey {
 
     // --- Transform hierarchy ------------------------------------------------------
 
-    glm::mat4 Entity::get_world_transform() const {
+    glm::mat4 Entity::get_world_transform() {
         HN_CORE_ASSERT(is_valid(), "get_world_transform() on invalid entity");
 
         if (!has_component<TransformComponent>()) {
@@ -241,7 +245,7 @@ namespace Honey {
             return glm::mat4(1.0f);
         }
 
-        const auto& tc = get_component<TransformComponent>();
+        auto& tc = get_component<TransformComponent>();
         glm::mat4 local = tc.get_transform();
 
         if (!has_parent())
@@ -269,6 +273,7 @@ namespace Honey {
         tc.translation = T;
         tc.rotation    = R_euler; // radians
         tc.scale       = S;
+        tc.dirty       = true;
     }
 
     bool Entity::is_ancestor_of(Entity other) const {
