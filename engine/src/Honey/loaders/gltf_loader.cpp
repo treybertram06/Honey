@@ -3,7 +3,9 @@
 #include "gltf_scene_tree.h"
 
 #include "Honey/core/log.h"
+#include "Honey/core/engine.h"
 #include "Honey/renderer/buffer.h"
+#include "Honey/renderer/renderer.h"
 #include "Honey/renderer/texture.h"
 #include "Honey/renderer/vertex_array.h"
 
@@ -237,17 +239,24 @@ namespace Honey {
 
                 Ref<Texture2D> tex;
                 if (async) {
-                    // Create a white 1x1 placeholder immediately; defer GPU upload to main thread.
+                    // Create a white 1x1 placeholder immediately; defer the real GPU upload
+                    // to the renderer-owned upload path so the editor thread stays responsive.
                     tex = Texture2D::create(1, 1);
                     uint32_t white = 0xFFFFFFFFu;
                     tex->set_data(&white, sizeof(white));
 
                     auto pixels = std::make_shared<std::vector<uint8_t>>(std::move(rgba));
                     const uint32_t tw = (uint32_t)w, th = (uint32_t)h;
-                    TaskSystem::enqueue_main([tex, pixels, tw, th]() {
+                    auto upload = [tex, pixels, tw, th]() {
                         tex->resize(tw, th);
                         tex->set_data_streaming(pixels->data(), tw * th * 4);
-                    });
+                    };
+
+                    if (Renderer::get_api() == RendererAPI::API::vulkan) {
+                        Application::get().get_vulkan_backend().enqueue_upload_job(std::move(upload));
+                    } else {
+                        TaskSystem::enqueue_main(std::move(upload));
+                    }
                 } else {
                     tex = Texture2D::create((uint32_t)w, (uint32_t)h);
                     tex->set_data(rgba.data(), (uint32_t)rgba.size());
@@ -332,6 +341,257 @@ namespace Honey {
 
             return glm::translate(glm::mat4(1.0f), t) * glm::toMat4(r) * glm::scale(glm::mat4(1.0f), s);
         }
+
+        static bool parse_gltf_model(const std::filesystem::path& path, tinygltf::Model& out_model) {
+            HN_PROFILE_FUNCTION();
+            if (!std::filesystem::exists(path)) {
+                HN_CORE_ERROR("glTF: file does not exist: {}", path.string());
+                return false;
+            }
+
+            tinygltf::TinyGLTF loader;
+
+            // Store raw compressed bytes during parse; decode in parallel below.
+            loader.SetImageLoader(
+                [](tinygltf::Image* img, const int, std::string*, std::string*,
+                   int, int, const unsigned char* bytes, int size, void*) -> bool {
+                    img->image.assign(bytes, bytes + size);
+                    img->as_is = true;
+                    return true;
+                }, nullptr);
+
+            std::string err;
+            std::string warn;
+
+            bool ok = false;
+            {
+                HN_PROFILE_SCOPE("parse_gltf_model::tinygltf_parse");
+                const std::string p = path.string();
+                if (has_ext(path, ".glb")) {
+                    ok = loader.LoadBinaryFromFile(&out_model, &err, &warn, p);
+                } else {
+                    ok = loader.LoadASCIIFromFile(&out_model, &err, &warn, p);
+                }
+            }
+
+            if (!warn.empty())
+                HN_CORE_WARN("glTF warn: {}", warn);
+            if (!err.empty())
+                HN_CORE_ERROR("glTF err: {}", err);
+            if (!ok) {
+                HN_CORE_ERROR("Failed to load glTF: {}", path.string());
+                return false;
+            }
+
+            if (!out_model.images.empty()) {
+                HN_PROFILE_SCOPE("parse_gltf_model::parallel_image_decode");
+                auto img_handle = TaskSystem::parallel_for(
+                    0, (uint32_t)out_model.images.size(),
+                    [&](uint32_t i) {
+                        auto& img = out_model.images[i];
+                        if (!img.as_is || img.image.empty()) return;
+                        int w = 0, h = 0, comp = 0;
+                        unsigned char* px = stbi_load_from_memory(
+                            img.image.data(), (int)img.image.size(), &w, &h, &comp, 0);
+                        if (!px) return;
+                        img.width     = w;
+                        img.height    = h;
+                        img.component = comp;
+                        img.bits      = 8;
+                        img.image.assign(px, px + (size_t)w * h * comp);
+                        img.as_is     = false;
+                        stbi_image_free(px);
+                    }, 1);
+                TaskSystem::wait(img_handle);
+            }
+
+            return true;
+        }
+
+        struct PendingMaterialPayload {
+            glm::vec4 base_color_factor{1.0f};
+            float metallic_factor = 1.0f;
+            float roughness_factor = 1.0f;
+            int texture_source = -1;
+            std::shared_ptr<DecodedImageRGBA8> base_color_texture{};
+        };
+
+        struct PendingSubmeshPayload {
+            PendingMaterialPayload material{};
+            std::string name;
+            glm::mat4 transform{1.0f};
+            std::vector<VertexPNUV> vertices;
+            std::vector<uint32_t> indices;
+            std::optional<MeshletGeometry> meshlets;
+        };
+
+        struct PendingMeshletBuffersPayload {
+            std::vector<float> vertices;
+            std::vector<meshopt_Meshlet> meshlets;
+            std::vector<uint32_t> meshlet_vertices;
+            std::vector<uint8_t> meshlet_triangles;
+            std::vector<MeshletBounds> bounds;
+        };
+
+        struct PendingMeshPayload {
+            std::string name;
+            std::vector<PendingSubmeshPayload> submeshes;
+            std::optional<PendingMeshletBuffersPayload> meshlet_buffers;
+        };
+
+        struct PendingSceneMeshJob {
+            uint32_t node_index = 0;
+            int gltf_mesh_index = -1;
+            std::string mesh_name;
+        };
+
+        struct PendingSceneNode {
+            std::string name;
+            glm::mat4 local_transform{1.0f};
+            std::vector<uint32_t> children;
+            int mesh_job_index = -1;
+        };
+
+        struct PendingSceneTreePayload {
+            std::string name;
+            std::vector<PendingSceneNode> nodes;
+            std::vector<uint32_t> roots;
+            std::vector<std::optional<PendingMeshPayload>> mesh_payloads;
+        };
+
+        static std::shared_ptr<DecodedImageRGBA8> decode_gltf_image_rgba8(const tinygltf::Image& img,
+                                                                          const std::filesystem::path& gltfDir) {
+            HN_PROFILE_FUNCTION();
+
+            auto decoded = std::make_shared<DecodedImageRGBA8>();
+
+            if (!img.image.empty() && img.width > 0 && img.height > 0) {
+                const int w = img.width;
+                const int h = img.height;
+                const int comp = img.component;
+                const int bits = img.bits > 0 ? img.bits : 8;
+                if (bits != 8 || comp <= 0) {
+                    decoded->error = "unsupported embedded image format";
+                    return decoded;
+                }
+
+                decoded->width = static_cast<uint32_t>(w);
+                decoded->height = static_cast<uint32_t>(h);
+                decoded->pixels.resize(static_cast<size_t>(w) * static_cast<size_t>(h) * 4);
+                for (int i = 0; i < w * h; ++i) {
+                    const uint8_t* src = img.image.data() + i * comp;
+                    decoded->pixels[i * 4 + 0] = comp >= 1 ? src[0] : 0;
+                    decoded->pixels[i * 4 + 1] = comp >= 2 ? src[1] : (comp == 1 ? src[0] : 0);
+                    decoded->pixels[i * 4 + 2] = comp >= 3 ? src[2] : (comp == 1 ? src[0] : 0);
+                    decoded->pixels[i * 4 + 3] = comp == 4 ? src[3] : 255;
+                }
+                return decoded;
+            }
+
+            if (img.uri.empty() || img.uri.rfind("data:", 0) == 0) {
+                decoded->error = "image has no decodable payload";
+                return decoded;
+            }
+
+            const std::filesystem::path texPath = gltfDir / img.uri;
+            int w = 0, h = 0, channels = 0;
+            stbi_uc* pixels = stbi_load(texPath.string().c_str(), &w, &h, &channels, STBI_rgb_alpha);
+            if (!pixels) {
+                decoded->error = "stbi_load failed";
+                return decoded;
+            }
+
+            decoded->width = static_cast<uint32_t>(w);
+            decoded->height = static_cast<uint32_t>(h);
+            decoded->pixels.resize(decoded->width * decoded->height * 4);
+            std::memcpy(decoded->pixels.data(), pixels, decoded->pixels.size());
+            stbi_image_free(pixels);
+            return decoded;
+        }
+
+        static PendingMaterialPayload build_material_payload_from_gltf(
+            const tinygltf::Model& model,
+            int materialIndex,
+            const std::filesystem::path& gltfDir,
+            const GltfLoadOptions& options,
+            std::unordered_map<int, std::shared_ptr<DecodedImageRGBA8>>& texturePayloadCacheByImageIndex,
+            std::mutex* p_tex_mutex = nullptr
+        ) {
+            HN_PROFILE_FUNCTION();
+
+            PendingMaterialPayload mat{};
+            mat.base_color_factor = glm::vec4(1.0f);
+            mat.metallic_factor = 1.0f;
+            mat.roughness_factor = 1.0f;
+
+            if (materialIndex < 0 || materialIndex >= (int)model.materials.size()) {
+                return mat;
+            }
+
+            const tinygltf::Material& gm = model.materials[(size_t)materialIndex];
+            if (gm.pbrMetallicRoughness.baseColorFactor.size() == 4) {
+                mat.base_color_factor.r = (float)gm.pbrMetallicRoughness.baseColorFactor[0];
+                mat.base_color_factor.g = (float)gm.pbrMetallicRoughness.baseColorFactor[1];
+                mat.base_color_factor.b = (float)gm.pbrMetallicRoughness.baseColorFactor[2];
+                mat.base_color_factor.a = (float)gm.pbrMetallicRoughness.baseColorFactor[3];
+            }
+
+            mat.metallic_factor = (float)gm.pbrMetallicRoughness.metallicFactor;
+            mat.roughness_factor = (float)gm.pbrMetallicRoughness.roughnessFactor;
+
+            if (options.disable_textures) {
+                return mat;
+            }
+
+            const tinygltf::TextureInfo& ti = gm.pbrMetallicRoughness.baseColorTexture;
+            if (ti.index < 0 || ti.index >= (int)model.textures.size()) {
+                return mat;
+            }
+
+            const tinygltf::Texture& gt = model.textures[(size_t)ti.index];
+            if (gt.source < 0 || gt.source >= (int)model.images.size()) {
+                return mat;
+            }
+
+            mat.texture_source = gt.source;
+
+            {
+                auto lk = p_tex_mutex
+                    ? std::unique_lock<std::mutex>(*p_tex_mutex)
+                    : std::unique_lock<std::mutex>();
+                auto it = texturePayloadCacheByImageIndex.find(gt.source);
+                if (it != texturePayloadCacheByImageIndex.end()) {
+                    mat.base_color_texture = it->second;
+                    return mat;
+                }
+            }
+
+            const tinygltf::Image& img = model.images[(size_t)gt.source];
+            auto decoded = decode_gltf_image_rgba8(img, gltfDir);
+            if (!decoded || !decoded->ok()) {
+                if (decoded && !decoded->error.empty()) {
+                    HN_CORE_WARN("glTF: failed to decode texture source {} ({})", gt.source, decoded->error);
+                }
+                return mat;
+            }
+
+            {
+                auto lk = p_tex_mutex
+                    ? std::unique_lock<std::mutex>(*p_tex_mutex)
+                    : std::unique_lock<std::mutex>();
+                auto [it, inserted] = texturePayloadCacheByImageIndex.emplace(gt.source, decoded);
+                mat.base_color_texture = it->second;
+            }
+
+            return mat;
+        }
+
+        struct ImportedPrimitivePayload {
+            std::string name;
+            std::vector<VertexPNUV> vertices;
+            std::vector<uint32_t> indices;
+            PendingMaterialPayload material;
+        };
 
         static glm::vec3 extract_translation(const glm::mat4& m) {
             // Column-major: translation is column 3 xyz (m[3].xyz)
@@ -435,6 +695,97 @@ namespace Honey {
             out.vertices = std::move(vertices);
             out.indices  = std::move(indices);
 
+            out.name = gm.name.empty()
+                ? ("Mesh_" + std::to_string(primIndex))
+                : gm.name;
+
+            return out;
+        }
+
+        static std::optional<ImportedPrimitivePayload> extract_primitive_payload(
+            const tinygltf::Model& model,
+            const tinygltf::Mesh& gm,
+            const tinygltf::Primitive& prim,
+            size_t primIndex,
+            const std::filesystem::path& gltfDir,
+            const GltfLoadOptions& options,
+            std::unordered_map<int, std::shared_ptr<DecodedImageRGBA8>>& texturePayloadCacheByImageIndex,
+            std::mutex* p_tex_mutex = nullptr) {
+            HN_PROFILE_FUNCTION();
+
+            ImportedPrimitivePayload out{};
+
+            if (prim.mode != TINYGLTF_MODE_TRIANGLES) {
+                HN_CORE_WARN("glTF: skipping primitive (mode != TRIANGLES)");
+                return std::nullopt;
+            }
+
+            auto posIt = prim.attributes.find("POSITION");
+            if (posIt == prim.attributes.end()) {
+                HN_CORE_WARN("glTF: primitive has no POSITION, skipping");
+                return std::nullopt;
+            }
+
+            const tinygltf::Accessor* posAcc = find_accessor(model, posIt->second);
+            if (!posAcc || posAcc->count == 0)
+                return std::nullopt;
+
+            const tinygltf::Accessor* nrmAcc = nullptr;
+            if (auto it = prim.attributes.find("NORMAL"); it != prim.attributes.end())
+                nrmAcc = find_accessor(model, it->second);
+
+            const tinygltf::Accessor* uvAcc = nullptr;
+            if (auto it = prim.attributes.find("TEXCOORD_0"); it != prim.attributes.end())
+                uvAcc = find_accessor(model, it->second);
+
+            std::vector<VertexPNUV> vertices((size_t)posAcc->count);
+            for (size_t i = 0; i < vertices.size(); ++i) {
+                if (!read_vec3_float(model, *posAcc, i, vertices[i].position))
+                    return std::nullopt;
+                if (nrmAcc)
+                    read_vec3_float(model, *nrmAcc, i, vertices[i].normal);
+                if (uvAcc)
+                    read_vec2_float(model, *uvAcc, i, vertices[i].uv);
+            }
+
+            if (prim.indices < 0) {
+                HN_CORE_WARN("glTF: primitive has no indices, skipping");
+                return std::nullopt;
+            }
+
+            const tinygltf::Accessor* idxAcc = find_accessor(model, prim.indices);
+            if (!idxAcc || idxAcc->count == 0)
+                return std::nullopt;
+
+            size_t idxStride = 0;
+            const uint8_t* idxBase = accessor_data_ptr(model, *idxAcc, idxStride);
+            if (!idxBase)
+                return std::nullopt;
+
+            std::vector<uint32_t> indices(idxAcc->count);
+            for (size_t i = 0; i < indices.size(); ++i) {
+                if (idxAcc->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) {
+                    indices[i] = *(idxBase + i * idxStride);
+                } else if (idxAcc->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
+                    indices[i] = *reinterpret_cast<const uint16_t*>(idxBase + i * idxStride);
+                } else if (idxAcc->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT) {
+                    indices[i] = *reinterpret_cast<const uint32_t*>(idxBase + i * idxStride);
+                } else {
+                    HN_CORE_WARN("glTF: unsupported index type");
+                    return std::nullopt;
+                }
+            }
+
+            out.material = build_material_payload_from_gltf(
+                model,
+                prim.material,
+                gltfDir,
+                options,
+                texturePayloadCacheByImageIndex,
+                p_tex_mutex
+            );
+            out.vertices = std::move(vertices);
+            out.indices = std::move(indices);
             out.name = gm.name.empty()
                 ? ("Mesh_" + std::to_string(primIndex))
                 : gm.name;
@@ -784,6 +1135,342 @@ namespace Honey {
                 out->add_submesh(std::move(pr.submesh));
         }
 
+        static std::optional<PendingMeshPayload> build_pending_mesh_payload_for_gltf_mesh(
+            const tinygltf::Model& model,
+            int gltfMeshIndex,
+            const glm::mat4& worldTransform,
+            const std::filesystem::path& gltfDir,
+            const GltfLoadOptions& options,
+            std::unordered_map<int, std::shared_ptr<DecodedImageRGBA8>>& texturePayloadCacheByImageIndex,
+            std::mutex* p_tex_mutex = nullptr,
+            std::string meshName = {}) {
+            HN_PROFILE_FUNCTION();
+
+            if (gltfMeshIndex < 0 || gltfMeshIndex >= (int)model.meshes.size())
+                return std::nullopt;
+
+            const tinygltf::Mesh& gm = model.meshes[(size_t)gltfMeshIndex];
+
+            struct PendingBuildResult {
+                PendingSubmeshPayload submesh;
+                std::optional<MeshletBuildResult> meshlet_build;
+            };
+
+            PendingMeshPayload out{};
+            out.name = meshName.empty() ? gm.name : meshName;
+
+            std::vector<PendingBuildResult> builds;
+            for (size_t primIndex = 0; primIndex < gm.primitives.size(); ++primIndex) {
+                const tinygltf::Primitive& prim = gm.primitives[primIndex];
+                auto primDataOpt = extract_primitive_payload(
+                    model, gm, prim, primIndex, gltfDir, options, texturePayloadCacheByImageIndex, p_tex_mutex);
+                if (!primDataOpt)
+                    continue;
+
+                const auto& primData = *primDataOpt;
+                PendingBuildResult build{};
+                build.submesh.material = primData.material;
+                build.submesh.name = primData.name;
+                build.submesh.transform = worldTransform;
+
+                if (auto result = build_meshlet_geometry(primData.vertices, primData.indices)) {
+                    build.submesh.vertices = std::move(result->opt_vertices);
+                    build.submesh.indices = std::move(result->opt_indices);
+                    build.submesh.meshlets = result->geometry;
+                    build.meshlet_build = std::move(*result);
+                } else {
+                    build.submesh.vertices = primData.vertices;
+                    build.submesh.indices = primData.indices;
+                }
+
+                builds.push_back(std::move(build));
+            }
+
+            if (builds.empty())
+                return std::nullopt;
+
+            bool has_any_meshlets = false;
+            for (const auto& build : builds) {
+                if (build.meshlet_build) {
+                    has_any_meshlets = true;
+                    break;
+                }
+            }
+
+            if (has_any_meshlets) {
+                PendingMeshletBuffersPayload global{};
+                uint32_t vertex_cursor = 0;
+                uint32_t meshlets_cursor = 0;
+                uint32_t meshlet_vertices_cursor = 0;
+                uint32_t meshlet_triangles_cursor = 0;
+
+                for (auto& build : builds) {
+                    if (!build.meshlet_build)
+                        continue;
+
+                    auto& mb = *build.meshlet_build;
+                    const uint32_t v_off = vertex_cursor;
+                    const uint32_t m_off = meshlets_cursor;
+                    const uint32_t mv_off = meshlet_vertices_cursor;
+                    const uint32_t mt_off = meshlet_triangles_cursor;
+
+                    const float* v_floats = reinterpret_cast<const float*>(build.submesh.vertices.data());
+                    global.vertices.insert(global.vertices.end(),
+                        v_floats, v_floats + build.submesh.vertices.size() * 8);
+                    vertex_cursor += (uint32_t)build.submesh.vertices.size();
+
+                    for (auto m : mb.meshlets) {
+                        m.vertex_offset += mv_off;
+                        m.triangle_offset += mt_off;
+                        global.meshlets.push_back(m);
+                    }
+                    meshlets_cursor += (uint32_t)mb.meshlets.size();
+
+                    for (uint32_t vi : mb.meshlet_vertices)
+                        global.meshlet_vertices.push_back(vi + v_off);
+                    meshlet_vertices_cursor += (uint32_t)mb.meshlet_vertices.size();
+
+                    global.meshlet_triangles.insert(global.meshlet_triangles.end(),
+                        mb.meshlet_triangles.begin(), mb.meshlet_triangles.end());
+                    meshlet_triangles_cursor += (uint32_t)mb.meshlet_triangles.size();
+
+                    global.bounds.insert(global.bounds.end(), mb.bounds.begin(), mb.bounds.end());
+
+                    build.submesh.meshlets->vertex_offset = v_off;
+                    build.submesh.meshlets->meshlets_offset = m_off;
+                    build.submesh.meshlets->meshlet_vertices_offset = mv_off;
+                    build.submesh.meshlets->meshlet_triangles_offset = mt_off;
+                    build.submesh.meshlets->bounds_offset = m_off;
+                }
+
+                out.meshlet_buffers = std::move(global);
+            }
+
+            out.submeshes.reserve(builds.size());
+            for (auto& build : builds)
+                out.submeshes.push_back(std::move(build.submesh));
+
+            return out;
+        }
+
+        static Ref<Texture2D> finalize_texture_payload(
+            const std::shared_ptr<DecodedImageRGBA8>& decoded) {
+            if (!decoded || !decoded->ok())
+                return nullptr;
+
+            Ref<Texture2D> tex = Texture2D::create(decoded->width, decoded->height);
+            tex->set_data(decoded->pixels.data(), static_cast<uint32_t>(decoded->pixels.size()));
+            return tex;
+        }
+
+        static Ref<Material> finalize_material_payload(
+            const PendingMaterialPayload& payload,
+            std::unordered_map<int, Ref<Texture2D>>& textureCacheByImageIndex) {
+            Ref<Material> mat = Material::create();
+            mat->set_base_color_factor(payload.base_color_factor);
+            mat->set_metallic_factor(payload.metallic_factor);
+            mat->set_roughness_factor(payload.roughness_factor);
+
+            if (payload.texture_source >= 0 && payload.base_color_texture) {
+                auto it = textureCacheByImageIndex.find(payload.texture_source);
+                if (it == textureCacheByImageIndex.end()) {
+                    Ref<Texture2D> tex = finalize_texture_payload(payload.base_color_texture);
+                    if (tex) {
+                        it = textureCacheByImageIndex.emplace(payload.texture_source, tex).first;
+                    }
+                }
+                if (it != textureCacheByImageIndex.end())
+                    mat->set_base_color_texture(it->second);
+            }
+
+            return mat;
+        }
+
+        static Ref<Mesh> finalize_pending_mesh_payload(
+            const PendingMeshPayload& payload,
+            std::unordered_map<int, Ref<Texture2D>>& textureCacheByImageIndex) {
+            HN_PROFILE_FUNCTION();
+
+            Ref<Mesh> out = Mesh::create(payload.name);
+            for (const auto& submeshPayload : payload.submeshes) {
+                Submesh submesh{};
+                submesh.material = finalize_material_payload(submeshPayload.material, textureCacheByImageIndex);
+                submesh.name = submeshPayload.name;
+                submesh.transform = submeshPayload.transform;
+                submesh.meshlets = submeshPayload.meshlets;
+
+                Ref<VertexArray> vao = VertexArray::create();
+                Ref<VertexBuffer> vb = VertexBuffer::create(
+                    static_cast<uint32_t>(submeshPayload.vertices.size() * sizeof(VertexPNUV)));
+                vb->set_data(submeshPayload.vertices.data(),
+                             static_cast<uint32_t>(submeshPayload.vertices.size() * sizeof(VertexPNUV)));
+                set_default_layout_pnuv(vb);
+                vao->add_vertex_buffer(vb);
+                vao->set_index_buffer(IndexBuffer::create(
+                    const_cast<uint32_t*>(submeshPayload.indices.data()),
+                    static_cast<uint32_t>(submeshPayload.indices.size())));
+                submesh.vao = vao;
+
+                out->add_submesh(std::move(submesh));
+            }
+
+            if (payload.meshlet_buffers &&
+                !payload.meshlet_buffers->vertices.empty() &&
+                !payload.meshlet_buffers->meshlets.empty() &&
+                !payload.meshlet_buffers->meshlet_vertices.empty() &&
+                !payload.meshlet_buffers->meshlet_triangles.empty() &&
+                !payload.meshlet_buffers->bounds.empty()) {
+                GlobalMeshletBuffers global_bufs{};
+                global_bufs.vertex_buffer = StorageBuffer::create_from_vector(
+                    payload.meshlet_buffers->vertices, StorageBufferUsage::Immutable);
+                global_bufs.meshlets_buffer = StorageBuffer::create_from_vector(
+                    payload.meshlet_buffers->meshlets, StorageBufferUsage::Immutable);
+                global_bufs.meshlet_vertices_buffer = StorageBuffer::create_from_vector(
+                    payload.meshlet_buffers->meshlet_vertices, StorageBufferUsage::Immutable);
+                global_bufs.meshlet_triangles_buffer = StorageBuffer::create_from_vector(
+                    payload.meshlet_buffers->meshlet_triangles, StorageBufferUsage::Immutable);
+                global_bufs.meshlet_bounds_buffer = StorageBuffer::create_from_vector(
+                    payload.meshlet_buffers->bounds, StorageBufferUsage::Immutable);
+                out->meshlet_buffers = std::move(global_bufs);
+            } else if (payload.meshlet_buffers) {
+                HN_CORE_WARN("Skipping empty meshlet buffer payload for mesh '{}'", payload.name);
+            }
+
+            return out->empty() ? nullptr : out;
+        }
+
+        static uint32_t append_pending_scene_node(
+            const tinygltf::Model& model,
+            int node_index,
+            PendingSceneTreePayload& out,
+            std::vector<PendingSceneMeshJob>& mesh_jobs) {
+            const tinygltf::Node& n = model.nodes[(size_t)node_index];
+
+            PendingSceneNode node{};
+            node.name = n.name.empty() ? ("Node_" + std::to_string(node_index)) : n.name;
+            node.local_transform = node_local_transform(n);
+
+            const uint32_t current_index = static_cast<uint32_t>(out.nodes.size());
+            out.nodes.push_back(std::move(node));
+
+            if (n.mesh >= 0) {
+                out.nodes[current_index].mesh_job_index = static_cast<int>(mesh_jobs.size());
+                mesh_jobs.push_back({ current_index, n.mesh, out.nodes[current_index].name });
+            }
+
+            out.nodes[current_index].children.reserve(n.children.size());
+            for (int child : n.children) {
+                const uint32_t child_index =
+                    append_pending_scene_node(model, child, out, mesh_jobs);
+                out.nodes[current_index].children.push_back(child_index);
+            }
+
+            return current_index;
+        }
+
+        static PendingSceneTreePayload build_pending_scene_tree_payload(
+            const tinygltf::Model& model,
+            const std::filesystem::path& path,
+            const GltfLoadOptions& options) {
+            HN_PROFILE_FUNCTION();
+
+            PendingSceneTreePayload out{};
+            out.name = path.filename().stem().string();
+
+            int scene_index = model.defaultScene;
+            if (scene_index < 0 || scene_index >= (int)model.scenes.size()) {
+                scene_index = model.scenes.empty() ? -1 : 0;
+            }
+
+            std::vector<PendingSceneMeshJob> mesh_jobs;
+            if (scene_index >= 0) {
+                const tinygltf::Scene& scene = model.scenes[(size_t)scene_index];
+                out.roots.reserve(scene.nodes.size());
+                for (int root_node : scene.nodes) {
+                    out.roots.push_back(append_pending_scene_node(model, root_node, out, mesh_jobs));
+                }
+            } else {
+                HN_CORE_WARN("glTF: model has no scenes; emitting meshes as root nodes.");
+                out.roots.reserve(model.meshes.size());
+                for (int mi = 0; mi < (int)model.meshes.size(); ++mi) {
+                    PendingSceneNode node{};
+                    node.name = model.meshes[mi].name.empty() ? ("Mesh_" + std::to_string(mi)) : model.meshes[mi].name;
+                    node.local_transform = glm::mat4(1.0f);
+                    node.mesh_job_index = static_cast<int>(mesh_jobs.size());
+                    const uint32_t node_index = static_cast<uint32_t>(out.nodes.size());
+                    out.nodes.push_back(std::move(node));
+                    out.roots.push_back(node_index);
+                    mesh_jobs.push_back({ node_index, mi, out.nodes[node_index].name });
+                }
+            }
+
+            out.mesh_payloads.resize(mesh_jobs.size());
+            if (mesh_jobs.empty())
+                return out;
+
+            std::unordered_map<int, std::shared_ptr<DecodedImageRGBA8>> texturePayloadCacheByImageIndex;
+            std::mutex texturePayloadMutex;
+            const std::filesystem::path gltfDir = path.parent_path();
+
+            auto mesh_handle = TaskSystem::parallel_for(
+                0, static_cast<uint32_t>(mesh_jobs.size()),
+                [&](uint32_t i) {
+                    const auto& job = mesh_jobs[i];
+                    out.mesh_payloads[i] = build_pending_mesh_payload_for_gltf_mesh(
+                        model,
+                        job.gltf_mesh_index,
+                        glm::mat4(1.0f),
+                        gltfDir,
+                        options,
+                        texturePayloadCacheByImageIndex,
+                        &texturePayloadMutex,
+                        job.mesh_name
+                    );
+                }, 1);
+            TaskSystem::wait(mesh_handle);
+
+            return out;
+        }
+
+        static GltfNode finalize_pending_scene_node(
+            uint32_t node_index,
+            const PendingSceneTreePayload& payload,
+            std::unordered_map<int, Ref<Texture2D>>& textureCacheByImageIndex) {
+            const auto& pending = payload.nodes[node_index];
+            GltfNode out{};
+            out.name = pending.name;
+            out.local_transform = pending.local_transform;
+
+            if (pending.mesh_job_index >= 0) {
+                const auto& meshPayload = payload.mesh_payloads[(size_t)pending.mesh_job_index];
+                if (meshPayload.has_value()) {
+                    out.mesh = finalize_pending_mesh_payload(*meshPayload, textureCacheByImageIndex);
+                }
+            }
+
+            out.children.reserve(pending.children.size());
+            for (uint32_t child_index : pending.children) {
+                out.children.push_back(finalize_pending_scene_node(child_index, payload, textureCacheByImageIndex));
+            }
+
+            return out;
+        }
+
+        static GltfSceneTree finalize_pending_scene_tree_payload(const PendingSceneTreePayload& payload) {
+            HN_PROFILE_FUNCTION();
+
+            GltfSceneTree out{};
+            out.name = payload.name;
+
+            std::unordered_map<int, Ref<Texture2D>> textureCacheByImageIndex;
+            out.roots.reserve(payload.roots.size());
+            for (uint32_t root_index : payload.roots) {
+                out.roots.push_back(finalize_pending_scene_node(root_index, payload, textureCacheByImageIndex));
+            }
+
+            return out;
+        }
+
         // For build_gltf_node: single-node path — collect and finalize in one shot.
         static void append_mesh_primitives_as_submeshes(
             Ref<Mesh>& out,
@@ -860,14 +1547,87 @@ namespace Honey {
 
             if (!n.children.empty()) {
                 out.children.resize(n.children.size());
-                auto handle = TaskSystem::parallel_for(
-                    0, (uint32_t)n.children.size(),
-                    [&](uint32_t i) {
-                        out.children[i] = build_gltf_node(
-                            model, n.children[i], gltf_dir, options,
-                            tex_cache, async, p_tex_mutex);
-                    }, 1);
-                TaskSystem::wait(handle);
+                for (size_t i = 0; i < n.children.size(); ++i) {
+                    out.children[i] = build_gltf_node(
+                        model, n.children[i], gltf_dir, options,
+                        tex_cache, async, p_tex_mutex);
+                }
+            }
+
+            return out;
+        }
+
+        static Ref<Mesh> build_gltf_mesh_from_model(const tinygltf::Model& model,
+                                                    const std::filesystem::path& path,
+                                                    const GltfLoadOptions& options,
+                                                    bool async) {
+            HN_PROFILE_FUNCTION();
+
+            Ref<Mesh> out = Mesh::create(path.filename().string());
+
+            const std::filesystem::path gltfDir = path.parent_path();
+            std::unordered_map<int, Ref<Texture2D>> textureCacheByImageIndex;
+
+            int sceneIndex = model.defaultScene;
+            if (sceneIndex < 0 || sceneIndex >= (int)model.scenes.size()) {
+                sceneIndex = model.scenes.empty() ? -1 : 0;
+            }
+
+            std::vector<PrimResult> all_prims;
+            if (sceneIndex >= 0) {
+                const tinygltf::Scene& scene = model.scenes[(size_t)sceneIndex];
+                const glm::mat4 I(1.0f);
+                for (int rootNode : scene.nodes) {
+                    traverse_and_collect_prims(model, rootNode, I,
+                        gltfDir, options, textureCacheByImageIndex, async, all_prims);
+                }
+            } else {
+                HN_CORE_WARN("glTF: model has no scenes; emitting meshes with identity transforms.");
+                const glm::mat4 I(1.0f);
+                for (int mi = 0; mi < (int)model.meshes.size(); ++mi) {
+                    collect_prims_for_gltf_mesh(model, mi, I,
+                        gltfDir, options, textureCacheByImageIndex, async, all_prims);
+                }
+            }
+            finalize_meshlet_buffers(out, all_prims);
+
+            return out;
+        }
+
+        static GltfSceneTree build_gltf_scene_tree_from_model(const tinygltf::Model& model,
+                                                              const std::filesystem::path& path,
+                                                              const GltfLoadOptions& options) {
+            HN_PROFILE_FUNCTION();
+
+            GltfSceneTree out;
+            out.name = path.filename().stem().string();
+
+            int scene_index = model.defaultScene;
+            if (scene_index < 0 || scene_index >= (int)model.scenes.size()) {
+                scene_index = model.scenes.empty() ? -1 : 0;
+            }
+
+            std::unordered_map<int, Ref<Texture2D>> tex_cache;
+            std::mutex tex_mutex;
+
+            if (scene_index >= 0) {
+                const tinygltf::Scene& scene = model.scenes[(size_t)scene_index];
+
+                HN_PROFILE_SCOPE("build_gltf_scene_tree_from_model::build_node_tree");
+                for (int root_node : scene.nodes) {
+                    out.roots.push_back(build_gltf_node(model, root_node, path.parent_path(), options, tex_cache, true, &tex_mutex));
+                }
+            } else {
+                HN_CORE_WARN("glTF: model has no scenes; emitting meshes as root nodes.");
+                for (int mi = 0; mi < (int)model.meshes.size(); ++mi) {
+                    GltfNode node;
+                    node.name = model.meshes[mi].name.empty() ? ("Mesh_" + std::to_string(mi)) : model.meshes[mi].name;
+                    node.local_transform = glm::mat4(1.0f);
+                    node.mesh = Mesh::create(node.name);
+                    append_mesh_primitives_as_submeshes(node.mesh, model, mi, glm::mat4(1.0f), path.parent_path(), options, tex_cache);
+                    if (!node.mesh->empty())
+                        out.roots.push_back(std::move(node));
+                }
             }
 
             return out;
@@ -878,102 +1638,12 @@ namespace Honey {
 
     Ref<Mesh> load_gltf_mesh(const std::filesystem::path& path, const GltfLoadOptions& options, bool async) {
         HN_PROFILE_FUNCTION();
-        if (!std::filesystem::exists(path)) {
-            HN_CORE_ERROR("load_gltf_mesh: file does not exist: {}", path.string());
-            return nullptr;
-        }
-
         tinygltf::Model model;
-        tinygltf::TinyGLTF loader;
-
-        // Store raw compressed bytes during parse; we decode in parallel below.
-        loader.SetImageLoader(
-            [](tinygltf::Image* img, const int, std::string*, std::string*,
-               int, int, const unsigned char* bytes, int size, void*) -> bool {
-                img->image.assign(bytes, bytes + size);
-                img->as_is = true;
-                return true;
-            }, nullptr);
-
-        std::string err;
-        std::string warn;
-
-        bool ok = false;
-        {
-            HN_PROFILE_SCOPE("load_gltf_mesh::tinygltf_parse");
-            const std::string p = path.string();
-            if (has_ext(path, ".glb")) {
-                ok = loader.LoadBinaryFromFile(&model, &err, &warn, p);
-            } else {
-                ok = loader.LoadASCIIFromFile(&model, &err, &warn, p);
-            }
-        }
-
-        if (!warn.empty())
-            HN_CORE_WARN("glTF warn: {}", warn);
-        if (!err.empty())
-            HN_CORE_ERROR("glTF err: {}", err);
-        if (!ok) {
-            HN_CORE_ERROR("Failed to load glTF: {}", path.string());
+        if (!parse_gltf_model(path, model)) {
+            HN_CORE_ERROR("load_gltf_mesh: failed to parse {}", path.string());
             return nullptr;
         }
-
-        // Decode all images in parallel (tinygltf stored raw bytes above)
-        if (!model.images.empty()) {
-            HN_PROFILE_SCOPE("load_gltf_mesh::parallel_image_decode");
-            auto img_handle = TaskSystem::parallel_for(
-                0, (uint32_t)model.images.size(),
-                [&](uint32_t i) {
-                    auto& img = model.images[i];
-                    if (!img.as_is || img.image.empty()) return;
-                    int w = 0, h = 0, comp = 0;
-                    unsigned char* px = stbi_load_from_memory(
-                        img.image.data(), (int)img.image.size(), &w, &h, &comp, 0);
-                    if (!px) return;
-                    img.width     = w;
-                    img.height    = h;
-                    img.component = comp;
-                    img.bits      = 8;
-                    img.image.assign(px, px + (size_t)w * h * comp);
-                    img.as_is     = false;
-                    stbi_image_free(px);
-                }, 1);
-            TaskSystem::wait(img_handle);
-        }
-
-        Ref<Mesh> out = Mesh::create(path.filename().string());
-
-        const std::filesystem::path gltfDir = path.parent_path();
-        std::unordered_map<int, Ref<Texture2D>> textureCacheByImageIndex;
-
-        // Traverse the scene graph so node transforms are applied.
-        // IMPORTANT: do NOT also do a second pass over model.meshes (that would duplicate submeshes at identity).
-        int sceneIndex = model.defaultScene;
-        if (sceneIndex < 0 || sceneIndex >= (int)model.scenes.size()) {
-            sceneIndex = model.scenes.empty() ? -1 : 0;
-        }
-
-        // Collect all primitives from all nodes first, then build SSBOs once.
-        // This ensures models with multiple gltf mesh nodes (flight helmet, couch, etc.)
-        // get a single GlobalMeshletBuffers covering all their submeshes.
-        std::vector<PrimResult> all_prims;
-        if (sceneIndex >= 0) {
-            const tinygltf::Scene& scene = model.scenes[(size_t)sceneIndex];
-            const glm::mat4 I(1.0f);
-            for (int rootNode : scene.nodes) {
-                traverse_and_collect_prims(model, rootNode, I,
-                    gltfDir, options, textureCacheByImageIndex, async, all_prims);
-            }
-        } else {
-            // No scenes? Fallback: emit all meshes at identity.
-            HN_CORE_WARN("glTF: model has no scenes; emitting meshes with identity transforms.");
-            const glm::mat4 I(1.0f);
-            for (int mi = 0; mi < (int)model.meshes.size(); ++mi) {
-                collect_prims_for_gltf_mesh(model, mi, I,
-                    gltfDir, options, textureCacheByImageIndex, async, all_prims);
-            }
-        }
-        finalize_meshlet_buffers(out, all_prims);
+        Ref<Mesh> out = build_gltf_mesh_from_model(model, path, options, async);
 
         if (out->empty()) {
             HN_CORE_WARN("load_gltf_mesh: loaded 0 primitives from {}", path.string());
@@ -990,15 +1660,28 @@ namespace Honey {
 
         auto handle = CreateRef<MeshAsyncHandle>();
 
-        // Kick work to background thread(s)
         TaskSystem::run_async([handle, path, options]() {
-            Ref<Mesh> result = load_gltf_mesh(path, options, true);
-            if (!result) {
+            tinygltf::Model model;
+            if (!parse_gltf_model(path, model)) {
                 handle->failed.store(true, std::memory_order_release);
-            } else {
-                handle->mesh = result;
+                handle->done.store(true, std::memory_order_release);
+                return;
             }
-            handle->done.store(true, std::memory_order_release);
+
+            auto finalize = [handle, path, options, model = std::move(model)]() mutable {
+                Ref<Mesh> result = build_gltf_mesh_from_model(model, path, options, true);
+                if (!result)
+                    handle->failed.store(true, std::memory_order_release);
+                else
+                    handle->mesh = std::move(result);
+                handle->done.store(true, std::memory_order_release);
+            };
+
+            if (Renderer::get_api() == RendererAPI::API::vulkan) {
+                Application::get().get_vulkan_backend().enqueue_upload_job(std::move(finalize));
+            } else {
+                TaskSystem::enqueue_main(std::move(finalize));
+            }
         });
 
         return handle;
@@ -1009,112 +1692,41 @@ namespace Honey {
         HN_PROFILE_FUNCTION();
         auto handle = CreateRef<GltfSceneTreeAsyncHandle>();
         TaskSystem::run_async([handle, path, options]() {
-            GltfSceneTree result = load_gltf_scene_tree(path, options);
-            if (result.roots.empty())
+            tinygltf::Model model;
+            if (!parse_gltf_model(path, model)) {
                 handle->failed.store(true, std::memory_order_release);
-            else
-                handle->tree = std::move(result);
-            handle->done.store(true, std::memory_order_release);
+                handle->done.store(true, std::memory_order_release);
+                return;
+            }
+
+            PendingSceneTreePayload pending = build_pending_scene_tree_payload(model, path, options);
+
+            auto finalize = [handle, pending = std::move(pending)]() mutable {
+                GltfSceneTree result = finalize_pending_scene_tree_payload(pending);
+                if (result.roots.empty())
+                    handle->failed.store(true, std::memory_order_release);
+                else
+                    handle->tree = std::move(result);
+                handle->done.store(true, std::memory_order_release);
+            };
+
+            if (Renderer::get_api() == RendererAPI::API::vulkan) {
+                Application::get().get_vulkan_backend().enqueue_upload_job(std::move(finalize));
+            } else {
+                TaskSystem::enqueue_main(std::move(finalize));
+            }
         });
         return handle;
     }
 
     GltfSceneTree load_gltf_scene_tree(const std::filesystem::path& path, const GltfLoadOptions& options) {
         HN_PROFILE_FUNCTION();
-        if (!std::filesystem::exists(path)) {
-            HN_CORE_ERROR("load_gltf_scene_tree: file does not exist: {}", path.string());
-            return {};
-        }
-
-        GltfSceneTree out;
-        out.name = path.filename().stem().string();
-
         tinygltf::Model model;
-        tinygltf::TinyGLTF loader;
-
-        // Store raw compressed bytes during parse; decode in parallel below.
-        loader.SetImageLoader(
-            [](tinygltf::Image* img, const int, std::string*, std::string*,
-               int, int, const unsigned char* bytes, int size, void*) -> bool {
-                img->image.assign(bytes, bytes + size);
-                img->as_is = true;
-                return true;
-            }, nullptr);
-
-        std::string err;
-        std::string warn;
-
-        bool ok = false;
-        {
-            HN_PROFILE_SCOPE("load_gltf_scene_tree::tinygltf_parse");
-            const std::string p = path.string();
-            if (has_ext(path, ".glb")) {
-                ok = loader.LoadBinaryFromFile(&model, &err, &warn, p);
-            } else {
-                ok = loader.LoadASCIIFromFile(&model, &err, &warn, p);
-            }
-        }
-
-        if (!warn.empty())
-            HN_CORE_WARN("glTF warn: {}", warn);
-        if (!err.empty())
-            HN_CORE_ERROR("glTF err: {}", err);
-        if (!ok) {
-            HN_CORE_ERROR("Failed to load glTF: {}", path.string());
+        if (!parse_gltf_model(path, model)) {
+            HN_CORE_ERROR("load_gltf_scene_tree: failed to parse {}", path.string());
             return {};
         }
-
-        // Decode all images in parallel (tinygltf stored raw bytes above)
-        if (!model.images.empty()) {
-            HN_PROFILE_SCOPE("load_gltf_scene_tree::parallel_image_decode");
-            auto img_handle = TaskSystem::parallel_for(
-                0, (uint32_t)model.images.size(),
-                [&](uint32_t i) {
-                    auto& img = model.images[i];
-                    if (!img.as_is || img.image.empty()) return;
-                    int w = 0, h = 0, comp = 0;
-                    unsigned char* px = stbi_load_from_memory(
-                        img.image.data(), (int)img.image.size(), &w, &h, &comp, 0);
-                    if (!px) return;
-                    img.width     = w;
-                    img.height    = h;
-                    img.component = comp;
-                    img.bits      = 8;
-                    img.image.assign(px, px + (size_t)w * h * comp);
-                    img.as_is     = false;
-                    stbi_image_free(px);
-                }, 1);
-            TaskSystem::wait(img_handle);
-        }
-
-        int scene_index = model.defaultScene;
-        if (scene_index < 0 || scene_index >= (int)model.scenes.size()) {
-            scene_index = model.scenes.empty() ? -1 : 0;
-        }
-
-        std::unordered_map<int, Ref<Texture2D>> tex_cache;
-        std::mutex tex_mutex;
-
-        if (scene_index >= 0) {
-            const tinygltf::Scene& scene = model.scenes[(size_t)scene_index];
-
-            HN_PROFILE_SCOPE("load_gltf_scene_tree::build_node_tree");
-            for (int root_node : scene.nodes) {
-                out.roots.push_back(build_gltf_node(model, root_node, path.parent_path(), options, tex_cache, true, &tex_mutex));
-            }
-        } else {
-            // No scenes — emit all meshes as root nodes
-            HN_CORE_WARN("glTF: model has no scenes; emitting meshes as root nodes.");
-            for (int mi = 0; mi < (int)model.meshes.size(); ++mi) {
-                GltfNode node;
-                node.name = model.meshes[mi].name.empty() ? ("Mesh_" + std::to_string(mi)) : model.meshes[mi].name;
-                node.local_transform = glm::mat4(1.0f);
-                node.mesh = Mesh::create(node.name);
-                append_mesh_primitives_as_submeshes(node.mesh, model, mi, glm::mat4(1.0f), path.parent_path(), options, tex_cache);
-                if (!node.mesh->empty())
-                    out.roots.push_back(std::move(node));
-            }
-        }
+        GltfSceneTree out = build_gltf_scene_tree_from_model(model, path, options);
 
         HN_CORE_INFO("load_gltf_scene_tree: loaded {} root nodes from {}", out.roots.size(), path.string());
         return out;

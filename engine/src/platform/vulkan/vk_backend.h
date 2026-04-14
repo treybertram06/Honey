@@ -6,6 +6,9 @@
 #include <mutex>
 #include <optional>
 #include <atomic>
+#include <condition_variable>
+#include <deque>
+#include <thread>
 #include <vector>
 
 #define GLFW_INCLUDE_VULKAN
@@ -130,7 +133,10 @@ namespace Honey {
         void queue_buffer_upload(const BufferUploadDesc& desc);
         void queue_image_upload(const ImageUploadDesc& desc);
 
-        // Called once per frame from the render thread, before recording draw commands.
+        void enqueue_upload_job(std::function<void()> job);
+        void execute_upload_job_blocking(const std::function<void()>& job);
+        bool is_upload_thread() const { return std::this_thread::get_id() == m_upload_thread_id; }
+
         void process_stream_uploads();
         void flush_stream_uploads_blocking();
 
@@ -196,6 +202,9 @@ namespace Honey {
 
         void init_stream_uploader();
         void shutdown_stream_uploader();
+        void start_upload_thread();
+        void stop_upload_thread();
+        void upload_thread_main();
         void flush_deferred_destroys();
         void collect_deferred_destroys_locked(uint64_t completedFrame);
 
@@ -238,11 +247,17 @@ namespace Honey {
         bool m_timeline_semaphore_supported = false;
         bool m_has_dedicated_compute_queue = false;
 
-        // Streaming upload context (ring buffer, used only on render thread)
+        // Streaming upload context (ring buffer, primarily used by the dedicated upload thread)
         std::mutex m_upload_mutex{};
         VkCommandPool m_upload_command_pool = VK_NULL_HANDLE;
         VkFence m_upload_fence = VK_NULL_HANDLE;
         VkQueue m_upload_queue = VK_NULL_HANDLE;
+        std::mutex m_upload_job_mutex{};
+        std::condition_variable m_upload_job_cv{};
+        std::deque<std::function<void()>> m_upload_jobs;
+        std::thread m_upload_thread{};
+        std::thread::id m_upload_thread_id{};
+        bool m_upload_thread_stop = false;
 
         // Immediate submit context - can be used from any thread
         std::mutex    m_immediate_mutex{};

@@ -44,6 +44,15 @@ namespace Honey {
             return;
         }
 
+        if (!m_backend->is_upload_thread()) {
+            m_stream_upload_pending.store(false, std::memory_order_release);
+            set_data(data, size);
+            if (on_complete) {
+                on_complete();
+            }
+            return;
+        }
+
         const uint32_t initial_layout = current_layout;
         m_stream_upload_pending.store(true, std::memory_order_release);
 
@@ -202,8 +211,8 @@ namespace Honey {
             std::memcpy(decoded.pixels.data(), pixels, decoded.pixels.size());
             stbi_image_free(pixels);
 
-            // GPU work must run on main thread while VulkanBackend is alive.
-            TaskSystem::enqueue_main([path, handle, decoded = std::move(decoded)]() mutable {
+            auto& backend = Application::get().get_vulkan_backend();
+            backend.enqueue_upload_job([path, handle, decoded = std::move(decoded)]() mutable {
                 HN_PROFILE_SCOPE("VulkanTexture2D::create_async::GPU work");
                 if (!decoded.ok()) {
                     handle->failed.store(true, std::memory_order_release);
@@ -546,8 +555,9 @@ namespace Honey {
 
         const uint32_t size = width * height * 4;
 
-        // Streaming-friendly path: prefer using backend's staging ring if available.
-        if (m_backend && m_backend->initialized()) {
+        // Streaming-friendly path is reserved for the upload thread so the UI thread never
+        // competes with background asset uploads for staging ownership.
+        if (m_backend && m_backend->initialized() && m_backend->is_upload_thread()) {
             queue_stream_upload(rgba_pixels, size, {});
             return;
         }

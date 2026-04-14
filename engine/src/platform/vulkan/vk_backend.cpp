@@ -202,6 +202,7 @@ namespace Honey {
         }
 
         if (device) {
+            stop_upload_thread();
             vkDeviceWaitIdle(device);
 
             // Ensure queued uploads complete and callbacks run before resource teardown.
@@ -427,6 +428,7 @@ namespace Honey {
         HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateFence failed for upload context");
 
         init_stream_uploader(); // Relies on upload context
+        start_upload_thread();
     }
 
     void VulkanBackend::shutdown_upload_context() {
@@ -446,6 +448,112 @@ namespace Honey {
             m_upload_command_pool = VK_NULL_HANDLE;
         }
         m_upload_queue = VK_NULL_HANDLE;
+    }
+
+    void VulkanBackend::start_upload_thread() {
+        HN_PROFILE_FUNCTION();
+
+        if (m_upload_thread.joinable())
+            return;
+
+        {
+            std::scoped_lock lock(m_upload_job_mutex);
+            m_upload_thread_stop = false;
+        }
+
+        m_upload_thread = std::thread([this]() {
+            upload_thread_main();
+        });
+    }
+
+    void VulkanBackend::stop_upload_thread() {
+        HN_PROFILE_FUNCTION();
+
+        {
+            std::scoped_lock lock(m_upload_job_mutex);
+            m_upload_thread_stop = true;
+        }
+        m_upload_job_cv.notify_all();
+
+        if (m_upload_thread.joinable()) {
+            m_upload_thread.join();
+        }
+
+        m_upload_thread_id = std::thread::id{};
+
+        std::scoped_lock lock(m_upload_job_mutex);
+        m_upload_jobs.clear();
+        m_upload_thread_stop = false;
+    }
+
+    void VulkanBackend::upload_thread_main() {
+        HN_PROFILE_FUNCTION();
+        m_upload_thread_id = std::this_thread::get_id();
+
+        while (true) {
+            std::function<void()> job;
+            {
+                std::unique_lock lock(m_upload_job_mutex);
+                m_upload_job_cv.wait(lock, [this]() {
+                    return m_upload_thread_stop || !m_upload_jobs.empty();
+                });
+
+                if (m_upload_jobs.empty()) {
+                    if (m_upload_thread_stop)
+                        break;
+                    continue;
+                }
+
+                job = std::move(m_upload_jobs.front());
+                m_upload_jobs.pop_front();
+            }
+
+            if (job) {
+                job();
+            }
+
+            flush_stream_uploads_blocking();
+        }
+    }
+
+    void VulkanBackend::enqueue_upload_job(std::function<void()> job) {
+        HN_CORE_ASSERT(job, "enqueue_upload_job requires a valid job");
+
+        if (is_upload_thread()) {
+            job();
+            return;
+        }
+
+        {
+            std::scoped_lock lock(m_upload_job_mutex);
+            HN_CORE_ASSERT(m_upload_thread.joinable(), "enqueue_upload_job called before upload thread started");
+            m_upload_jobs.push_back(std::move(job));
+        }
+        m_upload_job_cv.notify_one();
+    }
+
+    void VulkanBackend::execute_upload_job_blocking(const std::function<void()>& job) {
+        HN_CORE_ASSERT(job, "execute_upload_job_blocking requires a valid job");
+
+        if (is_upload_thread() || !m_upload_thread.joinable()) {
+            job();
+            return;
+        }
+
+        auto state = std::make_shared<std::pair<std::mutex, std::condition_variable>>();
+        auto done = std::make_shared<bool>(false);
+
+        enqueue_upload_job([job, state, done]() {
+            job();
+            {
+                std::scoped_lock lock(state->first);
+                *done = true;
+            }
+            state->second.notify_all();
+        });
+
+        std::unique_lock lock(state->first);
+        state->second.wait(lock, [&done]() { return *done; });
     }
 
     void VulkanBackend::init_immediate_context() {
@@ -738,7 +846,8 @@ namespace Honey {
 
     void VulkanBackend::queue_buffer_upload(const BufferUploadDesc& desc) {
         HN_PROFILE_FUNCTION();
-        assert_render_thread();
+        HN_CORE_ASSERT(is_upload_thread() || !m_upload_thread.joinable(),
+                       "queue_buffer_upload must be called from the upload thread");
 
         if (!desc.dstBuffer || !desc.srcData || desc.size == 0)
             return;
@@ -835,7 +944,8 @@ namespace Honey {
 
     void VulkanBackend::queue_image_upload(const ImageUploadDesc& desc) {
         HN_PROFILE_FUNCTION();
-        assert_render_thread();
+        HN_CORE_ASSERT(is_upload_thread() || !m_upload_thread.joinable(),
+                       "queue_image_upload must be called from the upload thread");
 
         HN_CORE_ASSERT(desc.dstImage != VK_NULL_HANDLE,
                        "queue_image_upload: dstImage is null (w={}, h={})",
@@ -1001,7 +1111,8 @@ namespace Honey {
 
     void VulkanBackend::process_stream_uploads() {
         HN_PROFILE_FUNCTION();
-        assert_render_thread();
+        HN_CORE_ASSERT(is_upload_thread() || !m_upload_thread.joinable(),
+                       "process_stream_uploads must be called from the upload thread");
 
         if (!m_device || !m_upload_command_pool || !m_stream_staging_buffer)
             return;
@@ -1171,6 +1282,13 @@ namespace Honey {
 
     void VulkanBackend::flush_stream_uploads_blocking() {
         HN_PROFILE_FUNCTION();
+
+        if (!is_upload_thread() && m_upload_thread.joinable()) {
+            execute_upload_job_blocking([this]() {
+                flush_stream_uploads_blocking();
+            });
+            return;
+        }
 
         if (!m_device || !m_upload_command_pool || !m_stream_staging_buffer)
             return;
@@ -1861,6 +1979,12 @@ namespace Honey {
     bool VulkanBackend::stream_staging_allocate(VkDeviceSize size, VkDeviceSize alignment, VkDeviceSize& outOffset) {
         HN_CORE_ASSERT(m_stream_staging_buffer && m_stream_staging_mapped, "Streaming uploader not initialized");
 
+        if (size > m_stream_staging_size) {
+            HN_CORE_ERROR("Streaming uploader: allocation of {} bytes exceeds staging buffer size {}",
+                          (uint64_t)size, (uint64_t)m_stream_staging_size);
+            return false;
+        }
+
         // Simple linear alloc with wrap-around if it fits.
         VkDeviceSize alignedHead = (m_stream_staging_head + (alignment - 1)) & ~(alignment - 1);
 
@@ -1878,9 +2002,7 @@ namespace Honey {
             return true;
         }
 
-        // The requested allocation is bigger than the whole staging buffer.
-        HN_CORE_ERROR("Streaming uploader: allocation of {} bytes exceeds staging buffer size {}",
-                      (uint64_t)size, (uint64_t)m_stream_staging_size);
+        // Not enough contiguous space remains before wrap-around, and pending jobs prevent reuse.
         return false;
     }
 }

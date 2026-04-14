@@ -1053,9 +1053,6 @@ namespace Honey {
 
         recreate_swapchain_if_needed();
 
-        if (m_backend)
-            m_backend->process_stream_uploads();
-
         if (!m_timestamp_written_this_frame.empty()) {
             std::fill(m_timestamp_written_this_frame.begin(),
                       m_timestamp_written_this_frame.end(), false);
