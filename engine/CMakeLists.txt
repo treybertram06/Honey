@@ -425,7 +425,7 @@ target_compile_definitions(engine PUBLIC
         GLM_FORCE_SILENT_WARNINGS
         GLM_FORCE_INLINE
         GLM_FORCE_INTRINSICS
-        $<$<CONFIG:Release>:GLM_FORCE_SIMD_AVX2>
+        $<$<CONFIG:Debug,RelWithDebInfo,Release>:GLM_FORCE_SIMD_AVX2>
 )
 
 # ------------------------------------------------------------------------------
@@ -665,4 +665,3 @@ elseif(UNIX)
  target_include_directories(engine PRIVATE ${GTK3_INCLUDE_DIRS})
  target_compile_options(engine PRIVATE ${GTK3_CFLAGS_OTHER})
 endif()
-

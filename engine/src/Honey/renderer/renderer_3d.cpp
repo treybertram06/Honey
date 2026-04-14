@@ -16,9 +16,9 @@ static const std::filesystem::path asset_root = ASSET_ROOT;
 namespace Honey {
 
     struct MeshletDrawCommand {
-        const Submesh* submesh = nullptr;
-        const Mesh*    mesh    = nullptr;
-        Ref<Material>  material;
+        const Submesh* submesh   = nullptr;
+        const Mesh*    mesh      = nullptr;
+        Material*      material  = nullptr; // raw ptr — lifetime owned by Mesh/override containers
         glm::mat4      transform{1.0f};
         int            entity_id = -1;
     };
@@ -34,6 +34,15 @@ namespace Honey {
         Ref<StorageBuffer> indirect_buffer;     // VkDrawMeshTasksIndirectCommandEXT[]
         Ref<StorageBuffer> count_buffer;        // uint32_t
         // draw_data_buffer lives per-mesh inside GlobalMeshletBuffers::draw_data_buffer
+
+        // Persistent per-frame scratch — cleared each frame, never reallocated after warmup
+        std::vector<GPUMaterial>                               frame_gpu_materials;
+        std::unordered_map<Texture2D*, uint32_t>               frame_tex_slot_map;
+        std::vector<const Mesh*>                               frame_mesh_order;
+        std::unordered_map<const Mesh*, std::vector<uint32_t>> frame_draws_by_mesh;
+        std::vector<VkDrawMeshTasksIndirectCommandEXT>         frame_indirect_cmds; // per-mesh scratch
+        std::vector<GPUDrawData>                               frame_draw_data;      // per-mesh scratch
+        VulkanContext*                                         vk_context_cache = nullptr;
 
         // Texture slots
         uint32_t                       max_texture_slots = 0;
@@ -223,9 +232,12 @@ namespace Honey {
     static void flush_batches_vulkan() {
         HN_PROFILE_FUNCTION();
 
-        auto* base = Application::get().get_window().get_context();
-        auto* vkCtx = dynamic_cast<Honey::VulkanContext*>(base);
-        HN_CORE_ASSERT(vkCtx, "Renderer3D Vulkan path expected VulkanContext");
+        if (!s_data->vk_context_cache) {
+            auto* base = Application::get().get_window().get_context();
+            s_data->vk_context_cache = dynamic_cast<Honey::VulkanContext*>(base);
+            HN_CORE_ASSERT(s_data->vk_context_cache, "Renderer3D Vulkan path expected VulkanContext");
+        }
+        auto* vkCtx = s_data->vk_context_cache;
 
         CameraUBO saved_camera = VulkanRendererAPI::get_globals_state().cameraUBO;
 
@@ -317,16 +329,13 @@ namespace Honey {
                              ? mat->get_base_color_texture().get()
                              : s_data->white_texture.get();
 
-            if (!tex_slot_map.count(tex)) {
-                if (tex_slot_count < s_data->max_texture_slots)
-                    tex_slot_map[tex] = tex_slot_count++;
-                else
-                    tex_slot_map[tex] = 0; // hard cap (>1024 unique textures) — fall back to white
-            }
+            auto [tex_it, inserted] = tex_slot_map.try_emplace(tex, 0u);
+            if (inserted)
+                tex_it->second = (tex_slot_count < s_data->max_texture_slots) ? tex_slot_count++ : 0u;
 
             GPUMaterial gpu_mat{};
             gpu_mat.base_color        = mat ? mat->get_base_color_factor()  : glm::vec4(1.0f);
-            gpu_mat.base_color_tex_id = (int32_t)tex_slot_map.at(tex);
+            gpu_mat.base_color_tex_id = (int32_t)tex_it->second;
             gpu_mat.metallic          = mat ? mat->get_metallic_factor()    : 0.0f;
             gpu_mat.roughness         = mat ? mat->get_roughness_factor()   : 0.5f;
             all_materials.push_back(gpu_mat);
@@ -371,9 +380,13 @@ namespace Honey {
         if (s_data->meshlet_draws.empty())
             return;
 
-        auto* base  = Application::get().get_window().get_context();
-        auto* vkCtx = dynamic_cast<Honey::VulkanContext*>(base);
-        HN_CORE_ASSERT(vkCtx, "flush_meshlet_draws: expected VulkanContext");
+        // Cache VulkanContext* — stays valid for the lifetime of the renderer
+        if (!s_data->vk_context_cache) {
+            auto* base = Application::get().get_window().get_context();
+            s_data->vk_context_cache = dynamic_cast<Honey::VulkanContext*>(base);
+            HN_CORE_ASSERT(s_data->vk_context_cache, "flush_meshlet_draws: expected VulkanContext");
+        }
+        auto* vkCtx = s_data->vk_context_cache;
 
         void* rpNative = nullptr;
         if (auto target = Renderer::get_render_target()) {
@@ -397,32 +410,32 @@ namespace Honey {
 
         RenderCommand::bind_pipeline(pipe);
 
-        // --- Build global material + texture table (shared across all draws) ---
+        // --- Build global material + texture table ---
         CameraUBO saved_camera = VulkanRendererAPI::get_globals_state().cameraUBO;
 
-        std::unordered_map<Texture2D*, uint32_t> tex_slot_map;
+        // Reuse persistent containers — no heap alloc after the first frame
+        auto& tex_slot_map  = s_data->frame_tex_slot_map;
+        auto& gpu_materials = s_data->frame_gpu_materials;
+        tex_slot_map.clear();
+        gpu_materials.clear();
         tex_slot_map[s_data->white_texture.get()] = 0;
         uint32_t tex_slot_count = 1;
 
-        std::vector<GPUMaterial> gpu_materials;
         gpu_materials.reserve(s_data->meshlet_draws.size());
 
         for (const auto& cmd : s_data->meshlet_draws) {
-            auto* mat = cmd.material.get();
+            auto* mat = cmd.material;
             Texture2D* tex = (mat && mat->get_base_color_texture())
                 ? mat->get_base_color_texture().get()
                 : s_data->white_texture.get();
 
-            if (!tex_slot_map.count(tex)) {
-                if (tex_slot_count < s_data->max_texture_slots)
-                    tex_slot_map[tex] = tex_slot_count++;
-                else
-                    tex_slot_map[tex] = 0; // hard cap (>1024 unique textures) — fall back to white
-            }
+            auto [tex_it, inserted] = tex_slot_map.try_emplace(tex, 0u);
+            if (inserted)
+                tex_it->second = (tex_slot_count < s_data->max_texture_slots) ? tex_slot_count++ : 0u;
 
             GPUMaterial gpu_mat{};
             gpu_mat.base_color        = mat ? mat->get_base_color_factor() : glm::vec4(1.0f);
-            gpu_mat.base_color_tex_id = (int32_t)tex_slot_map.at(tex);
+            gpu_mat.base_color_tex_id = (int32_t)tex_it->second;
             gpu_mat.metallic          = mat ? mat->get_metallic_factor()   : 0.0f;
             gpu_mat.roughness         = mat ? mat->get_roughness_factor()  : 0.5f;
             gpu_materials.push_back(gpu_mat);
@@ -438,16 +451,18 @@ namespace Honey {
         VulkanRendererAPI::submit_materials(gpu_materials, 0);
         VulkanRendererAPI::flush_globals();
 
-        // --- Group draws by Mesh, then dispatch one indirect call per Mesh ---
+        // --- Group draws by Mesh, dispatch one indirect call per Mesh ---
+        auto& mesh_order    = s_data->frame_mesh_order;
+        auto& draws_by_mesh = s_data->frame_draws_by_mesh;
+        mesh_order.clear();
+        draws_by_mesh.clear();
 
-        // Collect unique meshes in submission order
-        std::vector<const Mesh*> mesh_order;
-        std::unordered_map<const Mesh*, std::vector<uint32_t>> draws_by_mesh;
         for (uint32_t i = 0; i < (uint32_t)s_data->meshlet_draws.size(); ++i) {
             const Mesh* m = s_data->meshlet_draws[i].mesh;
-            if (!draws_by_mesh.count(m))
+            auto [dm_it, dm_inserted] = draws_by_mesh.try_emplace(m);
+            if (dm_inserted)
                 mesh_order.push_back(m);
-            draws_by_mesh[m].push_back(i);
+            dm_it->second.push_back(i);
         }
 
         // Size shared indirect + count buffers (draw_data is now per-mesh)
@@ -466,6 +481,10 @@ namespace Honey {
         auto indirect_vk = reinterpret_cast<VkBuffer>(s_data->indirect_buffer->get_native_buffer());
         auto count_vk    = reinterpret_cast<VkBuffer>(s_data->count_buffer->get_native_buffer());
 
+        // Per-mesh scratch vectors — reused each iteration, capacity is retained between frames
+        auto& indirect_cmds = s_data->frame_indirect_cmds;
+        auto& draw_data     = s_data->frame_draw_data;
+
         uint32_t global_draw_offset = 0;
 
         for (uint32_t mesh_idx = 0; mesh_idx < (uint32_t)mesh_order.size(); ++mesh_idx) {
@@ -482,9 +501,9 @@ namespace Honey {
             // Ensure descriptor set exists, writing all 6 bindings including draw_data_buffer
             VulkanRendererAPI::ensure_mesh_descriptor_set(bufs);
 
-            // Build indirect commands and draw data for this mesh's draws
-            std::vector<VkDrawMeshTasksIndirectCommandEXT> indirect_cmds;
-            std::vector<GPUDrawData> draw_data;
+            // Reuse scratch vectors — clear but keep capacity
+            indirect_cmds.clear();
+            draw_data.clear();
             indirect_cmds.reserve(mesh_draw_count);
             draw_data.reserve(mesh_draw_count);
 
@@ -617,7 +636,7 @@ namespace Honey {
             MeshletDrawCommand{
                 .submesh   = &submesh,
                 .mesh      = mesh,
-                .material  = material,
+                .material  = material.get(),
                 .transform = transform,
                 .entity_id = entity_id
             }

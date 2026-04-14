@@ -106,7 +106,13 @@ namespace Honey {
         // Flat BFS-sorted list of all entities with TransformComponent.
         // Parents are always before their children, so world transforms
         // can be computed in one linear pass without recursion.
-        std::vector<entt::entity> m_transform_order;
+        // parent_idx is the index of this entity's parent in the same vector (-1 = root).
+        // Cached so the hot update loop never touches RelationshipComponent.
+        struct TransformOrderEntry {
+            entt::entity entity;
+            int32_t      parent_idx; // index into m_transform_order, -1 for roots
+        };
+        std::vector<TransformOrderEntry> m_transform_order;
         uint64_t m_transform_order_version = UINT64_MAX;
 
         b2WorldId m_world = b2_nullWorldId;

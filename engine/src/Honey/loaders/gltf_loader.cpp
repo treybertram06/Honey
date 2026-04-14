@@ -680,8 +680,8 @@ namespace Honey {
                     ));
                     pr.submesh.vao = vao;
 
-                    HN_CORE_INFO("Built {} meshlets for submesh '{}'",
-                                 result->geometry.meshlet_count, pr.submesh.name);
+                    //HN_CORE_INFO("Built {} meshlets for submesh '{}'",
+                    //             result->geometry.meshlet_count, pr.submesh.name);
                     pr.submesh.meshlets = result->geometry; // offsets will be filled in second pass
                     pr.meshlet_build    = std::move(*result);
                 } else {

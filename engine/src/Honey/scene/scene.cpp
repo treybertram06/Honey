@@ -907,27 +907,19 @@ namespace Honey {
                 HN_PROFILE_SCOPE("Render3DScene::MeshSubmissionLoop"); // This loop is INCREDIBLY slow when application is built in debug mode
                 auto mesh_view = m_registry.view<TransformComponent, MeshRendererComponent>();
 
-                for (auto entity : mesh_view) {
-                    auto& mr = mesh_view.get<MeshRendererComponent>(entity);
+                for (auto [entity, tc, mr] : mesh_view.each()) {
 
                     if (!mr.mesh)
                         continue;
 
-                    const glm::mat4& world = mesh_view.get<TransformComponent>(entity).world;
+                    const glm::mat4& world = tc.world;
 
                     const auto& submeshes = mr.mesh->get_submeshes();
                     const auto& overrides = mr.material_overrides;
                     for (size_t i = 0; i < submeshes.size(); ++i) {
                         const auto& sm = submeshes[i];
-
-                        Ref<Material> material = sm.material;
-
-                        // Optional: override material if present
-                        if (i < overrides.size() && overrides[i])
-                            material = overrides[i];
-
-                        if (material && material->get_base_color_factor() != mr.color)
-                            material->set_base_color_factor(mr.color);
+                        const Ref<Material>& material =
+                            (i < overrides.size() && overrides[i]) ? overrides[i] : sm.material;
 
                         Renderer3D::submit_submesh(sm, material, world * sm.transform, (int)entity, mr.mesh.get());
                     }
@@ -950,6 +942,11 @@ namespace Honey {
         auto all = m_registry.view<TransformComponent>();
         m_transform_order.reserve(all.size());
 
+        // Map entity → index in m_transform_order, filled as we BFS.
+        // Used to resolve parent_idx at insertion time.
+        std::unordered_map<entt::entity, int32_t> entity_to_idx;
+        entity_to_idx.reserve(all.size());
+
         // BFS from all roots so parents always precede their children.
         std::queue<entt::entity> queue;
         for (auto entity : all) {
@@ -965,7 +962,21 @@ namespace Honey {
 
         while (!queue.empty()) {
             entt::entity e = queue.front(); queue.pop();
-            m_transform_order.push_back(e);
+
+            // Resolve parent index — parent was already inserted (BFS guarantee)
+            int32_t parent_idx = -1;
+            if (m_registry.all_of<RelationshipComponent>(e)) {
+                const auto& rel = m_registry.get<RelationshipComponent>(e);
+                if (rel.parent != entt::null && m_registry.valid(rel.parent)) {
+                    auto pit = entity_to_idx.find(rel.parent);
+                    if (pit != entity_to_idx.end())
+                        parent_idx = pit->second;
+                }
+            }
+
+            const int32_t my_idx = (int32_t)m_transform_order.size();
+            entity_to_idx[e] = my_idx;
+            m_transform_order.push_back({e, parent_idx});
 
             if (m_registry.all_of<RelationshipComponent>(e)) {
                 const auto& rel = m_registry.get<RelationshipComponent>(e);
@@ -987,25 +998,20 @@ namespace Honey {
         }
 
         // Single linear pass — parents are always processed before children.
-        // world_dirty is propagated downward: if a parent's world changed,
-        // all children must recompute even if their local transform is clean.
-        for (entt::entity entity : m_transform_order) {
-            if (!m_registry.valid(entity))
-                continue;
+        // parent_idx was cached at rebuild time so we never touch RelationshipComponent here.
+        // world_dirty propagates downward: a dirty parent forces all children to recompute.
+        for (const auto& entry : m_transform_order) {
+            HN_CORE_ASSERT(m_registry.valid(entry.entity), "Stale entity in transform order — hierarchy changed without mark_dirty()");
 
-            auto& tc = m_registry.get<TransformComponent>(entity);
+            auto& tc = m_registry.get<TransformComponent>(entry.entity);
 
-            bool   parent_world_dirty = false;
+            bool      parent_world_dirty = false;
             glm::mat4 parent_world(1.0f);
 
-            if (m_registry.all_of<RelationshipComponent>(entity)) {
-                const auto& rel = m_registry.get<RelationshipComponent>(entity);
-                if (rel.parent != entt::null && m_registry.valid(rel.parent)
-                    && m_registry.all_of<TransformComponent>(rel.parent)) {
-                    const auto& ptc = m_registry.get<TransformComponent>(rel.parent);
-                    parent_world       = ptc.world;
-                    parent_world_dirty = ptc.world_dirty;
-                }
+            if (entry.parent_idx >= 0) {
+                const auto& ptc = m_registry.get<TransformComponent>(m_transform_order[entry.parent_idx].entity);
+                parent_world       = ptc.world;
+                parent_world_dirty = ptc.world_dirty;
             }
 
             if (tc.dirty || parent_world_dirty) {
