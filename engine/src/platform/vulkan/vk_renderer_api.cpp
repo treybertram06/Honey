@@ -195,11 +195,29 @@ namespace Honey {
 
     void VulkanRendererAPI::update_mesh_draw_data_binding(GlobalMeshletBuffers& bufs, uint32_t draw_count) {
         const uint32_t needed = draw_count * (uint32_t)sizeof(GPUDrawData);
-        if (!bufs.draw_data_buffer || bufs.draw_data_buffer->get_size() < needed) {
-            bufs.draw_data_buffer = StorageBuffer::create(needed, StorageBufferUsage::Dynamic);
+        const uint32_t slot = get_meshlet_frame_slot();
+        auto& draw_data_buffer = bufs.draw_data_buffers[slot];
+        if (!draw_data_buffer || draw_data_buffer->get_size() < needed) {
+            draw_data_buffer = StorageBuffer::create(needed, StorageBufferUsage::Dynamic);
             // Force descriptor recreation so binding 5 points to the new buffer
-            bufs.descriptor_set = nullptr;
+            bufs.descriptor_sets[slot] = nullptr;
         }
+    }
+
+    uint32_t VulkanRendererAPI::get_meshlet_frame_slot() {
+        auto* ctx = get_vulkan_context();
+        HN_CORE_ASSERT(ctx, "get_meshlet_frame_slot: no active VulkanContext");
+        return ctx->get_current_frame() % GlobalMeshletBuffers::k_frame_ring_size;
+    }
+
+    Ref<StorageBuffer> VulkanRendererAPI::get_mesh_draw_data_buffer(const GlobalMeshletBuffers& bufs) {
+        const uint32_t slot = get_meshlet_frame_slot();
+        return bufs.draw_data_buffers[slot];
+    }
+
+    void* VulkanRendererAPI::get_mesh_descriptor_set(const GlobalMeshletBuffers& bufs) {
+        const uint32_t slot = get_meshlet_frame_slot();
+        return bufs.descriptor_sets[slot];
     }
 
     void VulkanRendererAPI::submit_instanced_draw(
@@ -499,7 +517,8 @@ namespace Honey {
     }
 
     void VulkanRendererAPI::ensure_mesh_descriptor_set(GlobalMeshletBuffers& bufs) {
-        if (bufs.descriptor_set) return;
+        const uint32_t slot = get_meshlet_frame_slot();
+        if (bufs.descriptor_sets[slot]) return;
 
         HN_CORE_ASSERT(s_meshlet_set_layout && !s_meshlet_desc_pools.empty(),
             "ensure_mesh_descriptor_set: call get_or_create_meshlet_set_layout first");
@@ -525,7 +544,7 @@ namespace Honey {
             HN_CORE_ASSERT(r == VK_SUCCESS, "ensure_mesh_descriptor_set: vkAllocateDescriptorSets failed on fresh pool");
         }
 
-        HN_CORE_ASSERT(bufs.draw_data_buffer,
+        HN_CORE_ASSERT(bufs.draw_data_buffers[slot],
             "ensure_mesh_descriptor_set: call update_mesh_draw_data_binding before ensure_mesh_descriptor_set");
 
         Ref<StorageBuffer> ssbo_bufs[6] = {
@@ -534,7 +553,7 @@ namespace Honey {
             bufs.meshlet_vertices_buffer,
             bufs.meshlet_triangles_buffer,
             bufs.meshlet_bounds_buffer,
-            bufs.draw_data_buffer
+            bufs.draw_data_buffers[slot]
         };
         VkDescriptorBufferInfo buf_infos[6]{};
         VkWriteDescriptorSet   writes[6]{};
@@ -553,7 +572,7 @@ namespace Honey {
         }
         vkUpdateDescriptorSets(device, 6, writes, 0, nullptr);
 
-        bufs.descriptor_set = ds;
+        bufs.descriptor_sets[slot] = ds;
     }
 
     void VulkanRendererAPI::submit_mesh_tasks_indirect_count(

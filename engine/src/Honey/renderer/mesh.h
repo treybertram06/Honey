@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include <optional>
+#include <array>
 
 namespace Honey {
 
@@ -16,13 +17,16 @@ namespace Honey {
     };
 
     struct GlobalMeshletBuffers {
+        // Keep this in sync with active Vulkan frames-in-flight.
+        static constexpr uint32_t k_frame_ring_size = 2;
+
         Ref<StorageBuffer> vertex_buffer;
         Ref<StorageBuffer> meshlets_buffer;
         Ref<StorageBuffer> meshlet_vertices_buffer;
         Ref<StorageBuffer> meshlet_triangles_buffer;
         Ref<StorageBuffer> meshlet_bounds_buffer;
-        Ref<StorageBuffer> draw_data_buffer; // per-mesh GPUDrawData[], grown as needed
-        void* descriptor_set = nullptr; // VkDescriptorSet, one per Mesh
+        std::array<Ref<StorageBuffer>, k_frame_ring_size> draw_data_buffers{}; // per-frame per-mesh GPUDrawData[]
+        std::array<void*, k_frame_ring_size> descriptor_sets{}; // VkDescriptorSet per frame slot
     };
 
     struct MeshletBounds {

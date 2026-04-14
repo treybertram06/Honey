@@ -33,16 +33,25 @@ namespace Honey {
     namespace {
         // Local vertex type matching your current 3D shader expectations.
         // If you already have TestVertex3D exposed in a header, prefer including that instead.
-        struct VertexPNUV {
-            glm::vec3 position{0.0f};
-            glm::vec3 normal{0.0f, 0.0f, 1.0f};
-            glm::vec2 uv{0.0f};
+        using packed_vec2 = glm::vec<2, float, glm::packed_highp>;
+        using packed_vec3 = glm::vec<3, float, glm::packed_highp>;
+        using packed_vec4 = glm::vec<4, float, glm::packed_highp>;
+
+        struct VertexPBR {
+            packed_vec3 position{0.0f};
+            packed_vec3 normal{0.0f, 0.0f, 1.0f};
+            packed_vec4 tangent{1.0f, 0.0f, 0.0f, 1.0f};
+            packed_vec2 uv0{0.0f};
+            packed_vec2 uv1{0.0f};
         };
+        static constexpr size_t k_vertex_floats = sizeof(VertexPBR) / sizeof(float);
+        static_assert(sizeof(VertexPBR) % sizeof(float) == 0, "VertexPBR must be float-packed");
+        static_assert(sizeof(VertexPBR) == (14 * sizeof(float)), "VertexPBR size must match shader vertex packing");
 
         struct ImportedPrimitiveData {
             std::string name;
 
-            std::vector<VertexPNUV> vertices;
+            std::vector<VertexPBR> vertices;
             std::vector<uint32_t> indices;
 
             Ref<Material> material;
@@ -145,102 +154,160 @@ namespace Honey {
             return true;
         }
 
-        static Ref<Material> build_material_from_gltf(
+        static bool read_vec4_float(const tinygltf::Model& model, const tinygltf::Accessor& acc, size_t index, glm::vec4& out) {
+            if (acc.componentType != TINYGLTF_COMPONENT_TYPE_FLOAT || acc.type != TINYGLTF_TYPE_VEC4)
+                return false;
+
+            size_t stride = 0;
+            const uint8_t* base = accessor_data_ptr(model, acc, stride);
+            if (!base) return false;
+
+            const float* f = reinterpret_cast<const float*>(base + index * stride);
+            out = glm::vec4(f[0], f[1], f[2], f[3]);
+            return true;
+        }
+
+        static void parse_texture_transform(const tinygltf::ExtensionMap& ext_map, Material::TextureSlot& slot) {
+            auto tx_it = ext_map.find("KHR_texture_transform");
+            if (tx_it == ext_map.end())
+                return;
+
+            const tinygltf::Value& tx = tx_it->second;
+            if (!tx.IsObject())
+                return;
+
+            auto& t = slot.transform;
+            t.has_transform = true;
+
+            if (tx.Has("offset")) {
+                const tinygltf::Value& offset = tx.Get("offset");
+                if (offset.IsArray() && offset.ArrayLen() >= 2) {
+                    t.offset.x = (float)offset.Get(0).GetNumberAsDouble();
+                    t.offset.y = (float)offset.Get(1).GetNumberAsDouble();
+                }
+            }
+            if (tx.Has("scale")) {
+                const tinygltf::Value& scale = tx.Get("scale");
+                if (scale.IsArray() && scale.ArrayLen() >= 2) {
+                    t.scale.x = (float)scale.Get(0).GetNumberAsDouble();
+                    t.scale.y = (float)scale.Get(1).GetNumberAsDouble();
+                }
+            }
+            if (tx.Has("rotation")) {
+                t.rotation = (float)tx.Get("rotation").GetNumberAsDouble();
+            }
+            if (tx.Has("texCoord")) {
+                slot.tex_coord = tx.Get("texCoord").GetNumberAsInt();
+            }
+        }
+
+        static void parse_texture_transform_from_value(const tinygltf::Value& extensions_value, Material::TextureSlot& slot) {
+            if (!extensions_value.IsObject() || !extensions_value.Has("KHR_texture_transform"))
+                return;
+            const tinygltf::Value& tx = extensions_value.Get("KHR_texture_transform");
+            if (!tx.IsObject())
+                return;
+
+            auto& t = slot.transform;
+            t.has_transform = true;
+
+            if (tx.Has("offset")) {
+                const tinygltf::Value& offset = tx.Get("offset");
+                if (offset.IsArray() && offset.ArrayLen() >= 2) {
+                    t.offset.x = (float)offset.Get(0).GetNumberAsDouble();
+                    t.offset.y = (float)offset.Get(1).GetNumberAsDouble();
+                }
+            }
+            if (tx.Has("scale")) {
+                const tinygltf::Value& scale = tx.Get("scale");
+                if (scale.IsArray() && scale.ArrayLen() >= 2) {
+                    t.scale.x = (float)scale.Get(0).GetNumberAsDouble();
+                    t.scale.y = (float)scale.Get(1).GetNumberAsDouble();
+                }
+            }
+            if (tx.Has("rotation")) {
+                t.rotation = (float)tx.Get("rotation").GetNumberAsDouble();
+            }
+            if (tx.Has("texCoord")) {
+                slot.tex_coord = tx.Get("texCoord").GetNumberAsInt();
+            }
+        }
+
+        template <typename TTextureInfo>
+        static void fill_texture_slot_metadata(
             const tinygltf::Model& model,
-            int materialIndex,
+            const TTextureInfo& info,
+            Material::TextureSlot& slot) {
+            slot.tex_coord = info.texCoord;
+            slot.gltf_texture_index = info.index;
+            parse_texture_transform(info.extensions, slot);
+
+            if (info.index < 0 || info.index >= (int)model.textures.size())
+                return;
+
+            const tinygltf::Texture& gt = model.textures[(size_t)info.index];
+            slot.gltf_image_source = gt.source;
+        }
+
+        static void fill_texture_slot_metadata_from_value(
+            const tinygltf::Model& model,
+            const tinygltf::Value& texture_info,
+            Material::TextureSlot& slot) {
+            if (!texture_info.IsObject() || !texture_info.Has("index"))
+                return;
+
+            slot.gltf_texture_index = texture_info.Get("index").GetNumberAsInt();
+            if (texture_info.Has("texCoord"))
+                slot.tex_coord = texture_info.Get("texCoord").GetNumberAsInt();
+            if (texture_info.Has("extensions"))
+                parse_texture_transform_from_value(texture_info.Get("extensions"), slot);
+
+            if (slot.gltf_texture_index < 0 || slot.gltf_texture_index >= (int)model.textures.size())
+                return;
+            const tinygltf::Texture& gt = model.textures[(size_t)slot.gltf_texture_index];
+            slot.gltf_image_source = gt.source;
+        }
+
+        static Ref<Texture2D> load_texture_from_source(
+            const tinygltf::Model& model,
+            int source,
             const std::filesystem::path& gltfDir,
-            const GltfLoadOptions& options,
+            bool async,
             std::unordered_map<int, Ref<Texture2D>>& textureCacheByImageIndex,
-            bool async = true,
-            std::mutex* p_tex_mutex = nullptr
-        ) {
-            HN_PROFILE_FUNCTION();
-            Ref<Material> mat = Material::create();
-
-            if (materialIndex < 0 || materialIndex >= (int)model.materials.size()) {
-                mat->set_base_color_factor(glm::vec4(1.0f));
-                mat->set_base_color_texture(nullptr);
-                return mat;
-            }
-
-            const tinygltf::Material& gm = model.materials[(size_t)materialIndex];
-
-            // baseColorFactor
-            glm::vec4 factor(1.0f);
-            if (gm.pbrMetallicRoughness.baseColorFactor.size() == 4) {
-                factor.r = (float)gm.pbrMetallicRoughness.baseColorFactor[0];
-                factor.g = (float)gm.pbrMetallicRoughness.baseColorFactor[1];
-                factor.b = (float)gm.pbrMetallicRoughness.baseColorFactor[2];
-                factor.a = (float)gm.pbrMetallicRoughness.baseColorFactor[3];
-            }
-            mat->set_base_color_factor(factor);
-
-            if (options.disable_textures) {
-                mat->set_base_color_texture(nullptr);
-                return mat;
-            }
-
-            // metallicFactor
-            mat->set_metallic_factor((float)gm.pbrMetallicRoughness.metallicFactor);
-            // roughnessFactor
-            mat->set_roughness_factor((float)gm.pbrMetallicRoughness.roughnessFactor);
-
-            // baseColorTexture (URI-based only for v1)
-            const tinygltf::TextureInfo& ti = gm.pbrMetallicRoughness.baseColorTexture;
-            if (ti.index < 0 || ti.index >= (int)model.textures.size()) {
-                mat->set_base_color_texture(nullptr);
-                return mat;
-            }
-
-            const tinygltf::Texture& gt = model.textures[(size_t)ti.index];
-            if (gt.source < 0 || gt.source >= (int)model.images.size()) {
-                mat->set_base_color_texture(nullptr);
-                return mat;
-            }
+            std::mutex* p_tex_mutex = nullptr) {
+            if (source < 0 || source >= (int)model.images.size())
+                return nullptr;
 
             {
                 auto lk = p_tex_mutex
                     ? std::unique_lock<std::mutex>(*p_tex_mutex)
                     : std::unique_lock<std::mutex>();
-                auto it = textureCacheByImageIndex.find(gt.source);
-                if (it != textureCacheByImageIndex.end()) {
-                    mat->set_base_color_texture(it->second);
-                    return mat;
-                }
+                auto it = textureCacheByImageIndex.find(source);
+                if (it != textureCacheByImageIndex.end())
+                    return it->second;
             }
 
-            const tinygltf::Image& img = model.images[(size_t)gt.source];
+            const tinygltf::Image& img = model.images[(size_t)source];
+            Ref<Texture2D> tex;
 
-            if (img.uri.empty() || img.uri.rfind("data:", 0) == 0) {
-                if (img.image.empty() || img.width <= 0 || img.height <= 0) {
-                    HN_CORE_WARN("glTF: embedded image has no decoded pixel data. Using white.");
-                    mat->set_base_color_texture(nullptr);
-                    return mat;
-                }
-
+            if (!img.image.empty() && img.width > 0 && img.height > 0) {
                 const int w = img.width, h = img.height, comp = img.component;
                 const int bits = img.bits > 0 ? img.bits : 8;
-                if (bits != 8) {
-                    HN_CORE_WARN("glTF: embedded image has {} bits/channel (only 8-bit supported). Using white.", bits);
-                    mat->set_base_color_texture(nullptr);
-                    return mat;
+                if (bits != 8 || comp <= 0) {
+                    HN_CORE_WARN("glTF: embedded image source {} has unsupported format", source);
+                    return nullptr;
                 }
 
-                // Expand to RGBA8
                 std::vector<uint8_t> rgba(w * h * 4);
                 for (int i = 0; i < w * h; ++i) {
                     const uint8_t* src = img.image.data() + i * comp;
-                    rgba[i*4+0] = comp >= 1 ? src[0] : 0;
-                    rgba[i*4+1] = comp >= 2 ? src[1] : (comp == 1 ? src[0] : 0);
-                    // grey→RGB
-                    rgba[i*4+2] = comp >= 3 ? src[2] : (comp == 1 ? src[0] : 0);
-                    rgba[i*4+3] = comp == 4 ? src[3] : 255;
+                    rgba[i * 4 + 0] = comp >= 1 ? src[0] : 0;
+                    rgba[i * 4 + 1] = comp >= 2 ? src[1] : (comp == 1 ? src[0] : 0);
+                    rgba[i * 4 + 2] = comp >= 3 ? src[2] : (comp == 1 ? src[0] : 0);
+                    rgba[i * 4 + 3] = comp == 4 ? src[3] : 255;
                 }
 
-                Ref<Texture2D> tex;
                 if (async) {
-                    // Create a white 1x1 placeholder immediately; defer the real GPU upload
-                    // to the renderer-owned upload path so the editor thread stays responsive.
                     tex = Texture2D::create(1, 1);
                     uint32_t white = 0xFFFFFFFFu;
                     tex->set_data(&white, sizeof(white));
@@ -261,31 +328,255 @@ namespace Honey {
                     tex = Texture2D::create((uint32_t)w, (uint32_t)h);
                     tex->set_data(rgba.data(), (uint32_t)rgba.size());
                 }
-                {
-                    auto lk = p_tex_mutex
-                        ? std::unique_lock<std::mutex>(*p_tex_mutex)
-                        : std::unique_lock<std::mutex>();
-                    textureCacheByImageIndex.emplace(gt.source, tex);
-                }
-                mat->set_base_color_texture(tex);
-                return mat;
+            } else if (!img.uri.empty() && img.uri.rfind("data:", 0) != 0) {
+                const std::filesystem::path texPath = gltfDir / img.uri;
+                tex = async ? Texture2D::create_async(texPath.string())
+                            : Texture2D::create(texPath.string());
             }
 
-            const std::filesystem::path texPath = gltfDir / img.uri;
-
-            Ref<Texture2D> tex;
-            if (async)
-                tex = Texture2D::create_async(texPath.string());
-            else
-                tex = Texture2D::create(texPath.string());
+            if (!tex)
+                return nullptr;
 
             {
                 auto lk = p_tex_mutex
                     ? std::unique_lock<std::mutex>(*p_tex_mutex)
                     : std::unique_lock<std::mutex>();
-                textureCacheByImageIndex.emplace(gt.source, tex);
+                textureCacheByImageIndex.emplace(source, tex);
             }
-            mat->set_base_color_texture(tex);
+            return tex;
+        }
+
+        static void parse_material_extensions(const tinygltf::Model& model, const tinygltf::Material& gm, Material& mat) {
+            auto parse_float = [](const tinygltf::Value& v, const char* key, float fallback) -> float {
+                if (!v.IsObject() || !v.Has(key))
+                    return fallback;
+                return (float)v.Get(key).GetNumberAsDouble();
+            };
+            auto parse_vec3 = [](const tinygltf::Value& v, const char* key, const glm::vec3& fallback) -> glm::vec3 {
+                if (!v.IsObject() || !v.Has(key))
+                    return fallback;
+                const tinygltf::Value& arr = v.Get(key);
+                if (!arr.IsArray() || arr.ArrayLen() < 3)
+                    return fallback;
+                return glm::vec3(
+                    (float)arr.Get(0).GetNumberAsDouble(),
+                    (float)arr.Get(1).GetNumberAsDouble(),
+                    (float)arr.Get(2).GetNumberAsDouble());
+            };
+
+            if (gm.extensions.find("KHR_materials_unlit") != gm.extensions.end()) {
+                mat.pbr().extensions.unlit.enabled = true;
+            }
+
+            if (auto it = gm.extensions.find("KHR_materials_emissive_strength"); it != gm.extensions.end()) {
+                mat.pbr().extensions.emissive_strength.enabled = true;
+                mat.pbr().extensions.emissive_strength.strength = parse_float(it->second, "emissiveStrength", 1.0f);
+            }
+
+            if (auto it = gm.extensions.find("KHR_materials_clearcoat"); it != gm.extensions.end()) {
+                auto& cc = mat.pbr().extensions.clearcoat;
+                cc.enabled = true;
+                cc.factor = parse_float(it->second, "clearcoatFactor", 0.0f);
+                cc.roughness_factor = parse_float(it->second, "clearcoatRoughnessFactor", 0.0f);
+                cc.normal_scale = 1.0f;
+                if (it->second.IsObject()) {
+                    fill_texture_slot_metadata_from_value(model, it->second.Get("clearcoatTexture"), cc.texture);
+                    fill_texture_slot_metadata_from_value(model, it->second.Get("clearcoatRoughnessTexture"), cc.roughness_texture);
+                    fill_texture_slot_metadata_from_value(model, it->second.Get("clearcoatNormalTexture"), cc.normal_texture);
+                }
+                if (it->second.IsObject() && it->second.Has("clearcoatNormalTexture")) {
+                    const tinygltf::Value& n = it->second.Get("clearcoatNormalTexture");
+                    if (n.IsObject() && n.Has("scale"))
+                        cc.normal_scale = (float)n.Get("scale").GetNumberAsDouble();
+                }
+            }
+
+            if (auto it = gm.extensions.find("KHR_materials_sheen"); it != gm.extensions.end()) {
+                auto& s = mat.pbr().extensions.sheen;
+                s.enabled = true;
+                s.color_factor = parse_vec3(it->second, "sheenColorFactor", glm::vec3(0.0f));
+                s.roughness_factor = parse_float(it->second, "sheenRoughnessFactor", 0.0f);
+                if (it->second.IsObject()) {
+                    fill_texture_slot_metadata_from_value(model, it->second.Get("sheenColorTexture"), s.color_texture);
+                    fill_texture_slot_metadata_from_value(model, it->second.Get("sheenRoughnessTexture"), s.roughness_texture);
+                }
+            }
+
+            if (auto it = gm.extensions.find("KHR_materials_specular"); it != gm.extensions.end()) {
+                auto& s = mat.pbr().extensions.specular;
+                s.enabled = true;
+                s.specular_factor = parse_float(it->second, "specularFactor", 1.0f);
+                s.specular_color_factor = parse_vec3(it->second, "specularColorFactor", glm::vec3(1.0f));
+                if (it->second.IsObject()) {
+                    fill_texture_slot_metadata_from_value(model, it->second.Get("specularTexture"), s.specular_texture);
+                    fill_texture_slot_metadata_from_value(model, it->second.Get("specularColorTexture"), s.specular_color_texture);
+                }
+            }
+
+            if (auto it = gm.extensions.find("KHR_materials_transmission"); it != gm.extensions.end()) {
+                auto& t = mat.pbr().extensions.transmission;
+                t.enabled = true;
+                t.factor = parse_float(it->second, "transmissionFactor", 0.0f);
+                if (it->second.IsObject())
+                    fill_texture_slot_metadata_from_value(model, it->second.Get("transmissionTexture"), t.texture);
+            }
+
+            if (auto it = gm.extensions.find("KHR_materials_volume"); it != gm.extensions.end()) {
+                auto& v = mat.pbr().extensions.volume;
+                v.enabled = true;
+                v.thickness_factor = parse_float(it->second, "thicknessFactor", 0.0f);
+                v.attenuation_distance = parse_float(it->second, "attenuationDistance", 0.0f);
+                v.attenuation_color = parse_vec3(it->second, "attenuationColor", glm::vec3(1.0f));
+                if (it->second.IsObject())
+                    fill_texture_slot_metadata_from_value(model, it->second.Get("thicknessTexture"), v.thickness_texture);
+            }
+
+            if (auto it = gm.extensions.find("KHR_materials_ior"); it != gm.extensions.end()) {
+                auto& ior = mat.pbr().extensions.ior;
+                ior.enabled = true;
+                ior.ior = parse_float(it->second, "ior", 1.5f);
+            }
+
+            if (auto it = gm.extensions.find("KHR_materials_iridescence"); it != gm.extensions.end()) {
+                auto& iri = mat.pbr().extensions.iridescence;
+                iri.enabled = true;
+                iri.factor = parse_float(it->second, "iridescenceFactor", 0.0f);
+                iri.ior = parse_float(it->second, "iridescenceIor", 1.3f);
+                iri.thickness_min = parse_float(it->second, "iridescenceThicknessMinimum", 100.0f);
+                iri.thickness_max = parse_float(it->second, "iridescenceThicknessMaximum", 400.0f);
+                if (it->second.IsObject()) {
+                    fill_texture_slot_metadata_from_value(model, it->second.Get("iridescenceTexture"), iri.texture);
+                    fill_texture_slot_metadata_from_value(model, it->second.Get("iridescenceThicknessTexture"), iri.thickness_texture);
+                }
+            }
+
+            if (auto it = gm.extensions.find("KHR_materials_anisotropy"); it != gm.extensions.end()) {
+                auto& aniso = mat.pbr().extensions.anisotropy;
+                aniso.enabled = true;
+                aniso.strength = parse_float(it->second, "anisotropyStrength", 0.0f);
+                aniso.rotation = parse_float(it->second, "anisotropyRotation", 0.0f);
+                if (it->second.IsObject())
+                    fill_texture_slot_metadata_from_value(model, it->second.Get("anisotropyTexture"), aniso.texture);
+            }
+
+            if (auto it = gm.extensions.find("KHR_materials_pbrSpecularGlossiness"); it != gm.extensions.end()) {
+                auto& sg = mat.pbr().extensions.pbr_specular_glossiness;
+                sg.enabled = true;
+                if (it->second.IsObject() && it->second.Has("diffuseFactor")) {
+                    const tinygltf::Value& f = it->second.Get("diffuseFactor");
+                    if (f.IsArray() && f.ArrayLen() >= 4) {
+                        sg.diffuse_factor = glm::vec4(
+                            (float)f.Get(0).GetNumberAsDouble(),
+                            (float)f.Get(1).GetNumberAsDouble(),
+                            (float)f.Get(2).GetNumberAsDouble(),
+                            (float)f.Get(3).GetNumberAsDouble());
+                    }
+                }
+                sg.specular_factor = parse_vec3(it->second, "specularFactor", glm::vec3(1.0f));
+                sg.glossiness_factor = parse_float(it->second, "glossinessFactor", 1.0f);
+                if (it->second.IsObject()) {
+                    fill_texture_slot_metadata_from_value(model, it->second.Get("diffuseTexture"), sg.diffuse_texture);
+                    fill_texture_slot_metadata_from_value(model, it->second.Get("specularGlossinessTexture"), sg.specular_glossiness_texture);
+                }
+            }
+        }
+
+        static Ref<Material> build_material_from_gltf(
+            const tinygltf::Model& model,
+            int materialIndex,
+            const std::filesystem::path& gltfDir,
+            const GltfLoadOptions& options,
+            std::unordered_map<int, Ref<Texture2D>>& textureCacheByImageIndex,
+            bool async = true,
+            std::mutex* p_tex_mutex = nullptr
+        ) {
+            HN_PROFILE_FUNCTION();
+            Ref<Material> mat = Material::create();
+
+            if (materialIndex < 0 || materialIndex >= (int)model.materials.size())
+                return mat;
+
+            const tinygltf::Material& gm = model.materials[(size_t)materialIndex];
+            auto& p = mat->pbr();
+
+            if (gm.pbrMetallicRoughness.baseColorFactor.size() == 4) {
+                p.base_color_factor = glm::vec4(
+                    (float)gm.pbrMetallicRoughness.baseColorFactor[0],
+                    (float)gm.pbrMetallicRoughness.baseColorFactor[1],
+                    (float)gm.pbrMetallicRoughness.baseColorFactor[2],
+                    (float)gm.pbrMetallicRoughness.baseColorFactor[3]);
+            }
+            p.metallic_factor = (float)gm.pbrMetallicRoughness.metallicFactor;
+            p.roughness_factor = (float)gm.pbrMetallicRoughness.roughnessFactor;
+            p.normal_scale = (float)gm.normalTexture.scale;
+            p.occlusion_strength = (float)gm.occlusionTexture.strength;
+            p.alpha_cutoff = (float)gm.alphaCutoff;
+            p.double_sided = gm.doubleSided;
+
+            if (gm.alphaMode == "MASK")
+                p.alpha_mode = Material::AlphaMode::Mask;
+            else if (gm.alphaMode == "BLEND")
+                p.alpha_mode = Material::AlphaMode::Blend;
+            else
+                p.alpha_mode = Material::AlphaMode::Opaque;
+
+            if (gm.emissiveFactor.size() == 3) {
+                p.emissive_factor = glm::vec3(
+                    (float)gm.emissiveFactor[0],
+                    (float)gm.emissiveFactor[1],
+                    (float)gm.emissiveFactor[2]);
+            }
+
+            fill_texture_slot_metadata(model, gm.pbrMetallicRoughness.baseColorTexture, p.base_color_texture);
+            fill_texture_slot_metadata(model, gm.pbrMetallicRoughness.metallicRoughnessTexture, p.metallic_roughness_texture);
+            fill_texture_slot_metadata(model, gm.normalTexture, p.normal_texture);
+            fill_texture_slot_metadata(model, gm.occlusionTexture, p.occlusion_texture);
+            fill_texture_slot_metadata(model, gm.emissiveTexture, p.emissive_texture);
+
+            parse_material_extensions(model, gm, *mat);
+
+            if (!options.disable_textures) {
+                p.base_color_texture.texture = load_texture_from_source(
+                    model, p.base_color_texture.gltf_image_source, gltfDir, async, textureCacheByImageIndex, p_tex_mutex);
+                p.metallic_roughness_texture.texture = load_texture_from_source(
+                    model, p.metallic_roughness_texture.gltf_image_source, gltfDir, async, textureCacheByImageIndex, p_tex_mutex);
+                p.normal_texture.texture = load_texture_from_source(
+                    model, p.normal_texture.gltf_image_source, gltfDir, async, textureCacheByImageIndex, p_tex_mutex);
+                p.occlusion_texture.texture = load_texture_from_source(
+                    model, p.occlusion_texture.gltf_image_source, gltfDir, async, textureCacheByImageIndex, p_tex_mutex);
+                p.emissive_texture.texture = load_texture_from_source(
+                    model, p.emissive_texture.gltf_image_source, gltfDir, async, textureCacheByImageIndex, p_tex_mutex);
+
+                auto& ext = p.extensions;
+                ext.clearcoat.texture.texture = load_texture_from_source(
+                    model, ext.clearcoat.texture.gltf_image_source, gltfDir, async, textureCacheByImageIndex, p_tex_mutex);
+                ext.clearcoat.roughness_texture.texture = load_texture_from_source(
+                    model, ext.clearcoat.roughness_texture.gltf_image_source, gltfDir, async, textureCacheByImageIndex, p_tex_mutex);
+                ext.clearcoat.normal_texture.texture = load_texture_from_source(
+                    model, ext.clearcoat.normal_texture.gltf_image_source, gltfDir, async, textureCacheByImageIndex, p_tex_mutex);
+                ext.sheen.color_texture.texture = load_texture_from_source(
+                    model, ext.sheen.color_texture.gltf_image_source, gltfDir, async, textureCacheByImageIndex, p_tex_mutex);
+                ext.sheen.roughness_texture.texture = load_texture_from_source(
+                    model, ext.sheen.roughness_texture.gltf_image_source, gltfDir, async, textureCacheByImageIndex, p_tex_mutex);
+                ext.specular.specular_texture.texture = load_texture_from_source(
+                    model, ext.specular.specular_texture.gltf_image_source, gltfDir, async, textureCacheByImageIndex, p_tex_mutex);
+                ext.specular.specular_color_texture.texture = load_texture_from_source(
+                    model, ext.specular.specular_color_texture.gltf_image_source, gltfDir, async, textureCacheByImageIndex, p_tex_mutex);
+                ext.transmission.texture.texture = load_texture_from_source(
+                    model, ext.transmission.texture.gltf_image_source, gltfDir, async, textureCacheByImageIndex, p_tex_mutex);
+                ext.volume.thickness_texture.texture = load_texture_from_source(
+                    model, ext.volume.thickness_texture.gltf_image_source, gltfDir, async, textureCacheByImageIndex, p_tex_mutex);
+                ext.iridescence.texture.texture = load_texture_from_source(
+                    model, ext.iridescence.texture.gltf_image_source, gltfDir, async, textureCacheByImageIndex, p_tex_mutex);
+                ext.iridescence.thickness_texture.texture = load_texture_from_source(
+                    model, ext.iridescence.thickness_texture.gltf_image_source, gltfDir, async, textureCacheByImageIndex, p_tex_mutex);
+                ext.anisotropy.texture.texture = load_texture_from_source(
+                    model, ext.anisotropy.texture.gltf_image_source, gltfDir, async, textureCacheByImageIndex, p_tex_mutex);
+                ext.pbr_specular_glossiness.diffuse_texture.texture = load_texture_from_source(
+                    model, ext.pbr_specular_glossiness.diffuse_texture.gltf_image_source, gltfDir, async, textureCacheByImageIndex, p_tex_mutex);
+                ext.pbr_specular_glossiness.specular_glossiness_texture.texture = load_texture_from_source(
+                    model, ext.pbr_specular_glossiness.specular_glossiness_texture.gltf_image_source, gltfDir, async, textureCacheByImageIndex, p_tex_mutex);
+            }
 
             return mat;
         }
@@ -294,7 +585,9 @@ namespace Honey {
             vb->set_layout({
                 { ShaderDataType::Float3, "a_position" },
                 { ShaderDataType::Float3, "a_normal"   },
-                { ShaderDataType::Float2, "a_uv"       },
+                { ShaderDataType::Float4, "a_tangent"  },
+                { ShaderDataType::Float2, "a_uv0"      },
+                { ShaderDataType::Float2, "a_uv1"      },
             });
         }
 
@@ -302,8 +595,71 @@ namespace Honey {
             return {
                 { ShaderDataType::Float3, "a_position" },
                 { ShaderDataType::Float3, "a_normal"   },
-                { ShaderDataType::Float2, "a_uv"       },
+                { ShaderDataType::Float4, "a_tangent"  },
+                { ShaderDataType::Float2, "a_uv0"      },
+                { ShaderDataType::Float2, "a_uv1"      },
             };
+        }
+
+        static void generate_tangents(std::vector<VertexPBR>& vertices, const std::vector<uint32_t>& indices) {
+            if (vertices.empty() || indices.empty())
+                return;
+
+            std::vector<glm::vec3> tan1(vertices.size(), glm::vec3(0.0f));
+            std::vector<glm::vec3> tan2(vertices.size(), glm::vec3(0.0f));
+
+            for (size_t i = 0; i + 2 < indices.size(); i += 3) {
+                const uint32_t i0 = indices[i + 0];
+                const uint32_t i1 = indices[i + 1];
+                const uint32_t i2 = indices[i + 2];
+                if (i0 >= vertices.size() || i1 >= vertices.size() || i2 >= vertices.size())
+                    continue;
+
+                const glm::vec3& p0 = vertices[i0].position;
+                const glm::vec3& p1 = vertices[i1].position;
+                const glm::vec3& p2 = vertices[i2].position;
+
+                const glm::vec2& w0 = vertices[i0].uv0;
+                const glm::vec2& w1 = vertices[i1].uv0;
+                const glm::vec2& w2 = vertices[i2].uv0;
+
+                const glm::vec3 e1 = p1 - p0;
+                const glm::vec3 e2 = p2 - p0;
+                const glm::vec2 d1 = w1 - w0;
+                const glm::vec2 d2 = w2 - w0;
+
+                const float denom = d1.x * d2.y - d1.y * d2.x;
+                if (glm::abs(denom) < 1e-8f)
+                    continue;
+
+                const float r = 1.0f / denom;
+                const glm::vec3 sdir = (e1 * d2.y - e2 * d1.y) * r;
+                const glm::vec3 tdir = (e2 * d1.x - e1 * d2.x) * r;
+
+                tan1[i0] += sdir;
+                tan1[i1] += sdir;
+                tan1[i2] += sdir;
+
+                tan2[i0] += tdir;
+                tan2[i1] += tdir;
+                tan2[i2] += tdir;
+            }
+
+            for (size_t i = 0; i < vertices.size(); ++i) {
+                const glm::vec3 n = glm::normalize(vertices[i].normal);
+                const glm::vec3 t = tan1[i];
+
+                glm::vec3 tangent = t - n * glm::dot(n, t);
+                if (glm::dot(tangent, tangent) < 1e-10f) {
+                    tangent = glm::vec3(1.0f, 0.0f, 0.0f);
+                } else {
+                    tangent = glm::normalize(tangent);
+                }
+
+                const glm::vec3 bitangent = glm::cross(n, tangent);
+                const float w = (glm::dot(bitangent, tan2[i]) < 0.0f) ? -1.0f : 1.0f;
+                vertices[i].tangent = glm::vec4(tangent, w);
+            }
         }
 
         static glm::mat4 gltf_mat4_to_glm(const std::vector<double>& m) {
@@ -408,19 +764,25 @@ namespace Honey {
             return true;
         }
 
+        struct PendingTexturePayload {
+            int source = -1;
+            std::shared_ptr<DecodedImageRGBA8> decoded{};
+        };
+
         struct PendingMaterialPayload {
-            glm::vec4 base_color_factor{1.0f};
-            float metallic_factor = 1.0f;
-            float roughness_factor = 1.0f;
-            int texture_source = -1;
-            std::shared_ptr<DecodedImageRGBA8> base_color_texture{};
+            Ref<Material> material;
+            PendingTexturePayload base_color_texture{};
+            PendingTexturePayload metallic_roughness_texture{};
+            PendingTexturePayload normal_texture{};
+            PendingTexturePayload occlusion_texture{};
+            PendingTexturePayload emissive_texture{};
         };
 
         struct PendingSubmeshPayload {
             PendingMaterialPayload material{};
             std::string name;
             glm::mat4 transform{1.0f};
-            std::vector<VertexPNUV> vertices;
+            std::vector<VertexPBR> vertices;
             std::vector<uint32_t> indices;
             std::optional<MeshletGeometry> meshlets;
         };
@@ -520,75 +882,77 @@ namespace Honey {
             HN_PROFILE_FUNCTION();
 
             PendingMaterialPayload mat{};
-            mat.base_color_factor = glm::vec4(1.0f);
-            mat.metallic_factor = 1.0f;
-            mat.roughness_factor = 1.0f;
+            GltfLoadOptions no_texture_opts = options;
+            no_texture_opts.disable_textures = true;
+            std::unordered_map<int, Ref<Texture2D>> dummy_cache;
+            mat.material = build_material_from_gltf(
+                model, materialIndex, gltfDir, no_texture_opts, dummy_cache, false, nullptr);
 
-            if (materialIndex < 0 || materialIndex >= (int)model.materials.size()) {
+            if (!mat.material || options.disable_textures)
                 return mat;
-            }
 
-            const tinygltf::Material& gm = model.materials[(size_t)materialIndex];
-            if (gm.pbrMetallicRoughness.baseColorFactor.size() == 4) {
-                mat.base_color_factor.r = (float)gm.pbrMetallicRoughness.baseColorFactor[0];
-                mat.base_color_factor.g = (float)gm.pbrMetallicRoughness.baseColorFactor[1];
-                mat.base_color_factor.b = (float)gm.pbrMetallicRoughness.baseColorFactor[2];
-                mat.base_color_factor.a = (float)gm.pbrMetallicRoughness.baseColorFactor[3];
-            }
+            auto decode_source = [&](int source, PendingTexturePayload& out_slot) {
+                out_slot.source = source;
+                if (source < 0 || source >= (int)model.images.size())
+                    return;
 
-            mat.metallic_factor = (float)gm.pbrMetallicRoughness.metallicFactor;
-            mat.roughness_factor = (float)gm.pbrMetallicRoughness.roughnessFactor;
-
-            if (options.disable_textures) {
-                return mat;
-            }
-
-            const tinygltf::TextureInfo& ti = gm.pbrMetallicRoughness.baseColorTexture;
-            if (ti.index < 0 || ti.index >= (int)model.textures.size()) {
-                return mat;
-            }
-
-            const tinygltf::Texture& gt = model.textures[(size_t)ti.index];
-            if (gt.source < 0 || gt.source >= (int)model.images.size()) {
-                return mat;
-            }
-
-            mat.texture_source = gt.source;
-
-            {
-                auto lk = p_tex_mutex
-                    ? std::unique_lock<std::mutex>(*p_tex_mutex)
-                    : std::unique_lock<std::mutex>();
-                auto it = texturePayloadCacheByImageIndex.find(gt.source);
-                if (it != texturePayloadCacheByImageIndex.end()) {
-                    mat.base_color_texture = it->second;
-                    return mat;
+                {
+                    auto lk = p_tex_mutex
+                        ? std::unique_lock<std::mutex>(*p_tex_mutex)
+                        : std::unique_lock<std::mutex>();
+                    auto it = texturePayloadCacheByImageIndex.find(source);
+                    if (it != texturePayloadCacheByImageIndex.end()) {
+                        out_slot.decoded = it->second;
+                        return;
+                    }
                 }
-            }
 
-            const tinygltf::Image& img = model.images[(size_t)gt.source];
-            auto decoded = decode_gltf_image_rgba8(img, gltfDir);
-            if (!decoded || !decoded->ok()) {
-                if (decoded && !decoded->error.empty()) {
-                    HN_CORE_WARN("glTF: failed to decode texture source {} ({})", gt.source, decoded->error);
+                const tinygltf::Image& img = model.images[(size_t)source];
+                auto decoded = decode_gltf_image_rgba8(img, gltfDir);
+                if (!decoded || !decoded->ok()) {
+                    if (decoded && !decoded->error.empty()) {
+                        HN_CORE_WARN("glTF: failed to decode texture source {} ({})", source, decoded->error);
+                    }
+                    return;
                 }
-                return mat;
-            }
 
-            {
-                auto lk = p_tex_mutex
-                    ? std::unique_lock<std::mutex>(*p_tex_mutex)
-                    : std::unique_lock<std::mutex>();
-                auto [it, inserted] = texturePayloadCacheByImageIndex.emplace(gt.source, decoded);
-                mat.base_color_texture = it->second;
-            }
+                {
+                    auto lk = p_tex_mutex
+                        ? std::unique_lock<std::mutex>(*p_tex_mutex)
+                        : std::unique_lock<std::mutex>();
+                    auto [it, inserted] = texturePayloadCacheByImageIndex.emplace(source, decoded);
+                    out_slot.decoded = it->second;
+                }
+            };
 
+            const auto& p = mat.material->pbr();
+            decode_source(p.base_color_texture.gltf_image_source, mat.base_color_texture);
+            decode_source(p.metallic_roughness_texture.gltf_image_source, mat.metallic_roughness_texture);
+            decode_source(p.normal_texture.gltf_image_source, mat.normal_texture);
+            decode_source(p.occlusion_texture.gltf_image_source, mat.occlusion_texture);
+            decode_source(p.emissive_texture.gltf_image_source, mat.emissive_texture);
+
+            PendingTexturePayload ext_decode_tmp{};
+            decode_source(p.extensions.clearcoat.texture.gltf_image_source, ext_decode_tmp);
+            decode_source(p.extensions.clearcoat.roughness_texture.gltf_image_source, ext_decode_tmp);
+            decode_source(p.extensions.clearcoat.normal_texture.gltf_image_source, ext_decode_tmp);
+            decode_source(p.extensions.sheen.color_texture.gltf_image_source, ext_decode_tmp);
+            decode_source(p.extensions.sheen.roughness_texture.gltf_image_source, ext_decode_tmp);
+            decode_source(p.extensions.specular.specular_texture.gltf_image_source, ext_decode_tmp);
+            decode_source(p.extensions.specular.specular_color_texture.gltf_image_source, ext_decode_tmp);
+            decode_source(p.extensions.transmission.texture.gltf_image_source, ext_decode_tmp);
+            decode_source(p.extensions.volume.thickness_texture.gltf_image_source, ext_decode_tmp);
+            decode_source(p.extensions.iridescence.texture.gltf_image_source, ext_decode_tmp);
+            decode_source(p.extensions.iridescence.thickness_texture.gltf_image_source, ext_decode_tmp);
+            decode_source(p.extensions.anisotropy.texture.gltf_image_source, ext_decode_tmp);
+            decode_source(p.extensions.pbr_specular_glossiness.diffuse_texture.gltf_image_source, ext_decode_tmp);
+            decode_source(p.extensions.pbr_specular_glossiness.specular_glossiness_texture.gltf_image_source, ext_decode_tmp);
             return mat;
         }
 
         struct ImportedPrimitivePayload {
             std::string name;
-            std::vector<VertexPNUV> vertices;
+            std::vector<VertexPBR> vertices;
             std::vector<uint32_t> indices;
             PendingMaterialPayload material;
         };
@@ -637,8 +1001,14 @@ namespace Honey {
             const tinygltf::Accessor* uvAcc = nullptr;
             if (auto it = prim.attributes.find("TEXCOORD_0"); it != prim.attributes.end())
                 uvAcc = find_accessor(model, it->second);
+            const tinygltf::Accessor* uv1Acc = nullptr;
+            if (auto it = prim.attributes.find("TEXCOORD_1"); it != prim.attributes.end())
+                uv1Acc = find_accessor(model, it->second);
+            const tinygltf::Accessor* tanAcc = nullptr;
+            if (auto it = prim.attributes.find("TANGENT"); it != prim.attributes.end())
+                tanAcc = find_accessor(model, it->second);
 
-            std::vector<VertexPNUV> vertices(vcount);
+            std::vector<VertexPBR> vertices(vcount);
 
             for (size_t i = 0; i < vcount; ++i) {
                 if (!read_vec3_float(model, *posAcc, i, vertices[i].position))
@@ -648,7 +1018,11 @@ namespace Honey {
                     read_vec3_float(model, *nrmAcc, i, vertices[i].normal);
 
                 if (uvAcc)
-                    read_vec2_float(model, *uvAcc, i, vertices[i].uv);
+                    read_vec2_float(model, *uvAcc, i, vertices[i].uv0);
+                if (uv1Acc)
+                    read_vec2_float(model, *uv1Acc, i, vertices[i].uv1);
+                if (tanAcc)
+                    read_vec4_float(model, *tanAcc, i, vertices[i].tangent);
             }
 
             // INDICES → ALWAYS uint32_t
@@ -680,6 +1054,9 @@ namespace Honey {
                     return std::nullopt;
                 }
             }
+
+            if (!tanAcc)
+                generate_tangents(vertices, indices);
 
             // MATERIAL
             out.material = build_material_from_gltf(
@@ -737,15 +1114,25 @@ namespace Honey {
             const tinygltf::Accessor* uvAcc = nullptr;
             if (auto it = prim.attributes.find("TEXCOORD_0"); it != prim.attributes.end())
                 uvAcc = find_accessor(model, it->second);
+            const tinygltf::Accessor* uv1Acc = nullptr;
+            if (auto it = prim.attributes.find("TEXCOORD_1"); it != prim.attributes.end())
+                uv1Acc = find_accessor(model, it->second);
+            const tinygltf::Accessor* tanAcc = nullptr;
+            if (auto it = prim.attributes.find("TANGENT"); it != prim.attributes.end())
+                tanAcc = find_accessor(model, it->second);
 
-            std::vector<VertexPNUV> vertices((size_t)posAcc->count);
+            std::vector<VertexPBR> vertices((size_t)posAcc->count);
             for (size_t i = 0; i < vertices.size(); ++i) {
                 if (!read_vec3_float(model, *posAcc, i, vertices[i].position))
                     return std::nullopt;
                 if (nrmAcc)
                     read_vec3_float(model, *nrmAcc, i, vertices[i].normal);
                 if (uvAcc)
-                    read_vec2_float(model, *uvAcc, i, vertices[i].uv);
+                    read_vec2_float(model, *uvAcc, i, vertices[i].uv0);
+                if (uv1Acc)
+                    read_vec2_float(model, *uv1Acc, i, vertices[i].uv1);
+                if (tanAcc)
+                    read_vec4_float(model, *tanAcc, i, vertices[i].tangent);
             }
 
             if (prim.indices < 0) {
@@ -776,6 +1163,9 @@ namespace Honey {
                 }
             }
 
+            if (!tanAcc)
+                generate_tangents(vertices, indices);
+
             out.material = build_material_payload_from_gltf(
                 model,
                 prim.material,
@@ -795,7 +1185,7 @@ namespace Honey {
 
         struct MeshletBuildResult {
             MeshletGeometry              geometry;      // counts filled; offsets set by caller
-            std::vector<VertexPNUV>      opt_vertices;
+            std::vector<VertexPBR>      opt_vertices;
             std::vector<uint32_t>        opt_indices;
             std::vector<meshopt_Meshlet> meshlets;
             std::vector<uint32_t>        meshlet_vertices;
@@ -804,7 +1194,7 @@ namespace Honey {
         };
 
         static std::optional<MeshletBuildResult> build_meshlet_geometry(
-              const std::vector<VertexPNUV>& vertices,
+              const std::vector<VertexPBR>& vertices,
               const std::vector<uint32_t>& indices)
         {
             HN_PROFILE_FUNCTION();
@@ -818,9 +1208,9 @@ namespace Honey {
 
             // Mutable copies for optimization passes
             std::vector<uint32_t>  opt_indices  = indices;
-            std::vector<VertexPNUV> opt_vertices = vertices;
+            std::vector<VertexPBR> opt_vertices = vertices;
 
-            const size_t vertex_stride = sizeof(VertexPNUV);
+            const size_t vertex_stride = sizeof(VertexPBR);
 
             // 1. Reorder indices for post-transform vertex cache efficiency
             {
@@ -1020,9 +1410,9 @@ namespace Honey {
                     // VAO for classic fallback — plain VB, separate from the meshlet SSBO
                     Ref<VertexArray> vao = VertexArray::create();
                     Ref<VertexBuffer> vb = VertexBuffer::create(
-                        (uint32_t)(result->opt_vertices.size() * sizeof(VertexPNUV)));
+                        (uint32_t)(result->opt_vertices.size() * sizeof(VertexPBR)));
                     vb->set_data(result->opt_vertices.data(),
-                                 (uint32_t)(result->opt_vertices.size() * sizeof(VertexPNUV)));
+                                 (uint32_t)(result->opt_vertices.size() * sizeof(VertexPBR)));
                     set_default_layout_pnuv(vb);
                     vao->add_vertex_buffer(vb);
                     vao->set_index_buffer(IndexBuffer::create(
@@ -1038,9 +1428,9 @@ namespace Honey {
                 } else {
                     Ref<VertexArray> vao = VertexArray::create();
                     Ref<VertexBuffer> vb = VertexBuffer::create(
-                        (uint32_t)(primData.vertices.size() * sizeof(VertexPNUV)));
+                        (uint32_t)(primData.vertices.size() * sizeof(VertexPBR)));
                     vb->set_data(primData.vertices.data(),
-                                 (uint32_t)(primData.vertices.size() * sizeof(VertexPNUV)));
+                                 (uint32_t)(primData.vertices.size() * sizeof(VertexPBR)));
                     set_default_layout_pnuv(vb);
                     vao->add_vertex_buffer(vb);
                     vao->set_index_buffer(IndexBuffer::create(
@@ -1088,7 +1478,7 @@ namespace Honey {
 
                     const float* v_floats = reinterpret_cast<const float*>(mb.opt_vertices.data());
                     global_vertices.insert(global_vertices.end(),
-                        v_floats, v_floats + mb.opt_vertices.size() * 8);
+                        v_floats, v_floats + mb.opt_vertices.size() * k_vertex_floats);
                     vertex_cursor += (uint32_t)mb.opt_vertices.size();
 
                     for (auto m : mb.meshlets) {
@@ -1216,7 +1606,7 @@ namespace Honey {
 
                     const float* v_floats = reinterpret_cast<const float*>(build.submesh.vertices.data());
                     global.vertices.insert(global.vertices.end(),
-                        v_floats, v_floats + build.submesh.vertices.size() * 8);
+                        v_floats, v_floats + build.submesh.vertices.size() * k_vertex_floats);
                     vertex_cursor += (uint32_t)build.submesh.vertices.size();
 
                     for (auto m : mb.meshlets) {
@@ -1266,22 +1656,54 @@ namespace Honey {
         static Ref<Material> finalize_material_payload(
             const PendingMaterialPayload& payload,
             std::unordered_map<int, Ref<Texture2D>>& textureCacheByImageIndex) {
-            Ref<Material> mat = Material::create();
-            mat->set_base_color_factor(payload.base_color_factor);
-            mat->set_metallic_factor(payload.metallic_factor);
-            mat->set_roughness_factor(payload.roughness_factor);
+            Ref<Material> mat = payload.material ? payload.material : Material::create();
+            auto& p = mat->pbr();
 
-            if (payload.texture_source >= 0 && payload.base_color_texture) {
-                auto it = textureCacheByImageIndex.find(payload.texture_source);
+            auto resolve_texture = [&](const PendingTexturePayload& src, Ref<Texture2D>& dst) {
+                if (src.source < 0 || !src.decoded)
+                    return;
+
+                auto it = textureCacheByImageIndex.find(src.source);
                 if (it == textureCacheByImageIndex.end()) {
-                    Ref<Texture2D> tex = finalize_texture_payload(payload.base_color_texture);
+                    Ref<Texture2D> tex = finalize_texture_payload(src.decoded);
                     if (tex) {
-                        it = textureCacheByImageIndex.emplace(payload.texture_source, tex).first;
+                        it = textureCacheByImageIndex.emplace(src.source, tex).first;
                     }
                 }
                 if (it != textureCacheByImageIndex.end())
-                    mat->set_base_color_texture(it->second);
-            }
+                    dst = it->second;
+            };
+
+            resolve_texture(payload.base_color_texture, p.base_color_texture.texture);
+            resolve_texture(payload.metallic_roughness_texture, p.metallic_roughness_texture.texture);
+            resolve_texture(payload.normal_texture, p.normal_texture.texture);
+            resolve_texture(payload.occlusion_texture, p.occlusion_texture.texture);
+            resolve_texture(payload.emissive_texture, p.emissive_texture.texture);
+
+            auto resolve_slot_from_source = [&](Material::TextureSlot& slot) {
+                if (slot.gltf_image_source < 0)
+                    return;
+                auto it = textureCacheByImageIndex.find(slot.gltf_image_source);
+                if (it != textureCacheByImageIndex.end()) {
+                    slot.texture = it->second;
+                }
+            };
+
+            auto& ext = p.extensions;
+            resolve_slot_from_source(ext.clearcoat.texture);
+            resolve_slot_from_source(ext.clearcoat.roughness_texture);
+            resolve_slot_from_source(ext.clearcoat.normal_texture);
+            resolve_slot_from_source(ext.sheen.color_texture);
+            resolve_slot_from_source(ext.sheen.roughness_texture);
+            resolve_slot_from_source(ext.specular.specular_texture);
+            resolve_slot_from_source(ext.specular.specular_color_texture);
+            resolve_slot_from_source(ext.transmission.texture);
+            resolve_slot_from_source(ext.volume.thickness_texture);
+            resolve_slot_from_source(ext.iridescence.texture);
+            resolve_slot_from_source(ext.iridescence.thickness_texture);
+            resolve_slot_from_source(ext.anisotropy.texture);
+            resolve_slot_from_source(ext.pbr_specular_glossiness.diffuse_texture);
+            resolve_slot_from_source(ext.pbr_specular_glossiness.specular_glossiness_texture);
 
             return mat;
         }
@@ -1301,9 +1723,9 @@ namespace Honey {
 
                 Ref<VertexArray> vao = VertexArray::create();
                 Ref<VertexBuffer> vb = VertexBuffer::create(
-                    static_cast<uint32_t>(submeshPayload.vertices.size() * sizeof(VertexPNUV)));
+                    static_cast<uint32_t>(submeshPayload.vertices.size() * sizeof(VertexPBR)));
                 vb->set_data(submeshPayload.vertices.data(),
-                             static_cast<uint32_t>(submeshPayload.vertices.size() * sizeof(VertexPNUV)));
+                             static_cast<uint32_t>(submeshPayload.vertices.size() * sizeof(VertexPBR)));
                 set_default_layout_pnuv(vb);
                 vao->add_vertex_buffer(vb);
                 vao->set_index_buffer(IndexBuffer::create(

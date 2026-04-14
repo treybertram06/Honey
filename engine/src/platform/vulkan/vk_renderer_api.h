@@ -40,6 +40,9 @@ namespace Honey {
         static void* get_or_create_meshlet_set_layout();
         static void  ensure_mesh_descriptor_set(GlobalMeshletBuffers& bufs);
         static void  update_mesh_draw_data_binding(GlobalMeshletBuffers& bufs, uint32_t draw_count);
+        static uint32_t get_meshlet_frame_slot();
+        static Ref<StorageBuffer> get_mesh_draw_data_buffer(const GlobalMeshletBuffers& bufs);
+        static void* get_mesh_descriptor_set(const GlobalMeshletBuffers& bufs);
         static void  submit_set1_descriptor_set(void* descriptor_set, void* pipeline_layout);
         static void  destroy_meshlet_resources();
 

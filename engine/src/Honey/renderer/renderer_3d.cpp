@@ -15,6 +15,29 @@ static const std::filesystem::path asset_root = ASSET_ROOT;
 
 namespace Honey {
 
+    namespace {
+        struct PipelineVariantKey {
+            void* render_pass = nullptr;
+            uint8_t blend = 0;
+            uint8_t cull_none = 0;
+
+            bool operator==(const PipelineVariantKey& other) const {
+                return render_pass == other.render_pass &&
+                       blend == other.blend &&
+                       cull_none == other.cull_none;
+            }
+        };
+
+        struct PipelineVariantKeyHash {
+            size_t operator()(const PipelineVariantKey& key) const {
+                size_t h = std::hash<void*>{}(key.render_pass);
+                h ^= (size_t)key.blend + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
+                h ^= (size_t)key.cull_none + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
+                return h;
+            }
+        };
+    }
+
     struct MeshletDrawCommand {
         const Submesh* submesh   = nullptr;
         const Mesh*    mesh      = nullptr;
@@ -31,9 +54,9 @@ namespace Honey {
         void* meshlet_set_layout = nullptr;
         void* meshlet_desc_pool  = nullptr;
 
-        Ref<StorageBuffer> indirect_buffer;     // VkDrawMeshTasksIndirectCommandEXT[]
-        Ref<StorageBuffer> count_buffer;        // uint32_t
-        // draw_data_buffer lives per-mesh inside GlobalMeshletBuffers::draw_data_buffer
+        std::array<Ref<StorageBuffer>, VulkanContext::k_max_frames_in_flight> indirect_buffers{}; // VkDrawMeshTasksIndirectCommandEXT[]
+        std::array<Ref<StorageBuffer>, VulkanContext::k_max_frames_in_flight> count_buffers{};    // uint32_t
+        // draw_data buffers live per-mesh inside GlobalMeshletBuffers::draw_data_buffers
 
         // Persistent per-frame scratch — cleared each frame, never reallocated after warmup
         std::vector<GPUMaterial>                               frame_gpu_materials;
@@ -54,8 +77,8 @@ namespace Honey {
 
         Ref<ShaderCache> shader_cache;
 
-        std::unordered_map<void*, Ref<Pipeline>> vk_forward_pipelines;
-        std::unordered_map<void*, Ref<Pipeline>> vk_meshlet_pipelines;
+        std::unordered_map<PipelineVariantKey, Ref<Pipeline>, PipelineVariantKeyHash> vk_forward_pipelines;
+        std::unordered_map<PipelineVariantKey, Ref<Pipeline>, PipelineVariantKeyHash> vk_meshlet_pipelines;
 
         Ref<Material> default_material;
 
@@ -229,6 +252,118 @@ namespace Honey {
         }
     }
 
+    static Ref<Pipeline> get_or_create_forward_pipeline(void* rp_native, bool blend, bool cull_none) {
+        HN_CORE_ASSERT(rp_native, "get_or_create_forward_pipeline: rp_native is null");
+        PipelineVariantKey key{rp_native, (uint8_t)(blend ? 1 : 0), (uint8_t)(cull_none ? 1 : 0)};
+
+        auto it = s_data->vk_forward_pipelines.find(key);
+        if (it != s_data->vk_forward_pipelines.end())
+            return it->second;
+
+        auto spec = PipelineSpec::from_shader(asset_root / "shaders" / "Renderer3D_Forward.glsl");
+        if (!spec.perColorAttachmentBlend.empty())
+            spec.perColorAttachmentBlend[0].enabled = blend;
+        if (cull_none)
+            spec.cullMode = CullMode::None;
+
+        auto pipeline = Pipeline::create(spec, rp_native);
+        s_data->vk_forward_pipelines.emplace(key, pipeline);
+        return pipeline;
+    }
+
+    static Ref<Pipeline> get_or_create_meshlet_pipeline(void* rp_native, void* extra_layout, bool blend, bool cull_none) {
+        HN_CORE_ASSERT(rp_native, "get_or_create_meshlet_pipeline: rp_native is null");
+        PipelineVariantKey key{rp_native, (uint8_t)(blend ? 1 : 0), (uint8_t)(cull_none ? 1 : 0)};
+
+        auto it = s_data->vk_meshlet_pipelines.find(key);
+        if (it != s_data->vk_meshlet_pipelines.end())
+            return it->second;
+
+        auto spec = PipelineSpec::from_shader(asset_root / "shaders" / "Renderer3D_Meshlet.glsl");
+        if (!spec.perColorAttachmentBlend.empty())
+            spec.perColorAttachmentBlend[0].enabled = blend;
+        if (cull_none)
+            spec.cullMode = CullMode::None;
+
+        auto pipeline = Pipeline::create(spec, rp_native, extra_layout);
+        s_data->vk_meshlet_pipelines.emplace(key, pipeline);
+        return pipeline;
+    }
+
+    static glm::vec4 slot_scale_offset(const Material::TextureSlot& slot) {
+        return glm::vec4(slot.transform.scale.x, slot.transform.scale.y, slot.transform.offset.x, slot.transform.offset.y);
+    }
+
+    static int32_t register_material_texture(Texture2D* tex,
+                                             std::unordered_map<Texture2D*, uint32_t>& tex_slot_map,
+                                             uint32_t& tex_slot_count) {
+        if (!tex)
+            return -1;
+
+        auto [tex_it, inserted] = tex_slot_map.try_emplace(tex, 0u);
+        if (inserted) {
+            if (tex_slot_count >= s_data->max_texture_slots) {
+                tex_it->second = 0u;
+                return 0;
+            }
+            tex_it->second = tex_slot_count++;
+        }
+        return (int32_t)tex_it->second;
+    }
+
+    static GPUMaterial build_gpu_material(const Material* mat,
+                                          std::unordered_map<Texture2D*, uint32_t>& tex_slot_map,
+                                          uint32_t& tex_slot_count) {
+        GPUMaterial gpu{};
+        if (!mat) {
+            gpu.base_color_tex_id = register_material_texture(s_data->white_texture.get(), tex_slot_map, tex_slot_count);
+            return gpu;
+        }
+
+        const auto& pbr = mat->pbr();
+        gpu.base_color = pbr.base_color_factor;
+        gpu.emissive_factor = glm::vec4(
+            pbr.emissive_factor * pbr.extensions.emissive_strength.strength, 1.0f);
+        gpu.metallic = pbr.metallic_factor;
+        gpu.roughness = pbr.roughness_factor;
+        gpu.normal_scale = pbr.normal_scale;
+        gpu.occlusion_strength = pbr.occlusion_strength;
+        gpu.alpha_cutoff = pbr.alpha_cutoff;
+        gpu.alpha_mode = (int32_t)pbr.alpha_mode;
+        gpu.double_sided = pbr.double_sided ? 1 : 0;
+        gpu.unlit = pbr.extensions.unlit.enabled ? 1 : 0;
+
+        Texture2D* base_tex = pbr.base_color_texture.texture ? pbr.base_color_texture.texture.get() : s_data->white_texture.get();
+        gpu.base_color_tex_id = register_material_texture(base_tex, tex_slot_map, tex_slot_count);
+        gpu.metallic_roughness_tex_id = register_material_texture(
+            pbr.metallic_roughness_texture.texture.get(), tex_slot_map, tex_slot_count);
+        gpu.normal_tex_id = register_material_texture(
+            pbr.normal_texture.texture.get(), tex_slot_map, tex_slot_count);
+        gpu.occlusion_tex_id = register_material_texture(
+            pbr.occlusion_texture.texture.get(), tex_slot_map, tex_slot_count);
+        gpu.emissive_tex_id = register_material_texture(
+            pbr.emissive_texture.texture.get(), tex_slot_map, tex_slot_count);
+
+        gpu.base_color_uv_set = pbr.base_color_texture.tex_coord;
+        gpu.metallic_roughness_uv_set = pbr.metallic_roughness_texture.tex_coord;
+        gpu.normal_uv_set = pbr.normal_texture.tex_coord;
+        gpu.occlusion_uv_set = pbr.occlusion_texture.tex_coord;
+        gpu.emissive_uv_set = pbr.emissive_texture.tex_coord;
+
+        gpu.base_color_uv_scale_offset = slot_scale_offset(pbr.base_color_texture);
+        gpu.metallic_roughness_uv_scale_offset = slot_scale_offset(pbr.metallic_roughness_texture);
+        gpu.normal_uv_scale_offset = slot_scale_offset(pbr.normal_texture);
+        gpu.occlusion_uv_scale_offset = slot_scale_offset(pbr.occlusion_texture);
+        gpu.emissive_uv_scale_offset = slot_scale_offset(pbr.emissive_texture);
+
+        gpu.base_color_uv_rotation = pbr.base_color_texture.transform.rotation;
+        gpu.metallic_roughness_uv_rotation = pbr.metallic_roughness_texture.transform.rotation;
+        gpu.normal_uv_rotation = pbr.normal_texture.transform.rotation;
+        gpu.occlusion_uv_rotation = pbr.occlusion_texture.transform.rotation;
+        gpu.emissive_uv_rotation = pbr.emissive_texture.transform.rotation;
+        return gpu;
+    }
+
     static void flush_batches_vulkan() {
         HN_PROFILE_FUNCTION();
 
@@ -250,14 +385,6 @@ namespace Honey {
             rpNative = vkCtx->get_render_pass();          // main swapchain
         }
         HN_CORE_ASSERT(rpNative, "Renderer3D: rpNative is null");
-
-        Ref<Pipeline> pipe;
-        auto it = s_data->vk_forward_pipelines.find(rpNative);
-        if (it == s_data->vk_forward_pipelines.end()) {
-            auto pipeline = Pipeline::create(asset_root / "shaders" / "Renderer3D_Forward.glsl", rpNative);
-            it = s_data->vk_forward_pipelines.emplace(rpNative, pipeline).first;
-        }
-        pipe = it->second;
 
         // --- Pack all instance transforms into one contiguous array ---
         uint32_t total_instances = 0;
@@ -307,11 +434,6 @@ namespace Honey {
         ensure_instance_buffer_capacity((uint32_t)packed.size());
         s_data->instance_vb->set_data(packed.data(), (uint32_t)(packed.size() * sizeof(InstanceData)));
 
-        // One pipeline bind for all batches (same forward shader for now)
-        RenderCommand::bind_pipeline(pipe);
-        s_data->stats.pipeline_binds++;
-
-
         struct MaterialPC { int32_t material_index; int32_t _pad[3]; };
         static_assert(sizeof(MaterialPC) <= 128, "MaterialPC too large");
 
@@ -325,20 +447,7 @@ namespace Honey {
 
         for (uint32_t i = 0; i < (uint32_t)ordered_batches.size(); i++) {
             auto* mat = ordered_batches[i].batch->material.get();
-            Texture2D* tex = (mat && mat->get_base_color_texture())
-                             ? mat->get_base_color_texture().get()
-                             : s_data->white_texture.get();
-
-            auto [tex_it, inserted] = tex_slot_map.try_emplace(tex, 0u);
-            if (inserted)
-                tex_it->second = (tex_slot_count < s_data->max_texture_slots) ? tex_slot_count++ : 0u;
-
-            GPUMaterial gpu_mat{};
-            gpu_mat.base_color        = mat ? mat->get_base_color_factor()  : glm::vec4(1.0f);
-            gpu_mat.base_color_tex_id = (int32_t)tex_it->second;
-            gpu_mat.metallic          = mat ? mat->get_metallic_factor()    : 0.0f;
-            gpu_mat.roughness         = mat ? mat->get_roughness_factor()   : 0.5f;
-            all_materials.push_back(gpu_mat);
+            all_materials.push_back(build_gpu_material(mat, tex_slot_map, tex_slot_count));
         }
 
         // Build flat texture array and submit globals once for the whole frame
@@ -347,13 +456,36 @@ namespace Honey {
         for (auto& [tex_ptr, slot] : tex_slot_map)
             tex_array[slot] = tex_ptr;
 
+        // Bind at least one pipeline before globals upload so a valid pipeline
+        // layout is available for descriptor binds.
+        if (!ordered_batches.empty()) {
+            const auto* first_mat = ordered_batches[0].batch->material.get();
+            const bool blend = first_mat && first_mat->get_alpha_mode() == Material::AlphaMode::Blend;
+            const bool cull_none = first_mat && first_mat->get_double_sided();
+            Ref<Pipeline> first_pipe = get_or_create_forward_pipeline(rpNative, blend, cull_none);
+            RenderCommand::bind_pipeline(first_pipe);
+            s_data->stats.pipeline_binds++;
+        }
+
         VulkanRendererAPI::submit_camera(saved_camera);
         VulkanRendererAPI::submit_bound_textures(tex_array, tex_slot_count);
         VulkanRendererAPI::submit_materials(all_materials, 0);
         VulkanRendererAPI::flush_globals();
 
         // Emit one draw call per batch
+        Ref<Pipeline> current_pipe;
         for (uint32_t i = 0; i < (uint32_t)ordered_batches.size(); i++) {
+            const auto* mat = ordered_batches[i].batch->material.get();
+            const bool blend = mat && mat->get_alpha_mode() == Material::AlphaMode::Blend;
+            const bool cull_none = mat && mat->get_double_sided();
+            Ref<Pipeline> pipe = get_or_create_forward_pipeline(rpNative, blend, cull_none);
+
+            if (pipe != current_pipe) {
+                RenderCommand::bind_pipeline(pipe);
+                s_data->stats.pipeline_binds++;
+                current_pipe = pipe;
+            }
+
             const int32_t material_index = (int32_t)i;
             const uint32_t byte_offset = ordered_batches[i].start_index * (uint32_t)sizeof(InstanceData);
 
@@ -400,16 +532,6 @@ namespace Honey {
 
         void* extra_layout = VulkanRendererAPI::get_or_create_meshlet_set_layout();
 
-        Ref<Pipeline> pipe;
-        auto it = s_data->vk_meshlet_pipelines.find(rpNative);
-        if (it == s_data->vk_meshlet_pipelines.end()) {
-            auto pipeline = Pipeline::create(asset_root / "shaders" / "Renderer3D_Meshlet.glsl", rpNative, extra_layout);
-            it = s_data->vk_meshlet_pipelines.emplace(rpNative, pipeline).first;
-        }
-        pipe = it->second;
-
-        RenderCommand::bind_pipeline(pipe);
-
         // --- Build global material + texture table ---
         CameraUBO saved_camera = VulkanRendererAPI::get_globals_state().cameraUBO;
 
@@ -425,20 +547,7 @@ namespace Honey {
 
         for (const auto& cmd : s_data->meshlet_draws) {
             auto* mat = cmd.material;
-            Texture2D* tex = (mat && mat->get_base_color_texture())
-                ? mat->get_base_color_texture().get()
-                : s_data->white_texture.get();
-
-            auto [tex_it, inserted] = tex_slot_map.try_emplace(tex, 0u);
-            if (inserted)
-                tex_it->second = (tex_slot_count < s_data->max_texture_slots) ? tex_slot_count++ : 0u;
-
-            GPUMaterial gpu_mat{};
-            gpu_mat.base_color        = mat ? mat->get_base_color_factor() : glm::vec4(1.0f);
-            gpu_mat.base_color_tex_id = (int32_t)tex_it->second;
-            gpu_mat.metallic          = mat ? mat->get_metallic_factor()   : 0.0f;
-            gpu_mat.roughness         = mat ? mat->get_roughness_factor()  : 0.5f;
-            gpu_materials.push_back(gpu_mat);
+            gpu_materials.push_back(build_gpu_material(mat, tex_slot_map, tex_slot_count));
         }
 
         std::array<void*, VulkanRendererAPI::k_max_texture_slots> tex_array{};
@@ -446,12 +555,23 @@ namespace Honey {
         for (auto& [tex_ptr, slot] : tex_slot_map)
             tex_array[slot] = tex_ptr;
 
+        // Bind one compatible meshlet pipeline before globals upload so
+        // descriptor writes have a valid pipeline layout bound.
+        if (!s_data->meshlet_draws.empty()) {
+            const auto* first_mat = s_data->meshlet_draws[0].material;
+            const bool blend = first_mat && first_mat->get_alpha_mode() == Material::AlphaMode::Blend;
+            const bool cull_none = first_mat && first_mat->get_double_sided();
+            Ref<Pipeline> first_pipe = get_or_create_meshlet_pipeline(rpNative, extra_layout, blend, cull_none);
+            RenderCommand::bind_pipeline(first_pipe);
+            s_data->stats.pipeline_binds++;
+        }
+
         VulkanRendererAPI::submit_camera(saved_camera);
         VulkanRendererAPI::submit_bound_textures(tex_array, tex_slot_count);
         VulkanRendererAPI::submit_materials(gpu_materials, 0);
         VulkanRendererAPI::flush_globals();
 
-        // --- Group draws by Mesh, dispatch one indirect call per Mesh ---
+        // --- Group draws by Mesh ---
         auto& mesh_order    = s_data->frame_mesh_order;
         auto& draws_by_mesh = s_data->frame_draws_by_mesh;
         mesh_order.clear();
@@ -465,86 +585,136 @@ namespace Honey {
             dm_it->second.push_back(i);
         }
 
-        // Size shared indirect + count buffers (draw_data is now per-mesh)
+        // Size shared indirect + count buffers
         const uint32_t total_draws    = (uint32_t)s_data->meshlet_draws.size();
         const uint32_t indirect_bytes = total_draws * 12u; // sizeof(VkDrawMeshTasksIndirectCommandEXT)
-        const uint32_t count_bytes    = (uint32_t)mesh_order.size() * sizeof(uint32_t);
+        const uint32_t count_bytes    = std::max(total_draws, 1u) * (uint32_t)sizeof(uint32_t);
 
-        if (!s_data->indirect_buffer || s_data->indirect_buffer->get_size() < indirect_bytes)
-            s_data->indirect_buffer = StorageBuffer::create(indirect_bytes,
+        const uint32_t frame_slot = vkCtx->get_current_frame() % VulkanContext::k_max_frames_in_flight;
+        auto& indirect_buffer = s_data->indirect_buffers[frame_slot];
+        auto& count_buffer = s_data->count_buffers[frame_slot];
+
+        if (!indirect_buffer || indirect_buffer->get_size() < indirect_bytes)
+            indirect_buffer = StorageBuffer::create(indirect_bytes,
                 StorageBufferUsage::Dynamic | StorageBufferUsage::Indirect);
 
-        if (!s_data->count_buffer || s_data->count_buffer->get_size() < count_bytes)
-            s_data->count_buffer = StorageBuffer::create(std::max(count_bytes, 4u),
+        if (!count_buffer || count_buffer->get_size() < count_bytes)
+            count_buffer = StorageBuffer::create(std::max(count_bytes, 4u),
                 StorageBufferUsage::Dynamic | StorageBufferUsage::Indirect);
 
-        auto indirect_vk = reinterpret_cast<VkBuffer>(s_data->indirect_buffer->get_native_buffer());
-        auto count_vk    = reinterpret_cast<VkBuffer>(s_data->count_buffer->get_native_buffer());
+        auto indirect_vk = reinterpret_cast<VkBuffer>(indirect_buffer->get_native_buffer());
+        auto count_vk    = reinterpret_cast<VkBuffer>(count_buffer->get_native_buffer());
 
         // Per-mesh scratch vectors — reused each iteration, capacity is retained between frames
         auto& indirect_cmds = s_data->frame_indirect_cmds;
         auto& draw_data     = s_data->frame_draw_data;
 
         uint32_t global_draw_offset = 0;
+        uint32_t dispatch_counter = 0;
+        Ref<Pipeline> current_pipe;
 
         for (uint32_t mesh_idx = 0; mesh_idx < (uint32_t)mesh_order.size(); ++mesh_idx) {
             const Mesh* mesh = mesh_order[mesh_idx];
             const auto& indices = draws_by_mesh.at(mesh);
-            const uint32_t mesh_draw_count = (uint32_t)indices.size();
+            const uint32_t mesh_total_draws = (uint32_t)indices.size();
+            uint32_t mesh_local_draw_offset = 0;
 
             HN_CORE_ASSERT(mesh && mesh->meshlet_buffers.has_value(),
                 "flush_meshlet_draws: mesh has no global meshlet buffers");
             auto& bufs = const_cast<GlobalMeshletBuffers&>(*mesh->meshlet_buffers);
 
-            // Ensure per-mesh draw_data_buffer is large enough (may reset descriptor_set on growth)
-            VulkanRendererAPI::update_mesh_draw_data_binding(bufs, mesh_draw_count);
-            // Ensure descriptor set exists, writing all 6 bindings including draw_data_buffer
+            // IMPORTANT: size and bind draw_data buffer once per mesh before issuing
+            // any variant dispatches. Reallocating mid-loop can invalidate buffers
+            // still referenced by commands already recorded this frame.
+            VulkanRendererAPI::update_mesh_draw_data_binding(bufs, mesh_total_draws);
             VulkanRendererAPI::ensure_mesh_descriptor_set(bufs);
 
-            // Reuse scratch vectors — clear but keep capacity
-            indirect_cmds.clear();
-            draw_data.clear();
-            indirect_cmds.reserve(mesh_draw_count);
-            draw_data.reserve(mesh_draw_count);
+            // Split this mesh's draws by material state so culling/blending pipeline
+            // variants are applied per draw subset, not per whole mesh.
+            std::unordered_map<uint8_t, std::vector<uint32_t>> draws_by_variant;
+            std::vector<uint8_t> variant_order;
+            draws_by_variant.reserve(4);
+            variant_order.reserve(4);
 
-            for (uint32_t local_i = 0; local_i < mesh_draw_count; ++local_i) {
-                const auto& cmd = s_data->meshlet_draws[indices[local_i]];
-                const auto& geo = *cmd.submesh->meshlets;
-                indirect_cmds.push_back({ geo.meshlet_count, 1, 1 });
-                draw_data.push_back({
-                    cmd.transform,
-                    geo.meshlets_offset,
-                    geo.meshlet_count,
-                    (int32_t)indices[local_i], // index into gpu_materials (original submission order)
-                    cmd.entity_id
-                });
+            for (uint32_t draw_idx : indices) {
+                const auto* draw_mat = s_data->meshlet_draws[draw_idx].material;
+                const bool blend = draw_mat && draw_mat->get_alpha_mode() == Material::AlphaMode::Blend;
+                const bool cull_none = draw_mat && draw_mat->get_double_sided();
+                const uint8_t variant = (uint8_t)((blend ? 1 : 0) | (cull_none ? 2 : 0));
+
+                auto [it, inserted] = draws_by_variant.try_emplace(variant);
+                if (inserted)
+                    variant_order.push_back(variant);
+                it->second.push_back(draw_idx);
             }
 
-            // Upload indirect commands to shared buffer at global offset
-            const uint32_t indirect_byte_off = global_draw_offset * 12u;
-            const uint32_t count_byte_off    = mesh_idx * (uint32_t)sizeof(uint32_t);
+            for (uint8_t variant : variant_order) {
+                const auto& variant_draws = draws_by_variant.at(variant);
+                const uint32_t mesh_draw_count = (uint32_t)variant_draws.size();
+                const bool blend = (variant & 1u) != 0u;
+                const bool cull_none = (variant & 2u) != 0u;
 
-            s_data->indirect_buffer->set_data(indirect_cmds.data(),
-                mesh_draw_count * 12u, indirect_byte_off);
-            s_data->count_buffer->set_data(&mesh_draw_count, sizeof(uint32_t), count_byte_off);
+                Ref<Pipeline> pipe = get_or_create_meshlet_pipeline(rpNative, extra_layout, blend, cull_none);
+                if (pipe != current_pipe) {
+                    RenderCommand::bind_pipeline(pipe);
+                    s_data->stats.pipeline_binds++;
+                    current_pipe = pipe;
+                }
 
-            // Upload draw data to per-mesh buffer at offset 0
-            // (gl_DrawID resets to 0 for each indirect call, so draws[gl_DrawID] is correct)
-            bufs.draw_data_buffer->set_data(draw_data.data(),
-                mesh_draw_count * (uint32_t)sizeof(GPUDrawData), 0);
+                indirect_cmds.clear();
+                draw_data.clear();
+                indirect_cmds.reserve(mesh_draw_count);
+                draw_data.reserve(mesh_draw_count);
 
-            // Bind this Mesh's descriptor set (set=1), then dispatch
-            VulkanRendererAPI::submit_set1_descriptor_set(
-                bufs.descriptor_set,
-                pipe->get_native_pipeline_layout());
+                const uint32_t mesh_draw_base = mesh_local_draw_offset;
+                for (uint32_t local_i = 0; local_i < mesh_draw_count; ++local_i) {
+                    const uint32_t draw_idx = variant_draws[local_i];
+                    const auto& cmd = s_data->meshlet_draws[draw_idx];
+                    const auto& geo = *cmd.submesh->meshlets;
+                    indirect_cmds.push_back({ geo.meshlet_count, 1, 1 });
+                    draw_data.push_back({
+                        cmd.transform,
+                        geo.meshlets_offset,
+                        geo.meshlet_count,
+                        (int32_t)draw_idx, // index into gpu_materials (original submission order)
+                        cmd.entity_id
+                    });
+                }
 
-            VulkanRendererAPI::submit_mesh_tasks_indirect_count(
-                indirect_vk, indirect_byte_off,
-                count_vk,    count_byte_off,
-                mesh_draw_count, 12u);
+                const uint32_t indirect_byte_off = global_draw_offset * 12u;
+                const uint32_t count_byte_off = dispatch_counter * (uint32_t)sizeof(uint32_t);
 
-            s_data->stats.draw_calls++;
-            global_draw_offset += mesh_draw_count;
+                indirect_buffer->set_data(indirect_cmds.data(),
+                    mesh_draw_count * 12u, indirect_byte_off);
+                count_buffer->set_data(&mesh_draw_count, sizeof(uint32_t), count_byte_off);
+
+                // gl_DrawID resets to 0 for this dispatch, so per-dispatch draw_data starts at 0.
+                Ref<StorageBuffer> draw_data_buffer = VulkanRendererAPI::get_mesh_draw_data_buffer(bufs);
+                HN_CORE_ASSERT(draw_data_buffer, "flush_meshlet_draws: draw_data_buffer not available for frame slot");
+                draw_data_buffer->set_data(draw_data.data(),
+                    mesh_draw_count * (uint32_t)sizeof(GPUDrawData),
+                    mesh_draw_base * (uint32_t)sizeof(GPUDrawData));
+
+                struct MeshletPC { int32_t draw_data_base; int32_t _pad[3]; };
+                const MeshletPC pc{(int32_t)mesh_draw_base, {0, 0, 0}};
+                VulkanRendererAPI::submit_push_constants(
+                    &pc, sizeof(MeshletPC), 0,
+                    VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_FRAGMENT_BIT);
+
+                VulkanRendererAPI::submit_set1_descriptor_set(
+                    VulkanRendererAPI::get_mesh_descriptor_set(bufs),
+                    pipe->get_native_pipeline_layout());
+
+                VulkanRendererAPI::submit_mesh_tasks_indirect_count(
+                    indirect_vk, indirect_byte_off,
+                    count_vk, count_byte_off,
+                    mesh_draw_count, 12u);
+
+                s_data->stats.draw_calls++;
+                mesh_local_draw_offset += mesh_draw_count;
+                global_draw_offset += mesh_draw_count;
+                dispatch_counter++;
+            }
         }
 
         s_data->meshlet_draws.clear();

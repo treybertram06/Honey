@@ -1,5 +1,6 @@
 #pragma once
 #include <glm/glm.hpp>
+#include <cstddef>
 
 namespace Honey {
 
@@ -33,14 +34,50 @@ namespace Honey {
         float _pad0 = 0;
     };
 
-    struct GPUMaterial {
-        glm::vec4 base_color = {1.0f, 1.0f, 1.0f, 1.0f};
-        float metallic = 0.0f;
-        float roughness = 0.0f;
-        int32_t base_color_tex_id = 0;
-        int32_t _pad0 = 0;
+    struct alignas(16) GPUMaterial {
+        alignas(16) glm::vec4 base_color{1.0f, 1.0f, 1.0f, 1.0f};
+        alignas(16) glm::vec4 emissive_factor{0.0f, 0.0f, 0.0f, 1.0f};
+
+        float metallic = 1.0f;
+        float roughness = 1.0f;
+        float normal_scale = 1.0f;
+        float occlusion_strength = 1.0f;
+
+        float alpha_cutoff = 0.5f;
+        int32_t alpha_mode = 0; // 0=opaque, 1=mask, 2=blend
+        int32_t double_sided = 0;
+        int32_t unlit = 0;
+
+        int32_t base_color_tex_id = -1;
+        int32_t metallic_roughness_tex_id = -1;
+        int32_t normal_tex_id = -1;
+        int32_t occlusion_tex_id = -1;
+        int32_t emissive_tex_id = -1;
+
+        int32_t base_color_uv_set = 0;
+        int32_t metallic_roughness_uv_set = 0;
+        int32_t normal_uv_set = 0;
+        int32_t occlusion_uv_set = 0;
+        int32_t emissive_uv_set = 0;
+
+        alignas(16) glm::vec4 base_color_uv_scale_offset{1.0f, 1.0f, 0.0f, 0.0f};
+        alignas(16) glm::vec4 metallic_roughness_uv_scale_offset{1.0f, 1.0f, 0.0f, 0.0f};
+        alignas(16) glm::vec4 normal_uv_scale_offset{1.0f, 1.0f, 0.0f, 0.0f};
+        alignas(16) glm::vec4 occlusion_uv_scale_offset{1.0f, 1.0f, 0.0f, 0.0f};
+        alignas(16) glm::vec4 emissive_uv_scale_offset{1.0f, 1.0f, 0.0f, 0.0f};
+
+        float base_color_uv_rotation = 0.0f;
+        float metallic_roughness_uv_rotation = 0.0f;
+        float normal_uv_rotation = 0.0f;
+        float occlusion_uv_rotation = 0.0f;
+        float emissive_uv_rotation = 0.0f;
+
+        float _pad0 = 0.0f;
+        float _pad1 = 0.0f;
+        float _pad2 = 0.0f;
     };
-    static_assert(sizeof(GPUMaterial) == 32, "GPUMaterial layout mismatch");
+    static_assert(sizeof(GPUMaterial) == 224, "GPUMaterial layout mismatch");
+    static_assert(offsetof(GPUMaterial, base_color_uv_scale_offset) == 112, "GPUMaterial std430 offset mismatch");
 
     struct GPUDrawData {
         glm::mat4   model;
@@ -50,4 +87,4 @@ namespace Honey {
         int32_t     entity_id;
     };
 
-}
+} // namespace Honey
