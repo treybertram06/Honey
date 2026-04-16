@@ -10,6 +10,7 @@ namespace Honey {
 
 		//color
 		RGBA8,
+	    RGBA16F,
 	    RED_INTEGER,
 
 		//depth/stencil

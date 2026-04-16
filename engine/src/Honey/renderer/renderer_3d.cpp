@@ -80,6 +80,8 @@ namespace Honey {
         std::unordered_map<PipelineVariantKey, Ref<Pipeline>, PipelineVariantKeyHash> vk_forward_pipelines;
         std::unordered_map<PipelineVariantKey, Ref<Pipeline>, PipelineVariantKeyHash> vk_meshlet_pipelines;
 
+        std::unordered_map<PipelineVariantKey, Ref<Pipeline>, PipelineVariantKeyHash> vk_gbuffer_pipelines;
+
         Ref<Material> default_material;
 
         struct BatchKeyHash {
@@ -290,6 +292,27 @@ namespace Honey {
         return pipeline;
     }
 
+    static Ref<Pipeline> get_or_create_gbuffer_pipeline(void* rp_native, bool blend, bool cull_none) {
+        PipelineVariantKey key{rp_native, 0, (uint8_t)(cull_none ? 1 : 0)};
+
+        auto it = s_data->vk_gbuffer_pipelines.find(key);
+        if (it != s_data->vk_gbuffer_pipelines.end())
+            return it->second;
+
+        auto spec = PipelineSpec::from_shader(asset_root / "shaders" / "Renderer3D_DeferredGeometry.glsl");
+        // G-Buffer has 3 color attachments (gAlbedo, gNormal, gPBRParams), all opaque.
+        // from_shader hardcodes 2 blend states for offscreen passes (editor FB hack), TODO: fix this 
+        // so we override to exactly 3 here.
+        spec.perColorAttachmentBlend.clear();
+        spec.perColorAttachmentBlend.resize(3, AttachmentBlendState{});
+        if (cull_none)
+            spec.cullMode = CullMode::None;
+
+        auto pipeline = Pipeline::create(spec, rp_native);
+        s_data->vk_gbuffer_pipelines.emplace(key, pipeline);
+        return pipeline;
+    }
+
     static glm::vec4 slot_scale_offset(const Material::TextureSlot& slot) {
         return glm::vec4(slot.transform.scale.x, slot.transform.scale.y, slot.transform.offset.x, slot.transform.offset.y);
     }
@@ -364,7 +387,8 @@ namespace Honey {
         return gpu;
     }
 
-    static void flush_batches_vulkan() {
+    using PipelineFactory = std::function<Ref<Pipeline>(void* rp, bool blend, bool cull_none)>;
+    static void flush_batches_vulkan(const PipelineFactory& get_pipeline) {
         HN_PROFILE_FUNCTION();
 
         if (!s_data->vk_context_cache) {
@@ -462,7 +486,7 @@ namespace Honey {
             const auto* first_mat = ordered_batches[0].batch->material.get();
             const bool blend = first_mat && first_mat->get_alpha_mode() == Material::AlphaMode::Blend;
             const bool cull_none = first_mat && first_mat->get_double_sided();
-            Ref<Pipeline> first_pipe = get_or_create_forward_pipeline(rpNative, blend, cull_none);
+            Ref<Pipeline> first_pipe = get_pipeline(rpNative, blend, cull_none);
             RenderCommand::bind_pipeline(first_pipe);
             s_data->stats.pipeline_binds++;
         }
@@ -478,7 +502,7 @@ namespace Honey {
             const auto* mat = ordered_batches[i].batch->material.get();
             const bool blend = mat && mat->get_alpha_mode() == Material::AlphaMode::Blend;
             const bool cull_none = mat && mat->get_double_sided();
-            Ref<Pipeline> pipe = get_or_create_forward_pipeline(rpNative, blend, cull_none);
+            Ref<Pipeline> pipe = get_pipeline(rpNative, blend, cull_none);
 
             if (pipe != current_pipe) {
                 RenderCommand::bind_pipeline(pipe);
@@ -723,11 +747,26 @@ namespace Honey {
     void Renderer3D::end_scene() {
         HN_PROFILE_FUNCTION();
 
-        if (Renderer::get_api() == RendererAPI::API::vulkan) {
-            flush_batches_vulkan();
-            flush_meshlet_draws();
-        } else {
+        if (Renderer::get_api() != RendererAPI::API::vulkan) {
             HN_CORE_ASSERT(false, "Renderer3D::end_scene: only Vulkan path implemented");
+        }
+
+        auto renderer_type = Settings::get().renderer.renderer_type;
+
+        switch (renderer_type) {
+        case RendererSettings::RendererType::forward:
+            flush_batches_vulkan(get_or_create_forward_pipeline);
+            flush_meshlet_draws();
+            break;
+
+        case RendererSettings::RendererType::deferred:
+            flush_batches_vulkan(get_or_create_gbuffer_pipeline);
+            flush_meshlet_draws();
+            break;
+
+        default:
+            HN_CORE_ASSERT(false, "Renderer3D::end_scene: unknown renderer type");
+            break;
         }
 
         HN_CORE_ASSERT(!s_data->vk_globals_stack.empty(),

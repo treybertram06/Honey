@@ -198,6 +198,10 @@ namespace Honey {
                 out = FramebufferTextureFormat::RGBA8;
                 return true;
             }
+            if (iequals(v, "rgba16f")) {
+                out = FramebufferTextureFormat::RGBA16F;
+                return true;
+            }
             if (iequals(v, "red_integer") || iequals(v, "redinteger")) {
                 out = FramebufferTextureFormat::RED_INTEGER;
                 return true;

@@ -142,7 +142,9 @@ namespace Honey {
         static ClearFormat honey_tex_format_to_gl(FramebufferTextureFormat fmt) {
             switch (fmt) {
                 case FramebufferTextureFormat::RGBA8:
-                    return { GL_RGBA, GL_UNSIGNED_BYTE };        // not GL_RGBA8, not GL_FLOAT
+                    return { GL_RGBA, GL_UNSIGNED_BYTE };
+                case FramebufferTextureFormat::RGBA16F:
+                    return { GL_RGBA, GL_HALF_FLOAT };
                 case FramebufferTextureFormat::RED_INTEGER:
                     return { GL_RED_INTEGER, GL_INT };
                 case FramebufferTextureFormat::DEPTH24STENCIL8:
@@ -203,8 +205,9 @@ namespace Honey {
             for (size_t i = 0; i < m_color_attachments.size(); i++) {
                 Utils::bind_texture(multisample, m_color_attachments[i]);
                 switch (m_color_attachment_specs[i].texture_format) {
-                    case FramebufferTextureFormat::RGBA8:       Utils::attach_color_texture(m_color_attachments[i], m_specification.samples, GL_RGBA8, GL_RGBA, m_specification.width, m_specification.height, i); break;
-                    case FramebufferTextureFormat::RED_INTEGER: Utils::attach_color_texture(m_color_attachments[i], m_specification.samples, GL_R32I, GL_RED_INTEGER, m_specification.width, m_specification.height, i); break;
+                    case FramebufferTextureFormat::RGBA8:       Utils::attach_color_texture(m_color_attachments[i], m_specification.samples, GL_RGBA8,   GL_RGBA,        m_specification.width, m_specification.height, i); break;
+                    case FramebufferTextureFormat::RGBA16F:     Utils::attach_color_texture(m_color_attachments[i], m_specification.samples, GL_RGBA16F, GL_RGBA,        m_specification.width, m_specification.height, i); break;
+                    case FramebufferTextureFormat::RED_INTEGER: Utils::attach_color_texture(m_color_attachments[i], m_specification.samples, GL_R32I,    GL_RED_INTEGER, m_specification.width, m_specification.height, i); break;
                 }
             }
         }

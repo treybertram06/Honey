@@ -23,6 +23,31 @@ namespace Honey {
         return fallback;
     }
 
+    static RendererSettings::RendererType parse_renderer_type(const std::string& type_str, RendererSettings::RendererType fallback) {
+        std::string s = type_str;
+        std::transform(s.begin(), s.end(), s.begin(),
+                       [](unsigned char c) { return std::tolower(c); });
+
+        if (s == "forward")
+            return RendererSettings::RendererType::forward;
+        if (s == "deferred")
+            return RendererSettings::RendererType::deferred;
+        if (s == "pathtracing")
+            return RendererSettings::RendererType::pathtracing;
+
+        HN_CORE_WARN("Unknown Renderer Type '{}', using fallback", type_str);
+        return fallback;
+    }
+
+    static std::string renderer_type_to_string(RendererSettings::RendererType type) {
+        switch (type) {
+        case RendererSettings::RendererType::forward: return "Forward";
+        case RendererSettings::RendererType::deferred: return "Deferred";
+        case RendererSettings::RendererType::pathtracing: return "PathTracing";
+        }
+        return "Forward";
+    }
+
     static RendererSettings::TextureFilter parse_texture_filter(
         const std::string& str,
         RendererSettings::TextureFilter fallback
@@ -156,6 +181,13 @@ namespace Honey {
                 }
             }
 
+            if (auto n = renderer_node["RendererType"]) {
+                s.renderer.renderer_type = parse_renderer_type(
+                    n.as<std::string>(),
+                    s.renderer.renderer_type
+                );
+            }
+
             if (auto n = renderer_node["TextureFilter"]) {
                 s.renderer.texture_filter = parse_texture_filter(
                     n.as<std::string>(),
@@ -230,6 +262,8 @@ namespace Honey {
 
         out << YAML::Key << "GeometryPath"            << YAML::Value << geometry_path_to_string(s.renderer.geometry_path);
         out << YAML::Key << "ParallelMeshSubmission"  << YAML::Value << s.renderer.enable_parallel_mesh_submission;
+
+        out << YAML::Key << "RendererType"            << YAML::Value << renderer_type_to_string(s.renderer.renderer_type);
 
         out << YAML::Key << "AnisotropicFilteringLevel"
             << YAML::Value << s.renderer.anisotropic_filtering_level;

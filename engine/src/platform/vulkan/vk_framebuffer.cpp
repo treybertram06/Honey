@@ -50,6 +50,7 @@ namespace Honey {
         static VkFormat to_vk_format(FramebufferTextureFormat fmt) {
             switch (fmt) {
             case FramebufferTextureFormat::RGBA8:         return VK_FORMAT_R8G8B8A8_UNORM;
+            case FramebufferTextureFormat::RGBA16F:       return VK_FORMAT_R16G16B16A16_SFLOAT;
             case FramebufferTextureFormat::RED_INTEGER:   return VK_FORMAT_R32_SINT;
             case FramebufferTextureFormat::Depth:         return VK_FORMAT_D24_UNORM_S8_UINT;
             default:

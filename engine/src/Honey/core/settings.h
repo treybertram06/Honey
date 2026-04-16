@@ -24,6 +24,12 @@ namespace Honey {
             anisotropic,
         };
 
+        enum class RendererType {
+            forward = 0,
+            deferred,
+            pathtracing,
+        };
+
         RendererAPI::API api = RendererAPI::API::vulkan;
 
         glm::vec4 clear_color = { 0.1f, 0.1f, 0.1f, 1.0f };
@@ -40,6 +46,7 @@ namespace Honey {
         GeometryPath geometry_path = GeometryPath::Meshlet;
         bool enable_parallel_mesh_submission = false;
 
+        RendererType renderer_type = RendererType::forward;
 
         TextureFilter texture_filter = TextureFilter::nearest;
 

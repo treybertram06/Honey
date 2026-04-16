@@ -560,6 +560,16 @@ namespace Honey {
         return m_pass->target_framebuffer;
     }
 
+    uint32_t FrameGraphPassContext::get_resource_attachment_index(const std::string& resource_name) const {
+        HN_CORE_ASSERT(m_graph, "FrameGraphPassContext::get_resource_attachment_index: null graph");
+
+        const FGResourceHandle h = m_graph->find_resource_handle(resource_name);
+        if (h == k_invalid_resource || h >= m_graph->m_resources.size())
+            return k_invalid_attachment;
+
+        return m_graph->m_resources[h].attachment_index;
+    }
+
     Ref<StorageBuffer> FrameGraphPassContext::get_buffer(const std::string& resource_name) const {
         HN_CORE_ASSERT(m_graph, "FrameGraphPassContext::get_buffer: null graph");
         HN_CORE_ASSERT(m_pass, "FrameGraphPassContext::get_buffer: null pass");
@@ -702,6 +712,7 @@ namespace Honey {
                     res.resolved_width = rw;
                     res.resolved_height = rh;
                 }
+                res.attachment_index = k_invalid_attachment;
             } else if (res.type == FGResourceType::Buffer) {
                 if (res.buffer.size == 0) {
                     out_diagnostics.add_error("Buffer resource has zero size", res.name);
@@ -1135,6 +1146,8 @@ namespace Honey {
                     switch (fmt) {
                         case FramebufferTextureFormat::RGBA8:
                             return 4;
+                        case FramebufferTextureFormat::RGBA16F:
+                            return 8;
                         case FramebufferTextureFormat::RED_INTEGER:
                             return 4;
                         case FramebufferTextureFormat::DEPTH24STENCIL8:
@@ -1200,6 +1213,7 @@ namespace Honey {
                 for (auto& r : compiled->m_resources) {
                     if (r.type == FGResourceType::Texture) {
                         r.physical_allocation = k_invalid_physical;
+                        r.attachment_index = k_invalid_attachment;
                         r.framebuffer.reset();
                     }
                 }
@@ -1377,11 +1391,13 @@ namespace Honey {
                     pass.physical_allocation = physical_index;
                     pass.target_framebuffer = physical_allocations[physical_index].framebuffer;
 
-                    for (const auto h : c.resources) {
+                    for (size_t attachment_index = 0; attachment_index < c.resources.size(); ++attachment_index) {
+                        const auto h = c.resources[attachment_index];
                         if (h >= compiled->m_resources.size())
                             continue;
                         auto& r = compiled->m_resources[h];
                         r.physical_allocation = physical_index;
+                        r.attachment_index = static_cast<uint32_t>(attachment_index);
                         r.framebuffer = physical_allocations[physical_index].framebuffer;
                     }
                 }

@@ -26,6 +26,7 @@ namespace Honey {
     static constexpr FGResourceHandle k_invalid_resource = UINT32_MAX;
     static constexpr FGPassHandle     k_invalid_pass     = UINT32_MAX;
     static constexpr uint32_t         k_invalid_physical = UINT32_MAX;
+    static constexpr uint32_t         k_invalid_attachment = UINT32_MAX;
 
     enum class FGResourceType : uint8_t {
         Texture,
@@ -216,6 +217,7 @@ namespace Honey {
         // Transient physical framebuffer allocation index for texture resources.
         // Multiple logical resources may alias the same physical allocation.
         uint32_t physical_allocation = k_invalid_physical;
+        uint32_t attachment_index = k_invalid_attachment;
 
         FGPassHandle first_use = k_invalid_pass;
         FGPassHandle last_use  = k_invalid_pass;
@@ -295,6 +297,7 @@ namespace Honey {
         Ref<Framebuffer> get_input_framebuffer(const std::string& resource_name) const;
         Ref<Framebuffer> get_output_framebuffer(const std::string& resource_name) const;
         Ref<Framebuffer> get_pass_target_framebuffer() const;
+        uint32_t get_resource_attachment_index(const std::string& resource_name) const;
 
         // API-agnostic buffer accessors for frame-graph Buffer resources.
         Ref<StorageBuffer> get_buffer(const std::string& resource_name) const;
@@ -330,4 +333,3 @@ namespace Honey {
 
 
 }
-
