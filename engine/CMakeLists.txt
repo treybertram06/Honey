@@ -111,8 +111,11 @@ add_library(engine STATIC
         src/Honey/camera_controller.cpp
         src/Honey/renderer/renderer_2d.cpp
         src/Honey/renderer/renderer_2d.h
-        src/Honey/renderer/renderer_3d.h
-        src/Honey/renderer/renderer_3d.cpp
+        src/Honey/renderer/renderer_3d/renderer_3d.h
+        src/Honey/renderer/renderer_3d/renderer_3d.cpp
+        src/Honey/renderer/renderer_3d/renderer_3d_forward.cpp
+        src/Honey/renderer/renderer_3d/renderer_3d_deferred.cpp
+        src/Honey/renderer/renderer_3d/renderer_3d_meshlet.cpp
         src/Honey/renderer/sub_texture_2d.h
         src/Honey/renderer/sub_texture_2d.cpp
         src/Honey/renderer/framebuffer.h
@@ -220,6 +223,8 @@ add_library(engine STATIC
         src/Honey/renderer/slug_font.cpp
         src/Honey/renderer/slug_icon.h
         src/Honey/renderer/slug_icon.cpp
+        src/Honey/renderer/renderer_3d/renderer_3d_internal.h
+        src/Honey/renderer/renderer_3d/renderer_3d_geometry.cpp
 )
 
 # Apply MSVC runtime to engine itself

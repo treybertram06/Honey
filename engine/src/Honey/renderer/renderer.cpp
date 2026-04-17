@@ -1,7 +1,7 @@
 #include "hnpch.h"
 #include "renderer.h"
 #include "renderer_2d.h"
-#include "renderer_3d.h"
+#include "renderer_3d/renderer_3d.h"
 #include "texture_cache.h"
 #include "Honey/core/engine.h"
 #include "platform/opengl/opengl_shader.h"

@@ -15,7 +15,7 @@
 #include "Honey/core/settings.h"
 #include "Honey/core/task_system.h"
 #include "Honey/math/math.h"
-#include "Honey/renderer/renderer_3d.h"
+#include "../renderer/renderer_3d/renderer_3d.h"
 #include "Honey/scripting/script_engine.h"
 #include "cloth_system.h"
 #include "platform/vulkan/vk_renderer_api.h"
