@@ -55,6 +55,12 @@ namespace Honey {
         // Returns the font SSBO descriptor set for the given frame (all chunk sets are identical).
         VkDescriptorSet get_font_descriptor_set(uint32_t frame) const { return m_fonts_descriptor_sets[frame][0]; }
 
+        VkDescriptorSetLayout get_gbuffer_set_layout() const { return m_gbuffer_set_layout; }
+        VkDescriptorSet get_gbuffer_descriptor_set(uint32_t frame) const { return m_gbuffer_sets[frame]; }
+        // Updates the G-buffer descriptor set for the given frame with the current attachments of fb.
+        // Lazily no-ops if fb hasn't changed since the last call for this frame.
+        void update_gbuffer_descriptors(uint32_t frame, class VulkanFramebuffer* fb);
+
         uint32_t get_graphics_queue_family() const { return m_graphics_queue_family; }
         uint32_t get_compute_queue_family() const { return m_compute_queue_family; }
         VkQueue get_graphics_queue() const { return m_graphics_queue; }
@@ -277,6 +283,8 @@ namespace Honey {
         void cleanup_global_descriptor_resources();
         void create_font_descriptor_resources();
         void cleanup_font_descriptor_resources();
+        void create_gbuffer_descriptor_resources();
+        void cleanup_gbuffer_descriptor_resources();
 
         bool submit_one_time_on_queue(
             VkQueue queue,
@@ -355,6 +363,12 @@ private:
         VkDescriptorSetLayout m_font_set_layout = nullptr;
         VkDescriptorPool m_font_descriptor_pool = nullptr;
         VkDescriptorSet m_fonts_descriptor_sets[k_max_frames_in_flight][k_max_chunks_per_frame]{};
+
+        // G-buffer (set=1 for deferred lighting)
+        VkDescriptorSetLayout m_gbuffer_set_layout = nullptr;
+        VkDescriptorPool      m_gbuffer_pool       = nullptr;
+        VkDescriptorSet       m_gbuffer_sets[k_max_frames_in_flight]{};
+        class VulkanFramebuffer* m_gbuffer_last_fb[k_max_frames_in_flight]{};
         //uint32_t m_chunk_ds_index[k_max_frames_in_flight]{};
 
         void* m_band_table_ubos[k_max_frames_in_flight]{};        // VkBuffer

@@ -949,6 +949,131 @@ namespace Honey {
         }
     }
 
+    void VulkanContext::create_gbuffer_descriptor_resources() {
+        HN_PROFILE_FUNCTION();
+        HN_CORE_ASSERT(m_device && m_physical_device, "create_gbuffer_descriptor_resources called without device");
+
+        // 3 bindings: gAlbedo (b=0), gNormal (b=1), gPBRParams (b=2) — all COMBINED_IMAGE_SAMPLER, FRAGMENT stage
+        static constexpr uint32_t k_gbuffer_binding_count = 3;
+
+        VkDescriptorSetLayoutBinding bindings[k_gbuffer_binding_count]{};
+        for (uint32_t i = 0; i < k_gbuffer_binding_count; ++i) {
+            bindings[i].binding         = i;
+            bindings[i].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            bindings[i].descriptorCount = 1;
+            bindings[i].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+        }
+
+        VkDescriptorBindingFlags binding_flags[k_gbuffer_binding_count]{};  // all zero
+
+        VkDescriptorSetLayoutBindingFlagsCreateInfo binding_flags_ci{};
+        binding_flags_ci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+        binding_flags_ci.bindingCount  = k_gbuffer_binding_count;
+        binding_flags_ci.pBindingFlags = binding_flags;
+
+        VkDescriptorSetLayoutCreateInfo layout_ci{};
+        layout_ci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layout_ci.pNext        = &binding_flags_ci;
+        layout_ci.bindingCount = k_gbuffer_binding_count;
+        layout_ci.pBindings    = bindings;
+
+        {
+            VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
+            VkResult r = vkCreateDescriptorSetLayout(reinterpret_cast<VkDevice>(m_device), &layout_ci, nullptr, &set_layout);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateDescriptorSetLayout (gbuffer) failed");
+            m_gbuffer_set_layout = reinterpret_cast<VkDescriptorSetLayout>(set_layout);
+
+            VkDescriptorPoolSize pool_size{};
+            pool_size.type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            pool_size.descriptorCount = k_max_frames_in_flight * k_gbuffer_binding_count;
+
+            VkDescriptorPoolCreateInfo pool_ci{};
+            pool_ci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+            pool_ci.maxSets       = k_max_frames_in_flight;
+            pool_ci.poolSizeCount = 1;
+            pool_ci.pPoolSizes    = &pool_size;
+
+            VkDescriptorPool pool = VK_NULL_HANDLE;
+            r = vkCreateDescriptorPool(reinterpret_cast<VkDevice>(m_device), &pool_ci, nullptr, &pool);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateDescriptorPool (gbuffer) failed");
+            m_gbuffer_pool = reinterpret_cast<VkDescriptorPool>(pool);
+        }
+
+        std::vector<VkDescriptorSetLayout> layouts(k_max_frames_in_flight,
+            reinterpret_cast<VkDescriptorSetLayout>(m_gbuffer_set_layout));
+
+        VkDescriptorSetAllocateInfo alloc{};
+        alloc.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        alloc.descriptorPool     = reinterpret_cast<VkDescriptorPool>(m_gbuffer_pool);
+        alloc.descriptorSetCount = k_max_frames_in_flight;
+        alloc.pSetLayouts        = layouts.data();
+
+        std::vector<VkDescriptorSet> sets(k_max_frames_in_flight);
+        VkResult r = vkAllocateDescriptorSets(reinterpret_cast<VkDevice>(m_device), &alloc, sets.data());
+        HN_CORE_ASSERT(r == VK_SUCCESS, "vkAllocateDescriptorSets (gbuffer) failed");
+
+        for (uint32_t f = 0; f < k_max_frames_in_flight; ++f) {
+            m_gbuffer_sets[f]    = sets[f];
+            m_gbuffer_last_fb[f] = nullptr;
+        }
+    }
+
+    void VulkanContext::cleanup_gbuffer_descriptor_resources() {
+        HN_PROFILE_FUNCTION();
+        if (!m_device) return;
+
+        for (uint32_t f = 0; f < k_max_frames_in_flight; ++f) {
+            m_gbuffer_sets[f]    = VK_NULL_HANDLE;
+            m_gbuffer_last_fb[f] = nullptr;
+        }
+
+        if (m_gbuffer_pool) {
+            vkDestroyDescriptorPool(reinterpret_cast<VkDevice>(m_device),
+                                    reinterpret_cast<VkDescriptorPool>(m_gbuffer_pool), nullptr);
+            m_gbuffer_pool = nullptr;
+        }
+        if (m_gbuffer_set_layout) {
+            vkDestroyDescriptorSetLayout(reinterpret_cast<VkDevice>(m_device),
+                                         reinterpret_cast<VkDescriptorSetLayout>(m_gbuffer_set_layout), nullptr);
+            m_gbuffer_set_layout = nullptr;
+        }
+    }
+
+    void VulkanContext::update_gbuffer_descriptors(uint32_t frame, VulkanFramebuffer* fb) {
+        HN_CORE_ASSERT(frame < k_max_frames_in_flight, "update_gbuffer_descriptors: frame index out of range");
+        HN_CORE_ASSERT(fb, "update_gbuffer_descriptors: fb is null");
+        HN_CORE_ASSERT(m_gbuffer_sets[frame] != VK_NULL_HANDLE, "update_gbuffer_descriptors: descriptor set not allocated");
+
+        if (fb == m_gbuffer_last_fb[frame])
+            return;  // already up-to-date for this frame
+
+        VkSampler sampler = m_backend->get_sampler_linear();
+        HN_CORE_ASSERT(sampler, "update_gbuffer_descriptors: sampler is null");
+
+        // Build 3 image infos: gAlbedo (attachment 0), gNormal (attachment 1), gPBRParams (attachment 2).
+        // Color attachments are in SHADER_READ_ONLY_OPTIMAL after the GBuffer render pass (finalLayout).
+        VkDescriptorImageInfo image_infos[3]{};
+        for (uint32_t i = 0; i < 3; ++i) {
+            image_infos[i].sampler     = sampler;
+            image_infos[i].imageView   = fb->get_color_image_view(i);
+            image_infos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        }
+
+        VkWriteDescriptorSet writes[3]{};
+        for (uint32_t i = 0; i < 3; ++i) {
+            writes[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i].dstSet          = m_gbuffer_sets[frame];
+            writes[i].dstBinding      = i;
+            writes[i].dstArrayElement = 0;
+            writes[i].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[i].descriptorCount = 1;
+            writes[i].pImageInfo      = &image_infos[i];
+        }
+
+        vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(m_device), 3, writes, 0, nullptr);
+        m_gbuffer_last_fb[frame] = fb;
+    }
+
     void VulkanContext::init() {
         HN_PROFILE_FUNCTION();
 
@@ -1017,6 +1142,7 @@ namespace Honey {
 
         create_global_descriptor_resources();
         create_font_descriptor_resources();
+        create_gbuffer_descriptor_resources();
 
         create_swapchain();
         create_image_views();
@@ -2229,6 +2355,7 @@ namespace Honey {
                 CameraUBO gpu_camera{};
                 gpu_camera.view_proj = correction * g.cameraUBO.view_proj;
                 gpu_camera.position = g.cameraUBO.position;
+                gpu_camera.inv_view_proj = glm::inverse(gpu_camera.view_proj);
 
                 void* mapped = nullptr;
                 VkResult mr = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
@@ -2768,6 +2895,7 @@ namespace Honey {
             cleanup_swapchain();
             cleanup_global_descriptor_resources();
             cleanup_font_descriptor_resources();
+            cleanup_gbuffer_descriptor_resources();
             cleanup_secondary_command_pools();
 
             if (m_command_pool) {

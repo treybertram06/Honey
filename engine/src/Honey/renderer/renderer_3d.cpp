@@ -81,6 +81,13 @@ namespace Honey {
         std::unordered_map<PipelineVariantKey, Ref<Pipeline>, PipelineVariantKeyHash> vk_meshlet_pipelines;
 
         std::unordered_map<PipelineVariantKey, Ref<Pipeline>, PipelineVariantKeyHash> vk_gbuffer_pipelines;
+        std::unordered_map<PipelineVariantKey, Ref<Pipeline>, PipelineVariantKeyHash> vk_lighting_pipelines;
+
+        // Cached scene data forwarded to the deferred lighting pass
+        glm::mat4    scene_view_proj{1.0f};
+        glm::vec3    scene_camera_pos{};
+        LightsUBO    scene_lights{};
+        Ref<Framebuffer> current_gbuffer_fb;
 
         Ref<Material> default_material;
 
@@ -162,6 +169,9 @@ namespace Honey {
         camera_ubo.position = camera.get_position();
         camera_ubo.view_proj = camera.get_view_projection_matrix();
 
+        s_data->scene_view_proj  = camera_ubo.view_proj;
+        s_data->scene_camera_pos = camera_ubo.position;
+
         auto state = VulkanRendererAPI::get_globals_state();
         state.source = VulkanRendererAPI::GlobalsState::Source::Renderer3D;
         s_data->vk_globals_stack.push_back(state);
@@ -205,6 +215,9 @@ namespace Honey {
         CameraUBO camera_ubo{};
         camera_ubo.position = position;
         camera_ubo.view_proj = view_proj;
+
+        s_data->scene_view_proj  = view_proj;
+        s_data->scene_camera_pos = position;
 
         auto state = VulkanRendererAPI::get_globals_state();
         state.source = VulkanRendererAPI::GlobalsState::Source::Renderer3D;
@@ -782,7 +795,98 @@ namespace Honey {
             HN_CORE_WARN("Renderer3D::submit_lights: only Vulkan path implemented");
             return;
         }
+        s_data->scene_lights = lights;
         VulkanRendererAPI::submit_lights(lights);
+    }
+
+    static Ref<Pipeline> get_or_create_lighting_pipeline(void* rp_native) {
+        PipelineVariantKey key{rp_native, 0, 0};
+        auto it = s_data->vk_lighting_pipelines.find(key);
+        if (it != s_data->vk_lighting_pipelines.end())
+            return it->second;
+
+        auto* base = Application::get().get_window().get_context();
+        auto* vk = dynamic_cast<VulkanContext*>(base);
+        HN_CORE_ASSERT(vk, "get_or_create_lighting_pipeline: VulkanContext is null");
+
+        void* gbuffer_layout = vk->get_gbuffer_set_layout();
+
+        auto spec = PipelineSpec::from_shader(asset_root / "shaders" / "Renderer3D_DeferredLighting.glsl");
+        spec.depthStencil.depthTest  = false;
+        spec.depthStencil.depthWrite = false;
+        // editorViewport has 2 color attachments (color + entity ID); resize to match.
+        // The lighting shader writes color at location=0 and -1 at location=1 to preserve entity ID buffer.
+        spec.perColorAttachmentBlend.clear();
+        spec.perColorAttachmentBlend.resize(2, AttachmentBlendState{});
+
+        auto pipeline = Pipeline::create(spec, rp_native, gbuffer_layout);
+        s_data->vk_lighting_pipelines.emplace(key, pipeline);
+        return pipeline;
+    }
+
+    void Renderer3D::begin_deferred_lighting_scene(Ref<Framebuffer> gbuffer_fb) {
+        HN_CORE_ASSERT(s_data, "Renderer3D not initialized");
+        s_data->current_gbuffer_fb = gbuffer_fb;
+    }
+
+    void Renderer3D::flush_deferred_lighting() {
+        HN_CORE_ASSERT(s_data, "Renderer3D not initialized");
+        HN_CORE_ASSERT(s_data->current_gbuffer_fb, "flush_deferred_lighting: no gbuffer_fb set — call begin_deferred_lighting_scene first");
+
+        if (Renderer::get_api() != RendererAPI::API::vulkan)
+            return;
+
+        if (!s_data->vk_context_cache) {
+            auto* base = Application::get().get_window().get_context();
+            s_data->vk_context_cache = dynamic_cast<VulkanContext*>(base);
+            HN_CORE_ASSERT(s_data->vk_context_cache, "flush_deferred_lighting: VulkanContext null");
+        }
+        auto* vkCtx = s_data->vk_context_cache;
+
+        void* rpNative = nullptr;
+        if (auto target = Renderer::get_render_target()) {
+            auto* vk_fb = dynamic_cast<VulkanFramebuffer*>(target.get());
+            HN_CORE_ASSERT(vk_fb, "flush_deferred_lighting: render target is not VulkanFramebuffer");
+            rpNative = vk_fb->get_render_pass();
+        } else {
+            rpNative = vkCtx->get_render_pass();
+        }
+        HN_CORE_ASSERT(rpNative, "flush_deferred_lighting: rpNative is null");
+
+        Ref<Pipeline> pipe = get_or_create_lighting_pipeline(rpNative);
+        RenderCommand::bind_pipeline(pipe);
+
+        // Emit BindGlobals to bind set=0 with the lighting pipeline's layout.
+        // Use the scene camera/lights cached from begin_scene/submit_lights.
+        // Submit one white texture so sampler+texture descriptors are populated.
+        CameraUBO cam_ubo{};
+        cam_ubo.view_proj = s_data->scene_view_proj;
+        cam_ubo.position  = s_data->scene_camera_pos;
+        VulkanRendererAPI::submit_camera(cam_ubo);
+        VulkanRendererAPI::submit_lights(s_data->scene_lights);
+
+        std::array<void*, VulkanRendererAPI::k_max_texture_slots> tex_array{};
+        tex_array[0] = s_data->white_texture.get();
+        VulkanRendererAPI::submit_bound_textures(tex_array, 1);
+        VulkanRendererAPI::flush_globals();
+
+        // Bind set=1 (G-buffer textures) and draw a fullscreen triangle
+        auto* gbuffer_vk = dynamic_cast<VulkanFramebuffer*>(s_data->current_gbuffer_fb.get());
+        HN_CORE_ASSERT(gbuffer_vk, "flush_deferred_lighting: current_gbuffer_fb is not a VulkanFramebuffer");
+
+        uint32_t frame = vkCtx->get_current_frame();
+        vkCtx->update_gbuffer_descriptors(frame, gbuffer_vk);
+        VkDescriptorSet gbuf_ds = vkCtx->get_gbuffer_descriptor_set(frame);
+
+        VkPipelineLayout pipe_layout = static_cast<VkPipelineLayout>(pipe->get_native_pipeline_layout());
+
+        vkCtx->queue_custom_vulkan_cmd(
+            [gbuf_ds, pipe_layout](VkCommandBuffer cmd, uint32_t, uint32_t) {
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    pipe_layout, 1, 1, &gbuf_ds, 0, nullptr);
+                vkCmdDraw(cmd, 3, 1, 0, 0);  // fullscreen triangle (no vertex buffer)
+            }
+        );
     }
 
     void Renderer3D::draw_mesh(const Ref<VertexArray>& vertex_array, const glm::mat4& transform, int entity_id) {

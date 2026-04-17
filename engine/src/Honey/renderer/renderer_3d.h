@@ -13,6 +13,7 @@
 #include "material.h"
 #include "mesh.h"
 #include "gpu_types.h"
+#include "framebuffer.h"
 
 namespace Honey {
 
@@ -29,6 +30,10 @@ namespace Honey {
 		static void end_scene();
 
 		static void submit_lights(const LightsUBO& lights);
+
+		// Deferred lighting pass — call after begin_scene/submit_lights for the GBuffer pass.
+		static void begin_deferred_lighting_scene(Ref<Framebuffer> gbuffer_fb);
+		static void flush_deferred_lighting();
 
 		// Generic mesh rendering
 		static void draw_mesh(const Ref<VertexArray>& vertex_array, const glm::mat4& transform, int entity_id = -1);

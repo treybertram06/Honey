@@ -860,4 +860,9 @@ namespace Honey {
         HN_CORE_ASSERT(index < m_color_attachments.size(), "VulkanFramebuffer: get_color_image index out of range");
         return m_color_attachments[index].image;
     }
+
+    VkImageView VulkanFramebuffer::get_depth_image_view() const {
+        HN_CORE_ASSERT(has_depth_attachment(), "VulkanFramebuffer::get_depth_image_view: no depth attachment");
+        return m_depth_attachment.view;
+    }
 } // namespace Honey

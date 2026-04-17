@@ -40,6 +40,7 @@ namespace Honey {
         VkExtent2D     get_extent() const           { return { m_spec.width, m_spec.height }; }
         VkImageView    get_color_image_view(uint32_t index = 0) const;
         VkImage        get_color_image(uint32_t index = 0) const;
+        VkImageView    get_depth_image_view() const;
 
         uint32_t get_color_attachment_count() const { return (uint32_t)m_color_attachments.size(); }
         bool has_depth_attachment() const { return m_depth_spec.texture_format != FramebufferTextureFormat::None; }

@@ -32,6 +32,7 @@ namespace Honey {
         glm::mat4 view_proj{};
         glm::vec3 position{};
         float _pad0 = 0;
+        glm::mat4 inv_view_proj{};  // inverse VP for deferred lighting position reconstruction
     };
 
     struct alignas(16) GPUMaterial {
