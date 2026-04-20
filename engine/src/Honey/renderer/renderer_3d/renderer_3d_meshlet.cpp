@@ -2,6 +2,7 @@
 #include "renderer_3d_internal.h"
 
 #include "Honey/core/engine.h"
+#include "Honey/core/settings.h"
 #include "Honey/renderer/render_command.h"
 #include "Honey/renderer/renderer.h"
 #include "platform/vulkan/vk_framebuffer.h"
@@ -26,6 +27,25 @@ namespace Honey::Renderer3DInternal {
 
         auto pipeline = Pipeline::create(spec, rp_native, extra_layout);
         g_renderer3d_data->vk_meshlet_pipelines.emplace(key, pipeline);
+        return pipeline;
+    }
+
+    Ref<Pipeline> get_or_create_meshlet_gbuffer_pipeline(void* rp_native, void* extra_layout, bool cull_none) {
+        HN_CORE_ASSERT(rp_native, "get_or_create_meshlet_gbuffer_pipeline: rp_native is null");
+        PipelineVariantKey key{rp_native, 0, (uint8_t)(cull_none ? 1 : 0)};
+
+        auto it = g_renderer3d_data->vk_meshlet_gbuffer_pipelines.find(key);
+        if (it != g_renderer3d_data->vk_meshlet_gbuffer_pipelines.end())
+            return it->second;
+
+        auto spec = PipelineSpec::from_shader(asset_root / "shaders" / "Renderer3D_MeshletDeferred.glsl");
+        spec.perColorAttachmentBlend.clear();
+        spec.perColorAttachmentBlend.resize(3, AttachmentBlendState{});
+        if (cull_none)
+            spec.cullMode = CullMode::None;
+
+        auto pipeline = Pipeline::create(spec, rp_native, extra_layout);
+        g_renderer3d_data->vk_meshlet_gbuffer_pipelines.emplace(key, pipeline);
         return pipeline;
     }
 
@@ -71,11 +91,15 @@ namespace Honey::Renderer3DInternal {
         for (auto& [tex_ptr, slot] : tex_slot_map)
             tex_array[slot] = tex_ptr;
 
+        const bool deferred = Settings::get().renderer.renderer_type == RendererSettings::RendererType::deferred;
+
         if (!g_renderer3d_data->meshlet_draws.empty()) {
             const auto* first_mat = g_renderer3d_data->meshlet_draws[0].material;
             const bool blend = first_mat && first_mat->get_alpha_mode() == Material::AlphaMode::Blend;
             const bool cull_none = first_mat && first_mat->get_double_sided();
-            Ref<Pipeline> first_pipe = get_or_create_meshlet_pipeline(rp_native, extra_layout, blend, cull_none);
+            Ref<Pipeline> first_pipe = deferred
+                ? get_or_create_meshlet_gbuffer_pipeline(rp_native, extra_layout, cull_none)
+                : get_or_create_meshlet_pipeline(rp_native, extra_layout, blend, cull_none);
             RenderCommand::bind_pipeline(first_pipe);
             g_renderer3d_data->stats.pipeline_binds++;
         }
@@ -157,7 +181,9 @@ namespace Honey::Renderer3DInternal {
                 const bool blend = (variant & 1u) != 0u;
                 const bool cull_none = (variant & 2u) != 0u;
 
-                Ref<Pipeline> pipe = get_or_create_meshlet_pipeline(rp_native, extra_layout, blend, cull_none);
+                Ref<Pipeline> pipe = deferred
+                    ? get_or_create_meshlet_gbuffer_pipeline(rp_native, extra_layout, cull_none)
+                    : get_or_create_meshlet_pipeline(rp_native, extra_layout, blend, cull_none);
                 if (pipe != current_pipe) {
                     RenderCommand::bind_pipeline(pipe);
                     g_renderer3d_data->stats.pipeline_binds++;

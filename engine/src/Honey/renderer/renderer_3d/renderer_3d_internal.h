@@ -94,6 +94,7 @@ namespace Honey::Renderer3DInternal {
 
         std::unordered_map<PipelineVariantKey, Ref<Pipeline>, PipelineVariantKeyHash> vk_forward_pipelines;
         std::unordered_map<PipelineVariantKey, Ref<Pipeline>, PipelineVariantKeyHash> vk_meshlet_pipelines;
+        std::unordered_map<PipelineVariantKey, Ref<Pipeline>, PipelineVariantKeyHash> vk_meshlet_gbuffer_pipelines;
         std::unordered_map<PipelineVariantKey, Ref<Pipeline>, PipelineVariantKeyHash> vk_gbuffer_pipelines;
         std::unordered_map<PipelineVariantKey, Ref<Pipeline>, PipelineVariantKeyHash> vk_lighting_pipelines;
 
@@ -140,5 +141,6 @@ namespace Honey::Renderer3DInternal {
     Ref<Pipeline> get_or_create_forward_pipeline(void* rp_native, bool blend, bool cull_none);
     Ref<Pipeline> get_or_create_gbuffer_pipeline(void* rp_native, bool blend, bool cull_none);
     Ref<Pipeline> get_or_create_meshlet_pipeline(void* rp_native, void* extra_layout, bool blend, bool cull_none);
+    Ref<Pipeline> get_or_create_meshlet_gbuffer_pipeline(void* rp_native, void* extra_layout, bool cull_none);
     void flush_meshlet_draws();
 }
