@@ -100,6 +100,7 @@ namespace Honey {
             bool hasCamera = false;
 
             LightsUBO lightUBO{};
+            TiledLightingData tiledLighting{};
 
             std::vector<GPUMaterial> materials{};
             uint32_t materials_ssbo_offset = 0;
@@ -146,6 +147,7 @@ namespace Honey {
                 bool hasCamera = false;
 
                 LightsUBO lightUBO{};
+                TiledLightingData tiledLighting{};
 
                 std::vector<GPUMaterial> materials{};
                 uint32_t materials_ssbo_offset = 0;
@@ -396,6 +398,10 @@ private:
         void* m_materials_ssbo[k_max_frames_in_flight]{};        // VkBuffer
         void* m_materials_ssbo_memories[k_max_frames_in_flight]{}; // VkDeviceMemory
         uint32_t m_materials_ssbo_size = 0;
+
+        void* m_tiled_lighting_ssbos[k_max_frames_in_flight]{};        // VkBuffer
+        void* m_tiled_lighting_ssbo_memories[k_max_frames_in_flight]{}; // VkDeviceMemory
+        uint32_t m_tiled_lighting_ssbo_size = 0;
 
         std::vector<void*> m_last_bound_textures[k_max_frames_in_flight];  // up to VulkanRendererAPI::k_max_texture_slots entries
         uint32_t m_last_bound_texture_count[k_max_frames_in_flight]{};

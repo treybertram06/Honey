@@ -424,16 +424,24 @@ namespace Honey {
         tex_binding.descriptorCount = VulkanRendererAPI::k_max_texture_slots;
         tex_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
+        // binding 5 => tiled lighting SSBO (fragment)
+        VkDescriptorSetLayoutBinding tiled_lighting_binding{};
+        tiled_lighting_binding.binding = binding_index++;
+        tiled_lighting_binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        tiled_lighting_binding.descriptorCount = 1;
+        tiled_lighting_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
         VkDescriptorSetLayoutBinding bindings[] = {
             camera_ubo_binding,
             lights_ubo_binding,
             material_ssbo_binding,
             sampler_binding,
-            tex_binding
+            tex_binding,
+            tiled_lighting_binding
         };
 
         // ---- Descriptor indexing / bindless binding flags (variable descriptor count) ----
-        VkDescriptorBindingFlags binding_flags[5]{};
+        VkDescriptorBindingFlags binding_flags[6]{};
         binding_flags[0] = 0; // Camera UBO
         binding_flags[1] = 0; // Lights UBO
         binding_flags[2] = 0; // Material SSBO
@@ -442,6 +450,7 @@ namespace Honey {
             VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
             VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT |
             VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
+        binding_flags[5] = 0; // Tiled lighting SSBO
 
         HN_CORE_ASSERT(sizeof(binding_flags) / sizeof(VkDescriptorBindingFlags) == binding_index &&
             sizeof(bindings) / sizeof(VkDescriptorSetLayoutBinding) == binding_index, "Inconsistency in "
@@ -466,7 +475,7 @@ namespace Honey {
             m_global_set_layout = reinterpret_cast<VkDescriptorSetLayout>(set_layout);
 
             // Descriptor pool sized for frames-in-flight:
-            VkDescriptorPoolSize pool_sizes[5]{};
+            VkDescriptorPoolSize pool_sizes[6]{};
             HN_CORE_ASSERT(sizeof(pool_sizes) / sizeof(VkDescriptorPoolSize) == binding_index,
                 "Inconsistency in descriptor pool size!");
 
@@ -478,7 +487,7 @@ namespace Honey {
             pool_sizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             pool_sizes[1].descriptorCount = k_max_frames_in_flight * k_max_chunks_per_frame;
 
-            // Matierals SSBO (binding 2)
+            // Materials SSBO (binding 2)
             pool_sizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             pool_sizes[2].descriptorCount = k_max_frames_in_flight * k_max_chunks_per_frame;
 
@@ -490,6 +499,10 @@ namespace Honey {
             // Pool must cover the MAX possible descriptors you may allocate across sets.
             pool_sizes[4].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
             pool_sizes[4].descriptorCount = k_max_frames_in_flight * k_max_chunks_per_frame * VulkanRendererAPI::k_max_texture_slots;
+
+            // Tiled lighting SSBO (binding 5)
+            pool_sizes[5].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            pool_sizes[5].descriptorCount = k_max_frames_in_flight * k_max_chunks_per_frame;
 
             VkDescriptorPoolCreateInfo pool_ci{};
             pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -511,6 +524,7 @@ namespace Honey {
         m_camera_ubo_size = sizeof(CameraUBO);
         m_lights_ubo_size = sizeof(LightsUBO);
         m_materials_ssbo_size = sizeof(GPUMaterial) * k_max_material_count;
+        m_tiled_lighting_ssbo_size = sizeof(TiledLightingData);
 
         const uint32_t total_sets = k_max_frames_in_flight * k_max_chunks_per_frame;
 
@@ -610,6 +624,8 @@ namespace Honey {
                     m_lights_ubo_size, 1, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
                 create_buffer_for_frame("materials", frame, m_materials_ssbo, m_materials_ssbo_memories,
                     m_materials_ssbo_size, 2, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+                create_buffer_for_frame("tiled_lighting", frame, m_tiled_lighting_ssbos, m_tiled_lighting_ssbo_memories,
+                    m_tiled_lighting_ssbo_size, 5, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
             }
         }
     }
@@ -892,6 +908,16 @@ namespace Honey {
                 vkFreeMemory(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkDeviceMemory>(m_materials_ssbo_memories[frame]), nullptr);
                 m_materials_ssbo_memories[frame] = nullptr;
             }
+
+            if (m_tiled_lighting_ssbos[frame]) {
+                vkDestroyBuffer(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkBuffer>(m_tiled_lighting_ssbos[frame]), nullptr);
+                m_tiled_lighting_ssbos[frame] = nullptr;
+            }
+            if (m_tiled_lighting_ssbo_memories[frame]) {
+                vkFreeMemory(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkDeviceMemory>(m_tiled_lighting_ssbo_memories[frame]), nullptr);
+                m_tiled_lighting_ssbo_memories[frame] = nullptr;
+            }
+
             for (uint32_t c = 0; c < k_max_chunks_per_frame; ++c)
                 m_global_descriptor_sets[frame][c] = VK_NULL_HANDLE;
         }
@@ -899,6 +925,7 @@ namespace Honey {
         m_camera_ubo_size = 0;
         m_lights_ubo_size = 0;
         m_materials_ssbo_size = 0;
+        m_tiled_lighting_ssbo_size = 0;
 
         if (m_descriptor_pool) {
             vkDestroyDescriptorPool(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkDescriptorPool>(m_descriptor_pool), nullptr);
@@ -953,8 +980,8 @@ namespace Honey {
         HN_PROFILE_FUNCTION();
         HN_CORE_ASSERT(m_device && m_physical_device, "create_gbuffer_descriptor_resources called without device");
 
-        // 3 bindings: gAlbedo (b=0), gNormal (b=1), gPBRParams (b=2) — all COMBINED_IMAGE_SAMPLER, FRAGMENT stage
-        static constexpr uint32_t k_gbuffer_binding_count = 3;
+        // 4 bindings: gAlbedo (b=0), gNormal (b=1), gPBRParams (b=2), gDepth (b=3) — all COMBINED_IMAGE_SAMPLER, FRAGMENT stage
+        static constexpr uint32_t k_gbuffer_binding_count = 4;
 
         VkDescriptorSetLayoutBinding bindings[k_gbuffer_binding_count]{};
         for (uint32_t i = 0; i < k_gbuffer_binding_count; ++i) {
@@ -1050,17 +1077,21 @@ namespace Honey {
         VkSampler sampler = m_backend->get_sampler_linear();
         HN_CORE_ASSERT(sampler, "update_gbuffer_descriptors: sampler is null");
 
-        // Build 3 image infos: gAlbedo (attachment 0), gNormal (attachment 1), gPBRParams (attachment 2).
-        // Color attachments are in SHADER_READ_ONLY_OPTIMAL after the GBuffer render pass (finalLayout).
-        VkDescriptorImageInfo image_infos[3]{};
+        // Build 4 image infos: gAlbedo (0), gNormal (1), gPBRParams (2), gDepth (3).
+        // Color attachments are in SHADER_READ_ONLY_OPTIMAL after the G-buffer pass.
+        // Depth is in DEPTH_STENCIL_READ_ONLY_OPTIMAL (finalLayout changed in vk_framebuffer.cpp).
+        VkDescriptorImageInfo image_infos[4]{};
         for (uint32_t i = 0; i < 3; ++i) {
             image_infos[i].sampler     = sampler;
             image_infos[i].imageView   = fb->get_color_image_view(i);
             image_infos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         }
+        image_infos[3].sampler     = sampler;
+        image_infos[3].imageView   = fb->get_depth_sampler_image_view();
+        image_infos[3].imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
 
-        VkWriteDescriptorSet writes[3]{};
-        for (uint32_t i = 0; i < 3; ++i) {
+        VkWriteDescriptorSet writes[4]{};
+        for (uint32_t i = 0; i < 4; ++i) {
             writes[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             writes[i].dstSet          = m_gbuffer_sets[frame];
             writes[i].dstBinding      = i;
@@ -1070,7 +1101,7 @@ namespace Honey {
             writes[i].pImageInfo      = &image_infos[i];
         }
 
-        vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(m_device), 3, writes, 0, nullptr);
+        vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(m_device), 4, writes, 0, nullptr);
         m_gbuffer_last_fb[frame] = fb;
     }
 
@@ -2379,6 +2410,18 @@ namespace Honey {
                 vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
 
                 reinterpret_cast<VkDeviceMemory>(m_lights_ubo_memories[frame]));
+            }
+
+            // Tiled lighting SSBO
+            if (m_tiled_lighting_ssbo_memories[frame] && m_tiled_lighting_ssbo_size == sizeof(TiledLightingData)) {
+                void* mapped = nullptr;
+                VkResult mr = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
+                                          reinterpret_cast<VkDeviceMemory>(m_tiled_lighting_ssbo_memories[frame]),
+                                          0, m_tiled_lighting_ssbo_size, 0, &mapped);
+                HN_CORE_ASSERT(mr == VK_SUCCESS, "vkMapMemory tiled lighting ssbo failed");
+                std::memcpy(mapped, &g.tiledLighting, sizeof(TiledLightingData));
+                vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
+                              reinterpret_cast<VkDeviceMemory>(m_tiled_lighting_ssbo_memories[frame]));
             }
 
             // Materials SSBO

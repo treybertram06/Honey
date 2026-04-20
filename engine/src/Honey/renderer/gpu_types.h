@@ -1,6 +1,7 @@
 #pragma once
 #include <glm/glm.hpp>
 #include <cstddef>
+#include "tiled_lighting_constants.h"
 
 namespace Honey {
 
@@ -23,9 +24,21 @@ namespace Honey {
         static_assert(sizeof(PointLight) == 32, "PointLight layout mismatch");
 
         DirectionalLight directional_light;
-        PointLight point_lights[32];
+        PointLight point_lights[k_max_point_lights];
 
         void set_point_light_count(int count) { directional_light.point_light_count = count; }
+    };
+
+    // Per-frame tiled lighting data — uploaded as an SSBO to set=0 binding=5.
+    // sorted_light_indices[i] is the original LightsUBO index of the i-th front-to-back light.
+    // tile_light_masks[tile] is a bitmask where bit N means point_lights[N] affects that tile.
+    struct TiledLightingData {
+        uint32_t tile_count_x = 0;
+        uint32_t tile_count_y = 0;
+        uint32_t light_count  = 0;
+        uint32_t _pad         = 0;
+        uint32_t sorted_light_indices[k_max_point_lights]{};
+        uint32_t tile_light_masks[k_max_tiles]{};
     };
 
     struct CameraUBO {

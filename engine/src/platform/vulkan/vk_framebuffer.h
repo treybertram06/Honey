@@ -41,6 +41,8 @@ namespace Honey {
         VkImageView    get_color_image_view(uint32_t index = 0) const;
         VkImage        get_color_image(uint32_t index = 0) const;
         VkImageView    get_depth_image_view() const;
+        // Depth-only aspect view suitable for shader sampling (set=1 binding=3 in deferred lighting).
+        VkImageView    get_depth_sampler_image_view() const { return m_depth_sampler_view; }
 
         uint32_t get_color_attachment_count() const { return (uint32_t)m_color_attachments.size(); }
         bool has_depth_attachment() const { return m_depth_spec.texture_format != FramebufferTextureFormat::None; }
@@ -78,6 +80,9 @@ namespace Honey {
         ImageAttachment              m_depth_attachment{};
 
         // Render pass + framebuffer that target these attachments
+        // Depth-only image view for shader sampling (separate from the combined depth+stencil attachment view)
+        VkImageView    m_depth_sampler_view = VK_NULL_HANDLE;
+
         VkRenderPass   m_render_pass  = VK_NULL_HANDLE;
         VkFramebuffer  m_framebuffer  = VK_NULL_HANDLE;
 

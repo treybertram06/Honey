@@ -96,6 +96,7 @@ namespace Honey {
         cam_ubo.position = data->scene_camera_pos;
         VulkanRendererAPI::submit_camera(cam_ubo);
         VulkanRendererAPI::submit_lights(data->scene_lights);
+        VulkanRendererAPI::submit_tiled_lighting(data->scene_tiled_lighting);
 
         std::array<void*, VulkanRendererAPI::k_max_texture_slots> tex_array{};
         tex_array[0] = data->white_texture.get();

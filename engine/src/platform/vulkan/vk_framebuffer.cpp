@@ -157,6 +157,7 @@ namespace Honey {
             m_render_pass = VK_NULL_HANDLE;
             m_color_attachments.clear();
             m_depth_attachment = {};
+            m_depth_sampler_view = VK_NULL_HANDLE;
             m_imgui_texture_sets.clear();
             return;
         }
@@ -185,6 +186,10 @@ namespace Honey {
         }
         m_color_attachments.clear();
 
+        if (m_depth_sampler_view) {
+            vkDestroyImageView(device, m_depth_sampler_view, nullptr);
+            m_depth_sampler_view = VK_NULL_HANDLE;
+        }
         if (m_depth_attachment.view)   vkDestroyImageView(device, m_depth_attachment.view, nullptr);
         if (m_depth_attachment.image)  vkDestroyImage(device, m_depth_attachment.image, nullptr);
         if (m_depth_attachment.memory) vkFreeMemory(device, m_depth_attachment.memory, nullptr);
@@ -355,14 +360,13 @@ namespace Honey {
             r = vkBindImageMemory(m_device, m_depth_attachment.image, m_depth_attachment.memory, 0);
             HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanFramebuffer: vkBindImageMemory (depth) failed: {0}", vk_result_to_string(r));
 
-            VkImageAspectFlags aspect = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
-
+            // Combined depth+stencil view — used as framebuffer attachment
             VkImageViewCreateInfo view{};
             view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
             view.image = m_depth_attachment.image;
             view.viewType = VK_IMAGE_VIEW_TYPE_2D;
             view.format = format;
-            view.subresourceRange.aspectMask = aspect;
+            view.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
             view.subresourceRange.baseMipLevel = 0;
             view.subresourceRange.levelCount = 1;
             view.subresourceRange.baseArrayLayer = 0;
@@ -370,6 +374,13 @@ namespace Honey {
 
             r = vkCreateImageView(m_device, &view, nullptr, &m_depth_attachment.view);
             HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanFramebuffer: vkCreateImageView (depth) failed: {0}", vk_result_to_string(r));
+
+            if (m_spec.depth_samplable) {
+                VkImageViewCreateInfo depth_sampler_view_ci = view;
+                depth_sampler_view_ci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+                r = vkCreateImageView(m_device, &depth_sampler_view_ci, nullptr, &m_depth_sampler_view);
+                HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanFramebuffer: vkCreateImageView (depth sampler) failed: {0}", vk_result_to_string(r));
+            }
 
             m_backend->immediate_submit([&](VkCommandBuffer cmd) {
                 VkImageMemoryBarrier barrier{};
@@ -438,7 +449,9 @@ namespace Honey {
             ad.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
             ad.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
             ad.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-            ad.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            ad.finalLayout   = m_spec.depth_samplable
+                                   ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+                                   : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
             VkAttachmentReference ref{};
             ref.attachment = static_cast<uint32_t>(attachments.size());

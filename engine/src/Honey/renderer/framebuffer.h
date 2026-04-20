@@ -43,6 +43,7 @@ namespace Honey {
 		uint32_t samples = 1;
 
 		bool swap_chain_target = false;
+		bool depth_samplable   = false;
 
 	};
 

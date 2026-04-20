@@ -304,9 +304,10 @@ namespace Honey {
         update_world_transforms();
     }
 
-    void Scene::render(const glm::mat4& view_proj, const glm::vec3& camera_pos) {
+    void Scene::render(const glm::mat4& view, const glm::mat4& view_proj, const glm::vec3& camera_pos,
+                       uint32_t viewport_w, uint32_t viewport_h) {
         s_active_scene = this;
-        on_update_render(view_proj, camera_pos);
+        on_update_render(view, view_proj, camera_pos, viewport_w, viewport_h);
     }
 
     void Scene::on_viewport_resize(uint32_t width, uint32_t height) {
@@ -801,7 +802,8 @@ namespace Honey {
         }
     }
 
-    void Scene::on_update_render(const glm::mat4& view_proj, const glm::vec3& camera_pos) {
+    void Scene::on_update_render(const glm::mat4& view, const glm::mat4& view_proj, const glm::vec3& camera_pos,
+                                  uint32_t viewport_w, uint32_t viewport_h) {
         HN_PROFILE_FUNCTION();
 
         bool parallel_mesh_submit_enabled = Settings::get().renderer.enable_parallel_mesh_submission;
@@ -872,7 +874,7 @@ namespace Honey {
                 auto& tc = point_light_group.get<TransformComponent>(entity);
                 if (!pl.enabled) continue;
 
-                if (lights_ubo.directional_light.point_light_count < 32) {
+                if (lights_ubo.directional_light.point_light_count < (int)k_max_point_lights) {
                     int index = lights_ubo.directional_light.point_light_count;
                     lights_ubo.point_lights[index].color = pl.color;
                     lights_ubo.point_lights[index].intensity = pl.intensity;
@@ -882,14 +884,120 @@ namespace Honey {
                     // point_light_count belongs to directional_light to ensure structure
                     // is 16 byte aligned without wasting space for padding
                 } else {
-                    HN_CORE_WARN("Maximum point light count (32) exceeded! Ignoring additional point light.");
+                    HN_CORE_WARN("Maximum point light count ({0}) exceeded! Ignoring additional point light.", k_max_point_lights);
                 }
             }
 
             //TODO: Spot lights!
 
+            // Build sorted index array (front-to-back by camera-space Z) and tile bitmasks.
+            TiledLightingData tiled_data{};
+            {
+                HN_PROFILE_SCOPE("BuildTiledLightingData");
+                const int light_count = lights_ubo.directional_light.point_light_count;
+                tiled_data.light_count = static_cast<uint32_t>(light_count);
+
+                for (int i = 0; i < light_count; ++i)
+                    tiled_data.sorted_light_indices[i] = static_cast<uint32_t>(i);
+
+                if (light_count > 1) {
+                    glm::vec3 view_z_row(view[0][2], view[1][2], view[2][2]);
+                    float view_z_t = view[3][2];
+                    std::sort(tiled_data.sorted_light_indices, tiled_data.sorted_light_indices + light_count,
+                        [&](uint32_t a, uint32_t b) {
+                            float za = glm::dot(view_z_row, lights_ubo.point_lights[a].position) + view_z_t;
+                            float zb = glm::dot(view_z_row, lights_ubo.point_lights[b].position) + view_z_t;
+                            return za > zb; // front-to-back: less negative cam-Z = closer = first
+                        });
+                }
+
+                // Tile assignment
+                {
+                    const uint32_t tiles_x = (viewport_w + k_tile_size - 1) / k_tile_size;
+                    const uint32_t tiles_y = (viewport_h + k_tile_size - 1) / k_tile_size;
+                    tiled_data.tile_count_x = tiles_x;
+                    tiled_data.tile_count_y = tiles_y;
+
+                    glm::vec3 view_z_row(view[0][2], view[1][2], view[2][2]);
+                    float view_z_t = view[3][2];
+                    float fvp_w = static_cast<float>(viewport_w);
+                    float fvp_h = static_cast<float>(viewport_h);
+
+                    for (int si = 0; si < light_count; ++si) {
+                        uint32_t orig_idx = tiled_data.sorted_light_indices[si];
+                        const auto& light = lights_ubo.point_lights[orig_idx];
+                        float range = light.range;
+
+                        // Camera-space Z of light center; cull if entire sphere is behind camera
+                        float cam_z = glm::dot(view_z_row, light.position) + view_z_t;
+                        if (cam_z - range > 0.0f)
+                            continue;
+
+                        // Project 8 AABB corners through view_proj to find screen-space extent
+                        glm::vec3 c = light.position;
+                        float ndc_min_x =  std::numeric_limits<float>::max();
+                        float ndc_max_x = -std::numeric_limits<float>::max();
+                        float ndc_min_y =  std::numeric_limits<float>::max();
+                        float ndc_max_y = -std::numeric_limits<float>::max();
+                        bool any_visible = false;
+                        bool any_behind  = false;
+
+                        for (int cx = 0; cx < 2; ++cx)
+                            for (int cy = 0; cy < 2; ++cy)
+                                for (int cz = 0; cz < 2; ++cz) {
+                                    glm::vec4 corner = view_proj * glm::vec4(
+                                        c.x + (cx ? range : -range),
+                                        c.y + (cy ? range : -range),
+                                        c.z + (cz ? range : -range),
+                                        1.0f);
+                                    if (corner.w <= 0.0f) { any_behind = true; continue; }
+                                    float nx = corner.x / corner.w;
+                                    float ny = corner.y / corner.w;
+                                    ndc_min_x = std::min(ndc_min_x, nx);
+                                    ndc_max_x = std::max(ndc_max_x, nx);
+                                    ndc_min_y = std::min(ndc_min_y, ny);
+                                    ndc_max_y = std::max(ndc_max_y, ny);
+                                    any_visible = true;
+                                }
+
+                        if (!any_visible && !any_behind) continue;
+
+                        int tx_min, tx_max, ty_min, ty_max;
+                        if (any_behind) {
+                            // AABB straddles the near plane — conservatively cover all tiles
+                            tx_min = 0; tx_max = (int)tiles_x - 1;
+                            ty_min = 0; ty_max = (int)tiles_y - 1;
+                        } else {
+                            // Convert NDC to Vulkan screen pixels (Y-down: NDC +Y = screen top)
+                            float px_min_x = ( ndc_min_x * 0.5f + 0.5f) * fvp_w;
+                            float px_max_x = ( ndc_max_x * 0.5f + 0.5f) * fvp_w;
+                            float px_min_y = (0.5f - ndc_max_y * 0.5f) * fvp_h;
+                            float px_max_y = (0.5f - ndc_min_y * 0.5f) * fvp_h;
+
+                            // Screen-space cull
+                            if (px_max_x < 0.0f || px_min_x >= fvp_w ||
+                                px_max_y < 0.0f || px_min_y >= fvp_h)
+                                continue;
+
+                            tx_min = std::max(0, (int)(px_min_x / (float)k_tile_size));
+                            tx_max = std::min((int)tiles_x - 1, (int)(px_max_x / (float)k_tile_size));
+                            ty_min = std::max(0, (int)(px_min_y / (float)k_tile_size));
+                            ty_max = std::min((int)tiles_y - 1, (int)(px_max_y / (float)k_tile_size));
+                        }
+
+                        for (int ty = ty_min; ty <= ty_max; ++ty)
+                            for (int tx = tx_min; tx <= tx_max; ++tx) {
+                                uint32_t tile_idx = static_cast<uint32_t>(ty) * tiles_x
+                                                  + static_cast<uint32_t>(tx);
+                                if (tile_idx < k_max_tiles)
+                                    tiled_data.tile_light_masks[tile_idx] |= (1u << orig_idx);
+                            }
+                    }
+                }
+            }
 
             Renderer3D::submit_lights(lights_ubo);
+            Renderer3D::submit_tiled_lighting_data(tiled_data);
             Renderer3D::begin_scene(view_proj, camera_pos);
 
             if (!parallel_mesh_submit_enabled) {

@@ -101,6 +101,7 @@ namespace Honey::Renderer3DInternal {
         glm::mat4 scene_view_proj{1.0f};
         glm::vec3 scene_camera_pos{};
         LightsUBO scene_lights{};
+        TiledLightingData scene_tiled_lighting{};
         Ref<Framebuffer> current_gbuffer_fb;
 
         Ref<Material> default_material;

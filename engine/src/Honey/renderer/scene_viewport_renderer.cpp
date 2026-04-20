@@ -74,8 +74,9 @@ namespace Honey {
             FramebufferTextureFormat::RGBA8,
             FramebufferTextureFormat::Depth
         };
-        gbuffer_spec.width = m_width;
-        gbuffer_spec.height = m_height;
+        gbuffer_spec.width          = m_width;
+        gbuffer_spec.height         = m_height;
+        gbuffer_spec.depth_samplable = true;
         m_gbuffer_framebuffer = Framebuffer::create(gbuffer_spec);
 
         m_frame_graph_dirty = true;
@@ -191,7 +192,7 @@ namespace Honey {
 
     void SceneViewportRenderer::execute_scene_pass(const SceneViewportRenderContext& context) const {
         HN_CORE_ASSERT(context.scene, "SceneViewportRenderer requires a valid scene");
-        context.scene->render(context.projection * context.view, context.camera_position);
+        context.scene->render(context.view, context.projection * context.view, context.camera_position, m_width, m_height);
         if (context.post_scene_overlay_render)
             context.post_scene_overlay_render();
     }

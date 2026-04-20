@@ -172,6 +172,16 @@ namespace Honey {
         VulkanRendererAPI::submit_lights(lights);
     }
 
+    void Renderer3D::submit_tiled_lighting_data(const TiledLightingData& data) {
+        HN_PROFILE_FUNCTION();
+        if (Renderer::get_api() != RendererAPI::API::vulkan) {
+            HN_CORE_WARN("Renderer3D::submit_tiled_lighting_data: only Vulkan path implemented");
+            return;
+        }
+        Renderer3DInternal::g_renderer3d_data->scene_tiled_lighting = data;
+        VulkanRendererAPI::submit_tiled_lighting(data);
+    }
+
     void Renderer3D::draw_mesh(const Ref<VertexArray>& vertex_array, const glm::mat4& transform, int entity_id) {
         draw_mesh(vertex_array, Renderer3DInternal::g_renderer3d_data->default_material, transform, entity_id);
     }

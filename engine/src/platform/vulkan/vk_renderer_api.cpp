@@ -45,6 +45,7 @@ namespace Honey {
         cmd.globals.cameraUBO = p.cameraUBO;
 
         cmd.globals.lightUBO = p.lightUBO;
+        cmd.globals.tiledLighting = p.tiledLighting;
 
         cmd.globals.materials = p.materials;
         cmd.globals.materials_ssbo_offset = p.materials_ssbo_offset;
@@ -417,6 +418,11 @@ namespace Honey {
         p.lightUBO = lights;
     }
 
+    void VulkanRendererAPI::submit_tiled_lighting(const TiledLightingData& data) {
+        require_frame_begun();
+        pkt().tiledLighting = data;
+    }
+
     void VulkanRendererAPI::submit_materials(const std::vector<GPUMaterial>& materials, uint32_t materials_ssbo_offset) {
         require_frame_begun();
         auto& p = pkt();
@@ -433,6 +439,7 @@ namespace Honey {
         s.hasCamera = p.hasCamera;
 
         s.lightUBO = p.lightUBO;
+        s.tiledLighting = p.tiledLighting;
 
         s.textures = p.textures;
         s.textureCount = p.textureCount;
@@ -451,6 +458,7 @@ namespace Honey {
         p.hasCamera = state.hasCamera;
 
         p.lightUBO = state.lightUBO;
+        p.tiledLighting = state.tiledLighting;
 
         p.textures = state.textures;
         p.textureCount = state.textureCount;
