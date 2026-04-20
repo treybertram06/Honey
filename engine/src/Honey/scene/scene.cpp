@@ -280,19 +280,6 @@ namespace Honey {
         }
 
         update_world_transforms();
-
-        Entity primary_camera_entity = get_primary_camera();
-        if (primary_camera_entity.is_valid()) {
-            auto& cc = primary_camera_entity.get_component<CameraComponent>();
-            auto& tc = primary_camera_entity.get_component<TransformComponent>();
-
-            Camera* primary_camera = cc.get_camera();
-            if (primary_camera) {
-                glm::mat4 transform = primary_camera_entity.get_world_transform();
-                on_update_render(primary_camera->get_projection_matrix() * glm::inverse(transform), tc.translation);
-            }
-        }
-
     }
 
     void Scene::on_update_editor(Timestep ts, EditorCamera& camera) {
@@ -303,8 +290,6 @@ namespace Honey {
         update_world_transforms();
 
         update_streamed_assets();
-
-        on_update_render(camera.get_view_projection_matrix(), camera.get_position());
     }
 
     void Scene::on_update_simulation(Timestep ts, EditorCamera& camera, bool paused) {
@@ -317,7 +302,11 @@ namespace Honey {
         }
 
         update_world_transforms();
-        on_update_render(camera.get_view_projection_matrix(), camera.get_position());
+    }
+
+    void Scene::render(const glm::mat4& view_proj, const glm::vec3& camera_pos) {
+        s_active_scene = this;
+        on_update_render(view_proj, camera_pos);
     }
 
     void Scene::on_viewport_resize(uint32_t width, uint32_t height) {

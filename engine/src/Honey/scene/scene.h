@@ -35,6 +35,7 @@ namespace Honey {
         void on_update_runtime(Timestep ts, bool paused = false);
         void on_update_editor(Timestep ts, EditorCamera& camera);
         void on_update_simulation(Timestep ts, EditorCamera& camera, bool paused = false);
+        void render(const glm::mat4& view_proj, const glm::vec3& camera_pos);
 
         Entity get_primary_camera() const;
 

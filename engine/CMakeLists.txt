@@ -209,6 +209,8 @@ add_library(engine STATIC
         src/Honey/renderer/frame_graph_loader.cpp
         src/Honey/renderer/frame_graph.cpp
         src/Honey/renderer/frame_graph_registry.cpp
+        src/Honey/renderer/scene_viewport_renderer.h
+        src/Honey/renderer/scene_viewport_renderer.cpp
         src/platform/vulkan/vk_cloth_sim.h
         src/platform/vulkan/vk_cloth_sim.cpp
         src/platform/vulkan/vk_cloth_renderer.h
