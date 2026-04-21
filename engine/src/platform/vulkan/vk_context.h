@@ -9,6 +9,7 @@
 
 #include "vk_pipeline.h"
 #include "../../Honey/renderer/gpu_types.h"
+#include "Honey/renderer/framebuffer.h"
 
 struct GLFWwindow;
 
@@ -138,7 +139,7 @@ namespace Honey {
 
             // New: offscreen pass description
             struct CmdBeginOffscreenPass {
-                class VulkanFramebuffer* framebuffer = nullptr;
+                Ref<Framebuffer> framebuffer;
                 glm::vec4 clearColor{0.1f, 0.1f, 0.1f, 1.0f};
             };
 
@@ -371,6 +372,7 @@ private:
         VkDescriptorPool      m_gbuffer_pool       = nullptr;
         VkDescriptorSet       m_gbuffer_sets[k_max_frames_in_flight]{};
         class VulkanFramebuffer* m_gbuffer_last_fb[k_max_frames_in_flight]{};
+        uint64_t              m_gbuffer_last_fb_generation[k_max_frames_in_flight]{};
         //uint32_t m_chunk_ds_index[k_max_frames_in_flight]{};
 
         void* m_band_table_ubos[k_max_frames_in_flight]{};        // VkBuffer

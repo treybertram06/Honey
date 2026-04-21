@@ -149,7 +149,7 @@ namespace Honey {
             cmd.draw.vertexBufferByteOffsets[i] = 0;
         }
 
-        pkt().cmds.push_back(cmd);
+        pkt().cmds.push_back(std::move(cmd));
     }
 
     void VulkanRendererAPI::draw_indexed_instanced(const Ref<VertexArray>& vertex_array, uint32_t index_count, uint32_t instance_count) {
@@ -174,7 +174,7 @@ namespace Honey {
             cmd.draw.vertexBufferByteOffsets[i] = 0;
         }
 
-        pkt().cmds.push_back(cmd);
+        pkt().cmds.push_back(std::move(cmd));
     }
 
     void VulkanRendererAPI::submit_mesh_tasks_draw(uint32_t group_count_x, uint32_t group_count_y, uint32_t group_count_z) {
@@ -254,7 +254,7 @@ namespace Honey {
         cmd.draw.vertexBuffers[(uint32_t)vbs.size()] = instance_vb;
         cmd.draw.vertexBufferByteOffsets[(uint32_t)vbs.size()] = instance_byte_offset;
 
-        pkt().cmds.push_back(cmd);
+        pkt().cmds.push_back(std::move(cmd));
     }
 
     void VulkanRendererAPI::set_wireframe(bool) {
@@ -381,7 +381,7 @@ namespace Honey {
         cmd.type = VulkanContext::FramePacket::CmdType::PushConstantsMat4;
         cmd.pushMat4.value = value;
 
-        pkt().cmds.push_back(cmd);
+        pkt().cmds.push_back(std::move(cmd));
     }
 
     void VulkanRendererAPI::submit_push_constants(const void* data, uint32_t size, uint32_t offset, VkShaderStageFlags stageFlags) {
@@ -394,7 +394,7 @@ namespace Honey {
         cmd.push.offset = offset;
         cmd.push.stageFlags = stageFlags;
 
-        pkt().cmds.push_back(cmd);
+        pkt().cmds.push_back(std::move(cmd));
     }
 
     bool VulkanRendererAPI::consume_bound_textures(std::array<void*, k_max_texture_slots>& out_textures, uint32_t& out_texture_count) {

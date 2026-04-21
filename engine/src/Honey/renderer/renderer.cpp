@@ -147,7 +147,7 @@ namespace Honey {
                 VulkanContext::FramePacket::Cmd cmd{};
                 cmd.type = VulkanContext::FramePacket::CmdType::BeginSwapchainPass;
                 cmd.begin.clearColor = pkt.clearColor;
-                pkt.cmds.push_back(cmd);
+                pkt.cmds.push_back(std::move(cmd));
             } else {
                 // Offscreen pass: let VulkanContext know which framebuffer to use.
                 auto* vk_fb = dynamic_cast<VulkanFramebuffer*>(s_current_target.get());
@@ -155,9 +155,9 @@ namespace Honey {
 
                 VulkanContext::FramePacket::Cmd cmd{};
                 cmd.type = VulkanContext::FramePacket::CmdType::BeginOffscreenPass;
-                cmd.offscreen.framebuffer = vk_fb;
+                cmd.offscreen.framebuffer = s_current_target;
                 cmd.offscreen.clearColor = pkt.clearColor;
-                pkt.cmds.push_back(cmd);
+                pkt.cmds.push_back(std::move(cmd));
             }
             break;
         }
@@ -193,7 +193,7 @@ namespace Honey {
 
             VulkanContext::FramePacket::Cmd cmd{};
             cmd.type = VulkanContext::FramePacket::CmdType::EndPass;
-            pkt.cmds.push_back(cmd);
+            pkt.cmds.push_back(std::move(cmd));
             break;
         }
         case RendererAPI::API::none:

@@ -41,6 +41,7 @@ namespace Honey {
         VkImageView    get_color_image_view(uint32_t index = 0) const;
         VkImage        get_color_image(uint32_t index = 0) const;
         VkImageView    get_depth_image_view() const;
+        uint64_t       get_resource_generation() const { return m_resource_generation; }
         // Depth-only aspect view suitable for shader sampling (set=1 binding=3 in deferred lighting).
         VkImageView    get_depth_sampler_image_view() const { return m_depth_sampler_view; }
 
@@ -89,6 +90,7 @@ namespace Honey {
         std::vector<VkDescriptorSet> m_imgui_texture_sets;
 
         uint32_t       m_samples = 1;
+        uint64_t       m_resource_generation = 0;
     };
 
 }

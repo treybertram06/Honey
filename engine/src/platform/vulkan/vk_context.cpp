@@ -1042,6 +1042,7 @@ namespace Honey {
         for (uint32_t f = 0; f < k_max_frames_in_flight; ++f) {
             m_gbuffer_sets[f]    = sets[f];
             m_gbuffer_last_fb[f] = nullptr;
+            m_gbuffer_last_fb_generation[f] = 0;
         }
     }
 
@@ -1052,6 +1053,7 @@ namespace Honey {
         for (uint32_t f = 0; f < k_max_frames_in_flight; ++f) {
             m_gbuffer_sets[f]    = VK_NULL_HANDLE;
             m_gbuffer_last_fb[f] = nullptr;
+            m_gbuffer_last_fb_generation[f] = 0;
         }
 
         if (m_gbuffer_pool) {
@@ -1071,7 +1073,9 @@ namespace Honey {
         HN_CORE_ASSERT(fb, "update_gbuffer_descriptors: fb is null");
         HN_CORE_ASSERT(m_gbuffer_sets[frame] != VK_NULL_HANDLE, "update_gbuffer_descriptors: descriptor set not allocated");
 
-        if (fb == m_gbuffer_last_fb[frame])
+        const uint64_t fb_generation = fb->get_resource_generation();
+        if (fb == m_gbuffer_last_fb[frame] &&
+            fb_generation == m_gbuffer_last_fb_generation[frame])
             return;  // already up-to-date for this frame
 
         VkSampler sampler = m_backend->get_sampler_linear();
@@ -1103,6 +1107,7 @@ namespace Honey {
 
         vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(m_device), 4, writes, 0, nullptr);
         m_gbuffer_last_fb[frame] = fb;
+        m_gbuffer_last_fb_generation[frame] = fb_generation;
     }
 
     void VulkanContext::init() {
@@ -1688,7 +1693,7 @@ namespace Honey {
         FramePacket::Cmd cmd{};
         cmd.type = FramePacket::CmdType::CustomVulkan;
         cmd.custom.callback_index = idx;
-        p.cmds.push_back(cmd);
+        p.cmds.push_back(std::move(cmd));
     }
 
     void VulkanContext::cancel_pending_custom_vulkan_cmds() {
@@ -2575,7 +2580,7 @@ namespace Honey {
                     break;
             }
             case FramePacket::CmdType::BeginOffscreenPass: {
-                    auto* vk_fb = c.offscreen.framebuffer;
+                    auto* vk_fb = dynamic_cast<VulkanFramebuffer*>(c.offscreen.framebuffer.get());
                     HN_CORE_ASSERT(vk_fb, "BeginOffscreenPass: framebuffer is null");
 
                     VkRenderPass rp = reinterpret_cast<VkRenderPass>(vk_fb->get_render_pass());

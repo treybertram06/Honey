@@ -206,6 +206,7 @@ namespace Honey {
             vkDeviceWaitIdle(m_device);
 
         destroy();
+        ++m_resource_generation;
 
         m_device          = m_backend->get_device();
         m_physical_device = m_backend->get_physical_device();
@@ -448,7 +449,10 @@ namespace Honey {
             ad.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
             ad.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
             ad.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-            ad.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            // The deferred path samples depth after the pass, so the previous frame often leaves it
+            // in READ_ONLY. Because we clear depth every pass, we can discard old contents and let
+            // the render pass transition from UNDEFINED back to ATTACHMENT_OPTIMAL.
+            ad.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
             ad.finalLayout   = m_spec.depth_samplable
                                    ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
                                    : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
@@ -545,7 +549,9 @@ namespace Honey {
         for (auto& att : m_color_attachments)
             att.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         if (has_depth)
-            m_depth_attachment.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            m_depth_attachment.layout = m_spec.depth_samplable
+                                            ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+                                            : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     }
 
     void VulkanFramebuffer::bind() {

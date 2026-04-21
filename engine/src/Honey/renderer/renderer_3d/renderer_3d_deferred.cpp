@@ -103,16 +103,17 @@ namespace Honey {
         VulkanRendererAPI::submit_bound_textures(tex_array, 1);
         VulkanRendererAPI::flush_globals();
 
-        auto* gbuffer_vk = dynamic_cast<VulkanFramebuffer*>(data->current_gbuffer_fb.get());
-        HN_CORE_ASSERT(gbuffer_vk, "flush_deferred_lighting: current_gbuffer_fb is not a VulkanFramebuffer");
-
-        uint32_t frame = vk_ctx->get_current_frame();
-        vk_ctx->update_gbuffer_descriptors(frame, gbuffer_vk);
-        VkDescriptorSet gbuf_ds = vk_ctx->get_gbuffer_descriptor_set(frame);
         VkPipelineLayout pipe_layout = static_cast<VkPipelineLayout>(pipe->get_native_pipeline_layout());
+        Ref<Framebuffer> gbuffer_fb = data->current_gbuffer_fb;
 
         vk_ctx->queue_custom_vulkan_cmd(
-            [gbuf_ds, pipe_layout](VkCommandBuffer cmd, uint32_t, uint32_t) {
+            [vk_ctx, gbuffer_fb, pipe_layout](VkCommandBuffer cmd, uint32_t, uint32_t) {
+                auto* gbuffer_vk = dynamic_cast<VulkanFramebuffer*>(gbuffer_fb.get());
+                HN_CORE_ASSERT(gbuffer_vk, "flush_deferred_lighting: current_gbuffer_fb is not a VulkanFramebuffer");
+
+                uint32_t frame = vk_ctx->get_current_frame();
+                vk_ctx->update_gbuffer_descriptors(frame, gbuffer_vk);
+                VkDescriptorSet gbuf_ds = vk_ctx->get_gbuffer_descriptor_set(frame);
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe_layout, 1, 1, &gbuf_ds, 0, nullptr);
                 vkCmdDraw(cmd, 3, 1, 0, 0);
             });
