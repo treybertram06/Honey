@@ -554,6 +554,7 @@ namespace Honey {
             } else if (!mesh_path_str.empty()) {
                 // Legacy flat-mesh import
                 mr.async_load_handle = load_gltf_mesh_async(mesh_path_str);
+                mr.mesh_path = mesh_path_str;
             }
 
             // Optionally: material overrides
