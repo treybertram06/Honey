@@ -117,7 +117,7 @@ namespace Honey {
         return true;
     }
 
-    static std::vector<const char*> get_required_instance_extensions_local() {
+    static std::vector<const char*> get_required_instance_extensions_local(bool enable_validation_extensions) {
         uint32_t glfw_extension_count = 0;
         const char** glfw_extensions = glfwGetRequiredInstanceExtensions(&glfw_extension_count);
 
@@ -126,7 +126,7 @@ namespace Honey {
 
         std::vector<const char*> extensions(glfw_extensions, glfw_extensions + glfw_extension_count);
 
-        if (k_enable_validation) {
+        if (enable_validation_extensions) {
             extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
             extensions.push_back(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
         }
@@ -1401,12 +1401,13 @@ namespace Honey {
 
         HN_CORE_ASSERT(glfwVulkanSupported(), "GLFW reports Vulkan is not supported on this system!");
 
-        if (k_enable_validation) {
-            HN_CORE_ASSERT(check_validation_layer_support_local(),
-                           "Vulkan validation requested, but VK_LAYER_KHRONOS_validation is not available.");
+        const bool validation_layers_available = check_validation_layer_support_local();
+        const bool enable_validation_layers = k_enable_validation && validation_layers_available;
+        if (k_enable_validation && !validation_layers_available) {
+            HN_CORE_ERROR("Vulkan validation requested, but VK_LAYER_KHRONOS_validation is not available.");
         }
 
-        std::vector<const char*> extensions = get_required_instance_extensions_local();
+        std::vector<const char*> extensions = get_required_instance_extensions_local(enable_validation_layers);
 
         VkApplicationInfo app_info{};
         app_info.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -1436,7 +1437,7 @@ namespace Honey {
             static_cast<uint32_t>(std::size(enabled_validation_features));
         validation_features.pEnabledValidationFeatures = enabled_validation_features;
 
-        if (k_enable_validation) {
+        if (enable_validation_layers) {
             create_info.enabledLayerCount = static_cast<uint32_t>(k_validation_layers.size());
             create_info.ppEnabledLayerNames = k_validation_layers.data();
 
@@ -1454,6 +1455,7 @@ namespace Honey {
             create_info.pNext = &validation_features;
         } else {
             create_info.enabledLayerCount = 0;
+            create_info.ppEnabledLayerNames = nullptr;
             create_info.pNext = nullptr;
         }
 
