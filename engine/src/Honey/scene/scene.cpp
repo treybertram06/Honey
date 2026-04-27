@@ -485,7 +485,9 @@ namespace Honey {
         }
 
         //auto& root_tc = entity.get_component<TransformComponent>();
-        auto& rb = entity.get_component<Rigidbody2DComponent>();
+        auto* rb = entity.try_get_component<Rigidbody2DComponent>();
+        if (!rb)
+            return;
 
         glm::mat4 world = entity.get_world_transform();
 
@@ -495,16 +497,16 @@ namespace Honey {
         Math::decompose_transform(world, world_translation, world_rotation, world_scale);
 
         b2BodyDef body_def = b2DefaultBodyDef();
-        body_def.type = hn_rigidbody2d_type_to_box2d_type(rb.body_type);
+        body_def.type = hn_rigidbody2d_type_to_box2d_type(rb->body_type);
         body_def.position = { world_translation.x, world_translation.y };
         body_def.rotation = b2MakeRot(world_rotation.z);
 
         b2BodyId body = b2CreateBody(m_world, &body_def);
 
         b2Body_SetUserData(body, (void*)(uint64_t)entity.get_uuid());
-        b2Body_SetMotionLocks(body, { false, false, rb.fixed_rotation });
+        b2Body_SetMotionLocks(body, { false, false, rb->fixed_rotation });
 
-        memcpy(&rb.runtime_body, &body, sizeof(b2BodyId));
+        memcpy(&rb->runtime_body, &body, sizeof(b2BodyId));
 
         // ---- COMPOUND COLLIDERS ----
         std::vector<Entity> collider_entities;

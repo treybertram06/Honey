@@ -53,7 +53,7 @@ namespace Honey {
         switch (get_api()) {
         case RendererAPI::API::opengl:
             Renderer2D::shutdown();
-            Renderer3D::init();
+            Renderer3D::shutdown();
             break;
 
         case RendererAPI::API::vulkan:

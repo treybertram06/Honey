@@ -48,6 +48,16 @@ namespace Honey {
         }
 
         template<typename T>
+        T* try_get_component() {
+            return m_scene->m_registry.try_get<T>(m_entity_handle);
+        }
+
+        template<typename T>
+        const T* try_get_component() const {
+            return m_scene->m_registry.try_get<T>(m_entity_handle);
+        }
+
+        template<typename T>
         bool has_component() const {
             return m_scene->m_registry.all_of<T>(m_entity_handle);
         }

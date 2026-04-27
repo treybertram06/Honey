@@ -117,6 +117,7 @@ namespace Honey {
                 if (type == "Rigidbody2D") return (void)e.add_component<Rigidbody2DComponent>();
                 if (type == "BoxCollider2D") return (void)e.add_component<BoxCollider2DComponent>();
                 if (type == "AudioSource") return (void)e.add_component<AudioSourceComponent>();
+                if (type == "PointLight") return (void)e.add_component<PointLightComponent>();
             },
 
             "HasComponent", [](Entity e, const std::string& type) {
@@ -125,6 +126,7 @@ namespace Honey {
                 if (type == "Rigidbody2D") return e.has_component<Rigidbody2DComponent>();
                 if (type == "BoxCollider2D") return e.has_component<BoxCollider2DComponent>();
                 if (type == "AudioSource") return e.has_component<AudioSourceComponent>();
+                if (type == "PointLight") return e.has_component<PointLightComponent>();
                 return false;
             },
 
@@ -150,6 +152,10 @@ namespace Honey {
                 if (type == "AudioSource") {
                     if (!e.has_component<AudioSourceComponent>()) return sol::nil;
                     return sol::make_object(L, &e.get_component<AudioSourceComponent>());
+                }
+                if (type == "PointLight") {
+                    if (!e.has_component<PointLightComponent>()) return sol::nil;
+                    return sol::make_object(L, &e.get_component<PointLightComponent>());
                 }
                 return sol::nil;
             },
@@ -231,6 +237,15 @@ namespace Honey {
         lua.new_usertype<SpriteRendererComponent>("SpriteRendererComponent",
             sol::constructors<SpriteRendererComponent()>(),
             "color", &SpriteRendererComponent::color
+        );
+
+        lua.new_usertype<PointLightComponent>("PointLightComponent",
+            sol::constructors<PointLightComponent()>(),
+            "color", &PointLightComponent::color,
+            "intensity", &PointLightComponent::intensity,
+            "range", &PointLightComponent::range,
+            "enabled", &PointLightComponent::enabled,
+            "shadows", &PointLightComponent::shadows
         );
 
         // Rigidbody2DComponent with Box2D-backed velocity
