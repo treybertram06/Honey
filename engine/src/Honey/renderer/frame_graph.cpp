@@ -5,6 +5,7 @@
 #include "renderer.h"
 #include "Honey/core/engine.h"
 #include "platform/vulkan/vk_context.h"
+#include "platform/vulkan/vk_framebuffer.h"
 
 #include <algorithm>
 #include <chrono>
@@ -666,6 +667,69 @@ namespace Honey {
         return vk_context->submit_one_time_transfer(record);
     }
 
+    bool FrameGraphPassContext::submit_vulkan_graphics_raw(const FGVulkanRecordCommands& record) const {
+        HN_CORE_ASSERT(m_pass, "FrameGraphPassContext::submit_vulkan_graphics_raw: null pass");
+
+        if (!record) {
+            HN_CORE_WARN("FrameGraphPassContext::submit_vulkan_graphics_raw called with empty record callback (pass '{0}')",
+                         m_pass->name);
+            return false;
+        }
+
+        auto* base = Application::get().get_window().get_context();
+        auto* vk_context = dynamic_cast<VulkanContext*>(base);
+        if (!vk_context) {
+            HN_CORE_WARN("FrameGraphPassContext::submit_vulkan_graphics_raw requires VulkanContext (pass '{0}')",
+                         m_pass->name);
+            return false;
+        }
+
+        return vk_context->submit_one_time_graphics(record);
+    }
+
+    static VulkanFramebuffer* resolve_vulkan_framebuffer(FrameGraphCompiled* graph, const std::string& name) {
+        if (!graph)
+            return nullptr;
+        const FGResourceHandle h = graph->find_resource_handle(name);
+        const auto& resources = graph->resources();
+        if (h == k_invalid_resource || h >= resources.size())
+            return nullptr;
+        const auto& res = resources[h];
+        if (!res.framebuffer)
+            return nullptr;
+        return dynamic_cast<VulkanFramebuffer*>(res.framebuffer.get());
+    }
+
+    VkFramebuffer FrameGraphPassContext::get_resource_layer_framebuffer(const std::string& name, uint32_t layer) const {
+        auto* vkfb = resolve_vulkan_framebuffer(m_graph, name);
+        HN_CORE_ASSERT(vkfb, "FrameGraphPassContext::get_resource_layer_framebuffer: resource not found or not VulkanFramebuffer");
+        return vkfb->get_layer_framebuffer(layer);
+    }
+
+    VkRenderPass FrameGraphPassContext::get_resource_render_pass(const std::string& name) const {
+        auto* vkfb = resolve_vulkan_framebuffer(m_graph, name);
+        HN_CORE_ASSERT(vkfb, "FrameGraphPassContext::get_resource_render_pass: resource not found or not VulkanFramebuffer");
+        return vkfb->get_render_pass();
+    }
+
+    VkImageView FrameGraphPassContext::get_resource_cube_array_view(const std::string& name) const {
+        auto* vkfb = resolve_vulkan_framebuffer(m_graph, name);
+        HN_CORE_ASSERT(vkfb, "FrameGraphPassContext::get_resource_cube_array_view: resource not found or not VulkanFramebuffer");
+        return vkfb->get_cube_array_view();
+    }
+
+    VkSampler FrameGraphPassContext::get_resource_depth_comparison_sampler(const std::string& name) const {
+        auto* vkfb = resolve_vulkan_framebuffer(m_graph, name);
+        HN_CORE_ASSERT(vkfb, "FrameGraphPassContext::get_resource_depth_comparison_sampler: resource not found or not VulkanFramebuffer");
+        return vkfb->get_depth_comparison_sampler();
+    }
+
+    VkImage FrameGraphPassContext::get_resource_vk_image(const std::string& name) const {
+        auto* vkfb = resolve_vulkan_framebuffer(m_graph, name);
+        HN_CORE_ASSERT(vkfb, "FrameGraphPassContext::get_resource_vk_image: resource not found or not VulkanFramebuffer");
+        return vkfb->get_depth_image();
+    }
+
     void* FrameGraphPassContext::user_context() const {
         return m_exec_context ? m_exec_context->user_context : nullptr;
     }
@@ -1144,17 +1208,13 @@ namespace Honey {
 
                 auto estimate_format_bytes_per_pixel = [](const FramebufferTextureFormat fmt) -> uint32_t {
                     switch (fmt) {
-                        case FramebufferTextureFormat::RGBA8:
-                            return 4;
-                        case FramebufferTextureFormat::RGBA16F:
-                            return 8;
-                        case FramebufferTextureFormat::RED_INTEGER:
-                            return 4;
-                        case FramebufferTextureFormat::DEPTH24STENCIL8:
-                            return 4;
+                        case FramebufferTextureFormat::RGBA8:          return 4;
+                        case FramebufferTextureFormat::RGBA16F:         return 8;
+                        case FramebufferTextureFormat::RED_INTEGER:     return 4;
+                        case FramebufferTextureFormat::DEPTH24STENCIL8: return 4;
+                        case FramebufferTextureFormat::D32_SFLOAT:      return 4;
                         case FramebufferTextureFormat::None:
-                        default:
-                            return 4;
+                        default:                                        return 4;
                     }
                 };
 
@@ -1166,6 +1226,7 @@ namespace Honey {
                     uint32_t width = 0;
                     uint32_t height = 0;
                     uint32_t samples = 1;
+                    uint32_t layers = 1;
 
                     std::vector<FramebufferTextureSpecification> attachments;
                     std::vector<FGResourceHandle> resources;
@@ -1177,6 +1238,7 @@ namespace Honey {
                     uint32_t width = 0;
                     uint32_t height = 0;
                     uint32_t samples = 1;
+                    uint32_t layers = 1;
                     std::vector<FramebufferTextureSpecification> attachments;
                     Ref<Framebuffer> framebuffer;
                     std::vector<size_t> assigned_candidate_indices;
@@ -1185,6 +1247,8 @@ namespace Honey {
                         if (c.width != width || c.height != height)
                             return false;
                         if (c.samples != samples)
+                            return false;
+                        if (c.layers != layers)
                             return false;
                         if (c.attachments.size() != attachments.size())
                             return false;
@@ -1258,6 +1322,7 @@ namespace Honey {
                             candidate.width = r.resolved_width;
                             candidate.height = r.resolved_height;
                             candidate.samples = r.texture.samples;
+                            candidate.layers = r.texture.layers;
                             have_dimensions = true;
                         } else {
                             if (r.resolved_width != candidate.width || r.resolved_height != candidate.height) {
@@ -1355,6 +1420,7 @@ namespace Honey {
                         alloc.width = c.width;
                         alloc.height = c.height;
                         alloc.samples = c.samples;
+                        alloc.layers = c.layers;
                         alloc.attachments = c.attachments;
                         physical_allocations.emplace_back(std::move(alloc));
                         chosen = static_cast<uint32_t>(physical_allocations.size() - 1);
@@ -1364,13 +1430,32 @@ namespace Honey {
                     physical_allocations[chosen].assigned_candidate_indices.push_back(candidate_index);
                 }
 
-                for (auto& alloc : physical_allocations) {
+                for (size_t alloc_idx = 0; alloc_idx < physical_allocations.size(); ++alloc_idx) {
+                    auto& alloc = physical_allocations[alloc_idx];
+
+                    // Derive layered/cube/compare flags from the first assigned candidate's resources
+                    bool any_cube_compatible = false;
+                    bool any_depth_compare   = false;
+                    for (const size_t ci : alloc.assigned_candidate_indices) {
+                        if (ci >= candidates.size()) continue;
+                        for (const FGResourceHandle h : candidates[ci].resources) {
+                            if (h >= compiled->m_resources.size()) continue;
+                            const auto& r = compiled->m_resources[h];
+                            any_cube_compatible |= r.texture.cube_compatible;
+                            any_depth_compare   |= r.texture.depth_compare;
+                        }
+                    }
+
                     FramebufferSpecification fb_spec{};
-                    fb_spec.width = alloc.width;
-                    fb_spec.height = alloc.height;
-                    fb_spec.samples = alloc.samples;
+                    fb_spec.width           = alloc.width;
+                    fb_spec.height          = alloc.height;
+                    fb_spec.samples         = alloc.samples;
                     fb_spec.attachments.attachments = alloc.attachments;
                     fb_spec.swap_chain_target = false;
+                    fb_spec.layers          = alloc.layers;
+                    fb_spec.cube_compatible = any_cube_compatible;
+                    fb_spec.depth_compare   = any_depth_compare;
+                    fb_spec.depth_samplable = (alloc.layers > 1);
 
                     alloc.framebuffer = Framebuffer::create(fb_spec);
                     if (!alloc.framebuffer) {
@@ -1404,6 +1489,31 @@ namespace Honey {
 
                 compiled->m_physical_framebuffer_allocations = static_cast<uint32_t>(physical_allocations.size());
                 compiled->m_logical_framebuffer_allocations = static_cast<uint32_t>(candidates.size());
+            }
+        }
+
+        // Allocate framebuffers for texture resources written by non-graphics passes.
+        // (e.g., a shadow cubemap written by a compute-domain pass that uses submit_vulkan_graphics_raw)
+        for (auto& res : compiled->m_resources) {
+            if (res.type != FGResourceType::Texture)
+                continue;
+            if (res.framebuffer)
+                continue; // already allocated by the graphics-pass allocator
+
+            FramebufferSpecification fb_spec{};
+            fb_spec.width           = res.resolved_width;
+            fb_spec.height          = res.resolved_height;
+            fb_spec.samples         = res.texture.samples;
+            fb_spec.attachments.attachments.emplace_back(res.texture.format);
+            fb_spec.swap_chain_target = false;
+            fb_spec.layers          = res.texture.layers;
+            fb_spec.cube_compatible = res.texture.cube_compatible;
+            fb_spec.depth_compare   = res.texture.depth_compare;
+            fb_spec.depth_samplable = (res.texture.layers > 1);
+
+            res.framebuffer = Framebuffer::create(fb_spec);
+            if (!res.framebuffer) {
+                out_diagnostics.add_error("Failed to allocate framebuffer for texture resource", res.name);
             }
         }
 

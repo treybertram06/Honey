@@ -2,12 +2,15 @@
 
 #include "scene_viewport_renderer.h"
 
+#include "Honey/core/engine.h"
 #include "Honey/core/settings.h"
 #include "Honey/renderer/frame_graph_loader.h"
 #include "Honey/renderer/frame_graph_registry.h"
 #include "Honey/renderer/renderer.h"
 #include "Honey/renderer/renderer_2d.h"
+#include "Honey/renderer/renderer_3d/renderer_3d_shadow.h"
 #include "Honey/scene/scene.h"
+#include "platform/vulkan/vk_context.h"
 
 #include <filesystem>
 
@@ -26,6 +29,8 @@ namespace Honey {
         void ensure_scene_viewport_frame_graph_executors_registered() {
             if (s_scene_viewport_executors_registered)
                 return;
+
+            Renderer3DShadow::register_frame_graph_executors();
 
             auto& registry = FrameGraphRegistry::get();
 
@@ -61,6 +66,14 @@ namespace Honey {
     void SceneViewportRenderer::initialize() {
         ensure_scene_viewport_frame_graph_executors_registered();
 
+        // Initialize shadow system
+        {
+            auto* base = Application::get().get_window().get_context();
+            auto* vk_ctx = dynamic_cast<VulkanContext*>(base);
+            if (vk_ctx)
+                Renderer3DShadow::init(vk_ctx);
+        }
+
         FramebufferSpecification fb_spec;
         fb_spec.attachments = { FramebufferTextureFormat::RGBA8, FramebufferTextureFormat::RED_INTEGER, FramebufferTextureFormat::Depth };
         fb_spec.width = m_width;
@@ -84,6 +97,7 @@ namespace Honey {
     }
 
     void SceneViewportRenderer::shutdown() {
+        Renderer3DShadow::shutdown();
         m_frame_graph.reset();
         m_output_framebuffer.reset();
         m_gbuffer_framebuffer.reset();
@@ -170,6 +184,10 @@ namespace Honey {
     }
 
     void SceneViewportRenderer::rebuild_frame_graph() {
+        // Clear stale shadow cubemap handles before the old frame graph (and its framebuffers)
+        // are destroyed. Re-registration happens automatically on the first ShadowDraw execution.
+        Renderer3DShadow::invalidate_cubemap_resources();
+
         FGCompileDiagnostics diags;
         FGCompileOptions options{};
         options.external_framebuffers.emplace("editorViewport", m_output_framebuffer);

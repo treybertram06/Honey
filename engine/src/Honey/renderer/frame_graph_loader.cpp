@@ -210,6 +210,10 @@ namespace Honey {
                 out = FramebufferTextureFormat::DEPTH24STENCIL8;
                 return true;
             }
+            if (iequals(v, "d32_sfloat") || iequals(v, "d32sfloat")) {
+                out = FramebufferTextureFormat::D32_SFLOAT;
+                return true;
+            }
 
             diags.add_error("Unknown texture Format: " + v, scope);
             return false;
@@ -432,6 +436,18 @@ namespace Honey {
                         } catch (const YAML::BadConversion&) {
                             out_diagnostics.add_error("Samples must be an integer", scope);
                         }
+                    }
+
+                    resource.texture.layers          = body["Layers"].as<uint32_t>(1);
+                    resource.texture.cube_compatible = body["CubeCompatible"].as<bool>(false);
+                    resource.texture.depth_compare   = body["DepthCompare"].as<bool>(false);
+
+                    if (resource.texture.layers == 0) {
+                        out_diagnostics.add_error("Layers must be >= 1", scope);
+                        resource.texture.layers = 1;
+                    }
+                    if (resource.texture.cube_compatible && (resource.texture.layers % 6) != 0) {
+                        out_diagnostics.add_error("CubeCompatible requires Layers to be a multiple of 6", scope);
                     }
                 } else if (resource.type == FGResourceType::Buffer) {
                     const auto size_node = body["Size"];

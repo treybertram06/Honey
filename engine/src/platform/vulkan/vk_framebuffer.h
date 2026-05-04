@@ -44,6 +44,10 @@ namespace Honey {
         uint64_t       get_resource_generation() const { return m_resource_generation; }
         // Depth-only aspect view suitable for shader sampling (set=1 binding=3 in deferred lighting).
         VkImageView    get_depth_sampler_image_view() const { return m_depth_sampler_view; }
+        VkFramebuffer  get_layer_framebuffer(uint32_t layer) const;
+        VkImageView    get_cube_array_view() const;
+        VkSampler      get_depth_comparison_sampler() const;
+        VkImage        get_depth_image() const;
 
         uint32_t get_color_attachment_count() const { return (uint32_t)m_color_attachments.size(); }
         bool has_depth_attachment() const { return m_depth_spec.texture_format != FramebufferTextureFormat::None; }
@@ -91,6 +95,11 @@ namespace Honey {
 
         uint32_t       m_samples = 1;
         uint64_t       m_resource_generation = 0;
+
+        std::vector<VkImageView>   m_per_layer_depth_views;
+        std::vector<VkFramebuffer> m_per_layer_framebuffers;
+        VkImageView                m_cube_array_view  = VK_NULL_HANDLE;
+        VkSampler                  m_depth_comparison_sampler = VK_NULL_HANDLE;
     };
 
 }

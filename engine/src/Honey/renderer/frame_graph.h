@@ -96,6 +96,11 @@ namespace Honey {
         float scale_y = 1.0f;
 
         uint32_t samples = 1;
+
+        // Layered / cubemap support
+        uint32_t layers          = 1;
+        bool cube_compatible     = false;
+        bool depth_compare       = false;
     };
 
     struct FGBufferDesc {
@@ -304,10 +309,19 @@ namespace Honey {
         Ref<StorageBuffer> get_input_buffer(const std::string& resource_name) const;
         Ref<StorageBuffer> get_output_buffer(const std::string& resource_name) const;
 
-        // Vulkan-only helper for compute/transfer frame-graph passes.
-        // Records and submits a one-time command buffer on the selected queue domain.
+        // Vulkan-only helpers for compute/transfer/graphics frame-graph passes.
+        // Each records and submits a one-time command buffer on the selected queue domain.
         bool submit_vulkan_compute(const FGVulkanRecordCommands& record) const;
         bool submit_vulkan_transfer(const FGVulkanRecordCommands& record) const;
+        bool submit_vulkan_graphics_raw(const FGVulkanRecordCommands& record) const;
+
+        // Vulkan-specific accessors for layered texture resources (e.g. shadow cubemaps).
+        // All downcast from the resource's Ref<Framebuffer> to VulkanFramebuffer.
+        VkFramebuffer get_resource_layer_framebuffer(const std::string& name, uint32_t layer) const;
+        VkRenderPass  get_resource_render_pass(const std::string& name) const;
+        VkImageView   get_resource_cube_array_view(const std::string& name) const;
+        VkSampler     get_resource_depth_comparison_sampler(const std::string& name) const;
+        VkImage       get_resource_vk_image(const std::string& name) const;
 
         void* user_context() const;
 

@@ -116,6 +116,8 @@ add_library(engine STATIC
         src/Honey/renderer/renderer_3d/renderer_3d_forward.cpp
         src/Honey/renderer/renderer_3d/renderer_3d_deferred.cpp
         src/Honey/renderer/renderer_3d/renderer_3d_meshlet.cpp
+        src/Honey/renderer/renderer_3d/renderer_3d_shadow.h
+        src/Honey/renderer/renderer_3d/renderer_3d_shadow.cpp
         src/Honey/renderer/sub_texture_2d.h
         src/Honey/renderer/sub_texture_2d.cpp
         src/Honey/renderer/framebuffer.h

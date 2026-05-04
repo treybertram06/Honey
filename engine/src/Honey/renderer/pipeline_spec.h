@@ -73,6 +73,8 @@ namespace Honey {
         CullMode          cullMode = CullMode::None;
         FrontFaceWinding  frontFace = FrontFaceWinding::CounterClockwise;
         bool              wireframe = false;
+        float             depthBiasConstantFactor = 0.0f;
+        float             depthBiasSlopeFactor    = 0.0f;
         std::vector<AttachmentBlendState> perColorAttachmentBlend;
         DepthStencilState depthStencil;
 
@@ -88,6 +90,8 @@ namespace Honey {
                    cullMode   == other.cullMode   &&
                    frontFace  == other.frontFace  &&
                    wireframe  == other.wireframe  &&
+                   depthBiasConstantFactor == other.depthBiasConstantFactor &&
+                   depthBiasSlopeFactor    == other.depthBiasSlopeFactor    &&
                    perColorAttachmentBlend == other.perColorAttachmentBlend &&
                    depthStencil == other.depthStencil &&
                    passType   == other.passType;

@@ -53,6 +53,8 @@ namespace Honey {
         VkPhysicalDevice get_physical_device() const { return m_physical_device; }
         VkDescriptorSetLayout get_global_set_layout() const { return m_global_set_layout; }
         VkDescriptorSetLayout get_font_set_layout()   const { return m_font_set_layout; }
+        // Returns the frame's global descriptor set (chunk 0; shadow draw uses it to access binding 6).
+        VkDescriptorSet get_global_descriptor_set(uint32_t frame) const { return m_global_descriptor_sets[frame][0]; }
         // Returns the font SSBO descriptor set for the given frame (all chunk sets are identical).
         VkDescriptorSet get_font_descriptor_set(uint32_t frame) const { return m_fonts_descriptor_sets[frame][0]; }
 
@@ -61,6 +63,12 @@ namespace Honey {
         // Updates the G-buffer descriptor set for the given frame with the current attachments of fb.
         // Lazily no-ops if fb hasn't changed since the last call for this frame.
         void update_gbuffer_descriptors(uint32_t frame, class VulkanFramebuffer* fb);
+
+        // Shadow matrices SSBO (binding 6 in global set) — call once per frame before rendering.
+        void upload_shadow_matrices(uint32_t frame, const ShadowMatricesSSBO& data);
+
+        // Shadow cubemap resources — set after frame graph compiles; stored for use in update_gbuffer_descriptors.
+        void set_shadow_cubemap_resources(VkImageView cube_array_view, VkSampler comparison_sampler);
 
         uint32_t get_graphics_queue_family() const { return m_graphics_queue_family; }
         uint32_t get_compute_queue_family() const { return m_compute_queue_family; }
@@ -404,6 +412,13 @@ private:
         void* m_tiled_lighting_ssbos[k_max_frames_in_flight]{};        // VkBuffer
         void* m_tiled_lighting_ssbo_memories[k_max_frames_in_flight]{}; // VkDeviceMemory
         uint32_t m_tiled_lighting_ssbo_size = 0;
+
+        void* m_shadow_matrices_ssbos[k_max_frames_in_flight]{};        // VkBuffer
+        void* m_shadow_matrices_ssbo_memories[k_max_frames_in_flight]{}; // VkDeviceMemory
+        uint32_t m_shadow_matrices_ssbo_size = 0;
+
+        VkImageView m_shadow_cube_array_view      = VK_NULL_HANDLE;
+        VkSampler   m_shadow_comparison_sampler   = VK_NULL_HANDLE;
 
         std::vector<void*> m_last_bound_textures[k_max_frames_in_flight];  // up to VulkanRendererAPI::k_max_texture_slots entries
         uint32_t m_last_bound_texture_count[k_max_frames_in_flight]{};

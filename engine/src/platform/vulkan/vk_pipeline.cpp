@@ -274,7 +274,10 @@ namespace Honey {
         case FrontFaceWinding::Clockwise:        raster.frontFace = VK_FRONT_FACE_CLOCKWISE; break;
         }
 
-        raster.depthBiasEnable = VK_FALSE;
+        raster.depthBiasEnable         = (spec.depthBiasConstantFactor != 0.0f || spec.depthBiasSlopeFactor != 0.0f) ? VK_TRUE : VK_FALSE;
+        raster.depthBiasConstantFactor = spec.depthBiasConstantFactor;
+        raster.depthBiasSlopeFactor    = spec.depthBiasSlopeFactor;
+        raster.depthBiasClamp          = 0.0f;
 
         VkPipelineMultisampleStateCreateInfo msaa{};
         msaa.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
@@ -451,7 +454,10 @@ namespace Honey {
         case FrontFaceWinding::Clockwise:        raster.frontFace = VK_FRONT_FACE_CLOCKWISE; break;
         }
 
-        raster.depthBiasEnable = VK_FALSE;
+        raster.depthBiasEnable         = (spec.depthBiasConstantFactor != 0.0f || spec.depthBiasSlopeFactor != 0.0f) ? VK_TRUE : VK_FALSE;
+        raster.depthBiasConstantFactor = spec.depthBiasConstantFactor;
+        raster.depthBiasSlopeFactor    = spec.depthBiasSlopeFactor;
+        raster.depthBiasClamp          = 0.0f;
 
         VkPipelineMultisampleStateCreateInfo msaa{};
         msaa.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;

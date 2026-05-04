@@ -15,6 +15,7 @@ namespace Honey {
 
 		//depth/stencil
 		DEPTH24STENCIL8,
+		D32_SFLOAT,
 
 		//defaults
 		Depth = DEPTH24STENCIL8
@@ -44,6 +45,10 @@ namespace Honey {
 
 		bool swap_chain_target = false;
 		bool depth_samplable   = false;
+
+		uint32_t layers = 1;
+		bool cube_compatible = false;
+		bool depth_compare   = false;
 
 	};
 

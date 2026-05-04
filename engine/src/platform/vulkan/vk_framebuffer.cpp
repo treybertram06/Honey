@@ -41,6 +41,7 @@ namespace Honey {
         static bool is_depth_format(FramebufferTextureFormat fmt) {
             switch (fmt) {
             case FramebufferTextureFormat::Depth:
+            case FramebufferTextureFormat::D32_SFLOAT:
                 return true;
             default:
                 return false;
@@ -53,6 +54,7 @@ namespace Honey {
             case FramebufferTextureFormat::RGBA16F:       return VK_FORMAT_R16G16B16A16_SFLOAT;
             case FramebufferTextureFormat::RED_INTEGER:   return VK_FORMAT_R32_SINT;
             case FramebufferTextureFormat::Depth:         return VK_FORMAT_D24_UNORM_S8_UINT;
+            case FramebufferTextureFormat::D32_SFLOAT:    return VK_FORMAT_D32_SFLOAT;
             default:
                 HN_CORE_ASSERT(false, "VulkanFramebuffer: unsupported FramebufferTextureFormat");
                 return VK_FORMAT_UNDEFINED;
@@ -78,10 +80,11 @@ namespace Honey {
         }
 
         static VkImageAspectFlags aspect_from_format(FramebufferTextureFormat fmt) {
-            if (is_depth_format(fmt))
-                return VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
-            // colour / integer
-            return VK_IMAGE_ASPECT_COLOR_BIT;
+            switch (fmt) {
+            case FramebufferTextureFormat::DEPTH24STENCIL8: return VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+            case FramebufferTextureFormat::D32_SFLOAT:      return VK_IMAGE_ASPECT_DEPTH_BIT;
+            default:                                        return VK_IMAGE_ASPECT_COLOR_BIT;
+            }
         }
 
         static VkPipelineStageFlags stage_for_layout(VkImageLayout layout) {
@@ -167,6 +170,10 @@ namespace Honey {
                                    "VulkanFramebuffer::destroy: device mismatch (backend was probably shut down earlier)");
 
         m_imgui_texture_sets.clear();
+        m_per_layer_depth_views.clear();
+        m_per_layer_framebuffers.clear();
+        m_cube_array_view = VK_NULL_HANDLE;
+        m_depth_comparison_sampler = VK_NULL_HANDLE;
 
         if (m_framebuffer) {
             vkDestroyFramebuffer(device, m_framebuffer, nullptr);
@@ -185,6 +192,26 @@ namespace Honey {
             att = {};
         }
         m_color_attachments.clear();
+
+        if (m_depth_comparison_sampler) {
+            vkDestroySampler(device, m_depth_comparison_sampler, nullptr);
+            m_depth_comparison_sampler = VK_NULL_HANDLE;
+        }
+
+        if (m_cube_array_view) {
+            vkDestroyImageView(device, m_cube_array_view, nullptr);
+            m_cube_array_view = VK_NULL_HANDLE;
+        }
+
+        for (auto fb : m_per_layer_framebuffers) {
+            if (fb) vkDestroyFramebuffer(device, fb, nullptr);
+        }
+        m_per_layer_framebuffers.clear();
+
+        for (auto v : m_per_layer_depth_views) {
+            if (v) vkDestroyImageView(device, v, nullptr);
+        }
+        m_per_layer_depth_views.clear();
 
         if (m_depth_sampler_view) {
             vkDestroyImageView(device, m_depth_sampler_view, nullptr);
@@ -325,7 +352,9 @@ namespace Honey {
             img.extent.height = height;
             img.extent.depth  = 1;
             img.mipLevels = 1;
-            img.arrayLayers = 1;
+            img.arrayLayers = m_spec.layers;
+            if (m_spec.cube_compatible)
+                img.flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
             img.format = format;
             img.tiling = VK_IMAGE_TILING_OPTIMAL;
             img.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -361,59 +390,115 @@ namespace Honey {
             r = vkBindImageMemory(m_device, m_depth_attachment.image, m_depth_attachment.memory, 0);
             HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanFramebuffer: vkBindImageMemory (depth) failed: {0}", vk_result_to_string(r));
 
-            // Combined depth+stencil view — used as framebuffer attachment
+            // Depth view — FB attachment for single-layer, full-array reference for layered
             VkImageViewCreateInfo view{};
             view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
             view.image = m_depth_attachment.image;
-            view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            view.viewType = (m_spec.layers > 1) ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
             view.format = format;
-            view.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+            view.subresourceRange.aspectMask = aspect_from_format(m_depth_spec.texture_format);
             view.subresourceRange.baseMipLevel = 0;
             view.subresourceRange.levelCount = 1;
             view.subresourceRange.baseArrayLayer = 0;
-            view.subresourceRange.layerCount = 1;
+            view.subresourceRange.layerCount = m_spec.layers;
 
             r = vkCreateImageView(m_device, &view, nullptr, &m_depth_attachment.view);
             HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanFramebuffer: vkCreateImageView (depth) failed: {0}", vk_result_to_string(r));
 
-            if (m_spec.depth_samplable) {
+            // Depth-only sampler view — single-layer path only; layered uses cube-array view
+            if (m_spec.depth_samplable && m_spec.layers == 1) {
                 VkImageViewCreateInfo depth_sampler_view_ci = view;
                 depth_sampler_view_ci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
                 r = vkCreateImageView(m_device, &depth_sampler_view_ci, nullptr, &m_depth_sampler_view);
                 HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanFramebuffer: vkCreateImageView (depth sampler) failed: {0}", vk_result_to_string(r));
             }
 
-            m_backend->immediate_submit([&](VkCommandBuffer cmd) {
-                VkImageMemoryBarrier barrier{};
-                barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-                barrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                barrier.image = m_depth_attachment.image;
-                barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
-                barrier.subresourceRange.baseMipLevel = 0;
-                barrier.subresourceRange.levelCount = 1;
-                barrier.subresourceRange.baseArrayLayer = 0;
-                barrier.subresourceRange.layerCount = 1;
-                barrier.srcAccessMask = 0;
-                barrier.dstAccessMask =
-                    VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
-                    VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+            // For single-layer FBs, transition to ATTACHMENT_OPTIMAL immediately.
+            // For layered (cubemap) FBs, the executor owns the first-frame transition.
+            if (m_spec.layers == 1) {
+                m_backend->immediate_submit([&](VkCommandBuffer cmd) {
+                    VkImageMemoryBarrier barrier{};
+                    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                    barrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+                    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    barrier.image = m_depth_attachment.image;
+                    barrier.subresourceRange.aspectMask = aspect_from_format(m_depth_spec.texture_format);
+                    barrier.subresourceRange.baseMipLevel = 0;
+                    barrier.subresourceRange.levelCount = 1;
+                    barrier.subresourceRange.baseArrayLayer = 0;
+                    barrier.subresourceRange.layerCount = 1;
+                    barrier.srcAccessMask = 0;
+                    barrier.dstAccessMask =
+                        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
-                vkCmdPipelineBarrier(
-                    cmd,
-                    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-                    VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                    0,
-                    0, nullptr,
-                    0, nullptr,
-                    1, &barrier
-                );
-            });
+                    vkCmdPipelineBarrier(
+                        cmd,
+                        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                        VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                        0,
+                        0, nullptr,
+                        0, nullptr,
+                        1, &barrier
+                    );
+                });
+                m_depth_attachment.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            }
 
-            m_depth_attachment.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            // Per-layer resources for layered (cubemap) depth images
+            if (m_spec.layers > 1) {
+                const VkImageAspectFlags depth_aspect = aspect_from_format(m_depth_spec.texture_format);
+
+                m_per_layer_depth_views.resize(m_spec.layers);
+                for (uint32_t i = 0; i < m_spec.layers; ++i) {
+                    VkImageViewCreateInfo v{};
+                    v.sType    = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+                    v.image    = m_depth_attachment.image;
+                    v.viewType = VK_IMAGE_VIEW_TYPE_2D;
+                    v.format   = format;
+                    v.subresourceRange.aspectMask     = depth_aspect;
+                    v.subresourceRange.baseMipLevel   = 0;
+                    v.subresourceRange.levelCount     = 1;
+                    v.subresourceRange.baseArrayLayer = i;
+                    v.subresourceRange.layerCount     = 1;
+                    VkResult rv = vkCreateImageView(m_device, &v, nullptr, &m_per_layer_depth_views[i]);
+                    HN_CORE_ASSERT(rv == VK_SUCCESS, "VulkanFramebuffer: vkCreateImageView (per-layer depth) failed");
+                }
+
+                if (m_spec.cube_compatible) {
+                    VkImageViewCreateInfo cv{};
+                    cv.sType    = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+                    cv.image    = m_depth_attachment.image;
+                    cv.viewType = VK_IMAGE_VIEW_TYPE_CUBE_ARRAY;
+                    cv.format   = format;
+                    cv.subresourceRange.aspectMask     = depth_aspect;
+                    cv.subresourceRange.baseMipLevel   = 0;
+                    cv.subresourceRange.levelCount     = 1;
+                    cv.subresourceRange.baseArrayLayer = 0;
+                    cv.subresourceRange.layerCount     = m_spec.layers;
+                    VkResult rv = vkCreateImageView(m_device, &cv, nullptr, &m_cube_array_view);
+                    HN_CORE_ASSERT(rv == VK_SUCCESS, "VulkanFramebuffer: vkCreateImageView (cube array) failed");
+                }
+
+                if (m_spec.depth_compare) {
+                    VkSamplerCreateInfo si{};
+                    si.sType         = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+                    si.magFilter     = VK_FILTER_LINEAR;
+                    si.minFilter     = VK_FILTER_LINEAR;
+                    si.mipmapMode    = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+                    si.addressModeU  = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+                    si.addressModeV  = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+                    si.addressModeW  = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+                    si.borderColor   = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+                    si.compareEnable = VK_TRUE;
+                    si.compareOp     = VK_COMPARE_OP_LESS_OR_EQUAL;
+                    VkResult rv = vkCreateSampler(m_device, &si, nullptr, &m_depth_comparison_sampler);
+                    HN_CORE_ASSERT(rv == VK_SUCCESS, "VulkanFramebuffer: vkCreateSampler (depth compare) failed");
+                }
+            }
         }
 
         std::vector<VkAttachmentDescription> attachments;
@@ -442,20 +527,24 @@ namespace Honey {
 
         std::optional<VkAttachmentReference> depth_ref;
         if (has_depth) {
+            const bool has_stencil = (m_depth_spec.texture_format == FramebufferTextureFormat::DEPTH24STENCIL8);
             VkAttachmentDescription ad{};
             ad.format = to_vk_format(m_depth_spec.texture_format);
             ad.samples = (VkSampleCountFlagBits)m_samples;
             ad.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
             ad.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-            ad.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-            ad.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-            // The deferred path samples depth after the pass, so the previous frame often leaves it
-            // in READ_ONLY. Because we clear depth every pass, we can discard old contents and let
-            // the render pass transition from UNDEFINED back to ATTACHMENT_OPTIMAL.
-            ad.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            ad.finalLayout   = m_spec.depth_samplable
-                                   ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
-                                   : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            ad.stencilLoadOp  = has_stencil ? VK_ATTACHMENT_LOAD_OP_CLEAR      : VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+            ad.stencilStoreOp = has_stencil ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            // Layered FBs: executor manages layout transitions explicitly — render pass must not alter them.
+            // Single-layer: let the render pass transition from UNDEFINED on every clear.
+            ad.initialLayout = (m_spec.layers > 1)
+                                   ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+                                   : VK_IMAGE_LAYOUT_UNDEFINED;
+            ad.finalLayout   = (m_spec.layers > 1)
+                                   ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+                                   : (m_spec.depth_samplable
+                                          ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+                                          : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 
             VkAttachmentReference ref{};
             ref.attachment = static_cast<uint32_t>(attachments.size());
@@ -524,34 +613,53 @@ namespace Honey {
                reinterpret_cast<uint64_t>(m_render_pass),
                "EditorFB_RenderPass");
 
-        // --- Create framebuffer ---
+        // --- Create framebuffer(s) ---
 
-        std::vector<VkImageView> views;
-        views.reserve(attachments.size());
+        if (m_spec.layers == 1) {
+            std::vector<VkImageView> views;
+            views.reserve(attachments.size());
 
-        for (auto& c : m_color_attachments)
-            views.push_back(c.view);
-        if (has_depth)
-            views.push_back(m_depth_attachment.view);
+            for (auto& c : m_color_attachments)
+                views.push_back(c.view);
+            if (has_depth)
+                views.push_back(m_depth_attachment.view);
 
-        VkFramebufferCreateInfo fb{};
-        fb.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        fb.renderPass = m_render_pass;
-        fb.attachmentCount = static_cast<uint32_t>(views.size());
-        fb.pAttachments = views.data();
-        fb.width  = width;
-        fb.height = height;
-        fb.layers = 1;
+            VkFramebufferCreateInfo fb{};
+            fb.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            fb.renderPass = m_render_pass;
+            fb.attachmentCount = static_cast<uint32_t>(views.size());
+            fb.pAttachments = views.data();
+            fb.width  = width;
+            fb.height = height;
+            fb.layers = 1;
 
-        r = vkCreateFramebuffer(m_device, &fb, nullptr, &m_framebuffer);
-        HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanFramebuffer: vkCreateFramebuffer failed: {0}", vk_result_to_string(r));
+            r = vkCreateFramebuffer(m_device, &fb, nullptr, &m_framebuffer);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanFramebuffer: vkCreateFramebuffer failed: {0}", vk_result_to_string(r));
 
-        for (auto& att : m_color_attachments)
-            att.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        if (has_depth)
-            m_depth_attachment.layout = m_spec.depth_samplable
-                                            ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
-                                            : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            for (auto& att : m_color_attachments)
+                att.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            if (has_depth)
+                m_depth_attachment.layout = m_spec.depth_samplable
+                                                ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+                                                : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        } else {
+            // One VkFramebuffer per layer — used by the shadow draw pass
+            m_per_layer_framebuffers.resize(m_spec.layers);
+            for (uint32_t i = 0; i < m_spec.layers; ++i) {
+                VkFramebufferCreateInfo fb{};
+                fb.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+                fb.renderPass      = m_render_pass;
+                fb.attachmentCount = 1;
+                fb.pAttachments    = &m_per_layer_depth_views[i];
+                fb.width           = width;
+                fb.height          = height;
+                fb.layers          = 1;
+                VkResult fr = vkCreateFramebuffer(m_device, &fb, nullptr, &m_per_layer_framebuffers[i]);
+                HN_CORE_ASSERT(fr == VK_SUCCESS, "VulkanFramebuffer: vkCreateFramebuffer (per-layer) failed: {0}", vk_result_to_string(fr));
+            }
+            // Layout managed entirely by the executor
+            m_depth_attachment.layout = VK_IMAGE_LAYOUT_UNDEFINED;
+        }
     }
 
     void VulkanFramebuffer::bind() {
@@ -883,5 +991,28 @@ namespace Honey {
     VkImageView VulkanFramebuffer::get_depth_image_view() const {
         HN_CORE_ASSERT(has_depth_attachment(), "VulkanFramebuffer::get_depth_image_view: no depth attachment");
         return m_depth_attachment.view;
+    }
+
+    VkFramebuffer VulkanFramebuffer::get_layer_framebuffer(uint32_t layer) const {
+        HN_CORE_ASSERT(layer < m_per_layer_framebuffers.size(),
+                       "VulkanFramebuffer::get_layer_framebuffer: layer index out of range");
+        return m_per_layer_framebuffers[layer];
+    }
+
+    VkImageView VulkanFramebuffer::get_cube_array_view() const {
+        HN_CORE_ASSERT(m_cube_array_view != VK_NULL_HANDLE,
+                       "VulkanFramebuffer::get_cube_array_view: not created (cube_compatible must be true)");
+        return m_cube_array_view;
+    }
+
+    VkSampler VulkanFramebuffer::get_depth_comparison_sampler() const {
+        HN_CORE_ASSERT(m_depth_comparison_sampler != VK_NULL_HANDLE,
+                       "VulkanFramebuffer::get_depth_comparison_sampler: not created (depth_compare must be true)");
+        return m_depth_comparison_sampler;
+    }
+
+    VkImage VulkanFramebuffer::get_depth_image() const {
+        HN_CORE_ASSERT(has_depth_attachment(), "VulkanFramebuffer::get_depth_image: no depth attachment");
+        return m_depth_attachment.image;
     }
 } // namespace Honey

@@ -101,4 +101,38 @@ namespace Honey {
         int32_t     entity_id;
     };
 
+    // One entry per shadow-casting point light (max k_max_shadow_lights).
+    // face_view_proj[f] = perspectiveRH_ZO * lookAt for cubemap face f.
+    struct ShadowLightMatrices {
+        glm::mat4 face_view_proj[6]; // 6 × 64 = 384 bytes
+        glm::vec3 light_position;    // 12 bytes
+        float     light_range;       //  4 bytes
+        // total: 400 bytes
+    };
+    static_assert(sizeof(ShadowLightMatrices) == 400, "ShadowLightMatrices layout mismatch");
+
+    // Uploaded to the ShadowMatricesSSBO (set=0 binding=6).
+    struct ShadowMatricesSSBO {
+        uint32_t           shadow_light_count;
+        uint32_t           shadow_light_point_indices[k_max_shadow_lights]; // index into LightsUBO::point_lights
+        uint32_t           _pad[3];
+        ShadowLightMatrices lights[k_max_shadow_lights];
+    };
+
+    // Push constants for the shadow mesh/task shader.
+    struct ShadowDrawPC {
+        uint32_t draw_data_base; // unused for now, reserved for multi-draw offsets
+        int32_t  light_index;    // which shadow light slot (0..shadow_light_count-1)
+        uint32_t face_index;     // which cubemap face (0..5)
+        uint32_t _pad;
+    };
+
+    // Push constants for the shadow cull compute shader.
+    struct ShadowCullPC {
+        uint32_t total_draws;
+        uint32_t shadow_light_count;
+        uint32_t draws_dwords_per_face; // = ceil(total_draws / 32)
+        uint32_t _pad;
+    };
+
 } // namespace Honey

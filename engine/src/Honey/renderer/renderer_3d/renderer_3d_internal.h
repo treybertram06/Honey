@@ -64,6 +64,12 @@ namespace Honey::Renderer3DInternal {
         int entity_id = -1;
     };
 
+    struct ShadowDrawEntry {
+        void*    mesh_descriptor_set = nullptr; // VkDescriptorSet (per-mesh meshlet set, set=1)
+        uint32_t draw_data_base      = 0;       // local index into per-mesh draw_data_buffer
+        uint32_t meshlet_count       = 0;       // dispatch X for vkCmdDrawMeshTasksEXT
+    };
+
     struct Renderer3DData {
         static constexpr uint32_t max_textures = 1024;
 
@@ -121,6 +127,9 @@ namespace Honey::Renderer3DInternal {
 
         Renderer3D::Statistics stats;
         std::unordered_set<const void*> unique_meshes_this_frame;
+
+        // Populated during flush_meshlet_draws; consumed by shadow.draw executor (runs after GBuffer).
+        std::vector<ShadowDrawEntry> shadow_draw_list;
     };
 
     struct InstanceData {

@@ -113,6 +113,7 @@ namespace Honey::Renderer3DInternal {
         auto& draws_by_mesh = g_renderer3d_data->frame_draws_by_mesh;
         mesh_order.clear();
         draws_by_mesh.clear();
+        g_renderer3d_data->shadow_draw_list.clear();
 
         for (uint32_t i = 0; i < (uint32_t)g_renderer3d_data->meshlet_draws.size(); ++i) {
             const Mesh* mesh = g_renderer3d_data->meshlet_draws[i].mesh;
@@ -224,6 +225,20 @@ namespace Honey::Renderer3DInternal {
                     mesh_draw_count * (uint32_t)sizeof(GPUDrawData),
                     mesh_draw_base * (uint32_t)sizeof(GPUDrawData));
 
+                // Populate shadow draw list for the shadow.draw executor (runs after GBuffer).
+                {
+                    void* mesh_ds = VulkanRendererAPI::get_mesh_descriptor_set(bufs);
+                    for (uint32_t di = 0; di < mesh_draw_count; ++di) {
+                        const uint32_t global_draw_i = variant_draws[di];
+                        const auto& cmd = g_renderer3d_data->meshlet_draws[global_draw_i];
+                        g_renderer3d_data->shadow_draw_list.push_back({
+                            mesh_ds,
+                            mesh_draw_base + di,
+                            cmd.submesh->meshlets->meshlet_count
+                        });
+                    }
+                }
+
                 struct MeshletPC {
                     int32_t draw_data_base;
                     int32_t _pad[3];
@@ -254,7 +269,7 @@ namespace Honey::Renderer3DInternal {
                 dispatch_counter++;
             }
         }
-
-        g_renderer3d_data->meshlet_draws.clear();
+        // meshlet_draws is intentionally NOT cleared here — begin_scene clears it.
+        // shadow_draw_list is left populated for the shadow.draw executor.
     }
 }
