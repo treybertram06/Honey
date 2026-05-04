@@ -23,6 +23,11 @@ namespace Honey {
         bool is_vsync() const override;
 
         inline virtual void* get_native_window() const override { return m_window; }
+        inline virtual GraphicsContext* get_context() const override { return m_context; }
+
+        inline virtual void request_close() override;
+        void set_cursor_captured(bool captured) override;
+        bool is_cursor_captured() const override;
 
     private:
         virtual void init(const WindowProps& props);
@@ -35,6 +40,8 @@ namespace Honey {
             std::string title;
             unsigned int width, height;
             bool vsync;
+
+            GraphicsContext* context = nullptr;
 
             event_callback_fn event_callback;
         };

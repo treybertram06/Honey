@@ -153,12 +153,12 @@ namespace Honey {
                 if (stored.properties.valid())
                     stored.env["Properties"] = stored.properties;
                 else
-                    stored.env["Properties"] = sol::nil;
+                    stored.env["Properties"] = sol::lua_nil;
 
                 sol::protected_function_result r = stored.OnCreate();
 
-                stored.env["self"] = sol::nil;
-                stored.env["Properties"] = sol::nil;
+                stored.env["self"] = sol::lua_nil;
+                stored.env["Properties"] = sol::lua_nil;
 
                 if (!r.valid()) {
                     sol::error err = r;
@@ -187,13 +187,14 @@ namespace Honey {
             return;
         }
 
-        // Inject per-call variables into the script environment.
+        // Inject per-call variables int
+        // o the script environment.
         inst->env["self"] = entity;
         inst->env["dt"]   = (float)ts;
         if (inst->properties.valid())
             inst->env["Properties"] = inst->properties;
         else
-            inst->env["Properties"] = sol::nil;
+            inst->env["Properties"] = sol::lua_nil;
 
         // Call Lua OnUpdate directly with a protected call.
         sol::protected_function on_update = inst->OnUpdate;
@@ -206,9 +207,9 @@ namespace Honey {
         }
 
         // Clean per-call keys now that we know the entity & instance are still valid.
-        inst->env["self"]        = sol::nil;
-        inst->env["dt"]          = sol::nil;
-        inst->env["Properties"]  = sol::nil;
+        inst->env["self"]        = sol::lua_nil;
+        inst->env["dt"]          = sol::lua_nil;
+        inst->env["Properties"]  = sol::lua_nil;
 
         if (!r.valid()) {
             sol::error err = r;
@@ -233,7 +234,7 @@ namespace Honey {
 
             sol::protected_function_result r = inst.OnDestroy();
 
-            inst.env["self"] = sol::nil;
+            inst.env["self"] = sol::lua_nil;
 
             if (!r.valid()) {
                 sol::error err = r;
@@ -260,7 +261,7 @@ namespace Honey {
 
         sol::protected_function_result r = inst.OnCollisionBegin(b);
 
-        inst.env["self"] = sol::nil;
+        inst.env["self"] = sol::lua_nil;
 
         if (!r.valid()) {
             sol::error err = r;
@@ -291,7 +292,7 @@ namespace Honey {
 
         sol::protected_function_result r = inst.OnCollisionEnd(b);
 
-        inst.env["self"] = sol::nil;
+        inst.env["self"] = sol::lua_nil;
 
         if (!r.valid()) {
             sol::error err = r;

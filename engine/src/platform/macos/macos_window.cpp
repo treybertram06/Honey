@@ -13,7 +13,9 @@
 
 #include <glad/glad.h>
 
+#include "Honey/core/settings.h"
 #include "platform/opengl/opengl_context.h"
+#include "platform/vulkan/vk_context.h"
 
 namespace Honey {
 
@@ -39,7 +41,7 @@ namespace Honey {
     }
 
     void MacOSWindow::init(const WindowProps& props) {
-        HN_PROFILE_FUNCTION();
+HN_PROFILE_FUNCTION();
 
         m_data.title = props.title;
         m_data.width = props.width;
@@ -48,29 +50,68 @@ namespace Honey {
         HN_CORE_INFO("Creating window {0} ({1}, {2})", props.title, props.width, props.height);
 
         if (!s_glfw_initialized) {
-            //TODO: glfwTerminate on shutdown
-            int success = glfwInit();
-            HN_CORE_ASSERT(success, "Could not initialize GLFW!");
-            glfwSetErrorCallback(GLFW_error_callback);
+            auto& renderer_settings = Settings::get().renderer;
 
-            s_glfw_initialized = true;
+            if (renderer_settings.api == RendererAPI::API::vulkan) {
+                // Application already called glfwInit() before creating the VulkanBackend.
+                // Mark it initialized so we don't call glfwInit() again.
+                glfwSetErrorCallback(GLFW_error_callback);
+                s_glfw_initialized = true;
+            } else {
+                // OpenGL path owns GLFW init here.
+                int success = glfwInit();
+                HN_CORE_ASSERT(success, "Could not initialize GLFW!");
+                glfwSetErrorCallback(GLFW_error_callback);
+                s_glfw_initialized = true;
+            }
         }
 
-        glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
-        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-        glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+        auto& renderer_settings = Settings::get().renderer;
+        switch (renderer_settings.api) {
 
-        m_window = glfwCreateWindow((int)props.width, (int)props.height, m_data.title.c_str(), nullptr, nullptr);
-        HN_CORE_ASSERT(m_window, "GLFW window creation failed!");
+        case RendererAPI::API::opengl:
+            {
+                glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
+                glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+                glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 5);
+                glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+                glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
 
-        glfwMakeContextCurrent(m_window);
-        m_context = new OpenGLContext(m_window);
-        m_context->init();
+                m_window = glfwCreateWindow((int)props.width, (int)props.height, m_data.title.c_str(), nullptr, nullptr);
+                HN_CORE_ASSERT(m_window, "GLFW window creation failed!");
+
+                glfwMakeContextCurrent(m_window);
+                m_context = new OpenGLContext(m_window);
+                m_context->init();
+                m_data.context = m_context;
+                set_vsync(true);
+            }
+            break;
+        case RendererAPI::API::vulkan:
+            {
+                glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+
+                m_window = glfwCreateWindow((int)props.width, (int)props.height, m_data.title.c_str(), nullptr, nullptr);
+                HN_CORE_ASSERT(m_window, "GLFW window creation failed!");
+
+                auto& backend = Application::get().get_vulkan_backend();
+                m_context = new VulkanContext(m_window, &backend);
+                m_context->init();
+                m_data.context = m_context;
+                m_data.vsync = true;
+            }
+            break;
+
+        case RendererAPI::API::none: HN_CORE_ASSERT(false, "RendererAPI::None is currently not supported!");
+            break;
+        }
+
+        if (props.fullscreen)
+            glfwMaximizeWindow(m_window);
+        else if (props.pos_x >= 0 && props.pos_y >= 0)
+            glfwSetWindowPos(m_window, (int)props.pos_x, (int)props.pos_y);
 
         glfwSetWindowUserPointer(m_window, &m_data);
-        set_vsync(true);
 
         // set glfw callbacks
         glfwSetWindowSizeCallback(m_window, [](GLFWwindow* window, int width, int height) {
@@ -80,13 +121,35 @@ namespace Honey {
 
             WindowResizeEvent event(width, height);
             data.event_callback(event);
+        });
 
+        glfwSetFramebufferSizeCallback(m_window, [](GLFWwindow* window, int width, int height) {
+            WindowData& data = *(WindowData*)glfwGetWindowUserPointer(window);
+
+            // Only Vulkan cares about framebuffer resize for swapchain recreation.
+            if (RendererAPI::get_api() == RendererAPI::API::vulkan) {
+                auto* ctx = dynamic_cast<VulkanContext*>(data.context);
+                if (ctx) {
+                    ctx->notify_framebuffer_resized();
+                }
+            }
+
+            // Keep emitting resize as well (some systems might depend on it)
+            WindowResizeEvent event(width, height);
+            data.event_callback(event);
         });
 
         glfwSetWindowCloseCallback(m_window, [](GLFWwindow* window) {
             WindowData& data = *(WindowData*)glfwGetWindowUserPointer(window);
+
+            glfwSetWindowShouldClose(window, GLFW_FALSE);
+
             WindowCloseEvent event;
             data.event_callback(event);
+
+            if (!event.handled()) {
+                glfwSetWindowShouldClose(window, GLFW_TRUE);
+            }
         });
 
         glfwSetKeyCallback(m_window, [](GLFWwindow* window, int key, int scancode, int action, int mods) {
@@ -156,7 +219,16 @@ namespace Honey {
     void MacOSWindow::shutdown() {
         HN_PROFILE_FUNCTION();
 
-        glfwDestroyWindow(m_window);
+        if (m_context) {
+            delete m_context;
+            m_context = nullptr;
+            m_data.context = nullptr;
+        }
+
+        if (m_window) {
+            glfwDestroyWindow(m_window);
+            m_window = nullptr;
+        }
     }
 
     void MacOSWindow::on_update() {
@@ -180,6 +252,23 @@ namespace Honey {
 
     bool MacOSWindow::is_vsync() const {
         return m_data.vsync;
+    }
+
+    void MacOSWindow::request_close() {
+        if (!m_window)
+            return;
+        glfwSetWindowShouldClose(m_window, GLFW_TRUE);
+    }
+
+    void MacOSWindow::set_cursor_captured(bool captured) {
+        if (!m_window)
+            return;
+        glfwSetInputMode(m_window, GLFW_CURSOR,
+            captured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+    }
+
+    bool MacOSWindow::is_cursor_captured() const {
+        return glfwGetInputMode(m_window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED;
     }
 
 }

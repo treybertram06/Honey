@@ -134,30 +134,30 @@ namespace Honey {
                 sol::state& L = ScriptEngine::get_lua_state();
 
                 if (type == "Transform") {
-                    if (!e.has_component<TransformComponent>()) return sol::nil;
+                    if (!e.has_component<TransformComponent>()) return sol::lua_nil;
                     return sol::make_object(L, &e.get_component<TransformComponent>());
                 }
                 if (type == "SpriteRenderer") {
-                    if (!e.has_component<SpriteRendererComponent>()) return sol::nil;
+                    if (!e.has_component<SpriteRendererComponent>()) return sol::lua_nil;
                     return sol::make_object(L, &e.get_component<SpriteRendererComponent>());
                 }
                 if (type == "Rigidbody2D") {
-                    if (!e.has_component<Rigidbody2DComponent>()) return sol::nil;
+                    if (!e.has_component<Rigidbody2DComponent>()) return sol::lua_nil;
                     return sol::make_object(L, &e.get_component<Rigidbody2DComponent>());
                 }
                 if (type == "BoxCollider2D") {
-                    if (!e.has_component<BoxCollider2DComponent>()) return sol::nil;
+                    if (!e.has_component<BoxCollider2DComponent>()) return sol::lua_nil;
                     return sol::make_object(L, &e.get_component<BoxCollider2DComponent>());
                 }
                 if (type == "AudioSource") {
-                    if (!e.has_component<AudioSourceComponent>()) return sol::nil;
+                    if (!e.has_component<AudioSourceComponent>()) return sol::lua_nil;
                     return sol::make_object(L, &e.get_component<AudioSourceComponent>());
                 }
                 if (type == "PointLight") {
-                    if (!e.has_component<PointLightComponent>()) return sol::nil;
+                    if (!e.has_component<PointLightComponent>()) return sol::lua_nil;
                     return sol::make_object(L, &e.get_component<PointLightComponent>());
                 }
-                return sol::nil;
+                return sol::lua_nil;
             },
 
             "GetTransform", [](Entity e) { return &e.get_component<TransformComponent>(); },
@@ -400,11 +400,11 @@ namespace Honey {
         scene_tbl.set_function("Get", [](const std::string& key) -> sol::object {
             Scene* scene = get_active_scene();
             if (!scene)
-                return sol::nil;
+                return sol::lua_nil;
 
             const auto* value = scene->get_state(key);
             if (!value)
-                return sol::nil;
+                return sol::lua_nil;
 
             return std::visit([](auto&& v) {
                 return sol::make_object(ScriptEngine::get_lua_state(), v);
