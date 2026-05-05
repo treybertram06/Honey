@@ -1672,7 +1672,14 @@ namespace Honey {
         const std::vector<const char*> device_extensions = {
             VK_KHR_SWAPCHAIN_EXTENSION_NAME,
             VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
-            VK_EXT_MESH_SHADER_EXTENSION_NAME
+            VK_EXT_MESH_SHADER_EXTENSION_NAME,
+
+            VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,   // BLAS/TLAS
+            VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,     // RT pipeline + vkCmdTraceRaysKHR
+            VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME, // required dep of accel structure
+            VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,    // required dep (device addresses)
+            VK_KHR_SPIRV_1_4_EXTENSION_NAME,                // required dep of RT pipeline
+            VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME,    // required dep of SPIRV 1.4
         };
 
         // ---- Bindless / descriptor indexing feature chain ----
@@ -1688,10 +1695,22 @@ namespace Honey {
         VkPhysicalDeviceVulkan11Features vk11_features{};
         vk11_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
 
+        VkPhysicalDeviceAccelerationStructureFeaturesKHR accel_features{};
+        accel_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+
+        VkPhysicalDeviceRayTracingPipelineFeaturesKHR rt_features{};
+        rt_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+
+        VkPhysicalDeviceBufferDeviceAddressFeaturesKHR bda_features{};
+        bda_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES_KHR;
+
         indexing_features.pNext = &timeline_features;
         timeline_features.pNext = &mesh_features;
         mesh_features.pNext     = &vk11_features;
-        vk11_features.pNext     = nullptr;
+        vk11_features.pNext    = &bda_features;
+        bda_features.pNext     = &accel_features;
+        accel_features.pNext   = &rt_features;
+        rt_features.pNext      = nullptr;
 
         VkPhysicalDeviceFeatures2 features2{};
         features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
@@ -1712,6 +1731,12 @@ namespace Honey {
                        "Async upload sync requires timelineSemaphore feature support");
         HN_CORE_ASSERT(mesh_features.meshShader == VK_TRUE,
                         "VK_EXT_mesh_shader: meshShader feature not supported on this device");
+        HN_CORE_ASSERT(accel_features.accelerationStructure == VK_TRUE,
+                        "VK_KHR_acceleration_structure: feature not supported on this device");
+        HN_CORE_ASSERT(rt_features.rayTracingPipeline == VK_TRUE,
+                        "VK_KHR_ray_tracing_pipeline: feature not supported on this device");
+        HN_CORE_ASSERT(bda_features.bufferDeviceAddress == VK_TRUE,
+                        "VK_KHR_buffer_device_address: feature not supported on this device");
 
         // Optional but commonly used for "true bindless" (variable-sized arrays / update-after-bind)
         // If you don't need them yet, you can leave them disabled and also omit related layout/pool flags.
@@ -1730,6 +1755,10 @@ namespace Honey {
         mesh_features.primitiveFragmentShadingRateMeshShader = VK_FALSE; // would require primitiveFragmentShadingRate to also be enabled
 
         vk11_features.shaderDrawParameters = VK_TRUE; // required for gl_DrawID in task/mesh shaders
+
+        accel_features.accelerationStructure = VK_TRUE;
+        rt_features.rayTracingPipeline       = VK_TRUE;
+        bda_features.bufferDeviceAddress     = VK_TRUE;
 
         // Keep your core features:
         features2.features = features;

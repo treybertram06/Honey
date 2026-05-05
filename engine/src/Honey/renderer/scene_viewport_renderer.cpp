@@ -9,6 +9,7 @@
 #include "Honey/renderer/renderer.h"
 #include "Honey/renderer/renderer_2d.h"
 #include "Honey/renderer/renderer_3d/renderer_3d_shadow.h"
+#include "Honey/renderer/renderer_3d/renderer_3d_pathtracer.h"
 #include "Honey/scene/scene.h"
 #include "platform/vulkan/vk_context.h"
 
@@ -31,6 +32,7 @@ namespace Honey {
                 return;
 
             Renderer3DShadow::register_frame_graph_executors();
+            Renderer3DPathTracer::register_frame_graph_executors();
 
             auto& registry = FrameGraphRegistry::get();
 
@@ -66,12 +68,14 @@ namespace Honey {
     void SceneViewportRenderer::initialize() {
         ensure_scene_viewport_frame_graph_executors_registered();
 
-        // Initialize shadow system
+        // Initialize shadow and path tracing systems
         {
             auto* base = Application::get().get_window().get_context();
             auto* vk_ctx = dynamic_cast<VulkanContext*>(base);
-            if (vk_ctx)
+            if (vk_ctx) {
                 Renderer3DShadow::init(vk_ctx);
+                Renderer3DPathTracer::init(vk_ctx);
+            }
         }
 
         FramebufferSpecification fb_spec;
@@ -98,6 +102,7 @@ namespace Honey {
 
     void SceneViewportRenderer::shutdown() {
         Renderer3DShadow::shutdown();
+        Renderer3DPathTracer::shutdown();
         m_frame_graph.reset();
         m_output_framebuffer.reset();
         m_gbuffer_framebuffer.reset();
@@ -141,6 +146,17 @@ namespace Honey {
             return;
 
         Scene::set_active_scene(context.scene);
+
+        if (Renderer3DPathTracer::is_initialized() &&
+            m_settings.renderer_type == RendererSettings::RendererType::pathtracing) {
+            glm::mat4 inv_view = glm::inverse(context.view);
+            glm::mat4 inv_proj = glm::inverse(context.projection);
+            Renderer3DPathTracer::set_camera(inv_view, inv_proj);
+            if (context.view != m_last_pt_view) {
+                Renderer3DPathTracer::invalidate_accumulation();
+                m_last_pt_view = context.view;
+            }
+        }
 
         SceneViewportFrameGraphExecutionContext exec_data{};
         exec_data.renderer = this;
@@ -187,6 +203,7 @@ namespace Honey {
         // Clear stale shadow cubemap handles before the old frame graph (and its framebuffers)
         // are destroyed. Re-registration happens automatically on the first ShadowDraw execution.
         Renderer3DShadow::invalidate_cubemap_resources();
+        Renderer3DPathTracer::invalidate_resources();
 
         FGCompileDiagnostics diags;
         FGCompileOptions options{};
@@ -194,10 +211,18 @@ namespace Honey {
         options.external_framebuffers.emplace("gBuffer", m_gbuffer_framebuffer);
         options.requested_output_resources.emplace_back("editorViewport");
 
-        const char* fg_file =
-            m_settings.renderer_type == RendererSettings::RendererType::deferred
-                ? "main_deferred.hnfg"
-                : "main_forward.hnfg";
+        std::string fg_file;
+        switch (m_settings.renderer_type) {
+            case RendererSettings::RendererType::deferred:
+                fg_file = "deferred.hnfg";
+                break;
+            case RendererSettings::RendererType::forward:
+                fg_file = "forward.hnfg";
+                break;
+            case RendererSettings::RendererType::pathtracing:
+                fg_file = "pathtracing.hnfg";
+                break;
+        }
 
         m_frame_graph = FrameGraphLoader::load_and_compile_from_file(
             asset_root / "frame_graphs" / fg_file,

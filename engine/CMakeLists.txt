@@ -229,6 +229,8 @@ add_library(engine STATIC
         src/Honey/renderer/slug_icon.cpp
         src/Honey/renderer/renderer_3d/renderer_3d_internal.h
         src/Honey/renderer/renderer_3d/renderer_3d_geometry.cpp
+        src/Honey/renderer/renderer_3d/renderer_3d_pathtracer.h
+        src/Honey/renderer/renderer_3d/renderer_3d_pathtracer.cpp
 )
 
 # Apply MSVC runtime to engine itself

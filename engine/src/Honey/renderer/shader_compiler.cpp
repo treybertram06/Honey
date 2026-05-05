@@ -159,6 +159,9 @@ std::vector<uint32_t> ShaderCompiler::compile_single_stage(const std::string& so
         case ShaderStage::TessellationEvaluation: kind = shaderc_glsl_tess_evaluation_shader; stage_name = "tess_eval"; break;
         case ShaderStage::Task:                   kind = shaderc_glsl_task_shader;          stage_name = "task"; break;
         case ShaderStage::Mesh:                   kind = shaderc_glsl_mesh_shader;          stage_name = "mesh"; break;
+        case ShaderStage::RayGen:                 kind = shaderc_glsl_raygen_shader;        stage_name = "raygen"; break;
+        case ShaderStage::Miss:                   kind = shaderc_glsl_miss_shader;          stage_name = "miss"; break;
+        case ShaderStage::ClosestHit:             kind = shaderc_glsl_closesthit_shader;    stage_name = "closest_hit"; break;
         default:                                  kind = shaderc_glsl_infer_from_source;    break;
     }
 

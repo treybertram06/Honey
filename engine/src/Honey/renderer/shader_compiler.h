@@ -22,7 +22,10 @@ namespace Honey {
             TessellationControl,
             TessellationEvaluation,
             Task,
-            Mesh
+            Mesh,
+            RayGen,
+            Miss,
+            ClosestHit,
         };
 
         struct CompilationResult {
@@ -62,6 +65,8 @@ namespace Honey {
         static std::string spirv_to_glsl(const std::vector<uint32_t>& spirv_code);
         static bool validate_spirv(const std::vector<uint32_t>& spirv_code);
 
+        static std::string read_file(const std::filesystem::path& path);
+
     private:
         struct ShaderSource {
             std::string vertex_source;
@@ -69,11 +74,13 @@ namespace Honey {
             std::string compute_source;
             std::string task_source;
             std::string mesh_source;
+            std::string raygen_source;
+            std::string miss_source;
+            std::string closest_hit_source;
         };
 
         static ShaderSource parse_shader_file(const std::filesystem::path& path);
         static ShaderStage get_stage_from_string(const std::string& stage_str);
-        static std::string read_file(const std::filesystem::path& path);
     };
 
 } // namespace Honey

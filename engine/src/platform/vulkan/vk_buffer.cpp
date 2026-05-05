@@ -29,7 +29,8 @@ namespace Honey {
                               VkBufferUsageFlags usage,
                               VkMemoryPropertyFlags props,
                               VkBuffer& out_buffer,
-                              VkDeviceMemory& out_memory) {
+                              VkDeviceMemory& out_memory,
+                              bool rt_geo = false) {
         HN_PROFILE_FUNCTION();
         VkBufferCreateInfo bi{};
         bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -43,8 +44,13 @@ namespace Honey {
         VkMemoryRequirements req{};
         vkGetBufferMemoryRequirements(dev, out_buffer, &req);
 
+        VkMemoryAllocateFlagsInfo flags_info{}; // For RTGeometry
+        flags_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+        flags_info.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT_KHR;
+
         VkMemoryAllocateInfo ai{};
         ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        ai.pNext = rt_geo ? &flags_info : nullptr;
         ai.allocationSize = req.size;
         ai.memoryTypeIndex = find_memory_type(phys, req.memoryTypeBits, props);
 
@@ -379,6 +385,7 @@ namespace Honey {
         const bool dynamic    = !immutable && !readback;  // Default or Dynamic
         const bool as_vb      = static_cast<uint32_t>(usage) & static_cast<uint32_t>(StorageBufferUsage::VertexBuffer);
         const bool indirect   = static_cast<uint32_t>(usage) & static_cast<uint32_t>(StorageBufferUsage::Indirect);
+        const bool rt_geo     = static_cast<uint32_t>(usage) & static_cast<uint32_t>(StorageBufferUsage::RTGeometry);
 
         if (immutable) {
             buffer_usage |= VK_BUFFER_USAGE_TRANSFER_DST_BIT;
@@ -399,6 +406,10 @@ namespace Honey {
         // Additive flags — independent of memory type
         if (as_vb)    buffer_usage |= VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
         if (indirect) buffer_usage |= VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+        if (rt_geo) {
+            buffer_usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+            buffer_usage |= VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
+        }
 
         create_buffer(
             m_device,
@@ -407,7 +418,8 @@ namespace Honey {
             buffer_usage,
             memory_props,
             m_buffer,
-            m_memory
+            m_memory,
+            rt_geo
         );
     }
 

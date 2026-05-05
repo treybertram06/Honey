@@ -25,6 +25,8 @@ namespace Honey {
         Ref<StorageBuffer> meshlet_vertices_buffer;
         Ref<StorageBuffer> meshlet_triangles_buffer;
         Ref<StorageBuffer> meshlet_bounds_buffer;
+        Ref<StorageBuffer> flat_index_buffer;
+        uint32_t flat_index_count = 0;
         std::array<Ref<StorageBuffer>, k_frame_ring_size> draw_data_buffers{}; // per-frame per-mesh GPUDrawData[]
         std::array<void*, k_frame_ring_size> descriptor_sets{}; // VkDescriptorSet per frame slot
     };

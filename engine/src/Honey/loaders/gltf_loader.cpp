@@ -1461,6 +1461,7 @@ namespace Honey {
                 std::vector<uint32_t>        global_meshlet_vertices;
                 std::vector<uint8_t>         global_meshlet_triangles;
                 std::vector<MeshletBounds>   global_bounds;
+                std::vector<uint32_t>        global_flat_indices;
 
                 uint32_t vertex_cursor            = 0;
                 uint32_t meshlets_cursor          = 0;
@@ -1481,10 +1482,21 @@ namespace Honey {
                         v_floats, v_floats + mb.opt_vertices.size() * k_vertex_floats);
                     vertex_cursor += (uint32_t)mb.opt_vertices.size();
 
-                    for (auto m : mb.meshlets) {
-                        m.vertex_offset   += mv_off;
-                        m.triangle_offset += mt_off;
-                        global_meshlets.push_back(m);
+                    for (const auto& raw_m : mb.meshlets) {
+                        // raw_m.vertex_offset and raw_m.triangle_offset are LOCAL to mb arrays
+                        for (uint32_t t = 0; t < raw_m.triangle_count; t++) {
+                            for (uint32_t v = 0; v < 3; v++) {
+                                uint8_t  local_idx  = mb.meshlet_triangles[raw_m.triangle_offset + t * 3 + v];
+                                uint32_t global_idx = mb.meshlet_vertices[raw_m.vertex_offset + local_idx] + v_off;
+                                global_flat_indices.push_back(global_idx);
+                            }
+                        }
+
+                        // then do the adjusted push for the rasterizer path
+                        meshopt_Meshlet adjusted = raw_m;
+                        adjusted.vertex_offset   += mv_off;
+                        adjusted.triangle_offset += mt_off;
+                        global_meshlets.push_back(adjusted);
                     }
                     meshlets_cursor += (uint32_t)mb.meshlets.size();
 
@@ -1508,7 +1520,7 @@ namespace Honey {
 
                 GlobalMeshletBuffers global_bufs{};
                 global_bufs.vertex_buffer = StorageBuffer::create_from_vector(
-                    global_vertices, StorageBufferUsage::Immutable);
+                    global_vertices, StorageBufferUsage::Immutable | StorageBufferUsage::RTGeometry);
                 global_bufs.meshlets_buffer = StorageBuffer::create_from_vector(
                     global_meshlets, StorageBufferUsage::Immutable);
                 global_bufs.meshlet_vertices_buffer = StorageBuffer::create_from_vector(
@@ -1517,6 +1529,9 @@ namespace Honey {
                     global_meshlet_triangles, StorageBufferUsage::Immutable);
                 global_bufs.meshlet_bounds_buffer = StorageBuffer::create_from_vector(
                     global_bounds, StorageBufferUsage::Immutable);
+                global_bufs.flat_index_buffer = StorageBuffer::create_from_vector(
+                    global_flat_indices, StorageBufferUsage::Immutable | StorageBufferUsage::RTGeometry);
+                global_bufs.flat_index_count = (uint32_t)global_flat_indices.size();
 
                 out->meshlet_buffers = std::move(global_bufs);
             }
@@ -1742,17 +1757,33 @@ namespace Honey {
                 !payload.meshlet_buffers->meshlet_vertices.empty() &&
                 !payload.meshlet_buffers->meshlet_triangles.empty() &&
                 !payload.meshlet_buffers->bounds.empty()) {
+                const auto& mb = *payload.meshlet_buffers;
+                std::vector<uint32_t> flat_indices;
+                flat_indices.reserve(mb.meshlets.size() * 64 * 3);
+                for (const auto& m : mb.meshlets) {
+                    for (uint32_t t = 0; t < m.triangle_count; t++) {
+                        for (uint32_t v = 0; v < 3; v++) {
+                            uint8_t  local_idx  = mb.meshlet_triangles[m.triangle_offset + t * 3 + v];
+                            uint32_t global_idx = mb.meshlet_vertices[m.vertex_offset + local_idx];
+                            flat_indices.push_back(global_idx);
+                        }
+                    }
+                }
+
                 GlobalMeshletBuffers global_bufs{};
                 global_bufs.vertex_buffer = StorageBuffer::create_from_vector(
-                    payload.meshlet_buffers->vertices, StorageBufferUsage::Immutable);
+                    mb.vertices, StorageBufferUsage::Immutable | StorageBufferUsage::RTGeometry);
                 global_bufs.meshlets_buffer = StorageBuffer::create_from_vector(
-                    payload.meshlet_buffers->meshlets, StorageBufferUsage::Immutable);
+                    mb.meshlets, StorageBufferUsage::Immutable);
                 global_bufs.meshlet_vertices_buffer = StorageBuffer::create_from_vector(
-                    payload.meshlet_buffers->meshlet_vertices, StorageBufferUsage::Immutable);
+                    mb.meshlet_vertices, StorageBufferUsage::Immutable);
                 global_bufs.meshlet_triangles_buffer = StorageBuffer::create_from_vector(
-                    payload.meshlet_buffers->meshlet_triangles, StorageBufferUsage::Immutable);
+                    mb.meshlet_triangles, StorageBufferUsage::Immutable);
                 global_bufs.meshlet_bounds_buffer = StorageBuffer::create_from_vector(
-                    payload.meshlet_buffers->bounds, StorageBufferUsage::Immutable);
+                    mb.bounds, StorageBufferUsage::Immutable);
+                global_bufs.flat_index_buffer = StorageBuffer::create_from_vector(
+                    flat_indices, StorageBufferUsage::Immutable | StorageBufferUsage::RTGeometry);
+                global_bufs.flat_index_count = (uint32_t)flat_indices.size();
                 out->meshlet_buffers = std::move(global_bufs);
             } else if (payload.meshlet_buffers) {
                 HN_CORE_WARN("Skipping empty meshlet buffer payload for mesh '{}'", payload.name);

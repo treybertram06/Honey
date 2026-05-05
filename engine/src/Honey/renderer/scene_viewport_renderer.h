@@ -65,6 +65,7 @@ namespace Honey {
         uint32_t m_height = 720;
         bool m_frame_graph_dirty = true;
         uint32_t m_frame_graph_frame_index = 0;
+        glm::mat4 m_last_pt_view{0.0f}; // for pathtracer accumulation invalidation
     };
 
 } // namespace Honey
