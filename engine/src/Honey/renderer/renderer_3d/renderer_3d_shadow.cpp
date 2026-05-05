@@ -95,7 +95,8 @@ namespace Honey {
 
         s_fn_draw_mesh_tasks = reinterpret_cast<PFN_vkCmdDrawMeshTasksEXT>(
             vkGetDeviceProcAddr(ctx->get_device(), "vkCmdDrawMeshTasksEXT"));
-        HN_CORE_ASSERT(s_fn_draw_mesh_tasks, "Renderer3DShadow: vkCmdDrawMeshTasksEXT not available");
+        HN_CORE_ASSERT(s_fn_draw_mesh_tasks,
+            "Renderer3DShadow: vkCmdDrawMeshTasksEXT not available — do not call init() without mesh shader support");
     }
 
     void Renderer3DShadow::shutdown() {

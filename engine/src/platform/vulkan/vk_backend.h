@@ -72,6 +72,7 @@ namespace Honey {
         }
         bool has_dedicated_compute_queue() const { return m_has_dedicated_compute_queue; }
         bool supports_timeline_semaphore() const { return m_timeline_semaphore_supported; }
+        bool supports_mesh_shader() const { return m_mesh_shader_supported; }
 
         VkDescriptorPool get_imgui_descriptor_pool() const { return m_imgui_descriptor_pool; }
         VkSampler get_imgui_sampler() const { return m_imgui_sampler; }
@@ -245,6 +246,7 @@ namespace Honey {
         std::mutex m_shared_present_mutex{};
 
         bool m_timeline_semaphore_supported = false;
+        bool m_mesh_shader_supported = false;
         bool m_has_dedicated_compute_queue = false;
 
         // Streaming upload context (ring buffer, primarily used by the dedicated upload thread)

@@ -55,6 +55,11 @@ namespace Honey::Renderer3DInternal {
         if (g_renderer3d_data->meshlet_draws.empty())
             return;
 
+        if (!Application::get().get_vulkan_backend().supports_mesh_shader()) {
+            g_renderer3d_data->meshlet_draws.clear();
+            return;
+        }
+
         if (!g_renderer3d_data->vk_context_cache) {
             auto* base = Application::get().get_window().get_context();
             g_renderer3d_data->vk_context_cache = dynamic_cast<VulkanContext*>(base);

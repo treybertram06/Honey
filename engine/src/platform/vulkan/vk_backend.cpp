@@ -131,6 +131,10 @@ namespace Honey {
             extensions.push_back(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
         }
 
+#ifdef HN_PLATFORM_MACOS
+        extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+#endif
+
         return extensions;
     }
 
@@ -145,6 +149,10 @@ namespace Honey {
 
         for (const auto& ext : exts) {
             needed.erase(ext.extensionName);
+        }
+
+        for (const auto& missing : needed) {
+            HN_CORE_WARN("Physical device missing required extension: {0}", missing);
         }
 
         return needed.empty();
@@ -1422,6 +1430,9 @@ namespace Honey {
         create_info.pApplicationInfo = &app_info;
         create_info.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
         create_info.ppEnabledExtensionNames = extensions.data();
+#ifdef HN_PLATFORM_MACOS
+        create_info.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+#endif
 
         VkDebugUtilsMessengerCreateInfoEXT debug_ci{};
         VkValidationFeatureEnableEXT enabled_validation_features[] = {
@@ -1515,7 +1526,6 @@ namespace Honey {
 
         const std::vector<const char*> required_device_exts = {
             VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-            VK_EXT_MESH_SHADER_EXTENSION_NAME
         };
 
         VkPhysicalDevice selected = VK_NULL_HANDLE;
@@ -1669,11 +1679,19 @@ namespace Honey {
         features.fillModeNonSolid = VK_TRUE;
         features.imageCubeArray = VK_TRUE;
 
-        const std::vector<const char*> device_extensions = {
+        std::vector<const char*> device_extensions = {
             VK_KHR_SWAPCHAIN_EXTENSION_NAME,
             VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
-            VK_EXT_MESH_SHADER_EXTENSION_NAME
         };
+
+        const bool has_mesh_shader_ext = device_supports_extensions(
+            m_physical_device, {VK_EXT_MESH_SHADER_EXTENSION_NAME});
+        if (has_mesh_shader_ext)
+            device_extensions.push_back(VK_EXT_MESH_SHADER_EXTENSION_NAME);
+
+#ifdef HN_PLATFORM_MACOS
+        device_extensions.push_back("VK_KHR_portability_subset");
+#endif
 
         // ---- Bindless / descriptor indexing feature chain ----
         VkPhysicalDeviceDescriptorIndexingFeatures indexing_features{};
@@ -1689,9 +1707,13 @@ namespace Honey {
         vk11_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
 
         indexing_features.pNext = &timeline_features;
-        timeline_features.pNext = &mesh_features;
-        mesh_features.pNext     = &vk11_features;
-        vk11_features.pNext     = nullptr;
+        if (has_mesh_shader_ext) {
+            timeline_features.pNext = &mesh_features;
+            mesh_features.pNext     = &vk11_features;
+        } else {
+            timeline_features.pNext = &vk11_features;
+        }
+        vk11_features.pNext = nullptr;
 
         VkPhysicalDeviceFeatures2 features2{};
         features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
@@ -1700,6 +1722,10 @@ namespace Honey {
         vkGetPhysicalDeviceFeatures2(m_physical_device, &features2);
 
         m_timeline_semaphore_supported = (timeline_features.timelineSemaphore == VK_TRUE);
+        m_mesh_shader_supported = has_mesh_shader_ext && (mesh_features.meshShader == VK_TRUE);
+
+        if (!m_mesh_shader_supported)
+            HN_CORE_WARN("VK_EXT_mesh_shader not available — mesh/shadow passes will be disabled.");
 
         // Enable the descriptor indexing features we want (assert support first)
         HN_CORE_ASSERT(indexing_features.runtimeDescriptorArray == VK_TRUE,
@@ -1710,8 +1736,6 @@ namespace Honey {
                        "Bindless requires shaderSampledImageArrayNonUniformIndexing (VK_EXT_descriptor_indexing)");
         HN_CORE_ASSERT(m_timeline_semaphore_supported,
                        "Async upload sync requires timelineSemaphore feature support");
-        HN_CORE_ASSERT(mesh_features.meshShader == VK_TRUE,
-                        "VK_EXT_mesh_shader: meshShader feature not supported on this device");
 
         // Optional but commonly used for "true bindless" (variable-sized arrays / update-after-bind)
         // If you don't need them yet, you can leave them disabled and also omit related layout/pool flags.
@@ -1724,10 +1748,12 @@ namespace Honey {
 
         timeline_features.timelineSemaphore = m_timeline_semaphore_supported ? VK_TRUE : VK_FALSE;
 
-        mesh_features.meshShader = VK_TRUE;
-        mesh_features.taskShader = VK_TRUE; // Require for now. TODO: Make task shader support optional at some point?
-        mesh_features.multiviewMeshShader                    = VK_FALSE; // would require multiview to also be enabled
-        mesh_features.primitiveFragmentShadingRateMeshShader = VK_FALSE; // would require primitiveFragmentShadingRate to also be enabled
+        if (m_mesh_shader_supported) {
+            mesh_features.meshShader = VK_TRUE;
+            mesh_features.taskShader = VK_TRUE;
+            mesh_features.multiviewMeshShader                    = VK_FALSE;
+            mesh_features.primitiveFragmentShadingRateMeshShader = VK_FALSE;
+        }
 
         vk11_features.shaderDrawParameters = VK_TRUE; // required for gl_DrawID in task/mesh shaders
 

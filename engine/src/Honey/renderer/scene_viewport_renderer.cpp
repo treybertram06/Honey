@@ -66,8 +66,8 @@ namespace Honey {
     void SceneViewportRenderer::initialize() {
         ensure_scene_viewport_frame_graph_executors_registered();
 
-        // Initialize shadow system
-        {
+        // Initialize shadow system (requires mesh shader support)
+        if (Application::get().get_vulkan_backend().supports_mesh_shader()) {
             auto* base = Application::get().get_window().get_context();
             auto* vk_ctx = dynamic_cast<VulkanContext*>(base);
             if (vk_ctx)
