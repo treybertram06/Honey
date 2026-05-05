@@ -48,12 +48,42 @@ namespace Honey {
             }
         }
 
-        static VkFormat to_vk_format(FramebufferTextureFormat fmt) {
+        static VkFormat find_supported_format(VkPhysicalDevice phys,
+                                              const std::vector<VkFormat>& candidates,
+                                              VkImageTiling tiling,
+                                              VkFormatFeatureFlags features)
+        {
+            for (VkFormat fmt : candidates) {
+                VkFormatProperties props;
+                vkGetPhysicalDeviceFormatProperties(phys, fmt, &props);
+                VkFormatFeatureFlags available = (tiling == VK_IMAGE_TILING_LINEAR)
+                    ? props.linearTilingFeatures
+                    : props.optimalTilingFeatures;
+                if ((available & features) == features)
+                    return fmt;
+            }
+            return VK_FORMAT_UNDEFINED;
+        }
+
+        static VkFormat choose_depth_stencil_format(VkPhysicalDevice phys)
+        {
+            // D24 is not supported on Apple Silicon / MoltenVK; prefer D32_S8 then D24_S8.
+            VkFormat fmt = find_supported_format(
+                phys,
+                { VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT },
+                VK_IMAGE_TILING_OPTIMAL,
+                VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT
+            );
+            HN_CORE_ASSERT(fmt != VK_FORMAT_UNDEFINED, "VulkanFramebuffer: no supported depth-stencil format");
+            return fmt;
+        }
+
+        static VkFormat to_vk_format(FramebufferTextureFormat fmt, VkPhysicalDevice phys = VK_NULL_HANDLE) {
             switch (fmt) {
             case FramebufferTextureFormat::RGBA8:         return VK_FORMAT_R8G8B8A8_UNORM;
             case FramebufferTextureFormat::RGBA16F:       return VK_FORMAT_R16G16B16A16_SFLOAT;
             case FramebufferTextureFormat::RED_INTEGER:   return VK_FORMAT_R32_SINT;
-            case FramebufferTextureFormat::Depth:         return VK_FORMAT_D24_UNORM_S8_UINT;
+            case FramebufferTextureFormat::Depth:         return phys ? choose_depth_stencil_format(phys) : VK_FORMAT_D32_SFLOAT_S8_UINT;
             case FramebufferTextureFormat::D32_SFLOAT:    return VK_FORMAT_D32_SFLOAT;
             default:
                 HN_CORE_ASSERT(false, "VulkanFramebuffer: unsupported FramebufferTextureFormat");
@@ -343,7 +373,7 @@ namespace Honey {
         // Depth attachment (optional)
         bool has_depth = (m_depth_spec.texture_format != FramebufferTextureFormat::None);
         if (has_depth) {
-            const VkFormat format = to_vk_format(m_depth_spec.texture_format);
+            const VkFormat format = to_vk_format(m_depth_spec.texture_format, m_physical_device);
 
             VkImageCreateInfo img{};
             img.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -529,7 +559,7 @@ namespace Honey {
         if (has_depth) {
             const bool has_stencil = (m_depth_spec.texture_format == FramebufferTextureFormat::DEPTH24STENCIL8);
             VkAttachmentDescription ad{};
-            ad.format = to_vk_format(m_depth_spec.texture_format);
+            ad.format = to_vk_format(m_depth_spec.texture_format, m_physical_device);
             ad.samples = (VkSampleCountFlagBits)m_samples;
             ad.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
             ad.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
