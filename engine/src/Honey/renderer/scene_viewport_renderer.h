@@ -4,6 +4,7 @@
 #include "Honey/core/timestep.h"
 #include "Honey/renderer/frame_graph.h"
 #include "Honey/renderer/framebuffer.h"
+#include "Honey/renderer/gpu_types.h"
 #include "Honey/renderer/renderer_3d/renderer_3d.h"
 #include "Honey/scene/entity.h"
 
@@ -65,9 +66,8 @@ namespace Honey {
         uint32_t m_height = 720;
         bool m_frame_graph_dirty = true;
         uint32_t m_frame_graph_frame_index = 0;
-        glm::mat4 m_last_pt_view{0.0f};       // for pathtracer accumulation invalidation
-        float     m_last_pt_light_intensity = 0.0f;
-        glm::vec3 m_last_pt_light_color{0.0f};
+        glm::mat4 m_last_pt_view{0.0f};     // for pathtracer accumulation invalidation
+        LightsUBO m_last_pt_lights_ubo{};  // full light state snapshot for change detection
     };
 
 } // namespace Honey

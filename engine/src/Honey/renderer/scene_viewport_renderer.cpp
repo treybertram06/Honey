@@ -156,6 +156,7 @@ namespace Honey {
             Renderer3DPathTracer::set_camera(inv_view, inv_proj);
 
             LightsUBO lights_ubo{};
+
             auto dl_group = context.scene->get_registry().group<DirectionalLightComponent>(entt::get<TransformComponent>);
             for (auto ent : dl_group) {
                 auto& dl = dl_group.get<DirectionalLightComponent>(ent);
@@ -166,15 +167,29 @@ namespace Honey {
                 lights_ubo.directional_light.direction = glm::normalize(glm::vec3(tc.get_transform() * glm::vec4(0, -1, 0, 0)));
                 break;
             }
+
+            int pl_count = 0;
+            auto pl_view = context.scene->get_registry().view<PointLightComponent, TransformComponent>();
+            for (auto ent : pl_view) {
+                if (pl_count >= (int)k_max_point_lights) break;
+                auto& pl = pl_view.get<PointLightComponent>(ent);
+                auto& tc = pl_view.get<TransformComponent>(ent);
+                if (!pl.enabled) continue;
+                lights_ubo.point_lights[pl_count].color     = pl.color;
+                lights_ubo.point_lights[pl_count].intensity = pl.intensity;
+                lights_ubo.point_lights[pl_count].range     = pl.range;
+                lights_ubo.point_lights[pl_count].position  = glm::vec3(tc.get_transform() * glm::vec4(0, 0, 0, 1));
+                pl_count++;
+            }
+            lights_ubo.set_point_light_count(pl_count);
+
             Renderer3DPathTracer::set_lights(lights_ubo);
 
-            bool lights_changed = (lights_ubo.directional_light.intensity != m_last_pt_light_intensity ||
-                                   lights_ubo.directional_light.color     != m_last_pt_light_color);
+            bool lights_changed = (memcmp(&lights_ubo, &m_last_pt_lights_ubo, sizeof(LightsUBO)) != 0);
             if (context.view != m_last_pt_view || lights_changed) {
                 Renderer3DPathTracer::invalidate_accumulation();
-                m_last_pt_view             = context.view;
-                m_last_pt_light_intensity  = lights_ubo.directional_light.intensity;
-                m_last_pt_light_color      = lights_ubo.directional_light.color;
+                m_last_pt_view       = context.view;
+                m_last_pt_lights_ubo = lights_ubo;
             }
         }
 
