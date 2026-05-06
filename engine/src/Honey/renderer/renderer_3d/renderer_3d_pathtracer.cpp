@@ -28,6 +28,16 @@ namespace Honey {
             PFN_vkGetRayTracingShaderGroupHandlesKHR  fn_get_sbt_handles = nullptr;
             PFN_vkGetBufferDeviceAddressKHR           fn_get_buf_addr  = nullptr;
 
+            // Per-instance geometry lookup (one entry per TLAS instance, rebuilt each frame)
+            struct GeometryInfo {
+                VkDeviceAddress vertex_buffer_addr;
+                VkDeviceAddress index_buffer_addr;
+            };
+            VkBuffer geometry_lookup_buffer = VK_NULL_HANDLE;
+            VkDeviceMemory geometry_lookup_memory = VK_NULL_HANDLE;
+            void* geometry_lookup_mapped = nullptr;
+            uint32_t geometry_lookup_capacity = 0;
+
             // One BLAS per unique Mesh* (keyed by pointer so it invalidates when mesh is replaced).
             struct BlasEntry {
                 VkAccelerationStructureKHR handle = VK_NULL_HANDLE;
@@ -163,13 +173,17 @@ namespace Honey {
         }
 
         static void update_desc_set() {
+            HN_CORE_ASSERT(s_res->geometry_lookup_buffer != VK_NULL_HANDLE, "Geometry lookup buffer not created");
+            HN_CORE_ASSERT(s_res->rt_desc_set != VK_NULL_HANDLE, "RT descriptor set not created");
+            HN_CORE_ASSERT(s_res->accum_view != VK_NULL_HANDLE, "Accumulation image not created");
+
             VkDevice device = s_res->vk_ctx->get_device();
+
+            VkWriteDescriptorSet writes[3] = {};
 
             VkWriteDescriptorSetAccelerationStructureKHR as_info{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR};
             as_info.accelerationStructureCount = 1;
             as_info.pAccelerationStructures    = &s_res->tlas;
-
-            VkWriteDescriptorSet writes[2] = {};
 
             writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             writes[0].pNext           = &as_info;
@@ -177,6 +191,7 @@ namespace Honey {
             writes[0].dstBinding      = 0;
             writes[0].descriptorCount = 1;
             writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+
 
             VkDescriptorImageInfo image_info{};
             image_info.imageView   = s_res->accum_view;
@@ -189,7 +204,20 @@ namespace Honey {
             writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
             writes[1].pImageInfo      = &image_info;
 
-            vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
+
+            VkDescriptorBufferInfo geo_buf_info{};
+            geo_buf_info.buffer = s_res->geometry_lookup_buffer;
+            geo_buf_info.offset = 0;
+            geo_buf_info.range  = VK_WHOLE_SIZE;
+
+            writes[2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[2].dstSet          = s_res->rt_desc_set;
+            writes[2].dstBinding      = 2;
+            writes[2].descriptorCount = 1;
+            writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            writes[2].pBufferInfo     = &geo_buf_info;
+
+            vkUpdateDescriptorSets(device, std::size(writes), writes, 0, nullptr);
         }
 
         static void ensure_instance_buffer(uint32_t count) {
@@ -231,6 +259,37 @@ namespace Honey {
             vkMapMemory(device, s_res->instance_memory, 0, size, 0, &s_res->instance_mapped);
 
             s_res->instance_buffer_capacity = count;
+        }
+
+        static void ensure_geometry_lookup_buffer(uint32_t count) {
+            if (count <= s_res->geometry_lookup_capacity)
+                return;
+
+            VkDevice device = s_res->vk_ctx->get_device();
+            if (s_res->geometry_lookup_buffer != VK_NULL_HANDLE) {
+                vkUnmapMemory(device, s_res->geometry_lookup_memory);
+                vkDestroyBuffer(device, s_res->geometry_lookup_buffer, nullptr);
+                vkFreeMemory(device, s_res->geometry_lookup_memory, nullptr);
+            }
+
+            VkDeviceSize size = count * sizeof(PathTracerResources::GeometryInfo);
+            VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+            bi.size      = size;
+            bi.usage     = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+            bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            vkCreateBuffer(device, &bi, nullptr, &s_res->geometry_lookup_buffer);
+
+            VkMemoryRequirements req{};
+            vkGetBufferMemoryRequirements(device, s_res->geometry_lookup_buffer, &req);
+
+            VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+            ai.allocationSize  = req.size;
+            ai.memoryTypeIndex = find_memory_type(s_res->vk_ctx->get_physical_device(), req.memoryTypeBits,
+                                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            vkAllocateMemory(device, &ai, nullptr, &s_res->geometry_lookup_memory);
+            vkBindBufferMemory(device, s_res->geometry_lookup_buffer, s_res->geometry_lookup_memory, 0);
+            vkMapMemory(device, s_res->geometry_lookup_memory, 0, size, 0, &s_res->geometry_lookup_mapped);
+            s_res->geometry_lookup_capacity = count;
         }
 
         static PathTracerResources::BlasEntry build_blas(const Mesh* mesh) {
@@ -387,6 +446,7 @@ namespace Honey {
             VkPhysicalDevice physical_device = s_res->vk_ctx->get_physical_device();
 
             std::vector<VkAccelerationStructureInstanceKHR> instances;
+            std::vector<PathTracerResources::GeometryInfo> geo_infos;
 
             auto view = scene->get_registry().view<TransformComponent, MeshRendererComponent>();
             for (auto entity : view) {
@@ -405,9 +465,17 @@ namespace Honey {
 
                 auto& blas = s_res->blas_cache.at(mesh);
 
+                auto& bufs = *mrc.mesh->meshlet_buffers;
+                VkBufferDeviceAddressInfo addr_info{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
+                addr_info.buffer = reinterpret_cast<VkBuffer>(bufs.vertex_buffer->get_native_buffer());
+                VkDeviceAddress v_addr = s_res->fn_get_buf_addr(device, &addr_info);
+                addr_info.buffer = reinterpret_cast<VkBuffer>(bufs.flat_index_buffer->get_native_buffer());
+                VkDeviceAddress i_addr = s_res->fn_get_buf_addr(device, &addr_info);
+                geo_infos.push_back({ v_addr, i_addr });
+
                 VkAccelerationStructureInstanceKHR inst{};
                 inst.transform                              = to_vk_transform(tc.world);
-                inst.instanceCustomIndex                    = 0; // expand later for materials
+                inst.instanceCustomIndex                    = (uint32_t)(geo_infos.size() - 1);
                 inst.mask                                   = 0xFF;
                 inst.instanceShaderBindingTableRecordOffset = 0;
                 inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
@@ -415,6 +483,10 @@ namespace Honey {
 
                 instances.push_back(inst);
             }
+
+            ensure_geometry_lookup_buffer((uint32_t)geo_infos.size());
+            memcpy(s_res->geometry_lookup_mapped, geo_infos.data(),
+                geo_infos.size() * sizeof(PathTracerResources::GeometryInfo));
 
             if (instances.empty()) {
                 static bool warned = false;
@@ -566,7 +638,7 @@ namespace Honey {
             uint32_t region_size = align_up(handle_size, base_align);
             uint32_t sbt_total   = region_size * 3;
 
-            VkDescriptorSetLayoutBinding bindings[2] = {};
+            VkDescriptorSetLayoutBinding bindings[3] = {};
             bindings[0].binding         = 0;
             bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
             bindings[0].descriptorCount = 1;
@@ -575,21 +647,26 @@ namespace Honey {
             bindings[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
             bindings[1].descriptorCount = 1;
             bindings[1].stageFlags      = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+            bindings[2].binding         = 2;
+            bindings[2].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            bindings[2].descriptorCount = 1;
+            bindings[2].stageFlags      = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
 
             VkDescriptorSetLayoutCreateInfo layout_ci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-            layout_ci.bindingCount = 2;
+            layout_ci.bindingCount = std::size(bindings);
             layout_ci.pBindings    = bindings;
             vkCreateDescriptorSetLayout(device, &layout_ci, nullptr, &s_res->rt_desc_layout);
 
 
             // Create descriptor pool and allocate the set
-            VkDescriptorPoolSize pool_sizes[2] = {
+            VkDescriptorPoolSize pool_sizes[3] = {
                 { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1 },
                 { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1 },
+                { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1 },
             };
             VkDescriptorPoolCreateInfo pool_ci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
             pool_ci.maxSets       = 1;
-            pool_ci.poolSizeCount = 2;
+            pool_ci.poolSizeCount = std::size(pool_sizes);
             pool_ci.pPoolSizes    = pool_sizes;
             vkCreateDescriptorPool(device, &pool_ci, nullptr, &s_res->rt_desc_pool);
 
@@ -811,6 +888,12 @@ namespace Honey {
             vkUnmapMemory(device, s_res->instance_memory);
             vkDestroyBuffer(device, s_res->instance_buffer, nullptr);
             vkFreeMemory(device, s_res->instance_memory, nullptr);
+        }
+
+        if (s_res->geometry_lookup_buffer != VK_NULL_HANDLE) {
+            vkUnmapMemory(device, s_res->geometry_lookup_memory);
+            vkDestroyBuffer(device, s_res->geometry_lookup_buffer, nullptr);
+            vkFreeMemory(device, s_res->geometry_lookup_memory, nullptr);
         }
 
         destroy_accum_image();
