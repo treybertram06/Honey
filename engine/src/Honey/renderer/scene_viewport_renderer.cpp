@@ -10,6 +10,8 @@
 #include "Honey/renderer/renderer_2d.h"
 #include "Honey/renderer/renderer_3d/renderer_3d_shadow.h"
 #include "Honey/renderer/renderer_3d/renderer_3d_pathtracer.h"
+#include "Honey/renderer/gpu_types.h"
+#include "Honey/scene/components.h"
 #include "Honey/scene/scene.h"
 #include "platform/vulkan/vk_context.h"
 
@@ -152,9 +154,27 @@ namespace Honey {
             glm::mat4 inv_view = glm::inverse(context.view);
             glm::mat4 inv_proj = glm::inverse(context.projection);
             Renderer3DPathTracer::set_camera(inv_view, inv_proj);
-            if (context.view != m_last_pt_view) {
+
+            LightsUBO lights_ubo{};
+            auto dl_group = context.scene->get_registry().group<DirectionalLightComponent>(entt::get<TransformComponent>);
+            for (auto ent : dl_group) {
+                auto& dl = dl_group.get<DirectionalLightComponent>(ent);
+                auto& tc = dl_group.get<TransformComponent>(ent);
+                if (!dl.enabled) continue;
+                lights_ubo.directional_light.color     = dl.color;
+                lights_ubo.directional_light.intensity = dl.intensity;
+                lights_ubo.directional_light.direction = glm::normalize(glm::vec3(tc.get_transform() * glm::vec4(0, -1, 0, 0)));
+                break;
+            }
+            Renderer3DPathTracer::set_lights(lights_ubo);
+
+            bool lights_changed = (lights_ubo.directional_light.intensity != m_last_pt_light_intensity ||
+                                   lights_ubo.directional_light.color     != m_last_pt_light_color);
+            if (context.view != m_last_pt_view || lights_changed) {
                 Renderer3DPathTracer::invalidate_accumulation();
-                m_last_pt_view = context.view;
+                m_last_pt_view             = context.view;
+                m_last_pt_light_intensity  = lights_ubo.directional_light.intensity;
+                m_last_pt_light_color      = lights_ubo.directional_light.color;
             }
         }
 

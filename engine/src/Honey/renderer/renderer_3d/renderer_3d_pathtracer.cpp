@@ -3,12 +3,14 @@
 
 #include "glm/gtc/type_ptr.hpp"
 #include "Honey/renderer/frame_graph_registry.h"
+#include "Honey/renderer/gpu_types.h"
 #include "Honey/renderer/mesh.h"
 #include "Honey/renderer/shader_compiler.h"
 #include "Honey/scene/components.h"
 #include "Honey/scene/scene.h"
 #include "platform/vulkan/vk_context.h"
 #include "platform/vulkan/vk_framebuffer.h"
+#include "platform/vulkan/vk_texture.h"
 
 namespace Honey {
 
@@ -38,14 +40,36 @@ namespace Honey {
             void* geometry_lookup_mapped = nullptr;
             uint32_t geometry_lookup_capacity = 0;
 
-            // One BLAS per unique Mesh* (keyed by pointer so it invalidates when mesh is replaced).
+            // Material / texture data
+            struct MaterialInfo {
+                glm::vec4 base_color_factor{1.0f};
+                int texture_index = -1; // -1 = no texture, else index into texture descriptor array
+                float _pad[3]{};
+            };
+
+            static constexpr uint32_t k_max_rt_textures = 512;
+
+            VkBuffer material_buffer = VK_NULL_HANDLE;
+            VkDeviceMemory material_memory = VK_NULL_HANDLE;
+            void* material_mapped = nullptr;
+            uint32_t material_capacity = 0;
+
+            // Texture descriptors — partially bound array, updated once per frame.
+            // Keyed by VkImageView so we can detect changes without re-uploading.
+            std::vector<std::pair<VkImageView, VkSampler>> bound_textures; // tracks what's in each slot
+
+            VkBuffer lights_buffer = VK_NULL_HANDLE;
+            VkDeviceMemory lights_memory = VK_NULL_HANDLE;
+            void* lights_mapped = nullptr;
+
+            // One BLAS per unique Submesh* (keyed by pointer so it invalidates when mesh is replaced).
             struct BlasEntry {
                 VkAccelerationStructureKHR handle = VK_NULL_HANDLE;
                 VkBuffer buffer = VK_NULL_HANDLE;
                 VkDeviceMemory memory = VK_NULL_HANDLE;
                 VkDeviceAddress device_address = 0;
             };
-            std::unordered_map<const Mesh*, BlasEntry> blas_cache;
+            std::unordered_map<const Submesh*, BlasEntry> blas_cache;
 
             // TLAS — rebuilt every frame.
             VkAccelerationStructureKHR tlas = VK_NULL_HANDLE;
@@ -179,7 +203,7 @@ namespace Honey {
 
             VkDevice device = s_res->vk_ctx->get_device();
 
-            VkWriteDescriptorSet writes[3] = {};
+            VkWriteDescriptorSet writes[6] = {};
 
             VkWriteDescriptorSetAccelerationStructureKHR as_info{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR};
             as_info.accelerationStructureCount = 1;
@@ -192,7 +216,6 @@ namespace Honey {
             writes[0].descriptorCount = 1;
             writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
 
-
             VkDescriptorImageInfo image_info{};
             image_info.imageView   = s_res->accum_view;
             image_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
@@ -204,7 +227,7 @@ namespace Honey {
             writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
             writes[1].pImageInfo      = &image_info;
 
-
+            // binding 2 - geometry info SSBO
             VkDescriptorBufferInfo geo_buf_info{};
             geo_buf_info.buffer = s_res->geometry_lookup_buffer;
             geo_buf_info.offset = 0;
@@ -217,7 +240,57 @@ namespace Honey {
             writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             writes[2].pBufferInfo     = &geo_buf_info;
 
-            vkUpdateDescriptorSets(device, std::size(writes), writes, 0, nullptr);
+            // binding 3 - material SSBO
+            VkDescriptorBufferInfo mat_buf_info{};
+            mat_buf_info.buffer = s_res->material_buffer;
+            mat_buf_info.offset = 0;
+            mat_buf_info.range  = VK_WHOLE_SIZE;
+
+            writes[3].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[3].dstSet          = s_res->rt_desc_set;
+            writes[3].dstBinding      = 3;
+            writes[3].descriptorCount = 1;
+            writes[3].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            writes[3].pBufferInfo     = &mat_buf_info;
+
+            // binding 4 — texture array (write only the occupied slots)
+            std::vector<VkDescriptorImageInfo> img_infos(s_res->bound_textures.size());
+            for (size_t i = 0; i < s_res->bound_textures.size(); i++) {
+                img_infos[i].imageView   = s_res->bound_textures[i].first;
+                img_infos[i].sampler     = s_res->bound_textures[i].second;
+                img_infos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            }
+            if (!img_infos.empty()) {
+                writes[4].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writes[4].dstSet          = s_res->rt_desc_set;
+                writes[4].dstBinding      = 4;
+                writes[4].dstArrayElement = 0;
+                writes[4].descriptorCount = (uint32_t)img_infos.size();
+                writes[4].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                writes[4].pImageInfo      = img_infos.data();
+            }
+
+            // binding 5 - lights UBO
+            VkDescriptorBufferInfo lights_buf_info{};
+            lights_buf_info.buffer = s_res->lights_buffer;
+            lights_buf_info.offset = 0;
+            lights_buf_info.range  = VK_WHOLE_SIZE;
+
+            writes[5].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[5].dstSet          = s_res->rt_desc_set;
+            writes[5].dstBinding      = 5;
+            writes[5].descriptorCount = 1;
+            writes[5].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            writes[5].pBufferInfo     = &lights_buf_info;
+
+            // Write all 6 entries; writes[4] is only valid when img_infos is non-empty,
+            // but its descriptorCount=0 default makes it a no-op when not filled.
+            uint32_t write_count = img_infos.empty() ? 5 : 6;
+            // Slide the lights write down to index 4 when there are no textures
+            // so we don't submit an empty texture write followed by the lights write.
+            if (img_infos.empty())
+                writes[4] = writes[5];
+            vkUpdateDescriptorSets(device, write_count, writes, 0, nullptr);
         }
 
         static void ensure_instance_buffer(uint32_t count) {
@@ -292,30 +365,57 @@ namespace Honey {
             s_res->geometry_lookup_capacity = count;
         }
 
-        static PathTracerResources::BlasEntry build_blas(const Mesh* mesh) {
+        static void ensure_material_buffer(uint32_t count) {
+            if (count <= s_res->material_capacity)
+                return;
+
+            VkDevice device = s_res->vk_ctx->get_device();
+            if (s_res->material_buffer != VK_NULL_HANDLE) {
+                vkUnmapMemory(device, s_res->material_memory);
+                vkDestroyBuffer(device, s_res->material_buffer, nullptr);
+                vkFreeMemory(device, s_res->material_memory, nullptr);
+            }
+
+            VkDeviceSize size = count * sizeof(PathTracerResources::MaterialInfo);
+            VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+            bi.size      = size;
+            bi.usage     = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+            bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            vkCreateBuffer(device, &bi, nullptr, &s_res->material_buffer);
+
+            VkMemoryRequirements req{};
+            vkGetBufferMemoryRequirements(device, s_res->material_buffer, &req);
+
+            VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+            ai.allocationSize  = req.size;
+            ai.memoryTypeIndex = find_memory_type(s_res->vk_ctx->get_physical_device(), req.memoryTypeBits,
+                                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            vkAllocateMemory(device, &ai, nullptr, &s_res->material_memory);
+            vkBindBufferMemory(device, s_res->material_buffer, s_res->material_memory, 0);
+            vkMapMemory(device, s_res->material_memory, 0, size, 0, &s_res->material_mapped);
+            s_res->material_capacity = count;
+        }
+
+        // vbuf_addr: device address of the full mesh vertex buffer (VertexPBR, stride 56)
+        // ibuf_addr: device address of the first index for this submesh in the flat index buffer
+        // tri_count: number of triangles in this submesh
+        // max_vertex: highest vertex index referenced (safe to use total mesh vertex count - 1)
+        static PathTracerResources::BlasEntry build_blas(
+                VkDeviceAddress vbuf_addr,
+                VkDeviceAddress ibuf_addr,
+                uint32_t tri_count,
+                uint32_t max_vertex) {
             HN_PROFILE_FUNCTION();
 
             VkDevice device = s_res->vk_ctx->get_device();
             VkPhysicalDevice physical_device = s_res->vk_ctx->get_physical_device();
-
-            HN_CORE_ASSERT(mesh->meshlet_buffers.has_value(), "Meshlet buffers not loaded");
-            auto& bufs = mesh->meshlet_buffers.value();
-            VkBuffer vk_vbuf = reinterpret_cast<VkBuffer>(bufs.vertex_buffer->get_native_buffer());
-            VkBuffer vk_ibuf = reinterpret_cast<VkBuffer>(bufs.flat_index_buffer->get_native_buffer());
-            uint32_t tri_count = bufs.flat_index_count / 3;
-
-            VkBufferDeviceAddressInfo addr_info = {VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
-            addr_info.buffer = vk_vbuf;
-            VkDeviceAddress vbuf_addr = s_res->fn_get_buf_addr(device, &addr_info);
-            addr_info.buffer = vk_ibuf;
-            VkDeviceAddress ibuf_addr = s_res->fn_get_buf_addr(device, &addr_info);
 
             VkAccelerationStructureGeometryTrianglesDataKHR triangles = {};
             triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
             triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
             triangles.vertexData.deviceAddress = vbuf_addr;
             triangles.vertexStride = 56; // sizeof(VertexPBR) from gltf_loader.cpp
-            triangles.maxVertex = tri_count * 3 - 1; // TODO: this is an overestimate which *should* not corrupt anything, but is wrong.
+            triangles.maxVertex = max_vertex;
             triangles.indexType = VK_INDEX_TYPE_UINT32;
             triangles.indexData.deviceAddress = ibuf_addr;
 
@@ -447,6 +547,9 @@ namespace Honey {
 
             std::vector<VkAccelerationStructureInstanceKHR> instances;
             std::vector<PathTracerResources::GeometryInfo> geo_infos;
+            std::vector<PathTracerResources::MaterialInfo> materials;
+
+            s_res->bound_textures.clear(); // Clear to get rid of removed textures
 
             auto view = scene->get_registry().view<TransformComponent, MeshRendererComponent>();
             for (auto entity : view) {
@@ -455,38 +558,85 @@ namespace Honey {
 
                 if (!mrc.mesh || !mrc.mesh->meshlet_buffers.has_value())
                     continue;
-                if (!mrc.mesh->meshlet_buffers->flat_index_buffer || !mrc.mesh->meshlet_buffers->vertex_buffer)
+                auto& bufs = *mrc.mesh->meshlet_buffers;
+                if (!bufs.flat_index_buffer || !bufs.vertex_buffer)
                     continue;
 
-                const Mesh* mesh = mrc.mesh.get();
-
-                if (!s_res->blas_cache.count(mesh))
-                    s_res->blas_cache[mesh] = build_blas(mesh);
-
-                auto& blas = s_res->blas_cache.at(mesh);
-
-                auto& bufs = *mrc.mesh->meshlet_buffers;
+                // Get base GPU buffer addresses shared by all submeshes of this mesh.
                 VkBufferDeviceAddressInfo addr_info{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
                 addr_info.buffer = reinterpret_cast<VkBuffer>(bufs.vertex_buffer->get_native_buffer());
-                VkDeviceAddress v_addr = s_res->fn_get_buf_addr(device, &addr_info);
+                const VkDeviceAddress vbuf_addr = s_res->fn_get_buf_addr(device, &addr_info);
                 addr_info.buffer = reinterpret_cast<VkBuffer>(bufs.flat_index_buffer->get_native_buffer());
-                VkDeviceAddress i_addr = s_res->fn_get_buf_addr(device, &addr_info);
-                geo_infos.push_back({ v_addr, i_addr });
+                const VkDeviceAddress ibuf_base_addr = s_res->fn_get_buf_addr(device, &addr_info);
 
-                VkAccelerationStructureInstanceKHR inst{};
-                inst.transform                              = to_vk_transform(tc.world);
-                inst.instanceCustomIndex                    = (uint32_t)(geo_infos.size() - 1);
-                inst.mask                                   = 0xFF;
-                inst.instanceShaderBindingTableRecordOffset = 0;
-                inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
-                inst.accelerationStructureReference         = blas.device_address;
+                // max_vertex: safe upper bound for all submeshes (total vertex count - 1)
+                const uint32_t max_vertex = bufs.vertex_buffer->get_size() / 56u - 1u;
 
-                instances.push_back(inst);
+                const auto& submeshes = mrc.mesh->get_submeshes();
+                for (size_t si = 0; si < submeshes.size(); ++si) {
+                    const Submesh& sm = submeshes[si];
+                    if (!sm.meshlets.has_value()) continue;
+                    if (sm.meshlets->flat_index_tri_count == 0) continue;
+
+                    const uint32_t tri_count  = sm.meshlets->flat_index_tri_count;
+                    const VkDeviceAddress ibuf_addr = ibuf_base_addr
+                        + (VkDeviceAddress)sm.meshlets->flat_index_first * 3u * sizeof(uint32_t);
+
+                    if (!s_res->blas_cache.count(&sm))
+                        s_res->blas_cache[&sm] = build_blas(vbuf_addr, ibuf_addr, tri_count, max_vertex);
+
+                    auto& blas = s_res->blas_cache.at(&sm);
+
+                    // Pick material: override at submesh index, else the submesh's own material.
+                    PathTracerResources::MaterialInfo mat_info{};
+                    Ref<Material> mat;
+                    if (si < mrc.material_overrides.size() && mrc.material_overrides[si])
+                        mat = mrc.material_overrides[si];
+                    else if (sm.material)
+                        mat = sm.material;
+
+                    if (mat) {
+                        mat_info.base_color_factor = mat->get_base_color_factor();
+                        const Ref<Texture2D>& tex = mat->get_base_color_texture();
+                        if (tex) {
+                            auto* vk_tex = dynamic_cast<VulkanTexture2D*>(tex.get());
+                            VkImageView img_view = vk_tex ? static_cast<VkImageView>(vk_tex->get_vk_image_view()) : VK_NULL_HANDLE;
+                            VkSampler sampler    = vk_tex ? static_cast<VkSampler>(vk_tex->get_vk_sampler())     : VK_NULL_HANDLE;
+                            if (img_view != VK_NULL_HANDLE) {
+                                auto it = std::find_if(s_res->bound_textures.begin(), s_res->bound_textures.end(),
+                                    [img_view](const auto& p) { return p.first == img_view; });
+                                if (it == s_res->bound_textures.end()) {
+                                    mat_info.texture_index = (int)s_res->bound_textures.size();
+                                    s_res->bound_textures.push_back({ img_view, sampler });
+                                } else {
+                                    mat_info.texture_index = (int)(it - s_res->bound_textures.begin());
+                                }
+                            }
+                        }
+                    }
+                    materials.push_back(mat_info);
+
+                    geo_infos.push_back({ vbuf_addr, ibuf_addr });
+
+                    VkAccelerationStructureInstanceKHR inst{};
+                    inst.transform                              = to_vk_transform(tc.world * sm.transform);
+                    inst.instanceCustomIndex                    = (uint32_t)(geo_infos.size() - 1);
+                    inst.mask                                   = 0xFF;
+                    inst.instanceShaderBindingTableRecordOffset = 0;
+                    inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+                    inst.accelerationStructureReference         = blas.device_address;
+
+                    instances.push_back(inst);
+                }
             }
 
             ensure_geometry_lookup_buffer((uint32_t)geo_infos.size());
             memcpy(s_res->geometry_lookup_mapped, geo_infos.data(),
                 geo_infos.size() * sizeof(PathTracerResources::GeometryInfo));
+
+            ensure_material_buffer((uint32_t)materials.size());
+            memcpy(s_res->material_mapped, materials.data(),
+                   materials.size() * sizeof(PathTracerResources::MaterialInfo));
 
             if (instances.empty()) {
                 static bool warned = false;
@@ -636,33 +786,68 @@ namespace Honey {
             };
 
             uint32_t region_size = align_up(handle_size, base_align);
-            uint32_t sbt_total   = region_size * 3;
+            uint32_t sbt_total   = region_size * 4; // raygen + miss_primary + miss_shadow + hit
 
-            VkDescriptorSetLayoutBinding bindings[3] = {};
+            VkDescriptorSetLayoutBinding bindings[6] = {};
             bindings[0].binding         = 0;
             bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
             bindings[0].descriptorCount = 1;
-            bindings[0].stageFlags      = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+            // TLAS must be visible in closest hit for shadow traceRayEXT calls
+            bindings[0].stageFlags      = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+            // binding 1 - Accumulation image
             bindings[1].binding         = 1;
             bindings[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
             bindings[1].descriptorCount = 1;
             bindings[1].stageFlags      = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+            // binding 2 - Geometry Info SSBO (closest hit)
             bindings[2].binding         = 2;
             bindings[2].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             bindings[2].descriptorCount = 1;
             bindings[2].stageFlags      = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+            // binding 3 - material info SSBO (closest hit)
+            bindings[3].binding         = 3;
+            bindings[3].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            bindings[3].descriptorCount = 1;
+            bindings[3].stageFlags      = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+            // binding 4 - texture array (closest hit) - partially bound
+            bindings[4].binding         = 4;
+            bindings[4].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            bindings[4].descriptorCount = PathTracerResources::k_max_rt_textures;
+            bindings[4].stageFlags      = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+            bindings[4].pImmutableSamplers = nullptr;
+            // binding 5 - lights UBO (closest hit)
+            bindings[5].binding         = 5;
+            bindings[5].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            bindings[5].descriptorCount = 1;
+            bindings[5].stageFlags      = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+
+            VkDescriptorBindingFlags binding_flags[6] = {
+                0, // 0: TLAS
+                0, // 1: storage image
+                0, // 2: geometry SSBO
+                0, // 3: material SSBO
+                VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT, // 4: texture array
+                0, // 5: lights UBO
+            };
+            VkDescriptorSetLayoutBindingFlagsCreateInfo flags_ci{
+                VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
+            flags_ci.bindingCount  = 6;
+            flags_ci.pBindingFlags = binding_flags;
 
             VkDescriptorSetLayoutCreateInfo layout_ci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+            layout_ci.pNext = &flags_ci;
             layout_ci.bindingCount = std::size(bindings);
             layout_ci.pBindings    = bindings;
             vkCreateDescriptorSetLayout(device, &layout_ci, nullptr, &s_res->rt_desc_layout);
 
 
             // Create descriptor pool and allocate the set
-            VkDescriptorPoolSize pool_sizes[3] = {
+            VkDescriptorPoolSize pool_sizes[5] = {
                 { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1 },
                 { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1 },
-                { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1 },
+                { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 }, // geometry + material
+                { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, PathTracerResources::k_max_rt_textures },
+                { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 },  // lights
             };
             VkDescriptorPoolCreateInfo pool_ci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
             pool_ci.maxSets       = 1;
@@ -719,24 +904,27 @@ namespace Honey {
             };
 
             std::filesystem::path assets_dir(ASSET_ROOT);
-            VkShaderModule raygen_module = make_module(ShaderCompiler::read_file(
-                (assets_dir / "shaders" / "PathTrace_RayGen.rgen")),  ShaderCompiler::ShaderStage::RayGen,    "PathTrace_RayGen.rgen");
-            VkShaderModule miss_module   = make_module(ShaderCompiler::read_file(
-                (assets_dir / "shaders" / "PathTrace_Miss.rmiss")),   ShaderCompiler::ShaderStage::Miss,       "PathTrace_Miss.rmiss");
-            VkShaderModule hit_module    = make_module(ShaderCompiler::read_file(
-                (assets_dir / "shaders" / "PathTrace_ClosestHit.rchit")), ShaderCompiler::ShaderStage::ClosestHit, "PathTrace_ClosestHit.rchit");
+            VkShaderModule raygen_module      = make_module(ShaderCompiler::read_file(
+                (assets_dir / "shaders" / "PathTrace_RayGen.rgen")),       ShaderCompiler::ShaderStage::RayGen,    "PathTrace_RayGen.rgen");
+            VkShaderModule miss_module        = make_module(ShaderCompiler::read_file(
+                (assets_dir / "shaders" / "PathTrace_Miss.rmiss")),        ShaderCompiler::ShaderStage::Miss,      "PathTrace_Miss.rmiss");
+            VkShaderModule shadow_miss_module = make_module(ShaderCompiler::read_file(
+                (assets_dir / "shaders" / "PathTrace_ShadowMiss.rmiss")),  ShaderCompiler::ShaderStage::Miss,      "PathTrace_ShadowMiss.rmiss");
+            VkShaderModule hit_module         = make_module(ShaderCompiler::read_file(
+                (assets_dir / "shaders" / "PathTrace_ClosestHit.rchit")),  ShaderCompiler::ShaderStage::ClosestHit,"PathTrace_ClosestHit.rchit");
 
             if (!compile_ok) {
                 HN_CORE_ERROR("[PathTracer] Shader compilation failed — RT pipeline will not be built");
-                if (raygen_module) vkDestroyShaderModule(device, raygen_module, nullptr);
-                if (miss_module)   vkDestroyShaderModule(device, miss_module,   nullptr);
-                if (hit_module)    vkDestroyShaderModule(device, hit_module,    nullptr);
+                if (raygen_module)      vkDestroyShaderModule(device, raygen_module,      nullptr);
+                if (miss_module)        vkDestroyShaderModule(device, miss_module,        nullptr);
+                if (shadow_miss_module) vkDestroyShaderModule(device, shadow_miss_module, nullptr);
+                if (hit_module)         vkDestroyShaderModule(device, hit_module,         nullptr);
                 return;
             }
 
 
-            // Create the RT pipeline
-            VkPipelineShaderStageCreateInfo stages[3] = {};
+            // Stages: 0=raygen, 1=primary_miss, 2=shadow_miss, 3=closest_hit
+            VkPipelineShaderStageCreateInfo stages[4] = {};
             stages[0].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
             stages[0].stage  = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
             stages[0].module = raygen_module;
@@ -746,52 +934,60 @@ namespace Honey {
             stages[1].module = miss_module;
             stages[1].pName  = "main";
             stages[2].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-            stages[2].stage  = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
-            stages[2].module = hit_module;
+            stages[2].stage  = VK_SHADER_STAGE_MISS_BIT_KHR;
+            stages[2].module = shadow_miss_module;
             stages[2].pName  = "main";
+            stages[3].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            stages[3].stage  = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+            stages[3].module = hit_module;
+            stages[3].pName  = "main";
 
-            VkRayTracingShaderGroupCreateInfoKHR groups[3] = {};
-            // group 0: raygen (general type, stage 0)
+            // Groups: 0=raygen, 1=primary_miss, 2=shadow_miss, 3=closest_hit
+            VkRayTracingShaderGroupCreateInfoKHR groups[4] = {};
             groups[0] = {VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR};
             groups[0].type             = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
             groups[0].generalShader    = 0;
             groups[0].closestHitShader = groups[0].anyHitShader = groups[0].intersectionShader = VK_SHADER_UNUSED_KHR;
 
-            // group 1: miss (general type, stage 1)
             groups[1] = {VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR};
             groups[1].type             = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
             groups[1].generalShader    = 1;
             groups[1].closestHitShader = groups[1].anyHitShader = groups[1].intersectionShader = VK_SHADER_UNUSED_KHR;
 
-            // group 2: closest hit (triangles type, no generalShader)
             groups[2] = {VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR};
-            groups[2].type             = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
-            groups[2].generalShader    = VK_SHADER_UNUSED_KHR;
-            groups[2].closestHitShader = 2;
-            groups[2].anyHitShader     = groups[2].intersectionShader = VK_SHADER_UNUSED_KHR;
+            groups[2].type             = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+            groups[2].generalShader    = 2;
+            groups[2].closestHitShader = groups[2].anyHitShader = groups[2].intersectionShader = VK_SHADER_UNUSED_KHR;
+
+            groups[3] = {VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR};
+            groups[3].type             = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
+            groups[3].generalShader    = VK_SHADER_UNUSED_KHR;
+            groups[3].closestHitShader = 3;
+            groups[3].anyHitShader     = groups[3].intersectionShader = VK_SHADER_UNUSED_KHR;
 
             VkRayTracingPipelineCreateInfoKHR rt_ci{VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR};
-            rt_ci.stageCount                   = 3;
+            rt_ci.stageCount                   = 4;
             rt_ci.pStages                      = stages;
-            rt_ci.groupCount                   = 3;
+            rt_ci.groupCount                   = 4;
             rt_ci.pGroups                      = groups;
-            rt_ci.maxPipelineRayRecursionDepth = 1;
+            rt_ci.maxPipelineRayRecursionDepth = 2; // allows shadow ray from within closest hit
             rt_ci.layout                       = s_res->rt_pipeline_layout;
 
             VkResult r = s_res->fn_create_rt_pipeline(device, VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &rt_ci, nullptr, &s_res->rt_pipeline);
 
-            vkDestroyShaderModule(device, raygen_module, nullptr);
-            vkDestroyShaderModule(device, miss_module, nullptr);
-            vkDestroyShaderModule(device, hit_module, nullptr);
+            vkDestroyShaderModule(device, raygen_module,      nullptr);
+            vkDestroyShaderModule(device, miss_module,        nullptr);
+            vkDestroyShaderModule(device, shadow_miss_module, nullptr);
+            vkDestroyShaderModule(device, hit_module,         nullptr);
 
             if (r != VK_SUCCESS) {
                 HN_CORE_ERROR("[PathTracer] vkCreateRayTracingPipelinesKHR failed ({})", (int)r);
                 return;
             }
 
-            // Retrieve shader handles from pipeline
-            std::vector<uint8_t> handles(handle_size * 3);
-            r = s_res->fn_get_sbt_handles(device, s_res->rt_pipeline, 0, 3, handle_size * 3, handles.data());
+            // Retrieve shader handles from pipeline (4 groups: raygen, miss, shadow_miss, hit)
+            std::vector<uint8_t> handles(handle_size * 4);
+            r = s_res->fn_get_sbt_handles(device, s_res->rt_pipeline, 0, 4, handle_size * 4, handles.data());
             HN_CORE_ASSERT(r == VK_SUCCESS, "vkGetRayTracingShaderGroupHandlesKHR failed");
 
 
@@ -820,22 +1016,25 @@ namespace Honey {
             }
 
 
-            // Copy handles into correct offsets
+            // Copy handles: [raygen | miss_primary | miss_shadow | hit]
             void* mapped = nullptr;
             vkMapMemory(device, s_res->sbt_memory, 0, sbt_total, 0, &mapped);
             uint8_t* dst = static_cast<uint8_t*>(mapped);
             memcpy(dst + 0 * region_size, handles.data() + 0 * handle_size, handle_size);
             memcpy(dst + 1 * region_size, handles.data() + 1 * handle_size, handle_size);
             memcpy(dst + 2 * region_size, handles.data() + 2 * handle_size, handle_size);
+            memcpy(dst + 3 * region_size, handles.data() + 3 * handle_size, handle_size);
             vkUnmapMemory(device, s_res->sbt_memory);
 
             VkBufferDeviceAddressInfo sbt_addr_info{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
             sbt_addr_info.buffer = s_res->sbt_buffer;
             VkDeviceAddress sbt_base = s_res->fn_get_buf_addr(device, &sbt_addr_info);
 
+            // miss region covers 2 entries (primary + shadow) with stride=region_size
+            // so traceRayEXT(..., missIndex=1) selects the shadow miss shader
             s_res->sbt_raygen = { sbt_base + 0 * region_size, region_size, region_size };
-            s_res->sbt_miss   = { sbt_base + 1 * region_size, region_size, region_size };
-            s_res->sbt_hit    = { sbt_base + 2 * region_size, region_size, region_size };
+            s_res->sbt_miss   = { sbt_base + 1 * region_size, region_size, 2 * region_size };
+            s_res->sbt_hit    = { sbt_base + 3 * region_size, region_size, region_size };
 
             s_res->pipeline_built = true;
             HN_CORE_INFO("[PathTracer] RT pipeline built successfully");
@@ -861,6 +1060,27 @@ namespace Honey {
         LOAD(fn_cmd_trace_rays,     vkCmdTraceRaysKHR);
         LOAD(fn_get_sbt_handles,    vkGetRayTracingShaderGroupHandlesKHR);
 #undef LOAD
+
+        // Allocate host-visible lights UBO (fixed size, mapped for lifetime of s_res)
+        {
+            VkDeviceSize lights_size = sizeof(LightsUBO);
+            VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+            bi.size        = lights_size;
+            bi.usage       = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+            bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            vkCreateBuffer(device, &bi, nullptr, &s_res->lights_buffer);
+
+            VkMemoryRequirements req{};
+            vkGetBufferMemoryRequirements(device, s_res->lights_buffer, &req);
+
+            VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+            ai.allocationSize  = req.size;
+            ai.memoryTypeIndex = find_memory_type(ctx->get_physical_device(), req.memoryTypeBits,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            vkAllocateMemory(device, &ai, nullptr, &s_res->lights_memory);
+            vkBindBufferMemory(device, s_res->lights_buffer, s_res->lights_memory, 0);
+            vkMapMemory(device, s_res->lights_memory, 0, lights_size, 0, &s_res->lights_mapped);
+        }
 
         build_rt_pipeline();
     }
@@ -896,6 +1116,18 @@ namespace Honey {
             vkFreeMemory(device, s_res->geometry_lookup_memory, nullptr);
         }
 
+        if (s_res->material_buffer != VK_NULL_HANDLE) {
+            vkUnmapMemory(device, s_res->material_memory);
+            vkDestroyBuffer(device, s_res->material_buffer, nullptr);
+            vkFreeMemory(device, s_res->material_memory, nullptr);
+        }
+
+        if (s_res->lights_buffer != VK_NULL_HANDLE) {
+            vkUnmapMemory(device, s_res->lights_memory);
+            vkDestroyBuffer(device, s_res->lights_buffer, nullptr);
+            vkFreeMemory(device, s_res->lights_memory, nullptr);
+        }
+
         destroy_accum_image();
 
         if (s_res->sbt_buffer != VK_NULL_HANDLE) {
@@ -929,6 +1161,11 @@ namespace Honey {
     void Renderer3DPathTracer::invalidate_accumulation() {
         if (s_res)
             s_res->accum_frame_count = 0;
+    }
+
+    void Renderer3DPathTracer::set_lights(const LightsUBO& lights) {
+        if (s_res && s_res->lights_mapped)
+            memcpy(s_res->lights_mapped, &lights, sizeof(LightsUBO));
     }
 
     void Renderer3DPathTracer::invalidate_resources() {

@@ -49,6 +49,10 @@ namespace Honey {
         uint32_t meshlet_count              = 0;
         uint32_t max_vertices_per_meshlet   = 0;
         uint32_t max_triangles_per_meshlet  = 0;
+
+        // Range of this submesh within the mesh-level flat_index_buffer (in triangles, not bytes).
+        uint32_t flat_index_first     = 0;
+        uint32_t flat_index_tri_count = 0;
     };
 
     struct Submesh {

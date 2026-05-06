@@ -1476,6 +1476,7 @@ namespace Honey {
                     const uint32_t m_off  = meshlets_cursor;
                     const uint32_t mv_off = meshlet_vertices_cursor;
                     const uint32_t mt_off = meshlet_triangles_cursor;
+                    const uint32_t flat_first = (uint32_t)global_flat_indices.size() / 3;
 
                     const float* v_floats = reinterpret_cast<const float*>(mb.opt_vertices.data());
                     global_vertices.insert(global_vertices.end(),
@@ -1516,6 +1517,8 @@ namespace Honey {
                     pr.submesh.meshlets->meshlet_vertices_offset  = mv_off;
                     pr.submesh.meshlets->meshlet_triangles_offset = mt_off;
                     pr.submesh.meshlets->bounds_offset            = m_off;
+                    pr.submesh.meshlets->flat_index_first         = flat_first;
+                    pr.submesh.meshlets->flat_index_tri_count     = (uint32_t)global_flat_indices.size() / 3 - flat_first;
                 }
 
                 GlobalMeshletBuffers global_bufs{};
@@ -1758,6 +1761,19 @@ namespace Honey {
                 !payload.meshlet_buffers->meshlet_triangles.empty() &&
                 !payload.meshlet_buffers->bounds.empty()) {
                 const auto& mb = *payload.meshlet_buffers;
+
+                // Prefix sum of triangle counts per meshlet — used to assign per-submesh flat index ranges.
+                std::vector<uint32_t> tri_prefix(mb.meshlets.size() + 1, 0);
+                for (size_t i = 0; i < mb.meshlets.size(); i++)
+                    tri_prefix[i + 1] = tri_prefix[i] + mb.meshlets[i].triangle_count;
+
+                for (auto& sm : out->get_submeshes()) {
+                    if (!sm.meshlets.has_value()) continue;
+                    auto& mg = *sm.meshlets;
+                    mg.flat_index_first     = tri_prefix[mg.meshlets_offset];
+                    mg.flat_index_tri_count = tri_prefix[mg.meshlets_offset + mg.meshlet_count] - tri_prefix[mg.meshlets_offset];
+                }
+
                 std::vector<uint32_t> flat_indices;
                 flat_indices.reserve(mb.meshlets.size() * 64 * 3);
                 for (const auto& m : mb.meshlets) {
