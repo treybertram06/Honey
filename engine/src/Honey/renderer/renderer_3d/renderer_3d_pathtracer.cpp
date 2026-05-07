@@ -42,10 +42,17 @@ namespace Honey {
 
             // Material / texture data
             struct MaterialInfo {
-                glm::vec4 base_color_factor{1.0f};
-                int texture_index = -1; // -1 = no texture, else index into texture descriptor array
-                float _pad[3]{};
-            };
+                glm::vec4 base_color_factor{1.0f};    // 16 bytes
+                glm::vec4 emissive_factor{0.0f};      // 16 bytes
+                int  base_color_tex  = -1;            //  4 bytes
+                int  metal_rough_tex = -1;            //  4 bytes  (B=metalness, G=roughness per glTF)
+                int  normal_tex      = -1;            //  4 bytes
+                int  emissive_tex    = -1;            //  4 bytes
+                float metalness      = 1.0f;          //  4 bytes
+                float roughness      = 1.0f;          //  4 bytes
+                float normal_scale   = 1.0f;          //  4 bytes
+                float _pad           = 0.0f;          //  4 bytes
+            }; // 64 bytes. GLSL std430 must match exactly.
 
             static constexpr uint32_t k_max_rt_textures = 512;
 
@@ -597,22 +604,30 @@ namespace Honey {
 
                     if (mat) {
                         mat_info.base_color_factor = mat->get_base_color_factor();
-                        const Ref<Texture2D>& tex = mat->get_base_color_texture();
-                        if (tex) {
-                            auto* vk_tex = dynamic_cast<VulkanTexture2D*>(tex.get());
-                            VkImageView img_view = vk_tex ? static_cast<VkImageView>(vk_tex->get_vk_image_view()) : VK_NULL_HANDLE;
-                            VkSampler sampler    = vk_tex ? static_cast<VkSampler>(vk_tex->get_vk_sampler())     : VK_NULL_HANDLE;
-                            if (img_view != VK_NULL_HANDLE) {
-                                auto it = std::find_if(s_res->bound_textures.begin(), s_res->bound_textures.end(),
-                                    [img_view](const auto& p) { return p.first == img_view; });
-                                if (it == s_res->bound_textures.end()) {
-                                    mat_info.texture_index = (int)s_res->bound_textures.size();
-                                    s_res->bound_textures.push_back({ img_view, sampler });
-                                } else {
-                                    mat_info.texture_index = (int)(it - s_res->bound_textures.begin());
-                                }
-                            }
-                        }
+                        mat_info.emissive_factor   = glm::vec4(mat->get_emissive_factor(), 0.0f);
+                        mat_info.metalness         = mat->get_metallic_factor();
+                        mat_info.roughness         = mat->get_roughness_factor();
+                        mat_info.normal_scale      = mat->get_normal_scale();
+
+                        auto register_tex = [&](const Ref<Texture2D>& tex) -> int {
+                            if (!tex) return -1;
+                            auto* vk = dynamic_cast<VulkanTexture2D*>(tex.get());
+                            VkImageView view    = vk ? static_cast<VkImageView>(vk->get_vk_image_view()) : VK_NULL_HANDLE;
+                            VkSampler   sampler = vk ? static_cast<VkSampler>(vk->get_vk_sampler())      : VK_NULL_HANDLE;
+                            if (view == VK_NULL_HANDLE) return -1;
+                            auto it = std::find_if(s_res->bound_textures.begin(), s_res->bound_textures.end(),
+                                [view](const auto& p){ return p.first == view; });
+                            if (it != s_res->bound_textures.end())
+                                return (int)(it - s_res->bound_textures.begin());
+                            int idx = (int)s_res->bound_textures.size();
+                            s_res->bound_textures.push_back({ view, sampler });
+                            return idx;
+                        };
+
+                        mat_info.base_color_tex  = register_tex(mat->get_base_color_texture());
+                        mat_info.metal_rough_tex = register_tex(mat->get_metallic_roughness_texture());
+                        mat_info.normal_tex      = register_tex(mat->get_normal_texture());
+                        mat_info.emissive_tex    = register_tex(mat->get_emissive_texture());
                     }
                     materials.push_back(mat_info);
 
@@ -819,7 +834,7 @@ namespace Honey {
             bindings[5].binding         = 5;
             bindings[5].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             bindings[5].descriptorCount = 1;
-            bindings[5].stageFlags      = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+            bindings[5].stageFlags      = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR;
 
             VkDescriptorBindingFlags binding_flags[6] = {
                 0, // 0: TLAS

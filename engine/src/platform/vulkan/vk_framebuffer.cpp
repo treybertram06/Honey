@@ -358,14 +358,32 @@ namespace Honey {
                                name);
             }
 
+            // Transition UNDEFINED → SHADER_READ_ONLY_OPTIMAL so ImGui can safely
+            // sample the image on the first frame before any render pass writes it.
+            m_backend->immediate_submit([&](VkCommandBuffer cmd) {
+                VkImageMemoryBarrier barrier{};
+                barrier.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                barrier.oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED;
+                barrier.newLayout           = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.image               = out.image;
+                barrier.subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+                barrier.srcAccessMask       = 0;
+                barrier.dstAccessMask       = VK_ACCESS_SHADER_READ_BIT;
+                vkCmdPipelineBarrier(cmd,
+                    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                    0, 0, nullptr, 0, nullptr, 1, &barrier);
+            });
+            out.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
             {
                 VkSampler sampler = m_backend->get_imgui_sampler();
-                VkImageLayout layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
                 m_imgui_texture_sets[i] = ImGui_ImplVulkan_AddTexture(
                     sampler,
                     out.view,
-                    layout
+                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
                 );
             }
         }

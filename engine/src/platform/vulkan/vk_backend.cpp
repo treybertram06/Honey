@@ -1674,6 +1674,7 @@ namespace Honey {
         VkPhysicalDeviceFeatures features{};
         features.independentBlend = VK_TRUE;
         features.samplerAnisotropy = VK_TRUE;
+        features.shaderInt64 = VK_TRUE;
         m_max_anisotropy = device_props.limits.maxSamplerAnisotropy;
         HN_CORE_INFO("Max Anisotropy: {0}", m_max_anisotropy);
         features.fillModeNonSolid = VK_TRUE;
