@@ -247,6 +247,7 @@ namespace Honey {
 
         bool m_timeline_semaphore_supported = false;
         bool m_mesh_shader_supported = false;
+        bool m_ray_tracing_supported = false;
         bool m_has_dedicated_compute_queue = false;
 
         // Streaming upload context (ring buffer, primarily used by the dedicated upload thread)

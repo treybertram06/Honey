@@ -1683,20 +1683,35 @@ namespace Honey {
         std::vector<const char*> device_extensions = {
             VK_KHR_SWAPCHAIN_EXTENSION_NAME,
             VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
-            VK_EXT_MESH_SHADER_EXTENSION_NAME,
+            //VK_EXT_MESH_SHADER_EXTENSION_NAME,
 
-            VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,   // BLAS/TLAS
-            VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,     // RT pipeline + vkCmdTraceRaysKHR
-            VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME, // required dep of accel structure
-            VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,    // required dep (device addresses)
-            VK_KHR_SPIRV_1_4_EXTENSION_NAME,                // required dep of RT pipeline
-            VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME,    // required dep of SPIRV 1.4
+            //VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,   // BLAS/TLAS
+            //VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,     // RT pipeline + vkCmdTraceRaysKHR
+            //VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME, // required dep of accel structure
+            //VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,    // required dep (device addresses)
+            //VK_KHR_SPIRV_1_4_EXTENSION_NAME,                // required dep of RT pipeline
+            //VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME,    // required dep of SPIRV 1.4
+        };
+
+        const auto rt_extensions = {
+            VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
+            VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
+            VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
+            VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
+            VK_KHR_SPIRV_1_4_EXTENSION_NAME,
+            VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME
         };
 
         const bool has_mesh_shader_ext = device_supports_extensions(
             m_physical_device, {VK_EXT_MESH_SHADER_EXTENSION_NAME});
         if (has_mesh_shader_ext)
             device_extensions.push_back(VK_EXT_MESH_SHADER_EXTENSION_NAME);
+
+        const bool has_ray_tracing_ext = device_supports_extensions(
+            m_physical_device, rt_extensions);
+        if (has_ray_tracing_ext)
+            for (auto ext : rt_extensions)
+                device_extensions.push_back(ext);
 
 #ifdef HN_PLATFORM_MACOS
         device_extensions.push_back("VK_KHR_portability_subset");
@@ -1732,9 +1747,14 @@ namespace Honey {
             timeline_features.pNext = &vk11_features;
         }
         vk11_features.pNext    = &bda_features;
-        bda_features.pNext     = &accel_features;
-        accel_features.pNext   = &rt_features;
-        rt_features.pNext      = nullptr;
+
+        if (has_ray_tracing_ext) {
+            bda_features.pNext     = &accel_features;
+            accel_features.pNext   = &rt_features;
+            rt_features.pNext      = nullptr;
+        } else {
+            bda_features.pNext     = nullptr;
+        }
 
         VkPhysicalDeviceFeatures2 features2{};
         features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
@@ -1744,9 +1764,15 @@ namespace Honey {
 
         m_timeline_semaphore_supported = (timeline_features.timelineSemaphore == VK_TRUE);
         m_mesh_shader_supported = has_mesh_shader_ext && (mesh_features.meshShader == VK_TRUE);
+        m_ray_tracing_supported = (accel_features.accelerationStructure == VK_TRUE &&
+                                    rt_features.rayTracingPipeline == VK_TRUE &&
+                                    bda_features.bufferDeviceAddress == VK_TRUE);
 
         if (!m_mesh_shader_supported)
             HN_CORE_WARN("VK_EXT_mesh_shader not available — mesh/shadow passes will be disabled.");
+
+        if (!m_ray_tracing_supported)
+            HN_CORE_WARN("At least one required hardware ray tracing feature is not available - hardware ray tracing passes will be disabled.");
 
         // Enable the descriptor indexing features we want (assert support first)
         HN_CORE_ASSERT(indexing_features.runtimeDescriptorArray == VK_TRUE,
@@ -1757,12 +1783,12 @@ namespace Honey {
                        "Bindless requires shaderSampledImageArrayNonUniformIndexing (VK_EXT_descriptor_indexing)");
         HN_CORE_ASSERT(m_timeline_semaphore_supported,
                        "Async upload sync requires timelineSemaphore feature support");
-        HN_CORE_ASSERT(accel_features.accelerationStructure == VK_TRUE,
-                        "VK_KHR_acceleration_structure: feature not supported on this device");
-        HN_CORE_ASSERT(rt_features.rayTracingPipeline == VK_TRUE,
-                        "VK_KHR_ray_tracing_pipeline: feature not supported on this device");
-        HN_CORE_ASSERT(bda_features.bufferDeviceAddress == VK_TRUE,
-                        "VK_KHR_buffer_device_address: feature not supported on this device");
+        //HN_CORE_ASSERT(accel_features.accelerationStructure == VK_TRUE,
+        //                "VK_KHR_acceleration_structure: feature not supported on this device");
+        //HN_CORE_ASSERT(rt_features.rayTracingPipeline == VK_TRUE,
+        //                "VK_KHR_ray_tracing_pipeline: feature not supported on this device");
+        //HN_CORE_ASSERT(bda_features.bufferDeviceAddress == VK_TRUE,
+        //                "VK_KHR_buffer_device_address: feature not supported on this device");
 
         // Optional but commonly used for "true bindless" (variable-sized arrays / update-after-bind)
         // If you don't need them yet, you can leave them disabled and also omit related layout/pool flags.
@@ -1784,9 +1810,11 @@ namespace Honey {
 
         vk11_features.shaderDrawParameters = VK_TRUE; // required for gl_DrawID in task/mesh shaders
 
-        accel_features.accelerationStructure = VK_TRUE;
-        rt_features.rayTracingPipeline       = VK_TRUE;
-        bda_features.bufferDeviceAddress     = VK_TRUE;
+        if (m_ray_tracing_supported) {
+            accel_features.accelerationStructure = VK_TRUE;
+            rt_features.rayTracingPipeline       = VK_TRUE;
+            bda_features.bufferDeviceAddress     = VK_TRUE;
+        }
 
         // Keep your core features:
         features2.features = features;
