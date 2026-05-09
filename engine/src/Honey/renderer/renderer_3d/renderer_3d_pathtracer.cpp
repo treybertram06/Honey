@@ -98,6 +98,32 @@ namespace Honey {
             uint32_t accum_frame_count = 0;
             bool accum_needs_layout_init = true; // transition UNDEFINED → GENERAL on first trace
 
+            // SVGF G-buffer: normal.xyz + linear depth.w (RGBA32F, written by raygen).
+            VkImage gbuffer_image = VK_NULL_HANDLE;
+            VkDeviceMemory gbuffer_memory = VK_NULL_HANDLE;
+            VkImageView gbuffer_view = VK_NULL_HANDLE;
+            bool gbuffer_needs_layout_init = true;
+
+            // SVGF À-Trous ping-pong scratch image.
+            VkImage ping_image = VK_NULL_HANDLE;
+            VkDeviceMemory ping_memory = VK_NULL_HANDLE;
+            VkImageView ping_view = VK_NULL_HANDLE;
+            bool ping_needs_layout_init = true;
+
+            // SVGF filtered output (final result after À-Trous, blitted to display).
+            VkImage filtered_image = VK_NULL_HANDLE;
+            VkDeviceMemory filtered_memory = VK_NULL_HANDLE;
+            VkImageView filtered_view = VK_NULL_HANDLE;
+            bool filtered_needs_layout_init = true;
+
+            // SVGF compute pipeline.
+            VkPipeline svgf_pipeline = VK_NULL_HANDLE;
+            VkPipelineLayout svgf_pipeline_layout = VK_NULL_HANDLE;
+            VkDescriptorSetLayout svgf_desc_layout = VK_NULL_HANDLE;
+            VkDescriptorPool svgf_desc_pool = VK_NULL_HANDLE;
+            VkDescriptorSet svgf_desc_set = VK_NULL_HANDLE;
+            bool svgf_pipeline_built = false;
+
             // Camera matrices for ray generation push constants.
             glm::mat4 inv_view{1.0f};
             glm::mat4 inv_proj{1.0f};
@@ -143,74 +169,89 @@ namespace Honey {
             return out;
         }
 
-        static void destroy_accum_image() {
-            VkDevice device = s_res->vk_ctx->get_device();
-            if (s_res->accum_view != VK_NULL_HANDLE) {
-                vkDestroyImageView(device, s_res->accum_view, nullptr);
-                s_res->accum_view = VK_NULL_HANDLE;
-            }
-            if (s_res->accum_image != VK_NULL_HANDLE) {
-                vkDestroyImage(device, s_res->accum_image, nullptr);
-                s_res->accum_image = VK_NULL_HANDLE;
-            }
-            if (s_res->accum_memory != VK_NULL_HANDLE) {
-                vkFreeMemory(device, s_res->accum_memory, nullptr);
-                s_res->accum_memory = VK_NULL_HANDLE;
-            }
+        static void destroy_image(VkDevice device, VkImage& img, VkDeviceMemory& mem, VkImageView& view) {
+            if (view  != VK_NULL_HANDLE) { vkDestroyImageView(device, view,  nullptr); view  = VK_NULL_HANDLE; }
+            if (img   != VK_NULL_HANDLE) { vkDestroyImage(device, img,   nullptr); img   = VK_NULL_HANDLE; }
+            if (mem   != VK_NULL_HANDLE) { vkFreeMemory(device, mem,   nullptr); mem   = VK_NULL_HANDLE; }
         }
 
-        static void create_accum_image(uint32_t w, uint32_t h) {
+        static void destroy_accum_image() {
+            VkDevice device = s_res->vk_ctx->get_device();
+            destroy_image(device, s_res->accum_image,    s_res->accum_memory,    s_res->accum_view);
+            destroy_image(device, s_res->gbuffer_image,  s_res->gbuffer_memory,  s_res->gbuffer_view);
+            destroy_image(device, s_res->ping_image,     s_res->ping_memory,     s_res->ping_view);
+            destroy_image(device, s_res->filtered_image, s_res->filtered_memory, s_res->filtered_view);
+        }
+
+        static void alloc_storage_image(uint32_t w, uint32_t h, VkFormat fmt, VkImageUsageFlags extra_usage,
+                                        VkImage& img, VkDeviceMemory& mem, VkImageView& view) {
             VkDevice device = s_res->vk_ctx->get_device();
             VkPhysicalDevice phys = s_res->vk_ctx->get_physical_device();
 
-            destroy_accum_image();
-
             VkImageCreateInfo ici{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-            ici.imageType   = VK_IMAGE_TYPE_2D;
-            ici.format      = VK_FORMAT_R32G32B32A32_SFLOAT;
-            ici.extent      = {w, h, 1};
-            ici.mipLevels   = 1;
-            ici.arrayLayers = 1;
-            ici.samples     = VK_SAMPLE_COUNT_1_BIT;
-            ici.tiling      = VK_IMAGE_TILING_OPTIMAL;
-            ici.usage       = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+            ici.imageType     = VK_IMAGE_TYPE_2D;
+            ici.format        = fmt;
+            ici.extent        = {w, h, 1};
+            ici.mipLevels     = 1;
+            ici.arrayLayers   = 1;
+            ici.samples       = VK_SAMPLE_COUNT_1_BIT;
+            ici.tiling        = VK_IMAGE_TILING_OPTIMAL;
+            ici.usage         = VK_IMAGE_USAGE_STORAGE_BIT | extra_usage;
             ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            VkResult r = vkCreateImage(device, &ici, nullptr, &s_res->accum_image);
-            HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateImage failed (accum)");
+            VkResult r = vkCreateImage(device, &ici, nullptr, &img);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateImage failed");
 
             VkMemoryRequirements req{};
-            vkGetImageMemoryRequirements(device, s_res->accum_image, &req);
+            vkGetImageMemoryRequirements(device, img, &req);
 
             VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
             ai.allocationSize  = req.size;
             ai.memoryTypeIndex = find_memory_type(phys, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-            r = vkAllocateMemory(device, &ai, nullptr, &s_res->accum_memory);
-            HN_CORE_ASSERT(r == VK_SUCCESS, "vkAllocateMemory failed (accum)");
-
-            vkBindImageMemory(device, s_res->accum_image, s_res->accum_memory, 0);
+            r = vkAllocateMemory(device, &ai, nullptr, &mem);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "vkAllocateMemory failed");
+            vkBindImageMemory(device, img, mem, 0);
 
             VkImageViewCreateInfo vci{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-            vci.image    = s_res->accum_image;
-            vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-            vci.format   = VK_FORMAT_R32G32B32A32_SFLOAT;
+            vci.image            = img;
+            vci.viewType         = VK_IMAGE_VIEW_TYPE_2D;
+            vci.format           = fmt;
             vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            r = vkCreateImageView(device, &vci, nullptr, &s_res->accum_view);
-            HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateImageView failed (accum)");
+            r = vkCreateImageView(device, &vci, nullptr, &view);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateImageView failed");
+        }
 
-            s_res->accum_width  = w;
-            s_res->accum_height = h;
-            s_res->accum_frame_count = 0;
-            s_res->accum_needs_layout_init = true;
+        static void create_accum_image(uint32_t w, uint32_t h) {
+            destroy_accum_image();
+
+            alloc_storage_image(w, h, VK_FORMAT_R32G32B32A32_SFLOAT,
+                VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                s_res->accum_image,    s_res->accum_memory,    s_res->accum_view);
+            alloc_storage_image(w, h, VK_FORMAT_R32G32B32A32_SFLOAT, 0,
+                s_res->gbuffer_image,  s_res->gbuffer_memory,  s_res->gbuffer_view);
+            alloc_storage_image(w, h, VK_FORMAT_R32G32B32A32_SFLOAT, 0,
+                s_res->ping_image,     s_res->ping_memory,     s_res->ping_view);
+            alloc_storage_image(w, h, VK_FORMAT_R32G32B32A32_SFLOAT,
+                VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                s_res->filtered_image, s_res->filtered_memory, s_res->filtered_view);
+
+            s_res->accum_width    = w;
+            s_res->accum_height   = h;
+            s_res->accum_frame_count      = 0;
+            s_res->accum_needs_layout_init    = true;
+            s_res->gbuffer_needs_layout_init  = true;
+            s_res->ping_needs_layout_init     = true;
+            s_res->filtered_needs_layout_init = true;
         }
 
         static void update_desc_set() {
             HN_CORE_ASSERT(s_res->geometry_lookup_buffer != VK_NULL_HANDLE, "Geometry lookup buffer not created");
             HN_CORE_ASSERT(s_res->rt_desc_set != VK_NULL_HANDLE, "RT descriptor set not created");
             HN_CORE_ASSERT(s_res->accum_view != VK_NULL_HANDLE, "Accumulation image not created");
+            HN_CORE_ASSERT(s_res->gbuffer_view != VK_NULL_HANDLE, "G-buffer image not created");
 
             VkDevice device = s_res->vk_ctx->get_device();
 
-            VkWriteDescriptorSet writes[6] = {};
+            VkWriteDescriptorSet writes[7] = {};
 
             VkWriteDescriptorSetAccelerationStructureKHR as_info{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR};
             as_info.accelerationStructureCount = 1;
@@ -290,13 +331,27 @@ namespace Honey {
             writes[5].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             writes[5].pBufferInfo     = &lights_buf_info;
 
-            // Write all 6 entries; writes[4] is only valid when img_infos is non-empty,
-            // but its descriptorCount=0 default makes it a no-op when not filled.
-            uint32_t write_count = img_infos.empty() ? 5 : 6;
-            // Slide the lights write down to index 4 when there are no textures
-            // so we don't submit an empty texture write followed by the lights write.
-            if (img_infos.empty())
+            // binding 6 - G-buffer image
+            VkDescriptorImageInfo gbuffer_info{};
+            gbuffer_info.imageView   = s_res->gbuffer_view;
+            gbuffer_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+            writes[6].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[6].dstSet          = s_res->rt_desc_set;
+            writes[6].dstBinding      = 6;
+            writes[6].descriptorCount = 1;
+            writes[6].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[6].pImageInfo      = &gbuffer_info;
+
+            // writes[4] is only valid when img_infos is non-empty; slide slots when empty.
+            uint32_t write_count;
+            if (img_infos.empty()) {
                 writes[4] = writes[5];
+                writes[5] = writes[6];
+                write_count = 6;
+            } else {
+                write_count = 7;
+            }
             vkUpdateDescriptorSets(device, write_count, writes, 0, nullptr);
         }
 
@@ -803,11 +858,10 @@ namespace Honey {
             uint32_t region_size = align_up(handle_size, base_align);
             uint32_t sbt_total   = region_size * 4; // raygen + miss_primary + miss_shadow + hit
 
-            VkDescriptorSetLayoutBinding bindings[6] = {};
+            VkDescriptorSetLayoutBinding bindings[7] = {};
             bindings[0].binding         = 0;
             bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
             bindings[0].descriptorCount = 1;
-            // TLAS must be visible in closest hit for shadow traceRayEXT calls
             bindings[0].stageFlags      = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
             // binding 1 - Accumulation image
             bindings[1].binding         = 1;
@@ -830,27 +884,33 @@ namespace Honey {
             bindings[4].descriptorCount = PathTracerResources::k_max_rt_textures;
             bindings[4].stageFlags      = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
             bindings[4].pImmutableSamplers = nullptr;
-            // binding 5 - lights UBO (closest hit)
+            // binding 5 - lights UBO
             bindings[5].binding         = 5;
             bindings[5].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             bindings[5].descriptorCount = 1;
             bindings[5].stageFlags      = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR;
+            // binding 6 - G-buffer image (normal.xyz + depth.w), written by raygen for SVGF
+            bindings[6].binding         = 6;
+            bindings[6].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            bindings[6].descriptorCount = 1;
+            bindings[6].stageFlags      = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
 
-            VkDescriptorBindingFlags binding_flags[6] = {
+            VkDescriptorBindingFlags binding_flags[7] = {
                 0, // 0: TLAS
-                0, // 1: storage image
+                0, // 1: accum image
                 0, // 2: geometry SSBO
                 0, // 3: material SSBO
                 VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT, // 4: texture array
                 0, // 5: lights UBO
+                0, // 6: gbuffer image
             };
             VkDescriptorSetLayoutBindingFlagsCreateInfo flags_ci{
                 VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
-            flags_ci.bindingCount  = 6;
+            flags_ci.bindingCount  = 7;
             flags_ci.pBindingFlags = binding_flags;
 
             VkDescriptorSetLayoutCreateInfo layout_ci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-            layout_ci.pNext = &flags_ci;
+            layout_ci.pNext        = &flags_ci;
             layout_ci.bindingCount = std::size(bindings);
             layout_ci.pBindings    = bindings;
             vkCreateDescriptorSetLayout(device, &layout_ci, nullptr, &s_res->rt_desc_layout);
@@ -859,10 +919,10 @@ namespace Honey {
             // Create descriptor pool and allocate the set
             VkDescriptorPoolSize pool_sizes[5] = {
                 { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1 },
-                { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1 },
+                { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 }, // accum + gbuffer
                 { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 }, // geometry + material
                 { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, PathTracerResources::k_max_rt_textures },
-                { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 },  // lights
+                { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 },
             };
             VkDescriptorPoolCreateInfo pool_ci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
             pool_ci.maxSets       = 1;
@@ -1055,6 +1115,104 @@ namespace Honey {
             HN_CORE_INFO("[PathTracer] RT pipeline built successfully");
         }
 
+        static void build_svgf_pipeline() {
+            VkDevice device = s_res->vk_ctx->get_device();
+
+            // Descriptor layout: 4 storage images (accum, ping, filtered, gbuffer)
+            VkDescriptorSetLayoutBinding svgf_bindings[4] = {};
+            for (uint32_t i = 0; i < 4; i++) {
+                svgf_bindings[i].binding        = i;
+                svgf_bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+                svgf_bindings[i].descriptorCount = 1;
+                svgf_bindings[i].stageFlags     = VK_SHADER_STAGE_COMPUTE_BIT;
+            }
+            VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+            slci.bindingCount = 4;
+            slci.pBindings    = svgf_bindings;
+            vkCreateDescriptorSetLayout(device, &slci, nullptr, &s_res->svgf_desc_layout);
+
+            VkDescriptorPoolSize pool_size{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4 };
+            VkDescriptorPoolCreateInfo dpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+            dpci.maxSets       = 1;
+            dpci.poolSizeCount = 1;
+            dpci.pPoolSizes    = &pool_size;
+            vkCreateDescriptorPool(device, &dpci, nullptr, &s_res->svgf_desc_pool);
+
+            VkDescriptorSetAllocateInfo dsai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+            dsai.descriptorPool     = s_res->svgf_desc_pool;
+            dsai.descriptorSetCount = 1;
+            dsai.pSetLayouts        = &s_res->svgf_desc_layout;
+            vkAllocateDescriptorSets(device, &dsai, &s_res->svgf_desc_set);
+
+            // Push constants: step_size, pass_idx, width, height (ints) + blend_factor (float) = 20 bytes
+            VkPushConstantRange pc_range{};
+            pc_range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+            pc_range.offset     = 0;
+            pc_range.size       = sizeof(int32_t) * 4 + sizeof(float);
+
+            VkPipelineLayoutCreateInfo plci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+            plci.setLayoutCount         = 1;
+            plci.pSetLayouts            = &s_res->svgf_desc_layout;
+            plci.pushConstantRangeCount = 1;
+            plci.pPushConstantRanges    = &pc_range;
+            vkCreatePipelineLayout(device, &plci, nullptr, &s_res->svgf_pipeline_layout);
+
+            std::filesystem::path assets_dir(ASSET_ROOT);
+            std::string src = ShaderCompiler::read_file(assets_dir / "shaders" / "PathTrace_SVGF.comp");
+            if (src.empty()) {
+                HN_CORE_ERROR("[PathTracer] Failed to read PathTrace_SVGF.comp");
+                return;
+            }
+            auto spirv = ShaderCompiler::compile_single_stage(src, ShaderCompiler::ShaderStage::Compute);
+            if (spirv.empty()) {
+                HN_CORE_ERROR("[PathTracer] SPIRV compilation failed for PathTrace_SVGF.comp");
+                return;
+            }
+            VkShaderModuleCreateInfo smci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+            smci.codeSize = spirv.size() * 4;
+            smci.pCode    = spirv.data();
+            VkShaderModule comp_module = VK_NULL_HANDLE;
+            vkCreateShaderModule(device, &smci, nullptr, &comp_module);
+
+            VkComputePipelineCreateInfo cpci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+            cpci.stage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            cpci.stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
+            cpci.stage.module = comp_module;
+            cpci.stage.pName  = "main";
+            cpci.layout       = s_res->svgf_pipeline_layout;
+            VkResult r = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &cpci, nullptr, &s_res->svgf_pipeline);
+            vkDestroyShaderModule(device, comp_module, nullptr);
+
+            if (r != VK_SUCCESS) {
+                HN_CORE_ERROR("[PathTracer] vkCreateComputePipelines failed for SVGF ({})", (int)r);
+                return;
+            }
+
+            s_res->svgf_pipeline_built = true;
+            HN_CORE_INFO("[PathTracer] SVGF compute pipeline built successfully");
+        }
+
+        static void update_svgf_desc_set() {
+            VkDevice device = s_res->vk_ctx->get_device();
+
+            VkDescriptorImageInfo img_infos[4] = {};
+            img_infos[0] = { VK_NULL_HANDLE, s_res->accum_view,    VK_IMAGE_LAYOUT_GENERAL };
+            img_infos[1] = { VK_NULL_HANDLE, s_res->ping_view,     VK_IMAGE_LAYOUT_GENERAL };
+            img_infos[2] = { VK_NULL_HANDLE, s_res->filtered_view, VK_IMAGE_LAYOUT_GENERAL };
+            img_infos[3] = { VK_NULL_HANDLE, s_res->gbuffer_view,  VK_IMAGE_LAYOUT_GENERAL };
+
+            VkWriteDescriptorSet writes[4] = {};
+            for (uint32_t i = 0; i < 4; i++) {
+                writes[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writes[i].dstSet          = s_res->svgf_desc_set;
+                writes[i].dstBinding      = i;
+                writes[i].descriptorCount = 1;
+                writes[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+                writes[i].pImageInfo      = &img_infos[i];
+            }
+            vkUpdateDescriptorSets(device, 4, writes, 0, nullptr);
+        }
+
     } // anonymous namespace
 
     void Renderer3DPathTracer::init(VulkanContext* ctx) {
@@ -1098,6 +1256,7 @@ namespace Honey {
         }
 
         build_rt_pipeline();
+        build_svgf_pipeline();
     }
 
     void Renderer3DPathTracer::shutdown() {
@@ -1157,6 +1316,15 @@ namespace Honey {
             vkDestroyDescriptorPool(device, s_res->rt_desc_pool, nullptr);
         if (s_res->rt_desc_layout != VK_NULL_HANDLE)
             vkDestroyDescriptorSetLayout(device, s_res->rt_desc_layout, nullptr);
+
+        if (s_res->svgf_pipeline != VK_NULL_HANDLE)
+            vkDestroyPipeline(device, s_res->svgf_pipeline, nullptr);
+        if (s_res->svgf_pipeline_layout != VK_NULL_HANDLE)
+            vkDestroyPipelineLayout(device, s_res->svgf_pipeline_layout, nullptr);
+        if (s_res->svgf_desc_pool != VK_NULL_HANDLE)
+            vkDestroyDescriptorPool(device, s_res->svgf_desc_pool, nullptr);
+        if (s_res->svgf_desc_layout != VK_NULL_HANDLE)
+            vkDestroyDescriptorSetLayout(device, s_res->svgf_desc_layout, nullptr);
 
         delete s_res;
         s_res = nullptr;
@@ -1240,29 +1408,44 @@ namespace Honey {
                 return;
 
             update_desc_set();
+            if (s_res->svgf_pipeline_built)
+                update_svgf_desc_set();
 
-            glm::mat4 inv_view    = s_res->inv_view;
-            glm::mat4 inv_proj    = s_res->inv_proj;
-            uint32_t  frame_count = s_res->accum_frame_count;
-            uint32_t  trace_w     = s_res->accum_width;
-            uint32_t  trace_h     = s_res->accum_height;
-            bool      need_init   = s_res->accum_needs_layout_init;
+            glm::mat4 inv_view     = s_res->inv_view;
+            glm::mat4 inv_proj     = s_res->inv_proj;
+            uint32_t  frame_count  = s_res->accum_frame_count;
+            uint32_t  trace_w      = s_res->accum_width;
+            uint32_t  trace_h      = s_res->accum_height;
+            bool      need_init    = s_res->accum_needs_layout_init;
+            bool      gbuf_init    = s_res->gbuffer_needs_layout_init;
+            bool      ping_init    = s_res->ping_needs_layout_init;
+            bool      filtered_init = s_res->filtered_needs_layout_init;
+            bool      svgf_ready   = s_res->svgf_pipeline_built;
+            // blend_factor decays as temporal accumulation converges: full filter at frame 0,
+            // half at frame 8, near-zero at frame 64 — avoids blurring a clean image.
+            float     blend_factor = std::min(1.0f, 8.0f / (float)(frame_count + 1));
 
-            // --- Ray trace into accum_image ---
-            ctx.submit_vulkan_compute([inv_view, inv_proj, frame_count, trace_w, trace_h, need_init](VkCommandBuffer cmd) {
-                if (need_init) {
+            // --- Ray trace into accum_image + gbuffer_image ---
+            ctx.submit_vulkan_compute([inv_view, inv_proj, frame_count, trace_w, trace_h,
+                                       need_init, gbuf_init, ping_init, filtered_init](VkCommandBuffer cmd) {
+                // Transition any images that are still in UNDEFINED layout on first use.
+                auto transition_to_general = [&](VkImage img) {
                     VkImageMemoryBarrier imb{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
                     imb.oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED;
                     imb.newLayout        = VK_IMAGE_LAYOUT_GENERAL;
-                    imb.image            = s_res->accum_image;
+                    imb.image            = img;
                     imb.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
                     imb.srcAccessMask    = 0;
                     imb.dstAccessMask    = VK_ACCESS_SHADER_WRITE_BIT;
                     vkCmdPipelineBarrier(cmd,
                         VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                        VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                        VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                         0, 0, nullptr, 0, nullptr, 1, &imb);
-                }
+                };
+                if (need_init)     transition_to_general(s_res->accum_image);
+                if (gbuf_init)     transition_to_general(s_res->gbuffer_image);
+                if (ping_init)     transition_to_general(s_res->ping_image);
+                if (filtered_init) transition_to_general(s_res->filtered_image);
 
                 struct PC { glm::mat4 inv_view; glm::mat4 inv_proj; uint32_t frame_count; };
                 PC pc{ inv_view, inv_proj, frame_count };
@@ -1279,20 +1462,64 @@ namespace Honey {
             });
 
             s_res->accum_frame_count++;
-            s_res->accum_needs_layout_init = false;
+            s_res->accum_needs_layout_init    = false;
+            s_res->gbuffer_needs_layout_init  = false;
+            s_res->ping_needs_layout_init     = false;
+            s_res->filtered_needs_layout_init = false;
 
-            // --- Blit accum_image → editorViewport ---
-            ctx.submit_vulkan_graphics_raw([dst_image, trace_w, trace_h](VkCommandBuffer cmd) {
-                // accum_image GENERAL → TRANSFER_SRC_OPTIMAL
+            // --- SVGF À-Trous denoise (4 passes, final result in filtered_image) ---
+            if (svgf_ready) {
+                ctx.submit_vulkan_compute([trace_w, trace_h, blend_factor](VkCommandBuffer cmd) {
+                    VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+                    mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+                    mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+                    // Wait for raygen to finish writing accum_image and gbuffer_image.
+                    vkCmdPipelineBarrier(cmd,
+                        VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                        0, 1, &mb, 0, nullptr, 0, nullptr);
+
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_res->svgf_pipeline);
+                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                        s_res->svgf_pipeline_layout, 0, 1, &s_res->svgf_desc_set, 0, nullptr);
+
+                    uint32_t gx = (trace_w + 7) / 8;
+                    uint32_t gy = (trace_h + 7) / 8;
+
+                    // 2 passes: step 1 then 2. Result lands in filtered_image (pass_idx 0→ping, 1→filtered).
+                    // blend_factor on the last pass blends filtered↔original to avoid over-blurring
+                    // converged (many-frame) images.
+                    struct SVGF_PC { int32_t step_size; int32_t pass_idx; int32_t width; int32_t height; float blend_factor; };
+                    const int step_sizes[2] = { 1, 2 };
+
+                    for (int pass = 0; pass < 2; pass++) {
+                        SVGF_PC pc{ step_sizes[pass], pass, (int32_t)trace_w, (int32_t)trace_h, blend_factor };
+                        vkCmdPushConstants(cmd, s_res->svgf_pipeline_layout,
+                            VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(SVGF_PC), &pc);
+                        vkCmdDispatch(cmd, gx, gy, 1);
+
+                        if (pass < 1) {
+                            vkCmdPipelineBarrier(cmd,
+                                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                0, 1, &mb, 0, nullptr, 0, nullptr);
+                        }
+                    }
+                });
+            }
+
+            // --- Blit filtered_image (or accum_image if SVGF unavailable) → editorViewport ---
+            ctx.submit_vulkan_graphics_raw([dst_image, trace_w, trace_h, svgf_ready](VkCommandBuffer cmd) {
+                VkImage src_image = svgf_ready ? s_res->filtered_image : s_res->accum_image;
+
                 VkImageMemoryBarrier src_bar{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
                 src_bar.oldLayout        = VK_IMAGE_LAYOUT_GENERAL;
                 src_bar.newLayout        = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-                src_bar.image            = s_res->accum_image;
+                src_bar.image            = src_image;
                 src_bar.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
                 src_bar.srcAccessMask    = VK_ACCESS_SHADER_WRITE_BIT;
                 src_bar.dstAccessMask    = VK_ACCESS_TRANSFER_READ_BIT;
 
-                // editorViewport UNDEFINED → TRANSFER_DST_OPTIMAL (discard old contents)
                 VkImageMemoryBarrier dst_bar{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
                 dst_bar.oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED;
                 dst_bar.newLayout        = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -1303,7 +1530,8 @@ namespace Honey {
 
                 VkImageMemoryBarrier pre[2] = { src_bar, dst_bar };
                 vkCmdPipelineBarrier(cmd,
-                    VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR
+                    | VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                     VK_PIPELINE_STAGE_TRANSFER_BIT,
                     0, 0, nullptr, 0, nullptr, 2, pre);
 
@@ -1313,17 +1541,17 @@ namespace Honey {
                 blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
                 blit.dstOffsets[1]  = {(int32_t)trace_w, (int32_t)trace_h, 1};
                 vkCmdBlitImage(cmd,
-                    s_res->accum_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                    dst_image,          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    src_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    dst_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                     1, &blit, VK_FILTER_NEAREST);
 
-                // accum_image TRANSFER_SRC_OPTIMAL → GENERAL for next frame's write
+                // Return src_image to GENERAL for next frame.
                 src_bar.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
                 src_bar.newLayout     = VK_IMAGE_LAYOUT_GENERAL;
                 src_bar.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
                 src_bar.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
 
-                // editorViewport TRANSFER_DST_OPTIMAL → SHADER_READ_ONLY_OPTIMAL for ImGui
+                // editorViewport → SHADER_READ_ONLY_OPTIMAL for ImGui.
                 dst_bar.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
                 dst_bar.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
                 dst_bar.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -1332,7 +1560,8 @@ namespace Honey {
                 VkImageMemoryBarrier post[2] = { src_bar, dst_bar };
                 vkCmdPipelineBarrier(cmd,
                     VK_PIPELINE_STAGE_TRANSFER_BIT,
-                    VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                    VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
+                    | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                     0, 0, nullptr, 0, nullptr, 2, post);
             });
         });
