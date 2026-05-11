@@ -46,6 +46,7 @@ namespace Honey {
         glm::vec3 position{};
         float _pad0 = 0;
         glm::mat4 inv_view_proj{};  // inverse VP for deferred lighting position reconstruction
+        glm::mat4 view{};
     };
 
     struct alignas(16) GPUMaterial {
@@ -120,10 +121,12 @@ namespace Honey {
     };
 
     struct DirectionalShadowSSBO {
-        glm::mat4   light_view_proj;
+        glm::mat4   cascade_vp[k_csm_cascade_count];
+        float       cascade_splits[k_csm_cascade_count];
+        uint32_t    cascade_count;
         uint32_t    enabled;
         float       shadow_distance;
-        uint32_t    _pad[2];
+        uint32_t    _pad;
     };
 
     // Push constants for the shadow mesh/task shader.

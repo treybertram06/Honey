@@ -1003,7 +1003,7 @@ namespace Honey {
 
             Renderer3D::submit_lights(lights_ubo);
             Renderer3D::submit_tiled_lighting_data(tiled_data);
-            Renderer3D::begin_scene(view_proj, camera_pos);
+            Renderer3D::begin_scene(view_proj, camera_pos, view);
 
             if (!parallel_mesh_submit_enabled) {
                 HN_PROFILE_SCOPE("Render3DScene::MeshSubmissionLoop"); // This loop is INCREDIBLY slow when application is built in debug mode

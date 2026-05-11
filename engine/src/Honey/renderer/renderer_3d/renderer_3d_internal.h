@@ -105,6 +105,7 @@ namespace Honey::Renderer3DInternal {
         std::unordered_map<PipelineVariantKey, Ref<Pipeline>, PipelineVariantKeyHash> vk_lighting_pipelines;
 
         glm::mat4 scene_view_proj{1.0f};
+        glm::mat4 scene_view{1.0f};
         glm::vec3 scene_camera_pos{};
         LightsUBO scene_lights{};
         TiledLightingData scene_tiled_lighting{};
@@ -133,6 +134,8 @@ namespace Honey::Renderer3DInternal {
 
         bool  directional_shadows_enabled  = false;
         float directional_shadow_distance  = 50.0f;
+        float scene_camera_near            = 0.1f;
+        float scene_camera_far             = 1000.0f;
     };
 
     struct InstanceData {

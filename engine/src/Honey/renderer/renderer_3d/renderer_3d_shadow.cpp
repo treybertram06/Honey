@@ -307,6 +307,103 @@ namespace Honey {
                                                0.0f, half_size * 2.0f);
             return proj * view;
         }
+
+        static glm::mat4 compute_cascade_vp(
+            glm::vec3        light_dir,
+            glm::vec3        cam_pos,
+            float            cam_far,
+            const glm::mat4& inv_view_proj,
+            float            sub_near,
+            float            sub_far) {
+
+            const glm::vec4 far_ndc[4] = {
+                {-1.f, -1.f, 1.f, 1.f},
+                { 1.f, -1.f, 1.f, 1.f},
+                { 1.f,  1.f, 1.f, 1.f},
+                {-1.f,  1.f, 1.f, 1.f},
+            };
+            glm::vec3 far_world[4];
+            for (int i = 0; i < 4; ++i) {
+                glm::vec4 w = inv_view_proj * far_ndc[i];
+                far_world[i] = glm::vec3(w) / w.w;
+            }
+
+            glm::vec3 corners[8];
+            for (int i = 0; i < 4; ++i) {
+                glm::vec3 ray = far_world[i] - cam_pos;  // length ≈ cam_far
+                corners[i]     = cam_pos + ray * (sub_near / cam_far);  // near face
+                corners[i + 4] = cam_pos + ray * (sub_far  / cam_far);  // far face
+            }
+
+            glm::vec3 L  = glm::normalize(-light_dir);
+            glm::vec3 up = (glm::abs(L.y) < 0.99f) ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0);
+
+            glm::vec3 centroid{0};
+            for (auto& c : corners) centroid += c;
+            centroid /= 8.f;
+
+            // Retreat the eye k_near_pull units in the light direction from the centroid.
+            // Placing the eye only 1 unit away (centroid + L) causes inner-cascade geometry
+            // to appear at POSITIVE view-space z (behind the eye), so it never gets rendered
+            // into this cascade's shadow map regardless of z_near. Retreating by k_near_pull
+            // ensures all potential shadow casters are at negative z (in front of the eye).
+            constexpr float k_near_pull = 200.f;
+            glm::mat4 light_view = glm::lookAt(centroid + L * k_near_pull, centroid, up);
+
+            glm::vec3 aabb_min{ FLT_MAX}, aabb_max{-FLT_MAX};
+            for (auto& c : corners) {
+                glm::vec4 lc = light_view * glm::vec4(c, 1.f);
+                aabb_min = glm::min(aabb_min, glm::vec3(lc));
+                aabb_max = glm::max(aabb_max, glm::vec3(lc));
+            }
+
+            // With the retreated eye, all frustum corners have negative z (in front).
+            // z_near = 0.001 keeps everything from the eye to z_far available as casters.
+            float z_near = 0.001f;
+            float z_far  = glm::max(z_near + 1.f, -aabb_min.z);
+            glm::mat4 proj = glm::orthoRH_ZO(
+                aabb_min.x, aabb_max.x,
+                aabb_min.y, aabb_max.y,
+                z_near, z_far);
+
+            // Snap to texel boundaries by correcting the projection matrix translation.
+            const float res = float(k_dir_shadow_map_resolution);
+            const float texel_size = 2.0f / res;
+            glm::vec4 origin = (proj * light_view) * glm::vec4(0.f, 0.f, 0.f, 1.f);
+            proj[3][0] += glm::round(origin.x / texel_size) * texel_size - origin.x;
+            proj[3][1] += glm::round(origin.y / texel_size) * texel_size - origin.y;
+
+            return proj * light_view;
+        }
+
+        static void compute_csm_cascades(
+            glm::vec3        light_dir,
+            glm::vec3        cam_pos,
+            float            cam_near,
+            float            cam_far,
+            float            shadow_far,
+            float            lambda,
+            const glm::mat4& inv_view_proj,
+            uint32_t         count,
+            glm::mat4*       out_vp,      // [count]
+            float*           out_splits)  // [count] view-space far-plane per cascade
+        {
+            float eff_far = glm::min(cam_far, shadow_far);
+
+            for (uint32_t i = 0; i < count; ++i) {
+                float p     = float(i + 1) / float(count);
+                float log_s = cam_near * glm::pow(eff_far / cam_near, p);
+                float uni_s = cam_near + (eff_far - cam_near) * p;
+                float split = lambda * log_s + (1.f - lambda) * uni_s;
+                out_splits[i] = split;
+
+                float sub_near = (i == 0) ? cam_near : out_splits[i - 1];
+                float sub_far  = split;
+
+                out_vp[i] = compute_cascade_vp(
+                    light_dir, cam_pos, cam_far, inv_view_proj, sub_near, sub_far);
+            }
+        }
     }
 
     void Renderer3DShadow::execute_dir_draw(FrameGraphPassContext& ctx) {
@@ -339,14 +436,24 @@ namespace Honey {
             DirectionalShadowSSBO ssbo{};
             ssbo.enabled         = shadows_on ? 1u : 0u;
             ssbo.shadow_distance = data->directional_shadow_distance;
+            ssbo.cascade_count   = k_csm_cascade_count;
+
             if (shadows_on) {
-                ssbo.light_view_proj = compute_dir_shadow_vp(
+                compute_csm_cascades(
                     glm::vec3(dir_light.direction),
                     data->scene_camera_pos,
-                    data->directional_shadow_distance);
+                    data->scene_camera_near,
+                    data->scene_camera_far,
+                    data->directional_shadow_distance,
+                    0.75f,
+                    glm::inverse(data->scene_view_proj),
+                    k_csm_cascade_count,
+                    ssbo.cascade_vp,
+                    ssbo.cascade_splits);
             }
             vk_ctx->upload_directional_shadows(frame, ssbo);
         }
+
 
         // On the very first frame, transition to SHADER_READ so the lighting pass can safely
         // sample the map even when no shadow geometry is rendered yet.
@@ -357,7 +464,7 @@ namespace Honey {
                 imb.oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED;
                 imb.newLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
                 imb.image            = image;
-                imb.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1 };
+                imb.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, k_csm_cascade_count };
                 imb.srcAccessMask    = 0;
                 imb.dstAccessMask    = VK_ACCESS_SHADER_READ_BIT;
                 vkCmdPipelineBarrier(cmd,
@@ -402,40 +509,25 @@ namespace Honey {
 
         VkRenderPass  rp    = ctx.get_resource_render_pass("shadowDirMap");
         VkImage       image = ctx.get_resource_vk_image("shadowDirMap");
-        VkFramebuffer fb    = ctx.get_resource_layer_framebuffer("shadowDirMap", 0);
-        if (!rp || !fb) return;
+        if (!rp) return;
 
         const uint32_t res_size = k_dir_shadow_map_resolution;
 
         ctx.submit_vulkan_graphics_raw([&](VkCommandBuffer cmd) {
+            // Transition all cascade layers: SHADER_READ → DEPTH_ATTACHMENT
             VkImageMemoryBarrier imb{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
             imb.oldLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
             imb.newLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
             imb.image            = image;
-            imb.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1 };
+            imb.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, k_csm_cascade_count };
             imb.srcAccessMask    = VK_ACCESS_SHADER_READ_BIT;
             imb.dstAccessMask    = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
                                  | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
             vkCmdPipelineBarrier(cmd,
                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+        VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
                 0, 0, nullptr, 0, nullptr, 1, &imb);
-
-            VkRenderPassBeginInfo rpbi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-            rpbi.renderPass        = rp;
-            rpbi.framebuffer       = fb;
-            rpbi.renderArea.extent = {res_size, res_size};
-            VkClearValue cv{};
-            cv.depthStencil        = {1.0f, 0};
-            rpbi.clearValueCount   = 1;
-            rpbi.pClearValues      = &cv;
-
-            vkCmdBeginRenderPass(cmd, &rpbi, VK_SUBPASS_CONTENTS_INLINE);
-
-            const VkViewport vp{0.0f, 0.0f, (float)res_size, (float)res_size, 0.0f, 1.0f};
-            const VkRect2D   sc{{0, 0}, {res_size, res_size}};
-            vkCmdSetViewport(cmd, 0, 1, &vp);
-            vkCmdSetScissor(cmd, 0, 1, &sc);
 
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, s_dir->pipeline);
 
@@ -443,24 +535,56 @@ namespace Honey {
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                 s_dir->layout, 0, 1, &global_ds, 0, nullptr);
 
-            for (const auto& draw : data->shadow_draw_list) {
-                VkDescriptorSet mesh_ds = reinterpret_cast<VkDescriptorSet>(draw.mesh_descriptor_set);
-                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                    s_dir->layout, 1, 1, &mesh_ds, 0, nullptr);
+            const VkViewport viewport{0.f, 0.f, (float)res_size, (float)res_size, 0.f, 1.f};
+            const VkRect2D   scissor{{0, 0}, {res_size, res_size}};
 
-                // light_index and face_index are unused by the directional shader — pass zeros.
-                ShadowDrawPC pc{draw.draw_data_base, 0, 0, 0};
-                vkCmdPushConstants(cmd, s_dir->layout,
-                    VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                    0, sizeof(ShadowDrawPC), &pc);
+            // Render one pass per cascade layer. face_index in the push constant carries
+            // the cascade index so the mesh shader looks up cascade_vp[face_index].
+            for (uint32_t c = 0; c < k_csm_cascade_count; ++c) {
+                VkFramebuffer fb = ctx.get_resource_layer_framebuffer("shadowDirMap", c);
+                if (!fb) continue;
 
-                s_fn_draw_mesh_tasks(cmd, draw.meshlet_count, 1, 1);
+                VkRenderPassBeginInfo rpbi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+                rpbi.renderPass        = rp;
+                rpbi.framebuffer       = fb;
+                rpbi.renderArea.extent = {res_size, res_size};
+                VkClearValue cv{};
+                cv.depthStencil        = {1.0f, 0};
+                rpbi.clearValueCount   = 1;
+                rpbi.pClearValues      = &cv;
+
+                vkCmdBeginRenderPass(cmd, &rpbi, VK_SUBPASS_CONTENTS_INLINE);
+                vkCmdSetViewport(cmd, 0, 1, &viewport);
+                vkCmdSetScissor(cmd,  0, 1, &scissor);
+
+                for (const auto& draw : data->shadow_draw_list) {
+                    VkDescriptorSet mesh_ds =
+        reinterpret_cast<VkDescriptorSet>(draw.mesh_descriptor_set);
+                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                        s_dir->layout, 1, 1, &mesh_ds, 0, nullptr);
+
+                    // Reuse face_index to carry the cascade index into the shader.
+                    ShadowDrawPC pc{draw.draw_data_base, 0, c, 0};
+                    vkCmdPushConstants(cmd, s_dir->layout,
+                        VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT |
+        VK_SHADER_STAGE_FRAGMENT_BIT,
+                        0, sizeof(ShadowDrawPC), &pc);
+
+                    s_fn_draw_mesh_tasks(cmd, draw.meshlet_count, 1, 1);
+                }
+
+                vkCmdEndRenderPass(cmd);
             }
 
-            vkCmdEndRenderPass(cmd);
-            // No explicit post-pass barrier needed: the render pass finalLayout is
-            // DEPTH_STENCIL_READ_ONLY_OPTIMAL (depth_samplable=true) and the external
-            // subpass dependency already covers DEPTH_WRITE -> SHADER_READ.
+            // Transition all layers back: DEPTH_ATTACHMENT → SHADER_READ
+            imb.oldLayout     = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            imb.newLayout     = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+            imb.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+            imb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            vkCmdPipelineBarrier(cmd,
+                VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                0, 0, nullptr, 0, nullptr, 1, &imb);
         });
     }
 

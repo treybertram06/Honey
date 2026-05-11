@@ -63,9 +63,13 @@ namespace Honey {
         CameraUBO camera_ubo{};
         camera_ubo.position = camera.get_position();
         camera_ubo.view_proj = camera.get_view_projection_matrix();
+        camera_ubo.view = camera.get_view_matrix();
 
-        data.scene_view_proj = camera_ubo.view_proj;
-        data.scene_camera_pos = camera_ubo.position;
+        data.scene_view_proj    = camera_ubo.view_proj;
+        data.scene_view         = camera_ubo.view;
+        data.scene_camera_pos   = camera_ubo.position;
+        data.scene_camera_near  = camera.get_near_clip();
+        data.scene_camera_far   = camera.get_far_clip();
 
         auto state = VulkanRendererAPI::get_globals_state();
         state.source = VulkanRendererAPI::GlobalsState::Source::Renderer3D;
@@ -105,7 +109,7 @@ namespace Honey {
         data.meshlet_draws.clear();
     }
 
-    void Renderer3D::begin_scene(const glm::mat4& view_proj, const glm::vec3& position) {
+    void Renderer3D::begin_scene(const glm::mat4& view_proj, const glm::vec3& position, const glm::mat4& view) {
         HN_PROFILE_FUNCTION();
         reset_stats();
 
@@ -114,8 +118,10 @@ namespace Honey {
         CameraUBO camera_ubo{};
         camera_ubo.position = position;
         camera_ubo.view_proj = view_proj;
+        camera_ubo.view = view;
 
         data.scene_view_proj = view_proj;
+        data.scene_view      = view;
         data.scene_camera_pos = position;
 
         auto state = VulkanRendererAPI::get_globals_state();

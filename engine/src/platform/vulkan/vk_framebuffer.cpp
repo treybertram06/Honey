@@ -453,8 +453,8 @@ namespace Honey {
             r = vkCreateImageView(m_device, &view, nullptr, &m_depth_attachment.view);
             HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanFramebuffer: vkCreateImageView (depth) failed: {0}", vk_result_to_string(r));
 
-            // Depth-only sampler view — single-layer path only; layered uses cube-array view
-            if (m_spec.depth_samplable && m_spec.layers == 1) {
+            // Depth-only sampler view — covers all layers (viewType is already 2D_ARRAY when layers > 1)
+            if (m_spec.depth_samplable) {
                 VkImageViewCreateInfo depth_sampler_view_ci = view;
                 depth_sampler_view_ci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
                 r = vkCreateImageView(m_device, &depth_sampler_view_ci, nullptr, &m_depth_sampler_view);
