@@ -66,9 +66,28 @@ namespace Honey {
 
         // Shadow matrices SSBO (binding 6 in global set) — call once per frame before rendering.
         void upload_shadow_matrices(uint32_t frame, const ShadowMatricesSSBO& data);
-
         // Shadow cubemap resources — set after frame graph compiles; stored for use in update_gbuffer_descriptors.
         void set_shadow_cubemap_resources(VkImageView cube_array_view, VkSampler comparison_sampler);
+
+        // Directional shadows SSBO (binding 7) - call once before rendering
+        void upload_directional_shadows(uint32_t frame, const DirectionalShadowSSBO& data);
+        void set_dir_shadow_resources(VkImageView cube_array_view, VkSampler comparison_sampler);
+
+        // RenderDoc / debug label helpers — no-ops when debug utils extension is absent.
+        void cmd_begin_debug_label(VkCommandBuffer cmd, const char* name,
+                                   float r = 1.0f, float g = 1.0f, float b = 0.0f) const {
+            if (m_pfnCmdBeginDebugLabel) {
+                VkDebugUtilsLabelEXT label{};
+                label.sType      = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT;
+                label.pLabelName = name;
+                label.color[0]   = r; label.color[1] = g; label.color[2] = b; label.color[3] = 1.0f;
+                m_pfnCmdBeginDebugLabel(cmd, &label);
+            }
+        }
+        void cmd_end_debug_label(VkCommandBuffer cmd) const {
+            if (m_pfnCmdEndDebugLabel)
+                m_pfnCmdEndDebugLabel(cmd);
+        }
 
         uint32_t get_graphics_queue_family() const { return m_graphics_queue_family; }
         uint32_t get_compute_queue_family() const { return m_compute_queue_family; }
@@ -143,12 +162,14 @@ namespace Honey {
 
             struct CmdBeginSwapchainPass {
                 glm::vec4 clearColor{0.1f, 0.1f, 0.1f, 1.0f};
+                const char* name = nullptr;
             };
 
             // New: offscreen pass description
             struct CmdBeginOffscreenPass {
                 Ref<Framebuffer> framebuffer;
                 glm::vec4 clearColor{0.1f, 0.1f, 0.1f, 1.0f};
+                const char* name = nullptr;
             };
 
             struct CmdBindGlobals {
@@ -335,6 +356,9 @@ private:
         VulkanBackend* m_backend = nullptr;
         VulkanQueueLease m_queue_lease{};
 
+        PFN_vkCmdBeginDebugUtilsLabelEXT m_pfnCmdBeginDebugLabel = nullptr;
+        PFN_vkCmdEndDebugUtilsLabelEXT   m_pfnCmdEndDebugLabel   = nullptr;
+
         // Shared handles (owned by backend, cached here)
         VkInstance m_instance = nullptr;
         VkPhysicalDevice m_physical_device = nullptr;
@@ -417,8 +441,15 @@ private:
         void* m_shadow_matrices_ssbo_memories[k_max_frames_in_flight]{}; // VkDeviceMemory
         uint32_t m_shadow_matrices_ssbo_size = 0;
 
+        void* m_dir_shadow_ssbos[k_max_frames_in_flight]{};        // VkBuffer
+        void* m_dir_shadow_ssbo_memories[k_max_frames_in_flight]{}; // VkDeviceMemory
+        uint32_t m_dir_shadow_ssbo_size = 0;
+
         VkImageView m_shadow_cube_array_view      = VK_NULL_HANDLE;
         VkSampler   m_shadow_comparison_sampler   = VK_NULL_HANDLE;
+
+        VkImageView m_dir_shadow_map_view             = VK_NULL_HANDLE;
+        VkSampler   m_dir_shadow_comparison_sampler   = VK_NULL_HANDLE;
 
         std::vector<void*> m_last_bound_textures[k_max_frames_in_flight];  // up to VulkanRendererAPI::k_max_texture_slots entries
         uint32_t m_last_bound_texture_count[k_max_frames_in_flight]{};

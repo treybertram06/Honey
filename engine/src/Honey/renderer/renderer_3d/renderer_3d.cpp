@@ -266,6 +266,13 @@ namespace Honey {
         Renderer3DInternal::g_renderer3d_data->geometry_path = path;
     }
 
+    void Renderer3D::set_directional_shadow_enabled(bool enabled, float shadow_distance) {
+        auto* data = Renderer3DInternal::g_renderer3d_data;
+        if (!data) return;
+        data->directional_shadows_enabled = enabled;
+        data->directional_shadow_distance  = shadow_distance;
+    }
+
     Renderer3D::Statistics Renderer3D::get_stats() {
         return Renderer3DInternal::g_renderer3d_data->stats;
     }

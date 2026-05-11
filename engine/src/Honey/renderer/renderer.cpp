@@ -115,7 +115,7 @@ namespace Honey {
         s_current_target = framebuffer;
     }
 
-    void Renderer::begin_pass() {
+    void Renderer::begin_pass(const char* name) {
         HN_PROFILE_FUNCTION();
         HN_CORE_ASSERT(!s_pass_open, "Renderer::begin_pass called while another pass is already open.");
         s_pass_open = true;
@@ -147,6 +147,7 @@ namespace Honey {
                 VulkanContext::FramePacket::Cmd cmd{};
                 cmd.type = VulkanContext::FramePacket::CmdType::BeginSwapchainPass;
                 cmd.begin.clearColor = pkt.clearColor;
+                cmd.begin.name = name ? name : "SwapchainPass";
                 pkt.cmds.push_back(std::move(cmd));
             } else {
                 // Offscreen pass: let VulkanContext know which framebuffer to use.
@@ -157,6 +158,7 @@ namespace Honey {
                 cmd.type = VulkanContext::FramePacket::CmdType::BeginOffscreenPass;
                 cmd.offscreen.framebuffer = s_current_target;
                 cmd.offscreen.clearColor = pkt.clearColor;
+                cmd.offscreen.name = name ? name : "OffscreenPass";
                 pkt.cmds.push_back(std::move(cmd));
             }
             break;

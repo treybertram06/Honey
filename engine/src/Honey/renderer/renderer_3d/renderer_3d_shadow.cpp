@@ -282,10 +282,207 @@ namespace Honey {
             s_res->vk_ctx->set_shadow_cubemap_resources(VK_NULL_HANDLE, VK_NULL_HANDLE);
     }
 
+    // -------------------------------------------------------------------------
+    // Directional light shadow map
+    // -------------------------------------------------------------------------
+
+    namespace {
+        struct DirShadowResources {
+            Ref<Pipeline> pipeline_ref;
+            VkPipeline    pipeline    = VK_NULL_HANDLE;
+            VkPipelineLayout layout   = VK_NULL_HANDLE;
+            bool resources_registered = false;
+            bool first_frame          = true;
+        };
+
+        static DirShadowResources* s_dir = nullptr;
+
+        glm::mat4 compute_dir_shadow_vp(glm::vec3 light_dir, glm::vec3 cam_pos, float half_size) {
+            glm::vec3 L  = glm::normalize(-light_dir);
+            glm::vec3 up = (glm::abs(L.y) < 0.99f) ? glm::vec3(0.0f, 1.0f, 0.0f)
+                                                     : glm::vec3(1.0f, 0.0f, 0.0f);
+            glm::mat4 view = glm::lookAt(cam_pos + L * half_size, cam_pos, up);
+            glm::mat4 proj = glm::orthoRH_ZO(-half_size, half_size,
+                                              -half_size, half_size,
+                                               0.0f, half_size * 2.0f);
+            return proj * view;
+        }
+    }
+
+    void Renderer3DShadow::execute_dir_draw(FrameGraphPassContext& ctx) {
+        if (!s_res || !s_res->vk_ctx || !Renderer3DInternal::g_renderer3d_data) return;
+
+        auto* data   = Renderer3DInternal::g_renderer3d_data;
+        auto* vk_ctx = s_res->vk_ctx;
+        const uint32_t frame = ctx.frame_index() % VulkanContext::k_max_frames_in_flight;
+
+        const auto& dir_light = data->scene_lights.directional_light;
+        const bool shadows_on = data->directional_shadows_enabled &&
+                                dir_light.intensity > 0.0f;
+
+        if (!s_dir)
+            s_dir = new DirShadowResources{};
+
+        // Register the shadow map's 2D view and comparison sampler with VulkanContext so
+        // update_gbuffer_descriptors can write them to set=1 binding=5 every frame.
+        if (!s_dir->resources_registered) {
+            VkImageView  map_view    = ctx.get_resource_depth_sampler_image_view("shadowDirMap");
+            VkSampler    cmp_sampler = ctx.get_resource_depth_comparison_sampler("shadowDirMap");
+            if (map_view && cmp_sampler) {
+                vk_ctx->set_dir_shadow_resources(map_view, cmp_sampler);
+                s_dir->resources_registered = true;
+            }
+        }
+
+        // Upload SSBO so the lighting shader always has valid data.
+        {
+            DirectionalShadowSSBO ssbo{};
+            ssbo.enabled         = shadows_on ? 1u : 0u;
+            ssbo.shadow_distance = data->directional_shadow_distance;
+            if (shadows_on) {
+                ssbo.light_view_proj = compute_dir_shadow_vp(
+                    glm::vec3(dir_light.direction),
+                    data->scene_camera_pos,
+                    data->directional_shadow_distance);
+            }
+            vk_ctx->upload_directional_shadows(frame, ssbo);
+        }
+
+        // On the very first frame, transition to SHADER_READ so the lighting pass can safely
+        // sample the map even when no shadow geometry is rendered yet.
+        if (s_dir->first_frame) {
+            VkImage image = ctx.get_resource_vk_image("shadowDirMap");
+            ctx.submit_vulkan_graphics_raw([image](VkCommandBuffer cmd) {
+                VkImageMemoryBarrier imb{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+                imb.oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED;
+                imb.newLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+                imb.image            = image;
+                imb.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1 };
+                imb.srcAccessMask    = 0;
+                imb.dstAccessMask    = VK_ACCESS_SHADER_READ_BIT;
+                vkCmdPipelineBarrier(cmd,
+                    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                    0, 0, nullptr, 0, nullptr, 1, &imb);
+            });
+            s_dir->first_frame = false;
+        }
+
+        if (!shadows_on) return;
+        if (data->shadow_draw_list.empty()) return;
+
+        // Lazily create the pipeline against the shadowDirMap render pass.
+        if (!s_dir->pipeline) {
+            VkRenderPass rp = ctx.get_resource_render_pass("shadowDirMap");
+            if (!rp) {
+                HN_CORE_WARN("Renderer3DShadow: dir shadow render pass not available, skipping");
+                return;
+            }
+
+            void* meshlet_extra_layout = VulkanRendererAPI::get_or_create_meshlet_set_layout();
+
+            auto spec = PipelineSpec::from_shader(asset_root / "shaders" / "Renderer3D_ShadowDirectional.glsl");
+            spec.pipelineKind = PipelineKind::MeshShading;
+            spec.perColorAttachmentBlend.clear();
+            spec.depthStencil.depthTest  = true;
+            spec.depthStencil.depthWrite = true;
+            spec.cullMode                = CullMode::Front;
+            spec.depthBiasConstantFactor = 2.0f;
+            spec.depthBiasSlopeFactor    = 1.5f;
+
+            Ref<Pipeline> pipe = Pipeline::create(spec, rp, meshlet_extra_layout);
+            HN_CORE_ASSERT(pipe, "Renderer3DShadow: failed to create directional shadow pipeline");
+
+            s_dir->pipeline_ref = pipe;
+            s_dir->pipeline     = reinterpret_cast<VkPipeline>(pipe->get_native_pipeline());
+            s_dir->layout       = reinterpret_cast<VkPipelineLayout>(pipe->get_native_pipeline_layout());
+        }
+
+        if (!s_dir->pipeline) return;
+
+        VkRenderPass  rp    = ctx.get_resource_render_pass("shadowDirMap");
+        VkImage       image = ctx.get_resource_vk_image("shadowDirMap");
+        VkFramebuffer fb    = ctx.get_resource_layer_framebuffer("shadowDirMap", 0);
+        if (!rp || !fb) return;
+
+        const uint32_t res_size = k_dir_shadow_map_resolution;
+
+        ctx.submit_vulkan_graphics_raw([&](VkCommandBuffer cmd) {
+            VkImageMemoryBarrier imb{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+            imb.oldLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+            imb.newLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            imb.image            = image;
+            imb.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1 };
+            imb.srcAccessMask    = VK_ACCESS_SHADER_READ_BIT;
+            imb.dstAccessMask    = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+                                 | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+            vkCmdPipelineBarrier(cmd,
+                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                0, 0, nullptr, 0, nullptr, 1, &imb);
+
+            VkRenderPassBeginInfo rpbi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+            rpbi.renderPass        = rp;
+            rpbi.framebuffer       = fb;
+            rpbi.renderArea.extent = {res_size, res_size};
+            VkClearValue cv{};
+            cv.depthStencil        = {1.0f, 0};
+            rpbi.clearValueCount   = 1;
+            rpbi.pClearValues      = &cv;
+
+            vkCmdBeginRenderPass(cmd, &rpbi, VK_SUBPASS_CONTENTS_INLINE);
+
+            const VkViewport vp{0.0f, 0.0f, (float)res_size, (float)res_size, 0.0f, 1.0f};
+            const VkRect2D   sc{{0, 0}, {res_size, res_size}};
+            vkCmdSetViewport(cmd, 0, 1, &vp);
+            vkCmdSetScissor(cmd, 0, 1, &sc);
+
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, s_dir->pipeline);
+
+            VkDescriptorSet global_ds = vk_ctx->get_global_descriptor_set(frame);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                s_dir->layout, 0, 1, &global_ds, 0, nullptr);
+
+            for (const auto& draw : data->shadow_draw_list) {
+                VkDescriptorSet mesh_ds = reinterpret_cast<VkDescriptorSet>(draw.mesh_descriptor_set);
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    s_dir->layout, 1, 1, &mesh_ds, 0, nullptr);
+
+                // light_index and face_index are unused by the directional shader — pass zeros.
+                ShadowDrawPC pc{draw.draw_data_base, 0, 0, 0};
+                vkCmdPushConstants(cmd, s_dir->layout,
+                    VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                    0, sizeof(ShadowDrawPC), &pc);
+
+                s_fn_draw_mesh_tasks(cmd, draw.meshlet_count, 1, 1);
+            }
+
+            vkCmdEndRenderPass(cmd);
+            // No explicit post-pass barrier needed: the render pass finalLayout is
+            // DEPTH_STENCIL_READ_ONLY_OPTIMAL (depth_samplable=true) and the external
+            // subpass dependency already covers DEPTH_WRITE -> SHADER_READ.
+        });
+    }
+
+    void Renderer3DShadow::invalidate_dir_shadow_resources() {
+        if (!s_dir) return;
+        s_dir->resources_registered = false;
+        s_dir->first_frame = true;
+        s_dir->pipeline_ref.reset();
+        s_dir->pipeline = VK_NULL_HANDLE;
+        s_dir->layout   = VK_NULL_HANDLE;
+        if (s_res && s_res->vk_ctx)
+            s_res->vk_ctx->set_dir_shadow_resources(VK_NULL_HANDLE, VK_NULL_HANDLE);
+    }
+
     void Renderer3DShadow::register_frame_graph_executors() {
         auto& registry = FrameGraphRegistry::get();
         registry.register_executor("shadow.draw", [](FrameGraphPassContext& ctx) {
             Renderer3DShadow::execute_draw(ctx);
+        });
+
+        registry.register_executor("shadow.draw_directional", [](FrameGraphPassContext& ctx) {
+            Renderer3DShadow::execute_dir_draw(ctx);
         });
     }
 

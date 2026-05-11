@@ -440,6 +440,15 @@ namespace Honey {
                                            | VK_SHADER_STAGE_TASK_BIT_EXT
                                            | VK_SHADER_STAGE_MESH_BIT_EXT;
 
+        // binding 7 => directional light shadow matrices SSBO (fragment + mesh/task for shadow draw shader)
+        VkDescriptorSetLayoutBinding dir_shadow_matrices_binding{};
+        dir_shadow_matrices_binding.binding = binding_index++;
+        dir_shadow_matrices_binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        dir_shadow_matrices_binding.descriptorCount = 1;
+        dir_shadow_matrices_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT
+                                           | VK_SHADER_STAGE_TASK_BIT_EXT
+                                           | VK_SHADER_STAGE_MESH_BIT_EXT;
+
         VkDescriptorSetLayoutBinding bindings[] = {
             camera_ubo_binding,
             lights_ubo_binding,
@@ -447,11 +456,12 @@ namespace Honey {
             sampler_binding,
             tex_binding,
             tiled_lighting_binding,
-            shadow_matrices_binding
+            shadow_matrices_binding,
+            dir_shadow_matrices_binding
         };
 
         // ---- Descriptor indexing / bindless binding flags (variable descriptor count) ----
-        VkDescriptorBindingFlags binding_flags[7]{};
+        VkDescriptorBindingFlags binding_flags[8]{};
         binding_flags[0] = 0; // Camera UBO
         binding_flags[1] = 0; // Lights UBO
         binding_flags[2] = 0; // Material SSBO
@@ -461,6 +471,7 @@ namespace Honey {
             VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
         binding_flags[5] = 0; // Tiled lighting SSBO
         binding_flags[6] = 0; // Shadow matrices SSBO
+        binding_flags[7] = 0; // Directional shadow SSBO
 
         HN_CORE_ASSERT(sizeof(binding_flags) / sizeof(VkDescriptorBindingFlags) == binding_index &&
             sizeof(bindings) / sizeof(VkDescriptorSetLayoutBinding) == binding_index, "Inconsistency in "
@@ -485,7 +496,7 @@ namespace Honey {
             m_global_set_layout = reinterpret_cast<VkDescriptorSetLayout>(set_layout);
 
             // Descriptor pool sized for frames-in-flight:
-            VkDescriptorPoolSize pool_sizes[7]{};
+            VkDescriptorPoolSize pool_sizes[8]{};
             HN_CORE_ASSERT(sizeof(pool_sizes) / sizeof(VkDescriptorPoolSize) == binding_index,
                 "Inconsistency in descriptor pool size!");
 
@@ -518,6 +529,10 @@ namespace Honey {
             pool_sizes[6].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             pool_sizes[6].descriptorCount = k_max_frames_in_flight * k_max_chunks_per_frame;
 
+            // Directional shadow SSBO (binding 7)
+            pool_sizes[7].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            pool_sizes[7].descriptorCount = k_max_frames_in_flight * k_max_chunks_per_frame;
+
             VkDescriptorPoolCreateInfo pool_ci{};
             pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
             pool_ci.maxSets = k_max_frames_in_flight * k_max_chunks_per_frame;
@@ -540,6 +555,7 @@ namespace Honey {
         m_materials_ssbo_size = sizeof(GPUMaterial) * k_max_material_count;
         m_tiled_lighting_ssbo_size = sizeof(TiledLightingData);
         m_shadow_matrices_ssbo_size = sizeof(ShadowMatricesSSBO);
+        m_dir_shadow_ssbo_size = sizeof(DirectionalShadowSSBO);
 
         const uint32_t total_sets = k_max_frames_in_flight * k_max_chunks_per_frame;
 
@@ -643,6 +659,8 @@ namespace Honey {
                     m_tiled_lighting_ssbo_size, 5, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
                 create_buffer_for_frame("shadow_matrices", frame, m_shadow_matrices_ssbos, m_shadow_matrices_ssbo_memories,
                     m_shadow_matrices_ssbo_size, 6, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+                create_buffer_for_frame("dir_shadow_matrices", frame, m_dir_shadow_ssbos, m_dir_shadow_ssbo_memories,
+                    m_dir_shadow_ssbo_size, 7, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
             }
         }
     }
@@ -944,6 +962,15 @@ namespace Honey {
                 m_shadow_matrices_ssbo_memories[frame] = nullptr;
             }
 
+            if (m_dir_shadow_ssbos[frame]) {
+                vkDestroyBuffer(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkBuffer>(m_dir_shadow_ssbos[frame]), nullptr);
+                m_dir_shadow_ssbos[frame] = nullptr;
+            }
+            if (m_dir_shadow_ssbo_memories[frame]) {
+                vkFreeMemory(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkDeviceMemory>(m_dir_shadow_ssbo_memories[frame]), nullptr);
+                m_dir_shadow_ssbo_memories[frame] = nullptr;
+            }
+
             for (uint32_t c = 0; c < k_max_chunks_per_frame; ++c)
                 m_global_descriptor_sets[frame][c] = VK_NULL_HANDLE;
         }
@@ -1006,9 +1033,9 @@ namespace Honey {
         HN_PROFILE_FUNCTION();
         HN_CORE_ASSERT(m_device && m_physical_device, "create_gbuffer_descriptor_resources called without device");
 
-        // 5 bindings: gAlbedo (b=0), gNormal (b=1), gPBRParams (b=2), gDepth (b=3), shadowCubemap (b=4)
+        // 6 bindings: gAlbedo (b=0), gNormal (b=1), gPBRParams (b=2), gDepth (b=3), shadowCubemap (b=4), directionalShadow (b=5)
         // All COMBINED_IMAGE_SAMPLER, FRAGMENT stage.
-        static constexpr uint32_t k_gbuffer_binding_count = 5;
+        static constexpr uint32_t k_gbuffer_binding_count = 6;
 
         VkDescriptorSetLayoutBinding bindings[k_gbuffer_binding_count]{};
         for (uint32_t i = 0; i < k_gbuffer_binding_count; ++i) {
@@ -1108,10 +1135,10 @@ namespace Honey {
         VkSampler sampler = m_backend->get_sampler_linear();
         HN_CORE_ASSERT(sampler, "update_gbuffer_descriptors: sampler is null");
 
-        // Build 5 image infos: gAlbedo (0), gNormal (1), gPBRParams (2), gDepth (3), shadowCubemap (4).
+        // Build 6 image infos: gAlbedo (0), gNormal (1), gPBRParams (2), gDepth (3), shadowCubemap (4), directionalShadow (5).
         // Color attachments are in SHADER_READ_ONLY_OPTIMAL after the G-buffer pass.
         // Depth is in DEPTH_STENCIL_READ_ONLY_OPTIMAL (finalLayout changed in vk_framebuffer.cpp).
-        VkDescriptorImageInfo image_infos[5]{};
+        VkDescriptorImageInfo image_infos[6]{};
         for (uint32_t i = 0; i < 3; ++i) {
             image_infos[i].sampler     = sampler;
             image_infos[i].imageView   = fb->get_color_image_view(i);
@@ -1127,8 +1154,14 @@ namespace Honey {
         image_infos[4].imageView   = m_shadow_cube_array_view    ? m_shadow_cube_array_view    : fb->get_depth_sampler_image_view();
         image_infos[4].imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
 
-        uint32_t write_count = (image_infos[4].imageView != VK_NULL_HANDLE) ? 5u : 4u;
-        VkWriteDescriptorSet writes[5]{};
+        // binding 6: directional shadow map.
+        // Falls back to a dummy (linear sampler, gDepth view) when shadow resources aren't set yet.
+        image_infos[5].sampler     = m_dir_shadow_comparison_sampler ? m_dir_shadow_comparison_sampler : sampler;
+        image_infos[5].imageView   = m_dir_shadow_map_view           ? m_dir_shadow_map_view           : fb->get_depth_sampler_image_view();
+        image_infos[5].imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+
+        constexpr uint32_t write_count = 6u;
+        VkWriteDescriptorSet writes[6]{};
         for (uint32_t i = 0; i < write_count; ++i) {
             writes[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             writes[i].dstSet          = m_gbuffer_sets[frame];
@@ -1167,6 +1200,29 @@ namespace Honey {
         }
     }
 
+    void VulkanContext::upload_directional_shadows(uint32_t frame, const DirectionalShadowSSBO& data) {
+        HN_CORE_ASSERT(frame < k_max_frames_in_flight, "upload_directional_shadows: frame index out of range");
+        if (!m_dir_shadow_ssbo_memories[frame]) return;
+        void* mapped = nullptr;
+        VkResult mr = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
+                                  reinterpret_cast<VkDeviceMemory>(m_dir_shadow_ssbo_memories[frame]),
+                                  0, m_dir_shadow_ssbo_size, 0, &mapped);
+        HN_CORE_ASSERT(mr == VK_SUCCESS, "vkMapMemory directional shadow matrices ssbo failed");
+        std::memcpy(mapped, &data, sizeof(DirectionalShadowSSBO));
+        vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
+                      reinterpret_cast<VkDeviceMemory>(m_dir_shadow_ssbo_memories[frame]));
+    }
+
+    void VulkanContext::set_dir_shadow_resources(VkImageView cube_array_view, VkSampler comparison_sampler) {
+        m_dir_shadow_map_view           = cube_array_view;
+        m_dir_shadow_comparison_sampler = comparison_sampler;
+        // Invalidate the gbuffer cache so binding 4 gets updated next frame.
+        for (uint32_t f = 0; f < k_max_frames_in_flight; ++f) {
+            m_gbuffer_last_fb[f] = nullptr;
+            m_gbuffer_last_fb_generation[f] = 0;
+        }
+    }
+
     void VulkanContext::init() {
         HN_PROFILE_FUNCTION();
 
@@ -1193,6 +1249,12 @@ namespace Honey {
         m_instance = m_backend->instance();
         m_device = m_backend->device();
         m_physical_device = m_backend->physical_device();
+
+        // Load debug label function pointers (null-safe: no-ops if extension absent).
+        m_pfnCmdBeginDebugLabel = reinterpret_cast<PFN_vkCmdBeginDebugUtilsLabelEXT>(
+            vkGetDeviceProcAddr(reinterpret_cast<VkDevice>(m_device), "vkCmdBeginDebugUtilsLabelEXT"));
+        m_pfnCmdEndDebugLabel = reinterpret_cast<PFN_vkCmdEndDebugUtilsLabelEXT>(
+            vkGetDeviceProcAddr(reinterpret_cast<VkDevice>(m_device), "vkCmdEndDebugUtilsLabelEXT"));
 
         m_graphics_queue_family = m_queue_lease.graphicsFamily;
         m_compute_queue_family = m_queue_lease.computeFamily;
@@ -2612,6 +2674,14 @@ namespace Honey {
         for (const auto& c : p.cmds) {
             switch (c.type) {
             case FramePacket::CmdType::BeginSwapchainPass: {
+                    if (m_pfnCmdBeginDebugLabel) {
+                        VkDebugUtilsLabelEXT label{};
+                        label.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT;
+                        label.pLabelName = c.begin.name ? c.begin.name : "SwapchainPass";
+                        label.color[0] = 0.2f; label.color[1] = 0.6f; label.color[2] = 1.0f; label.color[3] = 1.0f;
+                        m_pfnCmdBeginDebugLabel(cmd, &label);
+                    }
+
                     VkClearValue clear_values[2]{};
                     clear_values[0].color = { { c.begin.clearColor.r, c.begin.clearColor.g, c.begin.clearColor.b, c.begin.clearColor.a } };
                     clear_values[1].depthStencil.depth = 1.0f;
@@ -2637,6 +2707,14 @@ namespace Honey {
                     break;
             }
             case FramePacket::CmdType::BeginOffscreenPass: {
+                    if (m_pfnCmdBeginDebugLabel) {
+                        VkDebugUtilsLabelEXT label{};
+                        label.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT;
+                        label.pLabelName = c.offscreen.name ? c.offscreen.name : "OffscreenPass";
+                        label.color[0] = 1.0f; label.color[1] = 0.6f; label.color[2] = 0.2f; label.color[3] = 1.0f;
+                        m_pfnCmdBeginDebugLabel(cmd, &label);
+                    }
+
                     auto* vk_fb = dynamic_cast<VulkanFramebuffer*>(c.offscreen.framebuffer.get());
                     HN_CORE_ASSERT(vk_fb, "BeginOffscreenPass: framebuffer is null");
 
@@ -2812,6 +2890,8 @@ namespace Honey {
                         }
 
                         vkCmdEndRenderPass(cmd);
+                        if (m_pfnCmdEndDebugLabel)
+                            m_pfnCmdEndDebugLabel(cmd);
                         render_pass_open = false;
                         current_pass_is_swapchain = false; // reset for safety
                         current_pipeline_layout = VK_NULL_HANDLE;
@@ -2839,6 +2919,8 @@ namespace Honey {
             }
 
             vkCmdEndRenderPass(cmd);
+            if (m_pfnCmdEndDebugLabel)
+                m_pfnCmdEndDebugLabel(cmd);
             render_pass_open = false;
             current_pass_is_swapchain = false;
         }

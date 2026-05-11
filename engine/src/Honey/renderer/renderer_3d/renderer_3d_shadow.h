@@ -20,6 +20,7 @@ namespace Honey {
         // Runs after GBuffer in the frame graph.
         // Reads shadow_draw_list from Renderer3DData, renders into the shadow cubemap.
         static void execute_draw(FrameGraphPassContext& ctx);
+        static void execute_dir_draw(FrameGraphPassContext& ctx);
 
         static void register_frame_graph_executors();
         static bool is_initialized();
@@ -27,6 +28,7 @@ namespace Honey {
         // Call before rebuilding the frame graph so stale image views are cleared before
         // the old framebuffers are destroyed. Re-registration happens automatically on the next frame.
         static void invalidate_cubemap_resources();
+        static void invalidate_dir_shadow_resources();
 
     private:
         Renderer3DShadow() = delete;

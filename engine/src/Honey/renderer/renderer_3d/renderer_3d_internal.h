@@ -130,6 +130,9 @@ namespace Honey::Renderer3DInternal {
 
         // Populated during flush_meshlet_draws; consumed by shadow.draw executor (runs after GBuffer).
         std::vector<ShadowDrawEntry> shadow_draw_list;
+
+        bool  directional_shadows_enabled  = false;
+        float directional_shadow_distance  = 50.0f;
     };
 
     struct InstanceData {

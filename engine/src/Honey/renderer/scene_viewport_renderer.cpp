@@ -238,6 +238,7 @@ namespace Honey {
         // Clear stale shadow cubemap handles before the old frame graph (and its framebuffers)
         // are destroyed. Re-registration happens automatically on the first ShadowDraw execution.
         Renderer3DShadow::invalidate_cubemap_resources();
+        Renderer3DShadow::invalidate_dir_shadow_resources();
         Renderer3DPathTracer::invalidate_resources();
 
         FGCompileDiagnostics diags;

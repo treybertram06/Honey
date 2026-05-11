@@ -320,6 +320,7 @@ namespace Honey {
         VkFramebuffer get_resource_layer_framebuffer(const std::string& name, uint32_t layer) const;
         VkRenderPass  get_resource_render_pass(const std::string& name) const;
         VkImageView   get_resource_cube_array_view(const std::string& name) const;
+        VkImageView   get_resource_depth_sampler_image_view(const std::string& name) const;
         VkSampler     get_resource_depth_comparison_sampler(const std::string& name) const;
         VkImage       get_resource_vk_image(const std::string& name) const;
 

@@ -857,6 +857,7 @@ namespace Honey {
             // Gather and submit lights before draw
             LightsUBO lights_ubo{};
 
+            bool dir_shadows_enabled = false;
             auto directional_light_group = m_registry.group<DirectionalLightComponent>(entt::get<TransformComponent>);
             for (auto entity : directional_light_group) {
                 auto& dl = directional_light_group.get<DirectionalLightComponent>(entity);
@@ -867,8 +868,10 @@ namespace Honey {
                 lights_ubo.directional_light.intensity = dl.intensity;
                 lights_ubo.directional_light.direction = glm::normalize(glm::vec3(tc.get_transform() *
                   glm::vec4(0, -1, 0, 0)));
+                dir_shadows_enabled = dl.shadows;
                 break;
             }
+            Renderer3D::set_directional_shadow_enabled(dir_shadows_enabled);
 
             auto point_light_group = m_registry.group<PointLightComponent>(entt::get<TransformComponent>);
             for (auto entity : point_light_group) {

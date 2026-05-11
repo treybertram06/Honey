@@ -119,6 +119,13 @@ namespace Honey {
         ShadowLightMatrices lights[k_max_shadow_lights];
     };
 
+    struct DirectionalShadowSSBO {
+        glm::mat4   light_view_proj;
+        uint32_t    enabled;
+        float       shadow_distance;
+        uint32_t    _pad[2];
+    };
+
     // Push constants for the shadow mesh/task shader.
     struct ShadowDrawPC {
         uint32_t draw_data_base; // unused for now, reserved for multi-draw offsets

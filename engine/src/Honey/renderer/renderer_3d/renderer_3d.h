@@ -57,6 +57,9 @@ namespace Honey {
 
 		static void set_geometry_render_path(GeometryPath path);
 
+		// Directional shadow settings — call each frame before the shadow pass executes.
+		static void set_directional_shadow_enabled(bool enabled, float shadow_distance = 50.0f);
+
 		static Statistics get_stats();
 		static void reset_stats();
 	};

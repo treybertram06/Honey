@@ -313,7 +313,7 @@ namespace Honey {
                     Renderer::set_render_target(pass.target_framebuffer);
                 }
 
-                Renderer::begin_pass();
+                Renderer::begin_pass(pass.name.c_str());
 
                 // For OpenGL this performs the actual attachment clear.
                 // For Vulkan clear values are consumed by Begin*Pass commands,
@@ -644,7 +644,12 @@ namespace Honey {
             return false;
         }
 
-        return vk_context->submit_one_time_compute(record);
+        const std::string label_name = m_pass->name;
+        return vk_context->submit_one_time_compute([&](VkCommandBuffer cmd) {
+            vk_context->cmd_begin_debug_label(cmd, label_name.c_str(), 0.2f, 1.0f, 0.6f);
+            record(cmd);
+            vk_context->cmd_end_debug_label(cmd);
+        });
     }
 
     bool FrameGraphPassContext::submit_vulkan_transfer(const FGVulkanRecordCommands& record) const {
@@ -684,7 +689,12 @@ namespace Honey {
             return false;
         }
 
-        return vk_context->submit_one_time_graphics(record);
+        const std::string label_name = m_pass->name;
+        return vk_context->submit_one_time_graphics([&](VkCommandBuffer cmd) {
+            vk_context->cmd_begin_debug_label(cmd, label_name.c_str(), 1.0f, 0.6f, 0.1f);
+            record(cmd);
+            vk_context->cmd_end_debug_label(cmd);
+        });
     }
 
     static VulkanFramebuffer* resolve_vulkan_framebuffer(FrameGraphCompiled* graph, const std::string& name) {
@@ -716,6 +726,12 @@ namespace Honey {
         auto* vkfb = resolve_vulkan_framebuffer(m_graph, name);
         HN_CORE_ASSERT(vkfb, "FrameGraphPassContext::get_resource_cube_array_view: resource not found or not VulkanFramebuffer");
         return vkfb->get_cube_array_view();
+    }
+
+    VkImageView FrameGraphPassContext::get_resource_depth_sampler_image_view(const std::string& name) const {
+        auto* vkfb = resolve_vulkan_framebuffer(m_graph, name);
+        HN_CORE_ASSERT(vkfb, "FrameGraphPassContext::get_resource_depth_sampler_image_view: resource not found or not VulkanFramebuffer");
+        return vkfb->get_depth_sampler_image_view();
     }
 
     VkSampler FrameGraphPassContext::get_resource_depth_comparison_sampler(const std::string& name) const {
@@ -1455,7 +1471,7 @@ namespace Honey {
                     fb_spec.layers          = alloc.layers;
                     fb_spec.cube_compatible = any_cube_compatible;
                     fb_spec.depth_compare   = any_depth_compare;
-                    fb_spec.depth_samplable = (alloc.layers > 1);
+                    fb_spec.depth_samplable = (alloc.layers > 1) || any_depth_compare;
 
                     alloc.framebuffer = Framebuffer::create(fb_spec);
                     if (!alloc.framebuffer) {
@@ -1509,7 +1525,7 @@ namespace Honey {
             fb_spec.layers          = res.texture.layers;
             fb_spec.cube_compatible = res.texture.cube_compatible;
             fb_spec.depth_compare   = res.texture.depth_compare;
-            fb_spec.depth_samplable = (res.texture.layers > 1);
+            fb_spec.depth_samplable = (res.texture.layers > 1) || res.texture.depth_compare;
 
             res.framebuffer = Framebuffer::create(fb_spec);
             if (!res.framebuffer) {

@@ -530,23 +530,23 @@ namespace Honey {
                     VkResult rv = vkCreateImageView(m_device, &cv, nullptr, &m_cube_array_view);
                     HN_CORE_ASSERT(rv == VK_SUCCESS, "VulkanFramebuffer: vkCreateImageView (cube array) failed");
                 }
-
-                if (m_spec.depth_compare) {
-                    VkSamplerCreateInfo si{};
-                    si.sType         = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-                    si.magFilter     = VK_FILTER_LINEAR;
-                    si.minFilter     = VK_FILTER_LINEAR;
-                    si.mipmapMode    = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-                    si.addressModeU  = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-                    si.addressModeV  = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-                    si.addressModeW  = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-                    si.borderColor   = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
-                    si.compareEnable = VK_TRUE;
-                    si.compareOp     = VK_COMPARE_OP_LESS_OR_EQUAL;
-                    VkResult rv = vkCreateSampler(m_device, &si, nullptr, &m_depth_comparison_sampler);
-                    HN_CORE_ASSERT(rv == VK_SUCCESS, "VulkanFramebuffer: vkCreateSampler (depth compare) failed");
-                }
             }
+        }
+
+        if (m_spec.depth_compare) {
+            VkSamplerCreateInfo si{};
+            si.sType         = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+            si.magFilter     = VK_FILTER_LINEAR;
+            si.minFilter     = VK_FILTER_LINEAR;
+            si.mipmapMode    = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+            si.addressModeU  = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+            si.addressModeV  = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+            si.addressModeW  = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+            si.borderColor   = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+            si.compareEnable = VK_TRUE;
+            si.compareOp     = VK_COMPARE_OP_LESS_OR_EQUAL;
+            VkResult rv = vkCreateSampler(m_device, &si, nullptr, &m_depth_comparison_sampler);
+            HN_CORE_ASSERT(rv == VK_SUCCESS, "VulkanFramebuffer: vkCreateSampler (depth compare) failed");
         }
 
         std::vector<VkAttachmentDescription> attachments;
@@ -1042,6 +1042,11 @@ namespace Honey {
     }
 
     VkFramebuffer VulkanFramebuffer::get_layer_framebuffer(uint32_t layer) const {
+        // Single-layer framebuffers store their FB in m_framebuffer, not the per-layer array.
+        if (m_per_layer_framebuffers.empty()) {
+            HN_CORE_ASSERT(layer == 0, "VulkanFramebuffer::get_layer_framebuffer: layer index out of range");
+            return m_framebuffer;
+        }
         HN_CORE_ASSERT(layer < m_per_layer_framebuffers.size(),
                        "VulkanFramebuffer::get_layer_framebuffer: layer index out of range");
         return m_per_layer_framebuffers[layer];
