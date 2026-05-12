@@ -1317,16 +1317,18 @@ namespace Honey {
     }
 
     void VulkanContext::swap_buffers() {
+        end_frame_recording();
+    }
+
+    void VulkanContext::begin_frame_recording() {
         HN_PROFILE_FUNCTION();
         assert_render_thread();
 
-        HN_CORE_ASSERT(m_initialized, "VulkanContext::swap_buffers called before init");
+        HN_CORE_ASSERT(m_initialized, "VulkanContext::begin_frame_recording called before init");
         HN_CORE_ASSERT(!m_image_available_semaphores.empty(),
                        "m_image_available_semaphores is empty (sync objects not created?)");
         HN_CORE_ASSERT(m_current_frame < m_image_available_semaphores.size(),
                        "m_current_frame out of range for m_image_available_semaphores");
-
-        // m_render_finished_semaphores are per-swapchain-image now, so we only check non-empty here.
         HN_CORE_ASSERT(!m_render_finished_semaphores.empty(),
                        "m_render_finished_semaphores is empty (swapchain not created?)");
 
@@ -1428,7 +1430,77 @@ namespace Honey {
 
         vkResetFences(reinterpret_cast<VkDevice>(m_device), 1, &in_flight);
 
-        record_command_buffer(image_index);
+        // Begin recording the frame's primary command buffer.
+        VkCommandBuffer cmd = reinterpret_cast<VkCommandBuffer>(m_command_buffers[image_index]);
+        vkResetCommandBuffer(cmd, 0);
+
+        VkCommandBufferBeginInfo cb_begin{};
+        cb_begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        cb_begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        VkResult res = vkBeginCommandBuffer(cmd, &cb_begin);
+        HN_CORE_ASSERT(res == VK_SUCCESS, "vkBeginCommandBuffer failed: {0}", vk_result_to_string(res));
+
+        if (m_timestamp_query_pool) {
+            const uint32_t base = image_index * 2;
+            vkCmdResetQueryPool(cmd, m_timestamp_query_pool, base, 2);
+            vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, m_timestamp_query_pool, base + 0);
+        }
+
+        m_recording_cmd         = cmd;
+        m_recording_image_index = image_index;
+        m_recording_active      = true;
+
+        m_pending_globals.reset();
+    }
+
+   void VulkanContext::end_frame_recording() {
+        assert_render_thread();
+
+        if (!m_recording_active)
+            return;
+
+        VkCommandBuffer cmd        = m_recording_cmd;
+        const uint32_t  image_index = m_recording_image_index;
+
+        // Close any render pass that was left open by the frame graph (e.g. swapchain pass).
+        if (m_render_pass_open) {
+            if (m_current_pass_is_swapchain) {
+                if (ImGui::GetDrawData() && ImGui::GetDrawData()->CmdListsCount > 0 && m_backend) {
+                    VkExtent2D imgui_extent{ m_swapchain_extent_width, m_swapchain_extent_height };
+                    VkImageView imgui_target_view =
+                        reinterpret_cast<VkImageView>(m_swapchain_image_views[image_index]);
+                    m_backend->render_imgui_on_current_swapchain_image(cmd, imgui_target_view, imgui_extent);
+                }
+            }
+            vkCmdEndRenderPass(cmd);
+            if (m_pfnCmdEndDebugLabel)
+                m_pfnCmdEndDebugLabel(cmd);
+            m_render_pass_open          = false;
+            m_current_pass_is_swapchain = false;
+            m_current_pipeline_layout   = VK_NULL_HANDLE;
+        }
+
+        // Write frame-end timestamp.
+        if (m_timestamp_query_pool) {
+            const uint32_t base = image_index * 2;
+            vkCmdWriteTimestamp(cmd,
+                                VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                                m_timestamp_query_pool,
+                                base + 1);
+            if (image_index < m_timestamp_written_this_frame.size())
+                m_timestamp_written_this_frame[image_index] = true;
+            if (image_index < m_timestamp_written.size())
+                m_timestamp_written[image_index] = true;
+        }
+
+        VkResult res = vkEndCommandBuffer(cmd);
+        HN_CORE_ASSERT(res == VK_SUCCESS, "vkEndCommandBuffer failed: {0}", vk_result_to_string(res));
+
+        m_recording_cmd    = VK_NULL_HANDLE;
+        m_recording_active = false;
+
+        // ---- Submit and present ----
+        VkFence in_flight = m_in_flight_fences[m_current_frame];
 
         auto validate_present_inputs = [&](uint32_t idx, VkSemaphore render_finished) {
             HN_CORE_ASSERT(m_present_queue != VK_NULL_HANDLE, "vkQueuePresentKHR: present queue is null");
@@ -1523,15 +1595,12 @@ namespace Honey {
                 }
 
                 m_current_frame = (m_current_frame + 1) % k_max_frames_in_flight;
-                frame_packet().frame_begun = false;
                 return;
             }
         }
         HN_CORE_ASSERT(image_index < m_render_finished_semaphores.size(),
                        "image_index out of range for m_render_finished_semaphores");
         VkSemaphore signal_semaphores[] = { m_render_finished_semaphores[image_index] };
-
-        VkCommandBuffer cmd = reinterpret_cast<VkCommandBuffer>(m_command_buffers[image_index]);
 
         validate_present_inputs(image_index, signal_semaphores[0]);
 
@@ -1583,7 +1652,6 @@ namespace Honey {
         }
 
         m_current_frame = (m_current_frame + 1) % k_max_frames_in_flight;
-        frame_packet().frame_begun = false;
     }
 
     void VulkanContext::wait_idle() {
@@ -1805,20 +1873,166 @@ namespace Honey {
     void VulkanContext::queue_custom_vulkan_cmd(
         std::function<void(VkCommandBuffer, uint32_t, uint32_t)> fn)
     {
-        auto& p = frame_packet();
-        const uint32_t idx = static_cast<uint32_t>(p.custom_callbacks.size());
-        p.custom_callbacks.push_back(std::move(fn));
-
-        FramePacket::Cmd cmd{};
-        cmd.type = FramePacket::CmdType::CustomVulkan;
-        cmd.custom.callback_index = idx;
-        p.cmds.push_back(std::move(cmd));
+        if (fn && m_recording_active)
+            fn(m_recording_cmd, m_current_pass_extent.width, m_current_pass_extent.height);
     }
 
     void VulkanContext::cancel_pending_custom_vulkan_cmds() {
-        auto& p = frame_packet();
-        for (auto& fn : p.custom_callbacks)
-            fn = nullptr;
+        // No-op: callbacks now fire immediately in queue_custom_vulkan_cmd.
+    }
+
+    void VulkanContext::apply_pending_globals(VkCommandBuffer cmd, VkPipelineLayout activeLayout,
+                                              uint32_t frame,
+                                              const PendingGlobals& g)
+    {
+        HN_CORE_ASSERT(activeLayout != VK_NULL_HANDLE, "apply_pending_globals: active pipeline layout is null");
+
+        HN_CORE_ASSERT(m_chunk_ds_index[frame] < k_max_chunks_per_frame,
+                       "Renderer3D: exceeded k_max_chunks_per_frame ({0}) — increase it in vk_context.h",
+                       k_max_chunks_per_frame);
+        VkDescriptorSet ds = m_global_descriptor_sets[frame][m_chunk_ds_index[frame]++];
+
+        // Camera UBO
+        if (g.hasCamera && m_camera_ubo_memories[frame] && m_camera_ubo_size == sizeof(CameraUBO)) {
+
+            glm::mat4 correction(1.0f);
+            correction[1][1] = -1.0f;
+            correction[2][2] = 0.5f;
+            correction[3][2] = 0.5f;
+
+            CameraUBO gpu_camera{};
+            gpu_camera.view_proj = correction * g.cameraUBO.view_proj;
+            gpu_camera.position = g.cameraUBO.position;
+            gpu_camera.inv_view_proj = glm::inverse(gpu_camera.view_proj);
+            gpu_camera.view = g.cameraUBO.view;
+
+            void* mapped = nullptr;
+            VkResult mr = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
+                                      reinterpret_cast<VkDeviceMemory>(m_camera_ubo_memories[frame]),
+                                      0, m_camera_ubo_size, 0, &mapped);
+            HN_CORE_ASSERT(mr == VK_SUCCESS, "vkMapMemory camera ubo failed");
+            std::memcpy(mapped, &gpu_camera, sizeof(CameraUBO));
+            vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
+                          reinterpret_cast<VkDeviceMemory>(m_camera_ubo_memories[frame]));
+        }
+
+        // Lights UBO
+        if (m_lights_ubo_memories[frame] && m_lights_ubo_size == sizeof(LightsUBO)) {
+            void* mapped = nullptr;
+            VkResult mr = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
+                                      reinterpret_cast<VkDeviceMemory>(m_lights_ubo_memories[frame]),
+                                      0, m_lights_ubo_size, 0, &mapped);
+            HN_CORE_ASSERT(mr == VK_SUCCESS, "vkMapMemory lights ubo failed");
+            std::memcpy(mapped, &g.lightUBO, sizeof(LightsUBO));
+            vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
+                          reinterpret_cast<VkDeviceMemory>(m_lights_ubo_memories[frame]));
+        }
+
+        // Tiled lighting SSBO
+        if (m_tiled_lighting_ssbo_memories[frame] && m_tiled_lighting_ssbo_size == sizeof(TiledLightingData)) {
+            void* mapped = nullptr;
+            VkResult mr = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
+                                      reinterpret_cast<VkDeviceMemory>(m_tiled_lighting_ssbo_memories[frame]),
+                                      0, m_tiled_lighting_ssbo_size, 0, &mapped);
+            HN_CORE_ASSERT(mr == VK_SUCCESS, "vkMapMemory tiled lighting ssbo failed");
+            std::memcpy(mapped, &g.tiledLighting, sizeof(TiledLightingData));
+            vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
+                          reinterpret_cast<VkDeviceMemory>(m_tiled_lighting_ssbo_memories[frame]));
+        }
+
+        // Materials SSBO
+        if (m_materials_ssbo_memories[frame] && m_materials_ssbo_size == sizeof(GPUMaterial) * k_max_material_count) {
+            void* mapped = nullptr;
+            VkResult mr = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
+                                      reinterpret_cast<VkDeviceMemory>(m_materials_ssbo_memories[frame]),
+                                      0, m_materials_ssbo_size, 0, &mapped);
+            HN_CORE_ASSERT(mr == VK_SUCCESS, "vkMapMemory materials ssbo failed");
+            const uint32_t copy_size = (uint32_t)(g.materials.size() * sizeof(GPUMaterial));
+            uint8_t* dest = static_cast<uint8_t*>(mapped) + (g.materials_ssbo_offset * sizeof(GPUMaterial));
+            HN_CORE_ASSERT(
+                g.materials_ssbo_offset + (uint32_t)g.materials.size() <= k_max_material_count,
+                "Materials SSBO overflow: offset {0} + count {1} exceeds capacity {2}",
+                g.materials_ssbo_offset, g.materials.size(), k_max_material_count
+            );
+            std::memcpy(dest, g.materials.data(), copy_size);
+            vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
+                          reinterpret_cast<VkDeviceMemory>(m_materials_ssbo_memories[frame]));
+        } else {
+            HN_CORE_ERROR("apply_pending_globals: materials ssbo is null or there's a size mismatch");
+        }
+
+        // Sampler + texture descriptors
+        if (g.hasTextures) {
+            HN_CORE_ASSERT(g.textureCount > 0,
+                           "Vulkan: apply_pending_globals hasTextures=true but textureCount == 0");
+            HN_CORE_ASSERT(g.textureCount <= VulkanRendererAPI::k_max_texture_slots,
+                           "Vulkan: textureCount ({0}) exceeds k_max_texture_slots ({1})",
+                           g.textureCount, VulkanRendererAPI::k_max_texture_slots);
+            HN_CORE_ASSERT(g.textures[0],
+                           "Vulkan: expected texture slot 0 to be present and non-null");
+
+            const uint32_t write_count = std::max(1u, g.textureCount);
+
+            void* fallback_raw = g.textures[0];
+            auto* white_vk = dynamic_cast<VulkanTexture2D*>(reinterpret_cast<Texture2D*>(fallback_raw));
+            HN_CORE_ASSERT(white_vk, "Vulkan: slot 0 texture is not a VulkanTexture2D");
+
+            VkSampler sampler_handle = VK_NULL_HANDLE;
+            auto& rs = Settings::get().renderer;
+            switch (rs.texture_filter) {
+            case RendererSettings::TextureFilter::nearest:      sampler_handle = m_backend->get_sampler_nearest(); break;
+            case RendererSettings::TextureFilter::linear:       sampler_handle = m_backend->get_sampler_linear(); break;
+            case RendererSettings::TextureFilter::anisotropic:  sampler_handle = m_backend->get_sampler_anisotropic(); break;
+            }
+            if (!sampler_handle) sampler_handle = m_backend->get_sampler_linear();
+
+            VkDescriptorImageInfo sampler_info{};
+            sampler_info.sampler = sampler_handle;
+
+            VkWriteDescriptorSet write_sampler{};
+            write_sampler.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            write_sampler.dstSet = ds;
+            write_sampler.dstBinding = 3;
+            write_sampler.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+            write_sampler.descriptorCount = 1;
+            write_sampler.pImageInfo = &sampler_info;
+
+            std::vector<VkDescriptorImageInfo> infos(write_count);
+
+            for (uint32_t i = 0; i < write_count; ++i) {
+                void* rawPtr = (i < g.textureCount && g.textures[i]) ? g.textures[i] : fallback_raw;
+                auto* vktex = dynamic_cast<VulkanTexture2D*>(reinterpret_cast<Texture2D*>(rawPtr));
+                if (!vktex) vktex = white_vk;
+
+                const bool ready = vktex->is_ready_for_sampling();
+                const uint32_t image_layout = vktex->get_vk_image_layout();
+                if (!ready || image_layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+                    vktex = white_vk;
+
+                infos[i].imageView   = reinterpret_cast<VkImageView>(vktex->get_vk_image_view());
+                infos[i].imageLayout = static_cast<VkImageLayout>(vktex->get_vk_image_layout());
+                infos[i].sampler     = VK_NULL_HANDLE;
+            }
+
+            VkWriteDescriptorSet write_images{};
+            write_images.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            write_images.dstSet = ds;
+            write_images.dstBinding = 4;
+            write_images.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            write_images.descriptorCount = write_count;
+            write_images.pImageInfo = infos.data();
+
+            VkWriteDescriptorSet writes[] = { write_sampler, write_images };
+            vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(m_device),
+                                   static_cast<uint32_t>(std::size(writes)), writes, 0, nullptr);
+
+            m_last_bound_textures[frame]       = g.textures;
+            m_last_bound_texture_count[frame]  = write_count;
+            m_last_bound_textures_valid[frame] = true;
+        }
+
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, activeLayout,
+                                0, 1, &ds, 0, nullptr);
     }
 
     bool VulkanContext::submit_one_time_graphics(const std::function<void(VkCommandBuffer)>& record) {
@@ -2428,523 +2642,6 @@ namespace Honey {
         return (count > 0) ? (sum / count) : 0.0;
     }
 
-    void VulkanContext::record_command_buffer(uint32_t image_index) {
-        HN_PROFILE_FUNCTION();
-        assert_render_thread();
-
-        VulkanRendererAPI::set_recording_context(this);
-
-        VkCommandBuffer cmd = reinterpret_cast<VkCommandBuffer>(m_command_buffers[image_index]);
-        vkResetCommandBuffer(cmd, 0);
-
-        VkCommandBufferBeginInfo begin{};
-        begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-
-        VkResult res = vkBeginCommandBuffer(cmd, &begin);
-        HN_CORE_ASSERT(res == VK_SUCCESS, "vkBeginCommandBuffer failed: {0}", vk_result_to_string(res));
-
-        // Reset the two timestamp queries for this swapchain image
-        // write a "frame begin" timestamp at TOP_OF_PIPE.
-        if (m_timestamp_query_pool) {
-            uint32_t base = image_index * 2;
-            vkCmdResetQueryPool(cmd, m_timestamp_query_pool, base, 2);
-
-            vkCmdWriteTimestamp(cmd,
-                    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                    m_timestamp_query_pool,
-                    base + 0);
-        }
-
-        auto& p = frame_packet();
-
-        bool render_pass_open = false;
-        bool current_pass_is_swapchain = false;
-
-
-        uint32_t current_pass_w = 0;
-        uint32_t current_pass_h = 0;
-
-        VkPipelineLayout current_pipeline_layout = VK_NULL_HANDLE;
-
-        auto bind_pipeline_and_dynamic = [&](VkPipeline pipeline, uint32_t width, uint32_t height) {
-            HN_CORE_ASSERT(pipeline != VK_NULL_HANDLE, "Vulkan pipeline is null");
-            if (pipeline == VK_NULL_HANDLE) {
-                HN_CORE_ERROR("BindPipeline skipped: pipeline is null");
-                return;
-            }
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-
-            VkViewport viewport{};
-            viewport.x = 0.0f;
-            viewport.y = 0.0f;
-            viewport.width  = static_cast<float>(width);
-            viewport.height = static_cast<float>(height);
-            viewport.minDepth = 0.0f;
-            viewport.maxDepth = 1.0f;
-            vkCmdSetViewport(cmd, 0, 1, &viewport);
-
-            VkRect2D scissor{};
-            scissor.offset = { 0, 0 };
-            scissor.extent = { width, height };
-            vkCmdSetScissor(cmd, 0, 1, &scissor);
-        };
-
-        auto apply_globals = [&](VkPipelineLayout activeLayout, const FramePacket::CmdBindGlobals& g) {
-            HN_CORE_ASSERT(activeLayout != VK_NULL_HANDLE, "apply_globals: active pipeline layout is null");
-
-            const uint32_t frame = m_current_frame;
-            HN_CORE_ASSERT(m_chunk_ds_index[frame] < k_max_chunks_per_frame,
-                           "Renderer3D: exceeded k_max_chunks_per_frame ({0}) — increase it in vk_context.h",
-                           k_max_chunks_per_frame);
-            VkDescriptorSet ds = m_global_descriptor_sets[frame][m_chunk_ds_index[frame]++];
-
-            // Camera UBO
-            if (g.hasCamera && m_camera_ubo_memories[frame] && m_camera_ubo_size == sizeof(CameraUBO)) {
-
-                glm::mat4 correction(1.0f);
-                correction[1][1] = -1.0f; // flip Y
-                correction[2][2] = 0.5f;
-                correction[3][2] = 0.5f;  // z' = 0.5*z + 0.5*w
-
-                CameraUBO gpu_camera{};
-                gpu_camera.view_proj = correction * g.cameraUBO.view_proj;
-                gpu_camera.position = g.cameraUBO.position;
-                gpu_camera.inv_view_proj = glm::inverse(gpu_camera.view_proj);
-                gpu_camera.view = g.cameraUBO.view;
-
-                void* mapped = nullptr;
-                VkResult mr = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
-                                          reinterpret_cast<VkDeviceMemory>(m_camera_ubo_memories[frame]),
-                                          0, m_camera_ubo_size, 0, &mapped);
-                HN_CORE_ASSERT(mr == VK_SUCCESS, "vkMapMemory camera ubo failed");
-                std::memcpy(mapped, &gpu_camera, sizeof(CameraUBO));
-                vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
-                              reinterpret_cast<VkDeviceMemory>(m_camera_ubo_memories[frame]));
-            }
-
-            // Lights UBO
-            if (m_lights_ubo_memories[frame] && m_lights_ubo_size == sizeof(LightsUBO)) {
-                void* mapped = nullptr;
-                VkResult mr = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
-
-                reinterpret_cast<VkDeviceMemory>(m_lights_ubo_memories[frame]),
-                                          0, m_lights_ubo_size, 0, &mapped);
-                HN_CORE_ASSERT(mr == VK_SUCCESS, "vkMapMemory lights ubo failed");
-                std::memcpy(mapped, &g.lightUBO, sizeof(LightsUBO));
-                vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
-
-                reinterpret_cast<VkDeviceMemory>(m_lights_ubo_memories[frame]));
-            }
-
-            // Tiled lighting SSBO
-            if (m_tiled_lighting_ssbo_memories[frame] && m_tiled_lighting_ssbo_size == sizeof(TiledLightingData)) {
-                void* mapped = nullptr;
-                VkResult mr = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
-                                          reinterpret_cast<VkDeviceMemory>(m_tiled_lighting_ssbo_memories[frame]),
-                                          0, m_tiled_lighting_ssbo_size, 0, &mapped);
-                HN_CORE_ASSERT(mr == VK_SUCCESS, "vkMapMemory tiled lighting ssbo failed");
-                std::memcpy(mapped, &g.tiledLighting, sizeof(TiledLightingData));
-                vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
-                              reinterpret_cast<VkDeviceMemory>(m_tiled_lighting_ssbo_memories[frame]));
-            }
-
-            // Materials SSBO
-            if (m_materials_ssbo_memories[frame] && m_materials_ssbo_size == sizeof(GPUMaterial) * k_max_material_count) {
-                void* mapped = nullptr;
-                VkResult mr = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
-                reinterpret_cast<VkDeviceMemory>(m_materials_ssbo_memories[frame]),
-                                      0, m_materials_ssbo_size, 0, &mapped);
-                HN_CORE_ASSERT(mr == VK_SUCCESS, "vkMapMemory materials ssbo failed");
-                const uint32_t copy_size = (uint32_t)(g.materials.size() * sizeof(GPUMaterial));
-                uint8_t* dest = static_cast<uint8_t*>(mapped) + (g.materials_ssbo_offset * sizeof(GPUMaterial));
-                HN_CORE_ASSERT(
-                    g.materials_ssbo_offset + (uint32_t)g.materials.size() <= k_max_material_count,
-                    "Materials SSBO overflow: offset {0} + count {1} exceeds capacity {2}",
-                    g.materials_ssbo_offset, g.materials.size(), k_max_material_count
-                );
-                std::memcpy(dest, g.materials.data(), copy_size);
-                vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
-
-                reinterpret_cast<VkDeviceMemory>(m_materials_ssbo_memories[frame]));
-            } else {
-                HN_CORE_ERROR("apply_globals: materials ssbo is null or there's a size mismatch");
-            }
-
-            // Sampler + texture descriptors
-            if (g.hasTextures) {
-                HN_CORE_ASSERT(g.textureCount > 0,
-                               "Vulkan: BindGlobals hasTextures=true but textureCount == 0");
-                HN_CORE_ASSERT(g.textureCount <= VulkanRendererAPI::k_max_texture_slots,
-                               "Vulkan: textureCount ({0}) exceeds k_max_texture_slots ({1})",
-                               g.textureCount, VulkanRendererAPI::k_max_texture_slots);
-                HN_CORE_ASSERT(g.textures[0],
-                               "Vulkan: expected texture slot 0 to be present and non-null");
-
-                const uint32_t write_count = std::max(1u, g.textureCount);
-
-                // Build a sanitized view of the textures: no nullptrs, no out-of-range reads.
-                // Use slot 0 as fallback for any missing or null entry.
-                void* fallback_raw = g.textures[0];
-                auto* fallback_base = reinterpret_cast<Texture2D*>(fallback_raw);
-                auto* white_vk = dynamic_cast<VulkanTexture2D*>(fallback_base);
-                HN_CORE_ASSERT(white_vk, "Vulkan: slot 0 texture is not a VulkanTexture2D");
-
-                VkSampler sampler_handle = VK_NULL_HANDLE;
-                auto& rs = Settings::get().renderer;
-                switch (rs.texture_filter) {
-                case RendererSettings::TextureFilter::nearest:      sampler_handle = m_backend->get_sampler_nearest(); break;
-                case RendererSettings::TextureFilter::linear:       sampler_handle = m_backend->get_sampler_linear(); break;
-                case RendererSettings::TextureFilter::anisotropic:  sampler_handle = m_backend->get_sampler_anisotropic(); break;
-                }
-                if (!sampler_handle) sampler_handle = m_backend->get_sampler_linear();
-
-                VkDescriptorImageInfo sampler_info{};
-                sampler_info.sampler = sampler_handle;
-
-                VkWriteDescriptorSet write_sampler{};
-                write_sampler.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                write_sampler.dstSet = ds;
-                write_sampler.dstBinding = 3;
-                write_sampler.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
-                write_sampler.descriptorCount = 1;
-                write_sampler.pImageInfo = &sampler_info;
-
-                std::vector<VkDescriptorImageInfo> infos;
-                infos.resize(write_count);
-
-                for (uint32_t i = 0; i < write_count; ++i) {
-                    void* rawPtr = nullptr;
-
-                    if (i < g.textureCount && g.textures[i]) {
-                        rawPtr = g.textures[i];
-                    } else {
-                        rawPtr = fallback_raw;
-                    }
-
-                    auto* base = reinterpret_cast<Texture2D*>(rawPtr);
-                    auto* vktex = dynamic_cast<VulkanTexture2D*>(base);
-                    if (!vktex) {
-                        // Fall back to slot 0 texture if this slot is invalid.
-                        vktex = white_vk;
-                    }
-
-                    // Async uploads are completion-driven now. Never expose a texture to
-                    // descriptor sampling until its upload/layout transition is confirmed done.
-                    const bool ready = vktex->is_ready_for_sampling();
-                    const uint32_t image_layout = vktex->get_vk_image_layout();
-                    if (!ready || image_layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
-                        vktex = white_vk;
-                    }
-
-                    infos[i].imageView  = reinterpret_cast<VkImageView>(vktex->get_vk_image_view());
-                    infos[i].imageLayout = static_cast<VkImageLayout>(vktex->get_vk_image_layout());
-                    infos[i].sampler    = VK_NULL_HANDLE; // not used for SAMPLED_IMAGE
-                }
-
-                VkWriteDescriptorSet write_images{};
-                write_images.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                write_images.dstSet = ds;
-                write_images.dstBinding = 4;
-                write_images.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-                write_images.descriptorCount = write_count;
-                write_images.pImageInfo = infos.data();
-
-                VkWriteDescriptorSet writes[] = { write_sampler, write_images };
-                vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(m_device),
-                                       static_cast<uint32_t>(std::size(writes)),
-                                       writes,
-                                       0,
-                                       nullptr);
-
-                m_last_bound_textures[frame]        = g.textures;
-                m_last_bound_texture_count[frame]   = write_count;
-                m_last_bound_textures_valid[frame]  = true;
-            }
-
-            vkCmdBindDescriptorSets(cmd,
-                                    VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    activeLayout,
-                                    0,
-                                    1,
-                                    &ds,
-                                    0,
-                                    nullptr);
-        };
-
-        for (const auto& c : p.cmds) {
-            switch (c.type) {
-            case FramePacket::CmdType::BeginSwapchainPass: {
-                    if (m_pfnCmdBeginDebugLabel) {
-                        VkDebugUtilsLabelEXT label{};
-                        label.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT;
-                        label.pLabelName = c.begin.name ? c.begin.name : "SwapchainPass";
-                        label.color[0] = 0.2f; label.color[1] = 0.6f; label.color[2] = 1.0f; label.color[3] = 1.0f;
-                        m_pfnCmdBeginDebugLabel(cmd, &label);
-                    }
-
-                    VkClearValue clear_values[2]{};
-                    clear_values[0].color = { { c.begin.clearColor.r, c.begin.clearColor.g, c.begin.clearColor.b, c.begin.clearColor.a } };
-                    clear_values[1].depthStencil.depth = 1.0f;
-                    clear_values[1].depthStencil.stencil = 0;
-
-                    VkRenderPassBeginInfo rp_begin{};
-                    rp_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-                    rp_begin.renderPass = reinterpret_cast<VkRenderPass>(m_render_pass);
-                    rp_begin.framebuffer = reinterpret_cast<VkFramebuffer>(m_swapchain_framebuffers[image_index]);
-                    rp_begin.renderArea.offset = { 0, 0 };
-                    rp_begin.renderArea.extent = { m_swapchain_extent_width, m_swapchain_extent_height };
-                    rp_begin.clearValueCount = 2;
-                    rp_begin.pClearValues = clear_values;
-
-                    vkCmdBeginRenderPass(cmd, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
-                    render_pass_open = true;
-                    current_pass_is_swapchain = true;
-
-                    current_pass_w = m_swapchain_extent_width;
-                    current_pass_h = m_swapchain_extent_height;
-
-                    current_pipeline_layout = VK_NULL_HANDLE; // must be set by BindPipeline
-                    break;
-            }
-            case FramePacket::CmdType::BeginOffscreenPass: {
-                    if (m_pfnCmdBeginDebugLabel) {
-                        VkDebugUtilsLabelEXT label{};
-                        label.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT;
-                        label.pLabelName = c.offscreen.name ? c.offscreen.name : "OffscreenPass";
-                        label.color[0] = 1.0f; label.color[1] = 0.6f; label.color[2] = 0.2f; label.color[3] = 1.0f;
-                        m_pfnCmdBeginDebugLabel(cmd, &label);
-                    }
-
-                    auto* vk_fb = dynamic_cast<VulkanFramebuffer*>(c.offscreen.framebuffer.get());
-                    HN_CORE_ASSERT(vk_fb, "BeginOffscreenPass: framebuffer is null");
-
-                    VkRenderPass rp = reinterpret_cast<VkRenderPass>(vk_fb->get_render_pass());
-                    VkFramebuffer fb = reinterpret_cast<VkFramebuffer>(vk_fb->get_framebuffer());
-                    auto extent = vk_fb->get_extent();
-
-                    // Query attachment layout from the framebuffer itself
-                    const uint32_t colorCount = vk_fb->get_color_attachment_count();
-                    const bool hasDepth = vk_fb->has_depth_attachment();
-                    const uint32_t totalAttachments = colorCount + (hasDepth ? 1u : 0u);
-
-                    std::vector<VkClearValue> clear_values(totalAttachments);
-
-                    // Color attachments
-                    for (uint32_t i = 0; i < colorCount; ++i) {
-                        const auto fmt = vk_fb->get_color_attachment_format(i);
-                        VkClearValue& cv = clear_values[i];
-
-                        if (i == 0) {
-                            // First color: scene color, use clearColor from the pass
-                            cv.color = { {
-                                c.offscreen.clearColor.r,
-                                c.offscreen.clearColor.g,
-                                c.offscreen.clearColor.b,
-                                c.offscreen.clearColor.a
-                            } };
-                        } else {
-                            // Other colors: format‑dependent. For RED_INTEGER, clear to -1 for picking.
-                            switch (fmt) {
-                            case FramebufferTextureFormat::RED_INTEGER:
-                                cv.color.int32[0] = -1;
-                                cv.color.int32[1] = -1;
-                                cv.color.int32[2] = -1;
-                                cv.color.int32[3] = -1;
-                                break;
-                            case FramebufferTextureFormat::RGBA8:
-                            default:
-                                cv.color = { { 0.0f, 0.0f, 0.0f, 1.0f } };
-                                break;
-                            }
-                        }
-                    }
-
-                    // Depth attachment, if present, is always after all colors
-                    if (hasDepth) {
-                        VkClearValue& dv = clear_values[colorCount];
-                        dv.depthStencil.depth = 1.0f;
-                        dv.depthStencil.stencil = 0;
-                    }
-
-                    VkRenderPassBeginInfo rp_begin{};
-                    rp_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-                    rp_begin.renderPass = rp;
-                    rp_begin.framebuffer = fb;
-                    rp_begin.renderArea.offset = { 0, 0 };
-                    rp_begin.renderArea.extent = { extent.width, extent.height };
-                    rp_begin.clearValueCount = totalAttachments;
-                    rp_begin.pClearValues = clear_values.data();
-
-                    vkCmdBeginRenderPass(cmd, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
-                    render_pass_open = true;
-                    current_pass_is_swapchain = false;
-
-                    current_pass_w = extent.width;
-                    current_pass_h = extent.height;
-
-                    // The actual graphics pipeline is selected by a later CmdType::BindPipeline
-                    current_pipeline_layout = VK_NULL_HANDLE;
-
-                    break;
-            }
-            case FramePacket::CmdType::BindPipeline: {
-                    HN_CORE_ASSERT(render_pass_open, "BindPipeline must occur inside a render pass");
-                    HN_CORE_ASSERT(current_pass_w > 0 && current_pass_h > 0, "BindPipeline: current pass extent is zero");
-
-                    const VkPipeline pipeline = c.bindPipeline.pipeline;
-                    const VkPipelineLayout layout = c.bindPipeline.layout;
-
-                    bind_pipeline_and_dynamic(pipeline, current_pass_w, current_pass_h);
-                    if (pipeline == VK_NULL_HANDLE || layout == VK_NULL_HANDLE) {
-                        HN_CORE_ERROR("BindPipeline failed: pipeline/layout null (pipeline={}, layout={})",
-                                      (void*)pipeline,
-                                      (void*)layout);
-                        current_pipeline_layout = VK_NULL_HANDLE;
-                    } else {
-                        current_pipeline_layout = layout;
-                    }
-                    break;
-            }
-            case FramePacket::CmdType::BindGlobals: {
-                    HN_CORE_ASSERT(render_pass_open, "BindGlobals must occur inside a render pass");
-                    HN_CORE_ASSERT(current_pipeline_layout != VK_NULL_HANDLE, "BindGlobals: no pipeline layout bound yet. Call bind_pipeline() before BindGlobals.");
-
-                    apply_globals(current_pipeline_layout, c.globals);
-                    break;
-            }
-            case FramePacket::CmdType::PushConstantsMat4: {
-                    HN_CORE_ASSERT(render_pass_open, "PushConstantsMat4 must occur inside a render pass");
-                    HN_CORE_ASSERT(current_pipeline_layout != VK_NULL_HANDLE, "PushConstantsMat4: no pipeline layout bound yet. Call bind_pipeline() before PushConstantsMat4.");
-
-                    vkCmdPushConstants(cmd, current_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &c.pushMat4.value);
-                    break;
-            }
-            case FramePacket::CmdType::PushConstants: {
-                    HN_CORE_ASSERT(render_pass_open, "PushConstants must occur inside a render pass");
-                    HN_CORE_ASSERT(current_pipeline_layout != VK_NULL_HANDLE, "PushConstants: no pipeline layout bound yet. Call bind_pipeline() before PushConstants.");
-                    HN_CORE_ASSERT((c.push.size + c.push.offset) <= 128, "PushConstants: data size exceeds max size");
-
-                    vkCmdPushConstants(cmd, current_pipeline_layout, c.push.stageFlags, c.push.offset, c.push.size, c.push.bytes.data());
-                    break;
-            }
-            case FramePacket::CmdType::DrawIndexed: {
-                    HN_CORE_ASSERT(render_pass_open, "DrawIndexed must occur inside a render pass");
-                    HN_CORE_ASSERT(c.draw.va, "DrawIndexed: VertexArray is null");
-
-                    const auto& ib = c.draw.va->get_index_buffer();
-                    HN_CORE_ASSERT(ib, "Vulkan draw: VertexArray has no index buffer");
-
-                    HN_CORE_ASSERT(c.draw.vertexBufferCount > 0, "Vulkan draw: no vertex buffers specified in draw cmd");
-                    HN_CORE_ASSERT(c.draw.vertexBufferCount <= FramePacket::CmdDrawIndexed::k_max_vertex_buffers,
-                                   "Vulkan draw: vertexBufferCount exceeds max");
-
-                    VkBuffer buffers[FramePacket::CmdDrawIndexed::k_max_vertex_buffers]{};
-                    VkDeviceSize offsets[FramePacket::CmdDrawIndexed::k_max_vertex_buffers]{};
-
-                    for (uint32_t i = 0; i < c.draw.vertexBufferCount; ++i) {
-                        HN_CORE_ASSERT(c.draw.vertexBuffers[i], "Vulkan draw: vertex buffer is null");
-
-                        buffers[i] = reinterpret_cast<VkBuffer>(c.draw.vertexBuffers[i]->get_native_vertex_buffer());
-                        offsets[i] = static_cast<VkDeviceSize>(c.draw.vertexBufferByteOffsets[i]);
-                    }
-
-                    vkCmdBindVertexBuffers(cmd, 0, c.draw.vertexBufferCount, buffers, offsets);
-
-                    auto vk_ib = std::dynamic_pointer_cast<VulkanIndexBuffer>(ib);
-                    HN_CORE_ASSERT(vk_ib, "Vulkan draw: expected VulkanIndexBuffer in VertexArray");
-
-                    VkBuffer ibuf = reinterpret_cast<VkBuffer>(vk_ib->get_vk_buffer());
-                    vkCmdBindIndexBuffer(cmd, ibuf, 0, vk_ib->get_type());
-
-                    const uint32_t index_count = (c.draw.indexCount != 0) ? c.draw.indexCount : vk_ib->get_count();
-                    const uint32_t instance_count = (c.draw.instanceCount != 0) ? c.draw.instanceCount : 1;
-                    vkCmdDrawIndexed(cmd, index_count, instance_count, 0, 0, 0);
-                    break;
-            }
-            case FramePacket::CmdType::CustomVulkan: {
-                    HN_CORE_ASSERT(render_pass_open, "CustomVulkan must occur inside a render pass");
-                    HN_CORE_ASSERT(c.custom.callback_index < p.custom_callbacks.size(),
-                                   "CustomVulkan: callback_index {0} out of range (have {1})",
-                                   c.custom.callback_index, p.custom_callbacks.size());
-                    const auto& cb = p.custom_callbacks[c.custom.callback_index];
-                    if (cb)
-                        cb(cmd, current_pass_w, current_pass_h);
-                    break;
-            }
-            case FramePacket::CmdType::EndPass: {
-                    if (render_pass_open) {
-                        if (current_pass_is_swapchain) {
-                            // Before ending the main swapchain pass, draw Dear ImGui on top.
-                            if (ImGui::GetDrawData() && ImGui::GetDrawData()->CmdListsCount > 0 && m_backend) {
-                                VkExtent2D imgui_extent{
-                                    m_swapchain_extent_width,
-                                    m_swapchain_extent_height
-                                };
-                                VkImageView imgui_target_view =
-                                    reinterpret_cast<VkImageView>(m_swapchain_image_views[image_index]);
-
-                                m_backend->render_imgui_on_current_swapchain_image(cmd,
-                                                                                   imgui_target_view,
-                                                                                   imgui_extent);
-                            }
-                        }
-
-                        vkCmdEndRenderPass(cmd);
-                        if (m_pfnCmdEndDebugLabel)
-                            m_pfnCmdEndDebugLabel(cmd);
-                        render_pass_open = false;
-                        current_pass_is_swapchain = false; // reset for safety
-                        current_pipeline_layout = VK_NULL_HANDLE;
-                    }
-                    break;
-            }
-            }
-        }
-
-        if (render_pass_open) {
-            // Safety: if EndPass was never seen, close the pass.
-            if (current_pass_is_swapchain) {
-                if (ImGui::GetDrawData() && ImGui::GetDrawData()->CmdListsCount > 0 && m_backend) {
-                    VkExtent2D imgui_extent{
-                        m_swapchain_extent_width,
-                        m_swapchain_extent_height
-                    };
-                    VkImageView imgui_target_view =
-                        reinterpret_cast<VkImageView>(m_swapchain_image_views[image_index]);
-
-                    m_backend->render_imgui_on_current_swapchain_image(cmd,
-                                                                       imgui_target_view,
-                                                                       imgui_extent);
-                }
-            }
-
-            vkCmdEndRenderPass(cmd);
-            if (m_pfnCmdEndDebugLabel)
-                m_pfnCmdEndDebugLabel(cmd);
-            render_pass_open = false;
-            current_pass_is_swapchain = false;
-        }
-
-        // Write a "frame end" timestamp at BOTTOM_OF_PIPE and mark this
-        // image's timing as written for this frame.
-        if (m_timestamp_query_pool) {
-            uint32_t base = image_index * 2;
-            vkCmdWriteTimestamp(cmd,
-                                VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-                                m_timestamp_query_pool,
-                                base + 1);
-            if (image_index < m_timestamp_written_this_frame.size()) {
-                m_timestamp_written_this_frame[image_index] = true;
-            }
-            if (image_index < m_timestamp_written.size()) {
-                m_timestamp_written[image_index] = true;
-            }
-        }
-
-        res = vkEndCommandBuffer(cmd);
-        HN_CORE_ASSERT(res == VK_SUCCESS, "vkEndCommandBuffer failed: {0}", vk_result_to_string(res));
-    }
 
     void VulkanContext::cleanup_swapchain() {
         assert_render_thread();

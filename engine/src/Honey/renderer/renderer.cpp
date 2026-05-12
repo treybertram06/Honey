@@ -7,6 +7,8 @@
 #include "platform/opengl/opengl_shader.h"
 #include "platform/vulkan/vk_context.h"
 #include "platform/vulkan/vk_framebuffer.h"
+#include "platform/vulkan/vk_backend.h"
+#include "imgui.h"
 
 namespace Honey {
 
@@ -101,9 +103,9 @@ namespace Honey {
         auto* vk = dynamic_cast<VulkanContext*>(base);
         HN_CORE_ASSERT(vk, "Renderer::begin_frame() expected VulkanContext when Vulkan is active");
 
-        vk->frame_packet().begin_frame();
+        vk->begin_frame_recording();
 
-        if (!s_pipelines_prewarmed) { // Prewarm once as soon as there's a valid context, and therefore a render pass exists
+        if (!s_pipelines_prewarmed) {
             prewarm_pipelines(nullptr);
             s_pipelines_prewarmed = true;
         }
@@ -122,13 +124,9 @@ namespace Honey {
 
         switch (get_api()) {
         case RendererAPI::API::opengl: {
-            // For GL, just bind the FBO if there is one, otherwise bind default.
             if (s_current_target) {
                 s_current_target->bind();
             } else {
-                // Default framebuffer: relying on GL context default FBO 0.
-                // If you have a helper for this, call it here instead.
-                // No explicit call is strictly necessary if your GL backend assumes FBO 0 when no FB is bound.
                 glBindFramebuffer(GL_FRAMEBUFFER, 0);
             }
             break;
@@ -137,29 +135,84 @@ namespace Honey {
             auto* base = Application::get().get_window().get_context();
             auto* vk = dynamic_cast<VulkanContext*>(base);
             HN_CORE_ASSERT(vk, "Renderer::begin_pass (Vulkan) expected VulkanContext");
+            HN_CORE_ASSERT(vk->is_recording(), "Renderer::begin_pass (Vulkan): no active recording. Call Renderer::begin_frame() first.");
 
-            auto& pkt = vk->frame_packet();
-            HN_CORE_ASSERT(pkt.frame_begun, "Renderer::begin_pass (Vulkan): frame not begun. Call Renderer::begin_frame() first.");
+            VkCommandBuffer cmd = vk->get_recording_cmd();
+            const glm::vec4 clear_color = vk->get_clear_color();
 
-            // Push a "begin pass" command into the packet.
             if (!s_current_target) {
-                // Swapchain/main-window pass (what used to be BeginSwapchainPass).
-                VulkanContext::FramePacket::Cmd cmd{};
-                cmd.type = VulkanContext::FramePacket::CmdType::BeginSwapchainPass;
-                cmd.begin.clearColor = pkt.clearColor;
-                cmd.begin.name = name ? name : "SwapchainPass";
-                pkt.cmds.push_back(std::move(cmd));
+                // Swapchain pass
+                vk->cmd_begin_debug_label(cmd, name ? name : "SwapchainPass", 0.2f, 0.6f, 1.0f);
+
+                VkClearValue clear_values[2]{};
+                clear_values[0].color = { { clear_color.r, clear_color.g, clear_color.b, clear_color.a } };
+                clear_values[1].depthStencil.depth = 1.0f;
+                clear_values[1].depthStencil.stencil = 0;
+
+                const uint32_t img_idx = vk->get_recording_image_index();
+                VkRenderPassBeginInfo rp_begin{};
+                rp_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+                rp_begin.renderPass  = vk->get_render_pass();
+                rp_begin.framebuffer = vk->get_swapchain_framebuffer(img_idx);
+                rp_begin.renderArea.offset = { 0, 0 };
+                rp_begin.renderArea.extent = { vk->get_swapchain_extent_width(),
+                                               vk->get_swapchain_extent_height() };
+                rp_begin.clearValueCount = 2;
+                rp_begin.pClearValues = clear_values;
+
+                vkCmdBeginRenderPass(cmd, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
+                vk->open_render_pass(true, { vk->get_swapchain_extent_width(),
+                                             vk->get_swapchain_extent_height() });
             } else {
-                // Offscreen pass: let VulkanContext know which framebuffer to use.
+                // Offscreen pass
                 auto* vk_fb = dynamic_cast<VulkanFramebuffer*>(s_current_target.get());
                 HN_CORE_ASSERT(vk_fb, "Renderer::begin_pass (Vulkan): current target is not a VulkanFramebuffer");
 
-                VulkanContext::FramePacket::Cmd cmd{};
-                cmd.type = VulkanContext::FramePacket::CmdType::BeginOffscreenPass;
-                cmd.offscreen.framebuffer = s_current_target;
-                cmd.offscreen.clearColor = pkt.clearColor;
-                cmd.offscreen.name = name ? name : "OffscreenPass";
-                pkt.cmds.push_back(std::move(cmd));
+                vk->cmd_begin_debug_label(cmd, name ? name : "OffscreenPass", 1.0f, 0.6f, 0.2f);
+
+                VkRenderPass  rp     = reinterpret_cast<VkRenderPass>(vk_fb->get_render_pass());
+                VkFramebuffer fb     = reinterpret_cast<VkFramebuffer>(vk_fb->get_framebuffer());
+                auto          extent = vk_fb->get_extent();
+
+                const uint32_t colorCount       = vk_fb->get_color_attachment_count();
+                const bool     hasDepth         = vk_fb->has_depth_attachment();
+                const uint32_t totalAttachments = colorCount + (hasDepth ? 1u : 0u);
+
+                std::vector<VkClearValue> clear_values(totalAttachments);
+                for (uint32_t i = 0; i < colorCount; ++i) {
+                    const auto fmt = vk_fb->get_color_attachment_format(i);
+                    if (i == 0) {
+                        clear_values[i].color = { { clear_color.r, clear_color.g, clear_color.b, clear_color.a } };
+                    } else {
+                        switch (fmt) {
+                        case FramebufferTextureFormat::RED_INTEGER:
+                            clear_values[i].color.int32[0] = -1;
+                            clear_values[i].color.int32[1] = -1;
+                            clear_values[i].color.int32[2] = -1;
+                            clear_values[i].color.int32[3] = -1;
+                            break;
+                        default:
+                            clear_values[i].color = { { 0.0f, 0.0f, 0.0f, 1.0f } };
+                            break;
+                        }
+                    }
+                }
+                if (hasDepth) {
+                    clear_values[colorCount].depthStencil.depth   = 1.0f;
+                    clear_values[colorCount].depthStencil.stencil = 0;
+                }
+
+                VkRenderPassBeginInfo rp_begin{};
+                rp_begin.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+                rp_begin.renderPass      = rp;
+                rp_begin.framebuffer     = fb;
+                rp_begin.renderArea.offset = { 0, 0 };
+                rp_begin.renderArea.extent = { extent.width, extent.height };
+                rp_begin.clearValueCount = totalAttachments;
+                rp_begin.pClearValues    = clear_values.data();
+
+                vkCmdBeginRenderPass(cmd, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
+                vk->open_render_pass(false, { extent.width, extent.height });
             }
             break;
         }
@@ -177,25 +230,37 @@ namespace Honey {
 
         switch (get_api()) {
         case RendererAPI::API::opengl: {
-            // For GL, unbind offscreen FBO if one was bound.
-            if (s_current_target) {
+            if (s_current_target)
                 s_current_target->unbind();
-            } else {
-                // Leaving default framebuffer bound is fine; nothing to do.
-            }
             break;
         }
         case RendererAPI::API::vulkan: {
             auto* base = Application::get().get_window().get_context();
             auto* vk = dynamic_cast<VulkanContext*>(base);
             HN_CORE_ASSERT(vk, "Renderer::end_pass (Vulkan) expected VulkanContext");
+            HN_CORE_ASSERT(vk->is_recording(), "Renderer::end_pass (Vulkan): no active recording.");
 
-            auto& pkt = vk->frame_packet();
-            HN_CORE_ASSERT(pkt.frame_begun, "Renderer::end_pass (Vulkan): frame not begun.");
+            if (!vk->is_render_pass_open())
+                break;
 
-            VulkanContext::FramePacket::Cmd cmd{};
-            cmd.type = VulkanContext::FramePacket::CmdType::EndPass;
-            pkt.cmds.push_back(std::move(cmd));
+            VkCommandBuffer cmd = vk->get_recording_cmd();
+
+            // Render ImGui before closing the swapchain pass.
+            if (vk->is_current_pass_swapchain()) {
+                auto& backend = Application::get().get_vulkan_backend();
+                if (ImGui::GetDrawData() && ImGui::GetDrawData()->CmdListsCount > 0) {
+                    const uint32_t img_idx = vk->get_recording_image_index();
+                    VkExtent2D imgui_extent{ vk->get_swapchain_extent_width(),
+                                            vk->get_swapchain_extent_height() };
+                    VkImageView imgui_target_view = vk->get_swapchain_image_view(img_idx);
+                    backend.render_imgui_on_current_swapchain_image(cmd, imgui_target_view, imgui_extent);
+                }
+            }
+
+            vkCmdEndRenderPass(cmd);
+            vk->cmd_end_debug_label(cmd);
+
+            vk->close_render_pass();
             break;
         }
         case RendererAPI::API::none:

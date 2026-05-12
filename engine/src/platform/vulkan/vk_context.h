@@ -89,6 +89,9 @@ namespace Honey {
                 m_pfnCmdEndDebugLabel(cmd);
         }
 
+        VkCommandBuffer get_recording_cmd() const { return m_recording_cmd; }
+        uint32_t get_recording_image_index() const { return m_recording_image_index; }
+        bool is_recording() const { return m_recording_active; }
         uint32_t get_graphics_queue_family() const { return m_graphics_queue_family; }
         uint32_t get_compute_queue_family() const { return m_compute_queue_family; }
         VkQueue get_graphics_queue() const { return m_graphics_queue; }
@@ -105,25 +108,23 @@ namespace Honey {
         VkCommandPool get_command_pool() const { return m_command_pool; }
         VkRenderPass get_render_pass() const { return m_render_pass; }
 
+        // Swapchain per-image resources accessed by Renderer::begin_pass / end_pass.
+        VkFramebuffer get_swapchain_framebuffer(uint32_t idx) const {
+            return (idx < m_swapchain_framebuffers.size())
+                   ? reinterpret_cast<VkFramebuffer>(m_swapchain_framebuffers[idx]) : VK_NULL_HANDLE;
+        }
+        VkImageView get_swapchain_image_view(uint32_t idx) const {
+            return (idx < m_swapchain_image_views.size())
+                   ? reinterpret_cast<VkImageView>(m_swapchain_image_views[idx]) : VK_NULL_HANDLE;
+        }
+
         void mark_pipeline_dirty() { /* m_pipeline_dirty = true; */ } // Pipelines are owned by renderer2d now
         const VulkanPipelineCacheBlob& get_pipeline_cache() const { return m_backend->get_pipeline_cache(); }
         void request_swapchain_recreation() { m_framebuffer_resized = true; }
 
-        struct FramePacket {
-            struct DrawCmd {
-                Ref<VertexArray> va;
-                uint32_t indexCount = 0;
-                uint32_t instanceCount = 1;
-                Ref<VertexBuffer> instanceVB;
-                uint32_t instanceByteOffset = 0;
-            };
-
-            // Persistent-ish settings (can be overwritten by calls)
-            glm::vec4 clearColor{0.1f, 0.1f, 0.1f, 1.0f};
-
-            // One-shot per-frame flags/data
-            bool clearRequested = false;
-
+        // Per-frame accumulated GPU globals — populated by submit_camera / submit_lights / etc.
+        // and consumed by flush_globals() → apply_pending_globals().
+        struct PendingGlobals {
             CameraUBO cameraUBO{};
             bool hasCamera = false;
 
@@ -133,134 +134,30 @@ namespace Honey {
             std::vector<GPUMaterial> materials{};
             uint32_t materials_ssbo_offset = 0;
 
-            std::vector<void*> textures;  // up to VulkanRendererAPI::k_max_texture_slots entries
+            std::vector<void*> textures;
             uint32_t textureCount = 0;
             bool hasTextures = false;
 
-            std::vector<DrawCmd> draws;
-            size_t drawCursor = 0;
+            enum class Source : uint8_t { Unknown = 0, Renderer2D, Renderer3D } source = Source::Unknown;
 
-            bool frame_begun = false;
-
-            enum class CmdType : uint8_t {
-                BeginSwapchainPass,
-                BeginOffscreenPass,
-                EndPass,
-
-                BindPipeline,
-                BindGlobals,        // camera + textures for now
-                PushConstantsMat4,
-                PushConstants,
-                DrawIndexed,
-                CustomVulkan        // raw Vulkan record callback, index into custom_callbacks
-            };
-
-            struct CmdBindPipeline {
-                VkPipeline pipeline = nullptr;
-                VkPipelineLayout layout = nullptr;
-            };
-
-            struct CmdBeginSwapchainPass {
-                glm::vec4 clearColor{0.1f, 0.1f, 0.1f, 1.0f};
-                const char* name = nullptr;
-            };
-
-            // New: offscreen pass description
-            struct CmdBeginOffscreenPass {
-                Ref<Framebuffer> framebuffer;
-                glm::vec4 clearColor{0.1f, 0.1f, 0.1f, 1.0f};
-                const char* name = nullptr;
-            };
-
-            struct CmdBindGlobals {
-                CameraUBO cameraUBO{};
-                bool hasCamera = false;
-
-                LightsUBO lightUBO{};
-                TiledLightingData tiledLighting{};
-
-                std::vector<GPUMaterial> materials{};
-                uint32_t materials_ssbo_offset = 0;
-
-                std::vector<void*> textures;  // up to VulkanRendererAPI::k_max_texture_slots entries
-                uint32_t textureCount = 0;
-                bool hasTextures = false;
-
-                enum class Source : uint8_t { Unknown = 0, Renderer2D, Renderer3D } source = Source::Unknown;
-            };
-            CmdBindGlobals::Source sourceTag = CmdBindGlobals::Source::Unknown;
-
-            struct CmdPushConstantsMat4 {
-                glm::mat4 value{1.0f};
-            };
-
-            struct CmdPushConstants {
-                std::array<std::byte, 128> bytes{}; // 128 is spec minimum
-                uint32_t size = 0;
-                uint32_t offset = 0;
-                VkShaderStageFlags stageFlags = VK_SHADER_STAGE_ALL;
-            };
-
-            struct CmdDrawIndexed {
-                Ref<VertexArray> va;
-                uint32_t indexCount = 0;
-                uint32_t instanceCount = 1;
-
-                static constexpr uint32_t k_max_vertex_buffers = 4;
-                std::array<Ref<VertexBuffer>, k_max_vertex_buffers> vertexBuffers{};
-                std::array<uint32_t,        k_max_vertex_buffers> vertexBufferByteOffsets{};
-                uint32_t vertexBufferCount = 0;
-            };
-
-            // Index into custom_callbacks; the callback records raw Vulkan commands.
-            struct CmdCustomVulkan {
-                uint32_t callback_index = 0;
-            };
-
-            struct Cmd {
-                CmdType type{};
-                CmdBeginSwapchainPass begin{};
-                CmdBeginOffscreenPass offscreen{};
-                CmdBindPipeline bindPipeline{};
-                CmdBindGlobals globals{};
-                CmdPushConstantsMat4 pushMat4{};
-                CmdPushConstants push{};
-                CmdDrawIndexed draw{};
-                CmdCustomVulkan custom{};
-            };
-
-            std::vector<Cmd> cmds;
-            // Storage for CustomVulkan callbacks; fn(cmd, pass_width, pass_height)
-            std::vector<std::function<void(VkCommandBuffer, uint32_t, uint32_t)>> custom_callbacks;
-
-            void begin_frame() {
-                // Keep old fields for now (will be removed once everything is migrated)
-                clearRequested = false;
-                hasCamera = false;
+            void reset() {
+                hasCamera   = false;
                 hasTextures = false;
-                textures = {};
+                textures.clear();
                 textureCount = 0;
-                draws.clear();
-                drawCursor = 0;
-
-                cmds.clear();
-                custom_callbacks.clear();
-                frame_begun = true;
-
-                sourceTag = FramePacket::CmdBindGlobals::Source::Unknown;
-
-                // NOTE: we no longer auto-begin a swapchain pass here.
-                // Pass boundaries are driven by Renderer::begin_pass / end_pass.
+                source = Source::Unknown;
             }
         };
 
-        FramePacket& frame_packet() { return m_frame_packet; }
-        const FramePacket& frame_packet() const { return m_frame_packet; }
+        PendingGlobals& pending_globals() { return m_pending_globals; }
+        const PendingGlobals& pending_globals() const { return m_pending_globals; }
+
+        glm::vec4 get_clear_color() const { return m_pending_clear_color; }
+        void      set_clear_color(const glm::vec4& c) { m_pending_clear_color = c; }
 
         uint32_t get_current_frame() const { return m_current_frame; }
 
-        // Queues a custom Vulkan record callback into the current frame's FramePacket.
-        // The callback fires during record_command_buffer, inside the currently-open render pass.
+        // Queues a custom Vulkan record callback to fire during the current frame's active render pass.
         // fn(VkCommandBuffer cmd, uint32_t pass_w, uint32_t pass_h)
         void queue_custom_vulkan_cmd(std::function<void(VkCommandBuffer, uint32_t, uint32_t)> fn);
 
@@ -268,9 +165,35 @@ namespace Honey {
         // fire as no-ops. Call this before destroying GPU resources mid-frame (e.g. on_stop).
         void cancel_pending_custom_vulkan_cmds();
 
+        // --- Direct-recording pass state (set by Renderer::begin_pass/end_pass) ---
+        void open_render_pass(bool is_swapchain, VkExtent2D extent) {
+            m_render_pass_open         = true;
+            m_current_pass_is_swapchain = is_swapchain;
+            m_current_pass_extent      = extent;
+            m_current_pipeline_layout  = VK_NULL_HANDLE;
+        }
+        void close_render_pass() {
+            m_render_pass_open          = false;
+            m_current_pass_is_swapchain = false;
+            m_current_pipeline_layout   = VK_NULL_HANDLE;
+        }
+        bool           is_render_pass_open()           const { return m_render_pass_open; }
+        bool           is_current_pass_swapchain()     const { return m_current_pass_is_swapchain; }
+        VkExtent2D     get_current_pass_extent()       const { return m_current_pass_extent; }
+        VkPipelineLayout get_current_pipeline_layout() const { return m_current_pipeline_layout; }
+        void set_current_pipeline_layout(VkPipelineLayout layout) { m_current_pipeline_layout = layout; }
+
+        // Uploads UBOs, updates the global descriptor set, and records vkCmdBindDescriptorSets.
+        // Called directly by VulkanRendererAPI::flush_globals() in the direct-recording path.
+        void apply_pending_globals(VkCommandBuffer cmd, VkPipelineLayout layout, uint32_t frame,
+                                   const PendingGlobals& g);
+
         uint32_t get_swapchain_image_format() const { return m_swapchain_image_format; }
         uint32_t get_swapchain_extent_width()  const { return m_swapchain_extent_width; }
         uint32_t get_swapchain_extent_height() const { return m_swapchain_extent_height; }
+
+        void begin_frame_recording();
+        void end_frame_recording();
 
         void refresh_all_texture_samplers() override;
 
@@ -303,7 +226,6 @@ namespace Honey {
 
         void create_timing_query_pool();
 
-        void record_command_buffer(uint32_t image_index);
 
         void cleanup_swapchain();
         void recreate_swapchain_if_needed();
@@ -377,6 +299,16 @@ private:
 
         VkSemaphore m_frame_graph_timeline_semaphore = VK_NULL_HANDLE;
         uint64_t m_frame_graph_timeline_value = 0;
+
+        VkCommandBuffer m_recording_cmd          = VK_NULL_HANDLE;
+        uint32_t        m_recording_image_index  = 0;
+        bool            m_recording_active       = false;
+
+        // Direct-recording pass state (mirrors the locals that lived in record_command_buffer)
+        bool             m_render_pass_open          = false;
+        bool             m_current_pass_is_swapchain = false;
+        VkExtent2D       m_current_pass_extent       = {};
+        VkPipelineLayout m_current_pipeline_layout   = VK_NULL_HANDLE;
 
         VkSwapchainKHR m_swapchain = nullptr;
         std::vector<void*> m_swapchain_images;
@@ -474,7 +406,8 @@ private:
 
         std::vector<VkFence> m_images_in_flight;
 
-        FramePacket m_frame_packet{};
+        PendingGlobals m_pending_globals{};
+        glm::vec4     m_pending_clear_color{0.1f, 0.1f, 0.1f, 1.0f};
 
         uint32_t m_current_frame = 0;
 

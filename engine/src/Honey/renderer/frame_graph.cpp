@@ -498,6 +498,14 @@ namespace Honey {
         m_pass = &pass;
         m_frame_index = execution_context.frame_index;
         m_exec_context = &execution_context;
+
+        // Grab the live command buffer from the Vulkan context (valid during execute()).
+        if (Renderer::get_api() == RendererAPI::API::vulkan) {
+            auto* base = Application::get().get_window().get_context();
+            if (auto* vk = dynamic_cast<VulkanContext*>(base))
+                m_cmd = vk->get_recording_cmd();
+        }
+        HN_CORE_ASSERT(m_cmd != VK_NULL_HANDLE, "FrameGraphPassContext: no live recording cmd — was begin_frame_recording() called?");
     }
 
     const std::string& FrameGraphPassContext::pass_name() const {
@@ -689,12 +697,12 @@ namespace Honey {
             return false;
         }
 
-        const std::string label_name = m_pass->name;
-        return vk_context->submit_one_time_graphics([&](VkCommandBuffer cmd) {
-            vk_context->cmd_begin_debug_label(cmd, label_name.c_str(), 1.0f, 0.6f, 0.1f);
-            record(cmd);
-            vk_context->cmd_end_debug_label(cmd);
-        });
+        // Record directly into the live command buffer — no separate submit or fence wait.
+        HN_CORE_ASSERT(m_cmd != VK_NULL_HANDLE, "submit_vulkan_graphics_raw: no live recording cmd");
+        vk_context->cmd_begin_debug_label(m_cmd, m_pass->name.c_str(), 1.0f, 0.6f, 0.1f);
+        record(m_cmd);
+        vk_context->cmd_end_debug_label(m_cmd);
+        return true;
     }
 
     static VulkanFramebuffer* resolve_vulkan_framebuffer(FrameGraphCompiled* graph, const std::string& name) {

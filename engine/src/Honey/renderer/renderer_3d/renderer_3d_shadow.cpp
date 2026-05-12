@@ -134,19 +134,18 @@ namespace Honey {
         // lighting pass can safely sample them even when no shadow lights exist yet.
         if (res->cubemap_first_frame) {
             VkImage image = ctx.get_resource_vk_image("shadowCubemap");
-            ctx.submit_vulkan_graphics_raw([image](VkCommandBuffer cmd) {
-                VkImageMemoryBarrier imb{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-                imb.oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED;
-                imb.newLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-                imb.image            = image;
-                imb.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, k_max_shadow_lights * 6 };
-                imb.srcAccessMask    = 0;
-                imb.dstAccessMask    = VK_ACCESS_SHADER_READ_BIT;
-                vkCmdPipelineBarrier(cmd,
-                    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                    0, 0, nullptr, 0, nullptr, 1, &imb);
-            });
+            VkCommandBuffer cmd = ctx.cmd();
+            VkImageMemoryBarrier imb{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+            imb.oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED;
+            imb.newLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+            imb.image            = image;
+            imb.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, k_max_shadow_lights * 6 };
+            imb.srcAccessMask    = 0;
+            imb.dstAccessMask    = VK_ACCESS_SHADER_READ_BIT;
+            vkCmdPipelineBarrier(cmd,
+                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                0, 0, nullptr, 0, nullptr, 1, &imb);
             res->cubemap_first_frame = false;
         }
 
@@ -192,7 +191,8 @@ namespace Honey {
 
         const uint32_t res_size = k_shadow_map_resolution;
 
-        ctx.submit_vulkan_graphics_raw([&](VkCommandBuffer cmd) {
+        {
+            VkCommandBuffer cmd = ctx.cmd();
             // Transition READ_ONLY → DEPTH_ATTACHMENT. cubemap_first_frame was already cleared
             // by the initial transition above, so oldLayout is always DEPTH_STENCIL_READ_ONLY.
             VkImageMemoryBarrier imb{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
@@ -264,7 +264,7 @@ namespace Honey {
                 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                 0, 0, nullptr, 0, nullptr, 1, &imb);
-        });
+        }
     }
 
     void Renderer3DShadow::invalidate_cubemap_resources() {
@@ -485,19 +485,18 @@ namespace Honey {
         // sample the map even when no shadow geometry is rendered yet.
         if (s_dir->first_frame) {
             VkImage image = ctx.get_resource_vk_image("shadowDirMap");
-            ctx.submit_vulkan_graphics_raw([image](VkCommandBuffer cmd) {
-                VkImageMemoryBarrier imb{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-                imb.oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED;
-                imb.newLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-                imb.image            = image;
-                imb.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, k_csm_cascade_count };
-                imb.srcAccessMask    = 0;
-                imb.dstAccessMask    = VK_ACCESS_SHADER_READ_BIT;
-                vkCmdPipelineBarrier(cmd,
-                    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                    0, 0, nullptr, 0, nullptr, 1, &imb);
-            });
+            VkCommandBuffer cmd = ctx.cmd();
+            VkImageMemoryBarrier imb{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+            imb.oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED;
+            imb.newLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+            imb.image            = image;
+            imb.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, k_csm_cascade_count };
+            imb.srcAccessMask    = 0;
+            imb.dstAccessMask    = VK_ACCESS_SHADER_READ_BIT;
+            vkCmdPipelineBarrier(cmd,
+                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                0, 0, nullptr, 0, nullptr, 1, &imb);
             s_dir->first_frame = false;
         }
 
@@ -539,7 +538,8 @@ namespace Honey {
 
         const uint32_t res_size = k_dir_shadow_map_resolution;
 
-        ctx.submit_vulkan_graphics_raw([&](VkCommandBuffer cmd) {
+        {
+            VkCommandBuffer cmd = ctx.cmd();
             // Transition all cascade layers: SHADER_READ → DEPTH_ATTACHMENT
             VkImageMemoryBarrier imb{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
             imb.oldLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
@@ -611,7 +611,7 @@ namespace Honey {
                 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                 0, 0, nullptr, 0, nullptr, 1, &imb);
-        });
+        }
     }
 
     void Renderer3DShadow::invalidate_dir_shadow_resources() {

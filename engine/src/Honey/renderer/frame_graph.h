@@ -309,10 +309,14 @@ namespace Honey {
         Ref<StorageBuffer> get_input_buffer(const std::string& resource_name) const;
         Ref<StorageBuffer> get_output_buffer(const std::string& resource_name) const;
 
+        // Returns the live VkCommandBuffer for this frame.
+        // Valid during execute(). Use this for all direct Vulkan recording.
+        VkCommandBuffer cmd() const { return m_cmd; }
+
         // Vulkan-only helpers for compute/transfer/graphics frame-graph passes.
-        // Each records and submits a one-time command buffer on the selected queue domain.
         bool submit_vulkan_compute(const FGVulkanRecordCommands& record) const;
         bool submit_vulkan_transfer(const FGVulkanRecordCommands& record) const;
+        // Calls the record callback immediately with the live command buffer.
         bool submit_vulkan_graphics_raw(const FGVulkanRecordCommands& record) const;
 
         // Vulkan-specific accessors for layered texture resources (e.g. shadow cubemaps).
@@ -336,6 +340,7 @@ namespace Honey {
         FGCompiledPass* m_pass = nullptr;
         uint32_t m_frame_index = 0;
         const FGExecutionContext* m_exec_context = nullptr;
+        VkCommandBuffer m_cmd = VK_NULL_HANDLE;
     };
 
     class FrameGraphCompiler {
