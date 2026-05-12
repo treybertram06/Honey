@@ -136,6 +136,7 @@ namespace Honey::Renderer3DInternal {
         float directional_shadow_distance  = 50.0f;
         float scene_camera_near            = 0.1f;
         float scene_camera_far             = 1000.0f;
+        float scene_camera_fov             = 45.0f;
     };
 
     struct InstanceData {

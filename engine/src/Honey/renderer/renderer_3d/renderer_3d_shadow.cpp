@@ -297,25 +297,14 @@ namespace Honey {
 
         static DirShadowResources* s_dir = nullptr;
 
-        glm::mat4 compute_dir_shadow_vp(glm::vec3 light_dir, glm::vec3 cam_pos, float half_size) {
-            glm::vec3 L  = glm::normalize(-light_dir);
-            glm::vec3 up = (glm::abs(L.y) < 0.99f) ? glm::vec3(0.0f, 1.0f, 0.0f)
-                                                     : glm::vec3(1.0f, 0.0f, 0.0f);
-            glm::mat4 view = glm::lookAt(cam_pos + L * half_size, cam_pos, up);
-            glm::mat4 proj = glm::orthoRH_ZO(-half_size, half_size,
-                                              -half_size, half_size,
-                                               0.0f, half_size * 2.0f);
-            return proj * view;
-        }
-
         static glm::mat4 compute_cascade_vp(
             glm::vec3        light_dir,
             glm::vec3        cam_pos,
             float            cam_far,
+            float            cam_fov,
             const glm::mat4& inv_view_proj,
             float            sub_near,
             float            sub_far) {
-
             const glm::vec4 far_ndc[4] = {
                 {-1.f, -1.f, 1.f, 1.f},
                 { 1.f, -1.f, 1.f, 1.f},
@@ -342,36 +331,71 @@ namespace Honey {
             for (auto& c : corners) centroid += c;
             centroid /= 8.f;
 
-            // Retreat the eye k_near_pull units in the light direction from the centroid.
-            // Placing the eye only 1 unit away (centroid + L) causes inner-cascade geometry
-            // to appear at POSITIVE view-space z (behind the eye), so it never gets rendered
-            // into this cascade's shadow map regardless of z_near. Retreating by k_near_pull
-            // ensures all potential shadow casters are at negative z (in front of the eye).
-            constexpr float k_near_pull = 200.f;
-            glm::mat4 light_view = glm::lookAt(centroid + L * k_near_pull, centroid, up);
+            // Build light-space basis vectors
+            glm::vec3 forward = -L;
+            glm::vec3 right   = glm::normalize(glm::cross(up, forward));
+            glm::vec3 up_     = glm::cross(forward, right);
 
+            // AABB in light space (centred at origin, no eye offset yet)
             glm::vec3 aabb_min{ FLT_MAX}, aabb_max{-FLT_MAX};
             for (auto& c : corners) {
-                glm::vec4 lc = light_view * glm::vec4(c, 1.f);
-                aabb_min = glm::min(aabb_min, glm::vec3(lc));
-                aabb_max = glm::max(aabb_max, glm::vec3(lc));
+                glm::vec3 lc = {
+                    glm::dot(c, right),
+                    glm::dot(c, up_),
+                    glm::dot(c, forward),
+                };
+                aabb_min = glm::min(aabb_min, lc);
+                aabb_max = glm::max(aabb_max, lc);
             }
 
-            // With the retreated eye, all frustum corners have negative z (in front).
-            // z_near = 0.001 keeps everything from the eye to z_far available as casters.
-            float z_near = 0.001f;
-            float z_far  = glm::max(z_near + 1.f, -aabb_min.z);
-            glm::mat4 proj = glm::orthoRH_ZO(
-                aabb_min.x, aabb_max.x,
-                aabb_min.y, aabb_max.y,
-                z_near, z_far);
+            float tan_half_fov_x = glm::tan(glm::radians(cam_fov * 0.5f));
+            float tan_half_fov_y = glm::tan(glm::radians(cam_fov * 0.5f));
 
-            // Snap to texel boundaries by correcting the projection matrix translation.
-            const float res = float(k_dir_shadow_map_resolution);
-            const float texel_size = 2.0f / res;
-            glm::vec4 origin = (proj * light_view) * glm::vec4(0.f, 0.f, 0.f, 1.f);
-            proj[3][0] += glm::round(origin.x / texel_size) * texel_size - origin.x;
-            proj[3][1] += glm::round(origin.y / texel_size) * texel_size - origin.y;
+            // Analytically compute the bounding sphere of this frustum slice.
+            // This is rotation-invariant — same value every frame for the same cascade.
+            float half_near_x = sub_near * tan_half_fov_x;
+            float half_near_y = sub_near * tan_half_fov_y;
+            float half_far_x  = sub_far  * tan_half_fov_x;
+            float half_far_y  = sub_far  * tan_half_fov_y;
+
+            // Frustum slice centre along Z
+            float mid_z = (sub_near + sub_far) * 0.5f;
+
+            // Radius = max distance from centre to any corner
+            float r_near = glm::sqrt(half_near_x*half_near_x + half_near_y*half_near_y
+                                     + (sub_near - mid_z)*(sub_near - mid_z));
+            float r_far  = glm::sqrt(half_far_x*half_far_x  + half_far_y*half_far_y
+                                     + (sub_far  - mid_z)*(sub_far  - mid_z));
+            float radius = glm::max(r_near, r_far);
+
+            // Stable texel size — same bits every frame
+            const float res         = float(k_dir_shadow_map_resolution);
+            const float texel_world = (2.f * radius) / res;
+
+            // Round radius up to a texel boundary so the ortho extents are also stable
+            radius = glm::ceil(radius / texel_world) * texel_world;
+
+            // Snap centroid to texel grid using the now-stable texel_world
+            float cx = glm::dot(centroid, right);
+            float cy = glm::dot(centroid, up_);
+            cx = glm::floor(cx / texel_world) * texel_world;
+            cy = glm::floor(cy / texel_world) * texel_world;
+
+            glm::vec3 snapped_centroid = cx * right + cy * up_;
+            snapped_centroid += glm::dot(centroid, forward) * forward;
+
+            constexpr float k_near_pull = 200.f;
+            glm::mat4 light_view = glm::lookAt(
+                snapped_centroid + L * k_near_pull,
+                snapped_centroid,
+                up_);
+
+            // Fixed square ortho — same every frame for this cascade
+            float z_far = k_near_pull + (aabb_max.z - aabb_min.z);
+            glm::mat4 proj = glm::orthoRH_ZO(
+                -radius,  radius,
+                -radius,  radius,
+                0.001f,   z_far);
 
             return proj * light_view;
         }
@@ -381,6 +405,7 @@ namespace Honey {
             glm::vec3        cam_pos,
             float            cam_near,
             float            cam_far,
+            float            cam_fov,
             float            shadow_far,
             float            lambda,
             const glm::mat4& inv_view_proj,
@@ -401,7 +426,7 @@ namespace Honey {
                 float sub_far  = split;
 
                 out_vp[i] = compute_cascade_vp(
-                    light_dir, cam_pos, cam_far, inv_view_proj, sub_near, sub_far);
+                    light_dir, cam_pos, cam_far, cam_fov, inv_view_proj, sub_near, sub_far);
             }
         }
     }
@@ -444,6 +469,7 @@ namespace Honey {
                     data->scene_camera_pos,
                     data->scene_camera_near,
                     data->scene_camera_far,
+                    data->scene_camera_fov,
                     data->directional_shadow_distance,
                     0.75f,
                     glm::inverse(data->scene_view_proj),

@@ -70,6 +70,7 @@ namespace Honey {
         data.scene_camera_pos   = camera_ubo.position;
         data.scene_camera_near  = camera.get_near_clip();
         data.scene_camera_far   = camera.get_far_clip();
+        data.scene_camera_fov   = camera.get_fov();
 
         auto state = VulkanRendererAPI::get_globals_state();
         state.source = VulkanRendererAPI::GlobalsState::Source::Renderer3D;
