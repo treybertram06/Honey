@@ -231,18 +231,14 @@ namespace Honey::Renderer3DInternal {
                     mesh_draw_base * (uint32_t)sizeof(GPUDrawData));
 
                 // Populate shadow draw list for the shadow.draw executor (runs after GBuffer).
-                {
-                    void* mesh_ds = VulkanRendererAPI::get_mesh_descriptor_set(bufs);
-                    for (uint32_t di = 0; di < mesh_draw_count; ++di) {
-                        const uint32_t global_draw_i = variant_draws[di];
-                        const auto& cmd = g_renderer3d_data->meshlet_draws[global_draw_i];
-                        g_renderer3d_data->shadow_draw_list.push_back({
-                            mesh_ds,
-                            mesh_draw_base + di,
-                            cmd.submesh->meshlets->meshlet_count
-                        });
-                    }
-                }
+                // One entry per mesh-variant group so the executor can use indirect draws,
+                // matching the same pattern as the GBuffer indirect path above.
+                g_renderer3d_data->shadow_draw_list.push_back({
+                    VulkanRendererAPI::get_mesh_descriptor_set(bufs),
+                    mesh_draw_base,
+                    mesh_draw_count,
+                    indirect_byte_off,
+                });
 
                 struct MeshletPC {
                     int32_t draw_data_base;

@@ -65,9 +65,10 @@ namespace Honey::Renderer3DInternal {
     };
 
     struct ShadowDrawEntry {
-        void*    mesh_descriptor_set = nullptr; // VkDescriptorSet (per-mesh meshlet set, set=1)
-        uint32_t draw_data_base      = 0;       // local index into per-mesh draw_data_buffer
-        uint32_t meshlet_count       = 0;       // dispatch X for vkCmdDrawMeshTasksEXT
+        void*    mesh_descriptor_set  = nullptr; // VkDescriptorSet (per-mesh meshlet set, set=1)
+        uint32_t draw_data_base       = 0;       // base index; shader uses draw_data_base + gl_DrawID
+        uint32_t draw_count           = 0;       // indirect draw count for this group
+        uint32_t indirect_byte_offset = 0;       // byte offset into the frame's indirect buffer
     };
 
     struct Renderer3DData {

@@ -33,7 +33,8 @@ namespace Honey {
 
         static ShadowResources* s_res = nullptr;
 
-        static PFN_vkCmdDrawMeshTasksEXT s_fn_draw_mesh_tasks = nullptr;
+        static PFN_vkCmdDrawMeshTasksEXT         s_fn_draw_mesh_tasks          = nullptr;
+        static PFN_vkCmdDrawMeshTasksIndirectEXT s_fn_draw_mesh_tasks_indirect = nullptr;
 
         glm::mat4 make_shadow_face_view(glm::vec3 pos, uint32_t face) {
             // Face order matches Vulkan cubemap layer convention (spec section 16.5.4):
@@ -97,6 +98,11 @@ namespace Honey {
             vkGetDeviceProcAddr(ctx->get_device(), "vkCmdDrawMeshTasksEXT"));
         HN_CORE_ASSERT(s_fn_draw_mesh_tasks,
             "Renderer3DShadow: vkCmdDrawMeshTasksEXT not available — do not call init() without mesh shader support");
+
+        s_fn_draw_mesh_tasks_indirect = reinterpret_cast<PFN_vkCmdDrawMeshTasksIndirectEXT>(
+            vkGetDeviceProcAddr(ctx->get_device(), "vkCmdDrawMeshTasksIndirectEXT"));
+        HN_CORE_ASSERT(s_fn_draw_mesh_tasks_indirect,
+            "Renderer3DShadow: vkCmdDrawMeshTasksIndirectEXT not available");
     }
 
     void Renderer3DShadow::shutdown() {
@@ -104,12 +110,14 @@ namespace Honey {
 
         delete s_res;
         s_res = nullptr;
-        s_fn_draw_mesh_tasks = nullptr;
+        s_fn_draw_mesh_tasks          = nullptr;
+        s_fn_draw_mesh_tasks_indirect = nullptr;
     }
 
     bool Renderer3DShadow::is_initialized() { return s_res != nullptr; }
 
     void Renderer3DShadow::execute_draw(FrameGraphPassContext& ctx) {
+        HN_PROFILE_FUNCTION();
         if (!s_res || !s_res->vk_ctx || !Renderer3DInternal::g_renderer3d_data) return;
 
         auto* res = s_res;
@@ -128,7 +136,10 @@ namespace Honey {
         }
 
         // Build shadow matrices from current scene lights and upload.
-        prepare_shadow_data(frame, Renderer3DInternal::g_renderer3d_data->scene_lights);
+        {
+            HN_PROFILE_SCOPE("ShadowDraw::prepare_shadow_data");
+            prepare_shadow_data(frame, Renderer3DInternal::g_renderer3d_data->scene_lights);
+        }
 
         // On the very first frame, transition all cubemap layers to SHADER_READ so the deferred
         // lighting pass can safely sample them even when no shadow lights exist yet.
@@ -152,7 +163,7 @@ namespace Honey {
         if (res->shadow_light_count == 0) return;
 
         // Lazily create the shadow pipeline on the first draw.
-        if (!res->shadow_pipeline) {
+        if (!res->shadow_pipeline) { HN_PROFILE_SCOPE("ShadowDraw::pipeline_create");
             VkRenderPass shadow_rp = ctx.get_resource_render_pass("shadowCubemap");
             if (!shadow_rp) {
                 HN_CORE_WARN("Renderer3DShadow: shadow render pass not available, skipping");
@@ -185,6 +196,7 @@ namespace Honey {
 
         if (!res->shadow_pipeline) return;
         if (Renderer3DInternal::g_renderer3d_data->shadow_draw_list.empty()) return;
+        if (!Renderer3DInternal::g_renderer3d_data->indirect_buffers[frame]) return;
 
         VkRenderPass rp    = ctx.get_resource_render_pass("shadowCubemap");
         VkImage      image = ctx.get_resource_vk_image("shadowCubemap");
@@ -192,21 +204,26 @@ namespace Honey {
         const uint32_t res_size = k_shadow_map_resolution;
 
         {
+            HN_PROFILE_SCOPE("ShadowDraw::record_commands");
             VkCommandBuffer cmd = ctx.cmd();
-            // Transition READ_ONLY → DEPTH_ATTACHMENT. cubemap_first_frame was already cleared
-            // by the initial transition above, so oldLayout is always DEPTH_STENCIL_READ_ONLY.
-            VkImageMemoryBarrier imb{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-            imb.oldLayout           = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-            imb.newLayout           = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-            imb.image               = image;
-            imb.subresourceRange    = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, k_max_shadow_lights * 6 };
-            imb.srcAccessMask       = VK_ACCESS_SHADER_READ_BIT;
-            imb.dstAccessMask       = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
-                                    | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
-            vkCmdPipelineBarrier(cmd,
-                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                0, 0, nullptr, 0, nullptr, 1, &imb);
+
+            {
+                HN_PROFILE_SCOPE("ShadowDraw::barrier_to_attachment");
+                // Transition READ_ONLY → DEPTH_ATTACHMENT. cubemap_first_frame was already cleared
+                // by the initial transition above, so oldLayout is always DEPTH_STENCIL_READ_ONLY.
+                VkImageMemoryBarrier imb{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+                imb.oldLayout           = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+                imb.newLayout           = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+                imb.image               = image;
+                imb.subresourceRange    = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, k_max_shadow_lights * 6 };
+                imb.srcAccessMask       = VK_ACCESS_SHADER_READ_BIT;
+                imb.dstAccessMask       = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+                                        | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+                vkCmdPipelineBarrier(cmd,
+                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                    0, 0, nullptr, 0, nullptr, 1, &imb);
+            }
 
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, res->shadow_pipeline);
 
@@ -218,52 +235,73 @@ namespace Honey {
             const VkViewport vp{0.0f, 0.0f, (float)res_size, (float)res_size, 0.0f, 1.0f};
             const VkRect2D   sc{{0, 0}, {res_size, res_size}};
 
-            for (uint32_t li = 0; li < res->shadow_light_count; ++li) {
-                for (uint32_t fi = 0; fi < 6; ++fi) {
-                    const uint32_t layer = li * 6 + fi;
-                    VkFramebuffer fb = ctx.get_resource_layer_framebuffer("shadowCubemap", layer);
-                    if (!fb) continue;
+            VkBuffer indirect_vk = reinterpret_cast<VkBuffer>(
+                Renderer3DInternal::g_renderer3d_data->indirect_buffers[frame]->get_native_buffer());
 
-                    VkRenderPassBeginInfo rpbi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-                    rpbi.renderPass        = rp;
-                    rpbi.framebuffer       = fb;
-                    rpbi.renderArea.extent = {res_size, res_size};
-                    VkClearValue cv{};
-                    cv.depthStencil        = {1.0f, 0};
-                    rpbi.clearValueCount   = 1;
-                    rpbi.pClearValues      = &cv;
+            {
+                HN_PROFILE_SCOPE("ShadowDraw::face_draw_loop");
+                // last_ds persists across faces — descriptor set bindings survive render pass
+                // boundaries, so consecutive faces rendering the same last mesh skip re-binding.
+                void* last_ds = nullptr;
+                for (uint32_t li = 0; li < res->shadow_light_count; ++li) {
+                    for (uint32_t fi = 0; fi < 6; ++fi) {
+                        const uint32_t layer = li * 6 + fi;
+                        VkFramebuffer fb = ctx.get_resource_layer_framebuffer("shadowCubemap", layer);
+                        if (!fb) continue;
 
-                    vkCmdBeginRenderPass(cmd, &rpbi, VK_SUBPASS_CONTENTS_INLINE);
-                    vkCmdSetViewport(cmd, 0, 1, &vp);
-                    vkCmdSetScissor(cmd, 0, 1, &sc);
+                        VkRenderPassBeginInfo rpbi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+                        rpbi.renderPass        = rp;
+                        rpbi.framebuffer       = fb;
+                        rpbi.renderArea.extent = {res_size, res_size};
+                        VkClearValue cv{};
+                        cv.depthStencil        = {1.0f, 0};
+                        rpbi.clearValueCount   = 1;
+                        rpbi.pClearValues      = &cv;
 
-                    for (const auto& draw : Renderer3DInternal::g_renderer3d_data->shadow_draw_list) {
-                        // Bind the per-mesh descriptor set at set=1.
-                        VkDescriptorSet mesh_ds = reinterpret_cast<VkDescriptorSet>(draw.mesh_descriptor_set);
-                        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                            res->shadow_layout, 1, 1, &mesh_ds, 0, nullptr);
+                        vkCmdBeginRenderPass(cmd, &rpbi, VK_SUBPASS_CONTENTS_INLINE);
+                        vkCmdSetViewport(cmd, 0, 1, &vp);
+                        vkCmdSetScissor(cmd, 0, 1, &sc);
 
-                        ShadowDrawPC pc{draw.draw_data_base, (int32_t)li, fi, 0};
-                        vkCmdPushConstants(cmd, res->shadow_layout,
-                            VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                            0, sizeof(ShadowDrawPC), &pc);
+                        {
+                            HN_PROFILE_SCOPE("ShadowDraw::mesh_draw_calls");
+                            for (const auto& group : Renderer3DInternal::g_renderer3d_data->shadow_draw_list) {
+                                if (group.mesh_descriptor_set != last_ds) {
+                                    VkDescriptorSet mesh_ds = reinterpret_cast<VkDescriptorSet>(group.mesh_descriptor_set);
+                                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                        res->shadow_layout, 1, 1, &mesh_ds, 0, nullptr);
+                                    last_ds = group.mesh_descriptor_set;
+                                }
 
-                        s_fn_draw_mesh_tasks(cmd, draw.meshlet_count, 1, 1);
+                                ShadowDrawPC pc{group.draw_data_base, (int32_t)li, fi, 0};
+                                vkCmdPushConstants(cmd, res->shadow_layout,
+                                    VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                    0, sizeof(ShadowDrawPC), &pc);
+
+                                s_fn_draw_mesh_tasks_indirect(cmd, indirect_vk,
+                                    group.indirect_byte_offset, group.draw_count, 12u);
+                            }
+                        }
+
+                        vkCmdEndRenderPass(cmd);
                     }
-
-                    vkCmdEndRenderPass(cmd);
                 }
             }
 
-            // Transition all layers back to SHADER_READ for the deferred lighting pass.
-            imb.oldLayout     = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-            imb.newLayout     = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-            imb.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-            imb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-            vkCmdPipelineBarrier(cmd,
-                VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                0, 0, nullptr, 0, nullptr, 1, &imb);
+            {
+                HN_PROFILE_SCOPE("ShadowDraw::barrier_to_shader_read");
+                // Transition all layers back to SHADER_READ for the deferred lighting pass.
+                VkImageMemoryBarrier imb{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+                imb.image            = image;
+                imb.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, k_max_shadow_lights * 6 };
+                imb.oldLayout     = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+                imb.newLayout     = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+                imb.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+                imb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                vkCmdPipelineBarrier(cmd,
+                    VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                    0, 0, nullptr, 0, nullptr, 1, &imb);
+            }
         }
     }
 
@@ -432,6 +470,7 @@ namespace Honey {
     }
 
     void Renderer3DShadow::execute_dir_draw(FrameGraphPassContext& ctx) {
+        HN_PROFILE_FUNCTION();
         if (!s_res || !s_res->vk_ctx || !Renderer3DInternal::g_renderer3d_data) return;
 
         auto* data   = Renderer3DInternal::g_renderer3d_data;
@@ -458,12 +497,14 @@ namespace Honey {
 
         // Upload SSBO so the lighting shader always has valid data.
         {
+            HN_PROFILE_SCOPE("DirShadow::compute_and_upload_ssbo");
             DirectionalShadowSSBO ssbo{};
             ssbo.enabled         = shadows_on ? 1u : 0u;
             ssbo.shadow_distance = data->directional_shadow_distance;
             ssbo.cascade_count   = k_csm_cascade_count;
 
             if (shadows_on) {
+                HN_PROFILE_SCOPE("DirShadow::compute_csm_cascades");
                 compute_csm_cascades(
                     glm::vec3(dir_light.direction),
                     data->scene_camera_pos,
@@ -477,7 +518,10 @@ namespace Honey {
                     ssbo.cascade_vp,
                     ssbo.cascade_splits);
             }
-            vk_ctx->upload_directional_shadows(frame, ssbo);
+            {
+                HN_PROFILE_SCOPE("DirShadow::upload_ssbo");
+                vk_ctx->upload_directional_shadows(frame, ssbo);
+            }
         }
 
 
@@ -504,7 +548,7 @@ namespace Honey {
         if (data->shadow_draw_list.empty()) return;
 
         // Lazily create the pipeline against the shadowDirMap render pass.
-        if (!s_dir->pipeline) {
+        if (!s_dir->pipeline) { HN_PROFILE_SCOPE("DirShadow::pipeline_create");
             VkRenderPass rp = ctx.get_resource_render_pass("shadowDirMap");
             if (!rp) {
                 HN_CORE_WARN("Renderer3DShadow: dir shadow render pass not available, skipping");
@@ -531,6 +575,7 @@ namespace Honey {
         }
 
         if (!s_dir->pipeline) return;
+        if (!data->indirect_buffers[frame]) return;
 
         VkRenderPass  rp    = ctx.get_resource_render_pass("shadowDirMap");
         VkImage       image = ctx.get_resource_vk_image("shadowDirMap");
@@ -539,21 +584,25 @@ namespace Honey {
         const uint32_t res_size = k_dir_shadow_map_resolution;
 
         {
+            HN_PROFILE_SCOPE("DirShadow::record_commands");
             VkCommandBuffer cmd = ctx.cmd();
-            // Transition all cascade layers: SHADER_READ → DEPTH_ATTACHMENT
-            VkImageMemoryBarrier imb{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-            imb.oldLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-            imb.newLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-            imb.image            = image;
-            imb.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, k_csm_cascade_count };
-            imb.srcAccessMask    = VK_ACCESS_SHADER_READ_BIT;
-            imb.dstAccessMask    = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
-                                 | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
-            vkCmdPipelineBarrier(cmd,
-                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-        VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                0, 0, nullptr, 0, nullptr, 1, &imb);
+
+            {
+                HN_PROFILE_SCOPE("DirShadow::barrier_to_attachment");
+                // Transition all cascade layers: SHADER_READ → DEPTH_ATTACHMENT
+                VkImageMemoryBarrier imb{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+                imb.oldLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+                imb.newLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+                imb.image            = image;
+                imb.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, k_csm_cascade_count };
+                imb.srcAccessMask    = VK_ACCESS_SHADER_READ_BIT;
+                imb.dstAccessMask    = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+                                     | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+                vkCmdPipelineBarrier(cmd,
+                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                    0, 0, nullptr, 0, nullptr, 1, &imb);
+            }
 
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, s_dir->pipeline);
 
@@ -564,53 +613,74 @@ namespace Honey {
             const VkViewport viewport{0.f, 0.f, (float)res_size, (float)res_size, 0.f, 1.f};
             const VkRect2D   scissor{{0, 0}, {res_size, res_size}};
 
-            // Render one pass per cascade layer. face_index in the push constant carries
-            // the cascade index so the mesh shader looks up cascade_vp[face_index].
-            for (uint32_t c = 0; c < k_csm_cascade_count; ++c) {
-                VkFramebuffer fb = ctx.get_resource_layer_framebuffer("shadowDirMap", c);
-                if (!fb) continue;
+            VkBuffer indirect_vk = reinterpret_cast<VkBuffer>(
+                data->indirect_buffers[frame]->get_native_buffer());
 
-                VkRenderPassBeginInfo rpbi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-                rpbi.renderPass        = rp;
-                rpbi.framebuffer       = fb;
-                rpbi.renderArea.extent = {res_size, res_size};
-                VkClearValue cv{};
-                cv.depthStencil        = {1.0f, 0};
-                rpbi.clearValueCount   = 1;
-                rpbi.pClearValues      = &cv;
+            {
+                HN_PROFILE_SCOPE("DirShadow::cascade_draw_loop");
+                // Render one pass per cascade layer. face_index in the push constant carries
+                // the cascade index so the mesh shader looks up cascade_vp[face_index].
+                // last_ds persists across cascades — descriptor set bindings survive render pass boundaries.
+                void* last_ds = nullptr;
+                for (uint32_t c = 0; c < k_csm_cascade_count; ++c) {
+                    VkFramebuffer fb = ctx.get_resource_layer_framebuffer("shadowDirMap", c);
+                    if (!fb) continue;
 
-                vkCmdBeginRenderPass(cmd, &rpbi, VK_SUBPASS_CONTENTS_INLINE);
-                vkCmdSetViewport(cmd, 0, 1, &viewport);
-                vkCmdSetScissor(cmd,  0, 1, &scissor);
+                    VkRenderPassBeginInfo rpbi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+                    rpbi.renderPass        = rp;
+                    rpbi.framebuffer       = fb;
+                    rpbi.renderArea.extent = {res_size, res_size};
+                    VkClearValue cv{};
+                    cv.depthStencil        = {1.0f, 0};
+                    rpbi.clearValueCount   = 1;
+                    rpbi.pClearValues      = &cv;
 
-                for (const auto& draw : data->shadow_draw_list) {
-                    VkDescriptorSet mesh_ds =
-        reinterpret_cast<VkDescriptorSet>(draw.mesh_descriptor_set);
-                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                        s_dir->layout, 1, 1, &mesh_ds, 0, nullptr);
+                    vkCmdBeginRenderPass(cmd, &rpbi, VK_SUBPASS_CONTENTS_INLINE);
+                    vkCmdSetViewport(cmd, 0, 1, &viewport);
+                    vkCmdSetScissor(cmd,  0, 1, &scissor);
 
-                    // Reuse face_index to carry the cascade index into the shader.
-                    ShadowDrawPC pc{draw.draw_data_base, 0, c, 0};
-                    vkCmdPushConstants(cmd, s_dir->layout,
-                        VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT |
-        VK_SHADER_STAGE_FRAGMENT_BIT,
-                        0, sizeof(ShadowDrawPC), &pc);
+                    {
+                        HN_PROFILE_SCOPE("DirShadow::mesh_draw_calls");
+                        for (const auto& group : data->shadow_draw_list) {
+                            if (group.mesh_descriptor_set != last_ds) {
+                                VkDescriptorSet mesh_ds =
+                                    reinterpret_cast<VkDescriptorSet>(group.mesh_descriptor_set);
+                                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    s_dir->layout, 1, 1, &mesh_ds, 0, nullptr);
+                                last_ds = group.mesh_descriptor_set;
+                            }
 
-                    s_fn_draw_mesh_tasks(cmd, draw.meshlet_count, 1, 1);
+                            // Reuse face_index to carry the cascade index into the shader.
+                            ShadowDrawPC pc{group.draw_data_base, 0, c, 0};
+                            vkCmdPushConstants(cmd, s_dir->layout,
+                                VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT |
+                                VK_SHADER_STAGE_FRAGMENT_BIT,
+                                0, sizeof(ShadowDrawPC), &pc);
+
+                            s_fn_draw_mesh_tasks_indirect(cmd, indirect_vk,
+                                group.indirect_byte_offset, group.draw_count, 12u);
+                        }
+                    }
+
+                    vkCmdEndRenderPass(cmd);
                 }
-
-                vkCmdEndRenderPass(cmd);
             }
 
-            // Transition all layers back: DEPTH_ATTACHMENT → SHADER_READ
-            imb.oldLayout     = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-            imb.newLayout     = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-            imb.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-            imb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-            vkCmdPipelineBarrier(cmd,
-                VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                0, 0, nullptr, 0, nullptr, 1, &imb);
+            {
+                HN_PROFILE_SCOPE("DirShadow::barrier_to_shader_read");
+                // Transition all layers back: DEPTH_ATTACHMENT → SHADER_READ
+                VkImageMemoryBarrier imb{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+                imb.image            = image;
+                imb.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, k_csm_cascade_count };
+                imb.oldLayout     = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+                imb.newLayout     = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+                imb.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+                imb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                vkCmdPipelineBarrier(cmd,
+                    VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                    0, 0, nullptr, 0, nullptr, 1, &imb);
+            }
         }
     }
 

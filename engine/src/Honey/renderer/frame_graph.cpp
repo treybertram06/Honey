@@ -278,6 +278,9 @@ namespace Honey {
         const auto total_begin = std::chrono::high_resolution_clock::now();
 
         for (auto& pass : m_passes) {
+            const std::string scope_name = (pass.name.empty() ? "<unnamed>" : pass.name) + " Pass";
+            HN_PROFILE_SCOPE(scope_name.c_str());
+
             FGPassExecutionStat pass_stat{};
             pass_stat.pass_name = pass.name.empty() ? std::string("<unnamed>") : pass.name;
 
