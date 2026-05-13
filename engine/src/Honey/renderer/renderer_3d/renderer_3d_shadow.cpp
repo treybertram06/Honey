@@ -121,7 +121,7 @@ namespace Honey {
         if (!s_res || !s_res->vk_ctx || !Renderer3DInternal::g_renderer3d_data) return;
 
         auto* res = s_res;
-        const uint32_t frame = ctx.frame_index() % VulkanContext::k_max_frames_in_flight;
+        const uint32_t frame = res->vk_ctx->get_current_frame() % VulkanContext::k_max_frames_in_flight;
 
         // Register shadow cubemap resources on the first frame so the deferred lighting descriptor
         // at set=1 binding=4 always has a valid cube-array + comparison sampler, even when there
@@ -340,6 +340,7 @@ namespace Honey {
             glm::vec3        cam_pos,
             float            cam_far,
             float            cam_fov,
+            float            cam_aspect,
             const glm::mat4& inv_view_proj,
             float            sub_near,
             float            sub_far) {
@@ -374,20 +375,8 @@ namespace Honey {
             glm::vec3 right   = glm::normalize(glm::cross(up, forward));
             glm::vec3 up_     = glm::cross(forward, right);
 
-            // AABB in light space (centred at origin, no eye offset yet)
-            glm::vec3 aabb_min{ FLT_MAX}, aabb_max{-FLT_MAX};
-            for (auto& c : corners) {
-                glm::vec3 lc = {
-                    glm::dot(c, right),
-                    glm::dot(c, up_),
-                    glm::dot(c, forward),
-                };
-                aabb_min = glm::min(aabb_min, lc);
-                aabb_max = glm::max(aabb_max, lc);
-            }
-
-            float tan_half_fov_x = glm::tan(glm::radians(cam_fov * 0.5f));
             float tan_half_fov_y = glm::tan(glm::radians(cam_fov * 0.5f));
+            float tan_half_fov_x = tan_half_fov_y * cam_aspect;
 
             // Analytically compute the bounding sphere of this frustum slice.
             // This is rotation-invariant — same value every frame for the same cascade.
@@ -428,8 +417,9 @@ namespace Honey {
                 snapped_centroid,
                 up_);
 
-            // Fixed square ortho — same every frame for this cascade
-            float z_far = k_near_pull + (aabb_max.z - aabb_min.z);
+            // Use sphere diameter for z_far — rotation-invariant (AABB depth along the light
+            // direction changes with camera rotation, but sphere diameter is constant).
+            float z_far = k_near_pull + 2.0f * radius;
             glm::mat4 proj = glm::orthoRH_ZO(
                 -radius,  radius,
                 -radius,  radius,
@@ -444,6 +434,7 @@ namespace Honey {
             float            cam_near,
             float            cam_far,
             float            cam_fov,
+            float            cam_aspect,
             float            shadow_far,
             float            lambda,
             const glm::mat4& inv_view_proj,
@@ -464,7 +455,7 @@ namespace Honey {
                 float sub_far  = split;
 
                 out_vp[i] = compute_cascade_vp(
-                    light_dir, cam_pos, cam_far, cam_fov, inv_view_proj, sub_near, sub_far);
+                    light_dir, cam_pos, cam_far, cam_fov, cam_aspect, inv_view_proj, sub_near, sub_far);
             }
         }
     }
@@ -475,7 +466,7 @@ namespace Honey {
 
         auto* data   = Renderer3DInternal::g_renderer3d_data;
         auto* vk_ctx = s_res->vk_ctx;
-        const uint32_t frame = ctx.frame_index() % VulkanContext::k_max_frames_in_flight;
+        const uint32_t frame = vk_ctx->get_current_frame() % VulkanContext::k_max_frames_in_flight;
 
         const auto& dir_light = data->scene_lights.directional_light;
         const bool shadows_on = data->directional_shadows_enabled &&
@@ -511,6 +502,7 @@ namespace Honey {
                     data->scene_camera_near,
                     data->scene_camera_far,
                     data->scene_camera_fov,
+                    data->scene_camera_aspect_ratio,
                     data->directional_shadow_distance,
                     0.75f,
                     glm::inverse(data->scene_view_proj),

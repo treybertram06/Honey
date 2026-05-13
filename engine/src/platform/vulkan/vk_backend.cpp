@@ -1679,6 +1679,7 @@ namespace Honey {
         HN_CORE_INFO("Max Anisotropy: {0}", m_max_anisotropy);
         features.fillModeNonSolid = VK_TRUE;
         features.imageCubeArray = VK_TRUE;
+        features.multiDrawIndirect = VK_TRUE;
 
         std::vector<const char*> device_extensions = {
             VK_KHR_SWAPCHAIN_EXTENSION_NAME,
