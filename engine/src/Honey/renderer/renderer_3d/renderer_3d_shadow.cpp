@@ -339,8 +339,6 @@ namespace Honey {
             glm::vec3        light_dir,
             glm::vec3        cam_pos,
             float            cam_far,
-            float            cam_fov,
-            float            cam_aspect,
             const glm::mat4& inv_view_proj,
             float            sub_near,
             float            sub_far) {
@@ -375,32 +373,24 @@ namespace Honey {
             glm::vec3 right   = glm::normalize(glm::cross(up, forward));
             glm::vec3 up_     = glm::cross(forward, right);
 
-            float tan_half_fov_y = glm::tan(glm::radians(cam_fov * 0.5f));
-            float tan_half_fov_x = tan_half_fov_y * cam_aspect;
-
-            // Analytically compute the bounding sphere of this frustum slice.
-            // This is rotation-invariant — same value every frame for the same cascade.
-            float half_near_x = sub_near * tan_half_fov_x;
-            float half_near_y = sub_near * tan_half_fov_y;
-            float half_far_x  = sub_far  * tan_half_fov_x;
-            float half_far_y  = sub_far  * tan_half_fov_y;
-
-            // Frustum slice centre along Z
-            float mid_z = (sub_near + sub_far) * 0.5f;
-
-            // Radius = max distance from centre to any corner
-            float r_near = glm::sqrt(half_near_x*half_near_x + half_near_y*half_near_y
-                                     + (sub_near - mid_z)*(sub_near - mid_z));
-            float r_far  = glm::sqrt(half_far_x*half_far_x  + half_far_y*half_far_y
-                                     + (sub_far  - mid_z)*(sub_far  - mid_z));
-            float radius = glm::max(r_near, r_far);
+            // Bounding sphere radius = max distance from centroid to any corner.
+            // Computing from the actual corners (rather than analytically from fov/aspect)
+            // guarantees correctness for any viewport shape and avoids stale camera parameters.
+            // Euclidean distance is rotation-invariant, so this is shimmer-safe.
+            float radius = 0.0f;
+            for (auto& c : corners)
+                radius = glm::max(radius, glm::length(c - centroid));
 
             // Stable texel size — same bits every frame
             const float res         = float(k_dir_shadow_map_resolution);
             const float texel_world = (2.f * radius) / res;
 
-            // Round radius up to a texel boundary so the ortho extents are also stable
-            radius = glm::ceil(radius / texel_world) * texel_world;
+            // Round radius up to a texel boundary so the ortho extents are also stable.
+            // Add one extra texel of slack: floor-snapping the centroid (below) can shift
+            // it by up to one texel in the negative direction, which would push +right/+up_
+            // frustum corners (at exactly radius from the true centroid) just outside the
+            // ortho box. The extra texel absorbs that worst-case offset.
+            radius = glm::ceil(radius / texel_world) * texel_world + texel_world;
 
             // Snap centroid to texel grid using the now-stable texel_world
             float cx = glm::dot(centroid, right);
@@ -433,8 +423,6 @@ namespace Honey {
             glm::vec3        cam_pos,
             float            cam_near,
             float            cam_far,
-            float            cam_fov,
-            float            cam_aspect,
             float            shadow_far,
             float            lambda,
             const glm::mat4& inv_view_proj,
@@ -455,7 +443,7 @@ namespace Honey {
                 float sub_far  = split;
 
                 out_vp[i] = compute_cascade_vp(
-                    light_dir, cam_pos, cam_far, cam_fov, cam_aspect, inv_view_proj, sub_near, sub_far);
+                    light_dir, cam_pos, cam_far, inv_view_proj, sub_near, sub_far);
             }
         }
     }
@@ -501,8 +489,6 @@ namespace Honey {
                     data->scene_camera_pos,
                     data->scene_camera_near,
                     data->scene_camera_far,
-                    data->scene_camera_fov,
-                    data->scene_camera_aspect_ratio,
                     data->directional_shadow_distance,
                     0.75f,
                     glm::inverse(data->scene_view_proj),
