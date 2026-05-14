@@ -404,8 +404,6 @@ private:
         std::vector<VkSemaphore> m_render_finished_semaphores;
         std::vector<VkFence> m_in_flight_fences;
 
-        std::vector<VkFence> m_images_in_flight;
-
         PendingGlobals m_pending_globals{};
         glm::vec4     m_pending_clear_color{0.1f, 0.1f, 0.1f, 1.0f};
 

@@ -30,6 +30,9 @@ namespace Honey {
             PFN_vkGetRayTracingShaderGroupHandlesKHR  fn_get_sbt_handles = nullptr;
             PFN_vkGetBufferDeviceAddressKHR           fn_get_buf_addr  = nullptr;
 
+            // Cached once at init — physical device memory properties never change.
+            VkPhysicalDeviceMemoryProperties cached_mem_props{};
+
             // Per-instance geometry lookup (one entry per TLAS instance, rebuilt each frame)
             struct GeometryInfo {
                 VkDeviceAddress vertex_buffer_addr;
@@ -63,7 +66,9 @@ namespace Honey {
 
             // Texture descriptors — partially bound array, updated once per frame.
             // Keyed by VkImageView so we can detect changes without re-uploading.
-            std::vector<std::pair<VkImageView, VkSampler>> bound_textures; // tracks what's in each slot
+            std::vector<std::pair<VkImageView, VkSampler>> bound_textures;
+            // O(1) dedup index alongside bound_textures.
+            std::unordered_map<VkImageView, int> texture_index_map;
 
             VkBuffer lights_buffer = VK_NULL_HANDLE;
             VkDeviceMemory lights_memory = VK_NULL_HANDLE;
@@ -78,16 +83,50 @@ namespace Honey {
             };
             std::unordered_map<const Submesh*, BlasEntry> blas_cache;
 
-            // TLAS — rebuilt every frame.
+            // Persistent BLAS scratch — sized to the max scratch needed across all builds seen so
+            // far, reused sequentially (barriers between builds allow offset-0 reuse).
+            VkBuffer        blas_scratch_buffer = VK_NULL_HANDLE;
+            VkDeviceMemory  blas_scratch_memory = VK_NULL_HANDLE;
+            VkDeviceAddress blas_scratch_addr   = 0;
+            VkDeviceSize    blas_scratch_size   = 0;
+
+            // Pending BLAS builds accumulated by prepare_tlas_cpu(), consumed by record_pending_blas_builds().
+            struct PendingBlas {
+                const Submesh* submesh_key; // look up handle in blas_cache during recording
+                VkDeviceAddress vbuf_addr;
+                VkDeviceAddress ibuf_addr;
+                uint32_t tri_count;
+                uint32_t max_vertex;
+            };
+            std::vector<PendingBlas> pending_blas;
+
+            // TLAS — persistent handle and backing buffer; refitted when instance count is stable.
             VkAccelerationStructureKHR tlas = VK_NULL_HANDLE;
             VkBuffer tlas_buffer = VK_NULL_HANDLE;
             VkDeviceMemory tlas_memory = VK_NULL_HANDLE;
+            VkDeviceSize   tlas_backing_size = 0;       // size of tlas_buffer allocation
+            uint32_t       tlas_last_instance_count = UINT32_MAX; // triggers rebuild on first frame
+
+            // Persistent TLAS scratch — sized to buildScratchSize (always >= updateScratchSize).
+            VkBuffer        tlas_scratch_buffer = VK_NULL_HANDLE;
+            VkDeviceMemory  tlas_scratch_memory = VK_NULL_HANDLE;
+            VkDeviceAddress tlas_scratch_addr   = 0;
+            VkDeviceSize    tlas_scratch_size   = 0;
+
+            // Per-frame TLAS state set by prepare_tlas_cpu(), consumed by record_tlas_build().
+            uint32_t tlas_prim_count  = 0;
+            bool     tlas_mode_update = false; // false = full build, true = refit
 
             // Per-frame instance upload buffer (host visible)
             VkBuffer instance_buffer = VK_NULL_HANDLE;
             VkDeviceMemory instance_memory = VK_NULL_HANDLE;
             void* instance_mapped = nullptr;
             uint32_t instance_buffer_capacity = 0;
+
+            // Per-frame reusable work vectors (avoid heap churn every frame).
+            std::vector<VkAccelerationStructureInstanceKHR> frame_instances;
+            std::vector<GeometryInfo>                       frame_geo_infos;
+            std::vector<MaterialInfo>                       frame_materials;
 
             // Output accumulation image (RGBA32F storage image).
             VkImage accum_image = VK_NULL_HANDLE;
@@ -148,16 +187,14 @@ namespace Honey {
 
         static PathTracerResources* s_res = nullptr;
 
-        static uint32_t find_memory_type(VkPhysicalDevice phys, uint32_t type_filter, VkMemoryPropertyFlags props) {
-            HN_PROFILE_FUNCTION();
-            VkPhysicalDeviceMemoryProperties mem_props{};
-            vkGetPhysicalDeviceMemoryProperties(phys, &mem_props);
-
+        // Takes cached props instead of querying vkGetPhysicalDeviceMemoryProperties every call.
+        static uint32_t find_memory_type(const VkPhysicalDeviceMemoryProperties& mem_props,
+                                         uint32_t type_filter,
+                                         VkMemoryPropertyFlags props) {
             for (uint32_t i = 0; i < mem_props.memoryTypeCount; i++) {
                 if ((type_filter & (1u << i)) && ((mem_props.memoryTypes[i].propertyFlags & props) == props))
                     return i;
             }
-
             HN_CORE_ASSERT(false, "Failed to find suitable Vulkan memory type");
             return 0;
         }
@@ -186,7 +223,6 @@ namespace Honey {
         static void alloc_storage_image(uint32_t w, uint32_t h, VkFormat fmt, VkImageUsageFlags extra_usage,
                                         VkImage& img, VkDeviceMemory& mem, VkImageView& view) {
             VkDevice device = s_res->vk_ctx->get_device();
-            VkPhysicalDevice phys = s_res->vk_ctx->get_physical_device();
 
             VkImageCreateInfo ici{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
             ici.imageType     = VK_IMAGE_TYPE_2D;
@@ -206,7 +242,8 @@ namespace Honey {
 
             VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
             ai.allocationSize  = req.size;
-            ai.memoryTypeIndex = find_memory_type(phys, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            ai.memoryTypeIndex = find_memory_type(s_res->cached_mem_props, req.memoryTypeBits,
+                                                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
             r = vkAllocateMemory(device, &ai, nullptr, &mem);
             HN_CORE_ASSERT(r == VK_SUCCESS, "vkAllocateMemory failed");
             vkBindImageMemory(device, img, mem, 0);
@@ -387,7 +424,7 @@ namespace Honey {
             VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
             ai.pNext           = &flags_info;
             ai.allocationSize  = req.size;
-            ai.memoryTypeIndex = find_memory_type(s_res->vk_ctx->get_physical_device(), req.memoryTypeBits,
+            ai.memoryTypeIndex = find_memory_type(s_res->cached_mem_props, req.memoryTypeBits,
                                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
             vkAllocateMemory(device, &ai, nullptr, &s_res->instance_memory);
             vkBindBufferMemory(device, s_res->instance_buffer, s_res->instance_memory, 0);
@@ -419,7 +456,7 @@ namespace Honey {
 
             VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
             ai.allocationSize  = req.size;
-            ai.memoryTypeIndex = find_memory_type(s_res->vk_ctx->get_physical_device(), req.memoryTypeBits,
+            ai.memoryTypeIndex = find_memory_type(s_res->cached_mem_props, req.memoryTypeBits,
                                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
             vkAllocateMemory(device, &ai, nullptr, &s_res->geometry_lookup_memory);
             vkBindBufferMemory(device, s_res->geometry_lookup_buffer, s_res->geometry_lookup_memory, 0);
@@ -450,7 +487,7 @@ namespace Honey {
 
             VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
             ai.allocationSize  = req.size;
-            ai.memoryTypeIndex = find_memory_type(s_res->vk_ctx->get_physical_device(), req.memoryTypeBits,
+            ai.memoryTypeIndex = find_memory_type(s_res->cached_mem_props, req.memoryTypeBits,
                                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
             vkAllocateMemory(device, &ai, nullptr, &s_res->material_memory);
             vkBindBufferMemory(device, s_res->material_buffer, s_res->material_memory, 0);
@@ -458,11 +495,57 @@ namespace Honey {
             s_res->material_capacity = count;
         }
 
-        // vbuf_addr: device address of the full mesh vertex buffer (VertexPBR, stride 56)
-        // ibuf_addr: device address of the first index for this submesh in the flat index buffer
-        // tri_count: number of triangles in this submesh
-        // max_vertex: highest vertex index referenced (safe to use total mesh vertex count - 1)
-        static PathTracerResources::BlasEntry build_blas(
+        // Grows a generic device-local scratch buffer to at least `needed` bytes.
+        // Returns the new device address (or the existing one if no growth was needed).
+        static VkDeviceAddress ensure_scratch_buffer(VkDeviceSize needed,
+                                                     VkBuffer& buf, VkDeviceMemory& mem,
+                                                     VkDeviceAddress& addr, VkDeviceSize& current_size) {
+            if (needed <= current_size)
+                return addr;
+
+            VkDevice device = s_res->vk_ctx->get_device();
+            if (buf != VK_NULL_HANDLE) {
+                vkDestroyBuffer(device, buf, nullptr);
+                vkFreeMemory(device, mem, nullptr);
+                buf  = VK_NULL_HANDLE;
+                mem  = VK_NULL_HANDLE;
+                addr = 0;
+            }
+
+            VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+            bi.size        = needed;
+            bi.usage       = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+            bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            VkResult r = vkCreateBuffer(device, &bi, nullptr, &buf);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "ensure_scratch_buffer: vkCreateBuffer failed");
+
+            VkMemoryRequirements req{};
+            vkGetBufferMemoryRequirements(device, buf, &req);
+
+            VkMemoryAllocateFlagsInfo flags_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO};
+            flags_info.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT_KHR;
+
+            VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+            ai.pNext           = &flags_info;
+            ai.allocationSize  = req.size;
+            ai.memoryTypeIndex = find_memory_type(s_res->cached_mem_props, req.memoryTypeBits,
+                                                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            r = vkAllocateMemory(device, &ai, nullptr, &mem);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "ensure_scratch_buffer: vkAllocateMemory failed");
+            vkBindBufferMemory(device, buf, mem, 0);
+
+            VkBufferDeviceAddressInfo addr_info{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
+            addr_info.buffer = buf;
+            addr = s_res->fn_get_buf_addr(device, &addr_info);
+            current_size = needed;
+            return addr;
+        }
+
+        // Allocates a BLAS backing buffer and creates its AS handle on the CPU.
+        // Does NOT submit any GPU work — recording is deferred to record_pending_blas_builds().
+        // Appends to s_res->pending_blas and grows s_res->blas_scratch_size as needed.
+        static PathTracerResources::BlasEntry alloc_blas_entry(
+                const Submesh* submesh_key,
                 VkDeviceAddress vbuf_addr,
                 VkDeviceAddress ibuf_addr,
                 uint32_t tri_count,
@@ -470,38 +553,37 @@ namespace Honey {
             HN_PROFILE_FUNCTION();
 
             VkDevice device = s_res->vk_ctx->get_device();
-            VkPhysicalDevice physical_device = s_res->vk_ctx->get_physical_device();
 
-            VkAccelerationStructureGeometryTrianglesDataKHR triangles = {};
-            triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
-            triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+            VkAccelerationStructureGeometryTrianglesDataKHR triangles{};
+            triangles.sType          = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+            triangles.vertexFormat   = VK_FORMAT_R32G32B32_SFLOAT;
             triangles.vertexData.deviceAddress = vbuf_addr;
-            triangles.vertexStride = 56; // sizeof(VertexPBR) from gltf_loader.cpp
-            triangles.maxVertex = max_vertex;
-            triangles.indexType = VK_INDEX_TYPE_UINT32;
-            triangles.indexData.deviceAddress = ibuf_addr;
+            triangles.vertexStride   = 56; // sizeof(VertexPBR) from gltf_loader.cpp
+            triangles.maxVertex      = max_vertex;
+            triangles.indexType      = VK_INDEX_TYPE_UINT32;
+            triangles.indexData.deviceAddress  = ibuf_addr;
 
-            VkAccelerationStructureGeometryKHR geometry = {VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
-            geometry.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-            geometry.geometry.triangles = triangles;
-            geometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+            VkAccelerationStructureGeometryKHR geometry{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
+            geometry.geometryType        = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+            geometry.geometry.triangles  = triangles;
+            geometry.flags               = VK_GEOMETRY_OPAQUE_BIT_KHR;
 
             VkAccelerationStructureBuildGeometryInfoKHR build_info{};
-            build_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
-            build_info.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-            build_info.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+            build_info.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+            build_info.type          = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+            build_info.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
             build_info.geometryCount = 1;
-            build_info.pGeometries = &geometry;
+            build_info.pGeometries   = &geometry;
 
-            VkAccelerationStructureBuildSizesInfoKHR sizes = {VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR};
-            s_res->fn_get_as_sizes(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &build_info, &tri_count, &sizes);
+            VkAccelerationStructureBuildSizesInfoKHR sizes{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR};
+            s_res->fn_get_as_sizes(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
+                                   &build_info, &tri_count, &sizes);
 
-            // Allocate output buffer and create AS handle
             PathTracerResources::BlasEntry entry{};
 
+            // Alloc backing buffer and create handle.
             {
-                VkBufferCreateInfo bi{};
-                bi.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+                VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
                 bi.size        = sizes.accelerationStructureSize;
                 bi.usage       = VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
                                | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
@@ -512,106 +594,119 @@ namespace Honey {
                 VkMemoryRequirements req{};
                 vkGetBufferMemoryRequirements(device, entry.buffer, &req);
 
-                VkMemoryAllocateFlagsInfo flags_info{};
-                flags_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+                VkMemoryAllocateFlagsInfo flags_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO};
                 flags_info.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT_KHR;
 
-                VkMemoryAllocateInfo ai{};
-                ai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+                VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
                 ai.pNext           = &flags_info;
                 ai.allocationSize  = req.size;
-                ai.memoryTypeIndex = find_memory_type(physical_device, req.memoryTypeBits,
-                                                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+                ai.memoryTypeIndex = find_memory_type(s_res->cached_mem_props, req.memoryTypeBits,
+                                                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
                 r = vkAllocateMemory(device, &ai, nullptr, &entry.memory);
                 HN_CORE_ASSERT(r == VK_SUCCESS, "vkAllocateMemory failed (BLAS)");
                 r = vkBindBufferMemory(device, entry.buffer, entry.memory, 0);
                 HN_CORE_ASSERT(r == VK_SUCCESS, "vkBindBufferMemory failed (BLAS)");
             }
 
-            VkAccelerationStructureCreateInfoKHR ci{};
-            ci.sType  = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+            VkAccelerationStructureCreateInfoKHR ci{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR};
             ci.buffer = entry.buffer;
             ci.size   = sizes.accelerationStructureSize;
             ci.type   = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
             VkResult r = s_res->fn_create_as(device, &ci, nullptr, &entry.handle);
             HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateAccelerationStructureKHR failed");
 
-            VkBuffer scratch_buffer = VK_NULL_HANDLE;
-            VkDeviceMemory scratch_memory = VK_NULL_HANDLE;
-            {
-                VkBufferCreateInfo bi{};
-                bi.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-                bi.size        = sizes.buildScratchSize;
-                bi.usage       = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
-                               | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-                bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-                VkResult br = vkCreateBuffer(device, &bi, nullptr, &scratch_buffer);
-                HN_CORE_ASSERT(br == VK_SUCCESS, "vkCreateBuffer failed (BLAS scratch)");
-
-                VkMemoryRequirements req{};
-                vkGetBufferMemoryRequirements(device, scratch_buffer, &req);
-
-                VkMemoryAllocateFlagsInfo flags_info{};
-                flags_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
-                flags_info.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT_KHR;
-
-                VkMemoryAllocateInfo ai{};
-                ai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-                ai.pNext           = &flags_info;
-                ai.allocationSize  = req.size;
-                ai.memoryTypeIndex = find_memory_type(physical_device, req.memoryTypeBits,
-                                                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-                br = vkAllocateMemory(device, &ai, nullptr, &scratch_memory);
-                HN_CORE_ASSERT(br == VK_SUCCESS, "vkAllocateMemory failed (BLAS scratch)");
-                br = vkBindBufferMemory(device, scratch_buffer, scratch_memory, 0);
-                HN_CORE_ASSERT(br == VK_SUCCESS, "vkBindBufferMemory failed (BLAS scratch)");
-            }
-
-            VkBufferDeviceAddressInfo scratch_addr_info{};
-            scratch_addr_info.sType  = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
-            scratch_addr_info.buffer = scratch_buffer;
-            VkDeviceAddress scratch_addr = s_res->fn_get_buf_addr(device, &scratch_addr_info);
-
-            s_res->vk_ctx->submit_one_time_compute([&](VkCommandBuffer cmd) {
-                build_info.mode                     = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
-                build_info.dstAccelerationStructure = entry.handle;
-                build_info.scratchData.deviceAddress = scratch_addr;
-
-                VkAccelerationStructureBuildRangeInfoKHR range{};
-                range.primitiveCount = tri_count;
-                const VkAccelerationStructureBuildRangeInfoKHR* range_ptr = &range;
-                s_res->fn_cmd_build_as(cmd, 1, &build_info, &range_ptr);
-
-                VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-                barrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
-                barrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
-                vkCmdPipelineBarrier(cmd,
-                    VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-                    VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-                    0, 1, &barrier, 0, nullptr, 0, nullptr);
-            });
-
-            vkDestroyBuffer(device, scratch_buffer, nullptr);
-            vkFreeMemory(device, scratch_memory, nullptr);
-
             VkAccelerationStructureDeviceAddressInfoKHR as_addr{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR};
             as_addr.accelerationStructure = entry.handle;
             entry.device_address = s_res->fn_get_as_addr(device, &as_addr);
 
+            // Grow persistent BLAS scratch to accommodate this build (scratch is reused sequentially).
+            ensure_scratch_buffer(sizes.buildScratchSize,
+                                  s_res->blas_scratch_buffer, s_res->blas_scratch_memory,
+                                  s_res->blas_scratch_addr,   s_res->blas_scratch_size);
+
+            s_res->pending_blas.push_back({ submesh_key, vbuf_addr, ibuf_addr, tri_count, max_vertex });
             return entry;
         }
 
-        // Returns false if no instances were found (empty scene).
-        static bool build_tlas(Scene* scene) {
+        // Records all pending BLAS builds into cmd, then clears pending_blas.
+        // Emits an inter-build barrier when reusing scratch sequentially, and a final
+        // AS_WRITE → AS_READ barrier so the TLAS build can consume the results.
+        static void record_pending_blas_builds(VkCommandBuffer cmd) {
+            if (s_res->pending_blas.empty())
+                return;
+
+            const auto& pending = s_res->pending_blas;
+            for (size_t i = 0; i < pending.size(); ++i) {
+                const auto& pb = pending[i];
+                const PathTracerResources::BlasEntry& entry = s_res->blas_cache.at(pb.submesh_key);
+
+                VkAccelerationStructureGeometryTrianglesDataKHR triangles{};
+                triangles.sType          = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+                triangles.vertexFormat   = VK_FORMAT_R32G32B32_SFLOAT;
+                triangles.vertexData.deviceAddress = pb.vbuf_addr;
+                triangles.vertexStride   = 56;
+                triangles.maxVertex      = pb.max_vertex;
+                triangles.indexType      = VK_INDEX_TYPE_UINT32;
+                triangles.indexData.deviceAddress  = pb.ibuf_addr;
+
+                VkAccelerationStructureGeometryKHR geometry{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
+                geometry.geometryType       = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+                geometry.geometry.triangles = triangles;
+                geometry.flags              = VK_GEOMETRY_OPAQUE_BIT_KHR;
+
+                VkAccelerationStructureBuildGeometryInfoKHR build_info{};
+                build_info.sType                     = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+                build_info.type                      = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+                build_info.flags                     = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+                build_info.mode                      = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+                build_info.dstAccelerationStructure  = entry.handle;
+                build_info.geometryCount             = 1;
+                build_info.pGeometries               = &geometry;
+                build_info.scratchData.deviceAddress = s_res->blas_scratch_addr; // offset 0, reused sequentially
+
+                VkAccelerationStructureBuildRangeInfoKHR range{};
+                range.primitiveCount = pb.tri_count;
+                const VkAccelerationStructureBuildRangeInfoKHR* range_ptr = &range;
+                s_res->fn_cmd_build_as(cmd, 1, &build_info, &range_ptr);
+
+                // Between sequential builds: ensure previous build's scratch writes are visible
+                // before the next build reads/writes scratch at offset 0.
+                if (i + 1 < pending.size()) {
+                    VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+                    mb.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+                    mb.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR
+                                     | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+                    vkCmdPipelineBarrier(cmd,
+                        VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                        VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                        0, 1, &mb, 0, nullptr, 0, nullptr);
+                }
+            }
+
+            // Final barrier: all BLAS writes must be visible to the TLAS build.
+            VkMemoryBarrier final_mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            final_mb.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+            final_mb.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+            vkCmdPipelineBarrier(cmd,
+                VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                0, 1, &final_mb, 0, nullptr, 0, nullptr);
+
+            s_res->pending_blas.clear();
+        }
+
+        // CPU-only: iterates the scene, uploads instance/material/geo data, prepares TLAS state.
+        // New BLASes are allocated but not built — they are appended to pending_blas.
+        // Returns false if the scene has no renderable instances.
+        static bool prepare_tlas_cpu(Scene* scene) {
             VkDevice device = s_res->vk_ctx->get_device();
-            VkPhysicalDevice physical_device = s_res->vk_ctx->get_physical_device();
 
-            std::vector<VkAccelerationStructureInstanceKHR> instances;
-            std::vector<PathTracerResources::GeometryInfo> geo_infos;
-            std::vector<PathTracerResources::MaterialInfo> materials;
-
-            s_res->bound_textures.clear(); // Clear to get rid of removed textures
+            s_res->frame_instances.clear();
+            s_res->frame_geo_infos.clear();
+            s_res->frame_materials.clear();
+            s_res->bound_textures.clear();
+            s_res->texture_index_map.clear();
+            s_res->pending_blas.clear();
 
             auto view = scene->get_registry().view<TransformComponent, MeshRendererComponent>();
             for (auto entity : view) {
@@ -624,14 +719,12 @@ namespace Honey {
                 if (!bufs.flat_index_buffer || !bufs.vertex_buffer)
                     continue;
 
-                // Get base GPU buffer addresses shared by all submeshes of this mesh.
                 VkBufferDeviceAddressInfo addr_info{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
                 addr_info.buffer = reinterpret_cast<VkBuffer>(bufs.vertex_buffer->get_native_buffer());
                 const VkDeviceAddress vbuf_addr = s_res->fn_get_buf_addr(device, &addr_info);
                 addr_info.buffer = reinterpret_cast<VkBuffer>(bufs.flat_index_buffer->get_native_buffer());
                 const VkDeviceAddress ibuf_base_addr = s_res->fn_get_buf_addr(device, &addr_info);
 
-                // max_vertex: safe upper bound for all submeshes (total vertex count - 1)
                 const uint32_t max_vertex = bufs.vertex_buffer->get_size() / 56u - 1u;
 
                 const auto& submeshes = mrc.mesh->get_submeshes();
@@ -640,12 +733,13 @@ namespace Honey {
                     if (!sm.meshlets.has_value()) continue;
                     if (sm.meshlets->flat_index_tri_count == 0) continue;
 
-                    const uint32_t tri_count  = sm.meshlets->flat_index_tri_count;
+                    const uint32_t tri_count = sm.meshlets->flat_index_tri_count;
                     const VkDeviceAddress ibuf_addr = ibuf_base_addr
                         + (VkDeviceAddress)sm.meshlets->flat_index_first * 3u * sizeof(uint32_t);
 
+                    // Allocate BLAS if not cached — GPU build is deferred to record_pending_blas_builds().
                     if (!s_res->blas_cache.count(&sm))
-                        s_res->blas_cache[&sm] = build_blas(vbuf_addr, ibuf_addr, tri_count, max_vertex);
+                        s_res->blas_cache[&sm] = alloc_blas_entry(&sm, vbuf_addr, ibuf_addr, tri_count, max_vertex);
 
                     auto& blas = s_res->blas_cache.at(&sm);
 
@@ -664,19 +758,18 @@ namespace Honey {
                         mat_info.roughness         = mat->get_roughness_factor();
                         mat_info.normal_scale      = mat->get_normal_scale();
 
+                        // O(1) texture deduplication via unordered_map.
                         auto register_tex = [&](const Ref<Texture2D>& tex) -> int {
                             if (!tex) return -1;
                             auto* vk = dynamic_cast<VulkanTexture2D*>(tex.get());
-                            VkImageView view    = vk ? static_cast<VkImageView>(vk->get_vk_image_view()) : VK_NULL_HANDLE;
-                            VkSampler   sampler = vk ? static_cast<VkSampler>(vk->get_vk_sampler())      : VK_NULL_HANDLE;
-                            if (view == VK_NULL_HANDLE) return -1;
-                            auto it = std::find_if(s_res->bound_textures.begin(), s_res->bound_textures.end(),
-                                [view](const auto& p){ return p.first == view; });
-                            if (it != s_res->bound_textures.end())
-                                return (int)(it - s_res->bound_textures.begin());
-                            int idx = (int)s_res->bound_textures.size();
-                            s_res->bound_textures.push_back({ view, sampler });
-                            return idx;
+                            VkImageView img_view = vk ? static_cast<VkImageView>(vk->get_vk_image_view()) : VK_NULL_HANDLE;
+                            VkSampler   sampler  = vk ? static_cast<VkSampler>(vk->get_vk_sampler())      : VK_NULL_HANDLE;
+                            if (img_view == VK_NULL_HANDLE) return -1;
+                            auto [it, inserted] = s_res->texture_index_map.try_emplace(
+                                img_view, (int)s_res->bound_textures.size());
+                            if (inserted)
+                                s_res->bound_textures.push_back({ img_view, sampler });
+                            return it->second;
                         };
 
                         mat_info.base_color_tex  = register_tex(mat->get_base_color_texture());
@@ -684,46 +777,140 @@ namespace Honey {
                         mat_info.normal_tex      = register_tex(mat->get_normal_texture());
                         mat_info.emissive_tex    = register_tex(mat->get_emissive_texture());
                     }
-                    materials.push_back(mat_info);
-
-                    geo_infos.push_back({ vbuf_addr, ibuf_addr });
+                    s_res->frame_materials.push_back(mat_info);
+                    s_res->frame_geo_infos.push_back({ vbuf_addr, ibuf_addr });
 
                     VkAccelerationStructureInstanceKHR inst{};
                     inst.transform                              = to_vk_transform(tc.world * sm.transform);
-                    inst.instanceCustomIndex                    = (uint32_t)(geo_infos.size() - 1);
+                    inst.instanceCustomIndex                    = (uint32_t)(s_res->frame_geo_infos.size() - 1);
                     inst.mask                                   = 0xFF;
                     inst.instanceShaderBindingTableRecordOffset = 0;
                     inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
                     inst.accelerationStructureReference         = blas.device_address;
-
-                    instances.push_back(inst);
+                    s_res->frame_instances.push_back(inst);
                 }
             }
 
-            ensure_geometry_lookup_buffer((uint32_t)geo_infos.size());
-            memcpy(s_res->geometry_lookup_mapped, geo_infos.data(),
-                geo_infos.size() * sizeof(PathTracerResources::GeometryInfo));
+            // Upload host data to persistently-mapped GPU-visible buffers.
+            ensure_geometry_lookup_buffer((uint32_t)s_res->frame_geo_infos.size());
+            if (!s_res->frame_geo_infos.empty())
+                memcpy(s_res->geometry_lookup_mapped, s_res->frame_geo_infos.data(),
+                       s_res->frame_geo_infos.size() * sizeof(PathTracerResources::GeometryInfo));
 
-            ensure_material_buffer((uint32_t)materials.size());
-            memcpy(s_res->material_mapped, materials.data(),
-                   materials.size() * sizeof(PathTracerResources::MaterialInfo));
+            ensure_material_buffer((uint32_t)s_res->frame_materials.size());
+            if (!s_res->frame_materials.empty())
+                memcpy(s_res->material_mapped, s_res->frame_materials.data(),
+                       s_res->frame_materials.size() * sizeof(PathTracerResources::MaterialInfo));
 
-            if (instances.empty()) {
+            if (s_res->frame_instances.empty()) {
                 static bool warned = false;
                 if (!warned) {
-                    HN_CORE_WARN("[PathTracer] build_tlas: no renderable instances — scene has no meshes with meshlet+flat_index buffers");
+                    HN_CORE_WARN("[PathTracer] prepare_tlas_cpu: no renderable instances — scene has no meshes with meshlet+flat_index buffers");
                     warned = true;
                 }
                 return false;
             }
 
-            ensure_instance_buffer((uint32_t)instances.size());
-            memcpy(s_res->instance_mapped, instances.data(),
-                   instances.size() * sizeof(VkAccelerationStructureInstanceKHR));
+            ensure_instance_buffer((uint32_t)s_res->frame_instances.size());
+            memcpy(s_res->instance_mapped, s_res->frame_instances.data(),
+                   s_res->frame_instances.size() * sizeof(VkAccelerationStructureInstanceKHR));
 
+            // Determine if a full rebuild or an in-place refit is needed.
+            const uint32_t prim_count   = (uint32_t)s_res->frame_instances.size();
+            const bool count_changed    = (prim_count != s_res->tlas_last_instance_count);
+            const bool first_build      = (s_res->tlas == VK_NULL_HANDLE);
+            const bool need_full_build  = first_build || count_changed;
+
+            if (need_full_build) {
+                // Query AS and scratch sizes for a fresh build.
+                VkAccelerationStructureGeometryInstancesDataKHR instances_data{};
+                instances_data.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+
+                VkAccelerationStructureGeometryKHR geometry{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
+                geometry.geometryType       = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+                geometry.geometry.instances = instances_data;
+
+                VkAccelerationStructureBuildGeometryInfoKHR size_query{};
+                size_query.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+                size_query.type          = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+                // ALLOW_UPDATE so future same-count frames can refit instead of rebuilding.
+                size_query.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR
+                                         | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+                size_query.geometryCount = 1;
+                size_query.pGeometries   = &geometry;
+
+                VkAccelerationStructureBuildSizesInfoKHR sizes{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR};
+                s_res->fn_get_as_sizes(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
+                                       &size_query, &prim_count, &sizes);
+
+                // Reallocate backing buffer only if it has grown beyond current capacity.
+                if (sizes.accelerationStructureSize > s_res->tlas_backing_size) {
+                    if (s_res->tlas != VK_NULL_HANDLE) {
+                        // The TLAS may still be in use — wait for all GPU work to complete
+                        // before destroying and reallocating.  This path only triggers when
+                        // the instance count grows past the previous high-water mark.
+                        vkDeviceWaitIdle(device);
+                        s_res->fn_destroy_as(device, s_res->tlas, nullptr);
+                        vkDestroyBuffer(device, s_res->tlas_buffer, nullptr);
+                        vkFreeMemory(device, s_res->tlas_memory, nullptr);
+                        s_res->tlas = VK_NULL_HANDLE;
+                    }
+
+                    VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+                    bi.size        = sizes.accelerationStructureSize;
+                    bi.usage       = VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
+                                   | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+                    bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+                    vkCreateBuffer(device, &bi, nullptr, &s_res->tlas_buffer);
+
+                    VkMemoryRequirements req{};
+                    vkGetBufferMemoryRequirements(device, s_res->tlas_buffer, &req);
+
+                    VkMemoryAllocateFlagsInfo flags_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO};
+                    flags_info.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT_KHR;
+
+                    VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+                    ai.pNext           = &flags_info;
+                    ai.allocationSize  = req.size;
+                    ai.memoryTypeIndex = find_memory_type(s_res->cached_mem_props, req.memoryTypeBits,
+                                                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+                    vkAllocateMemory(device, &ai, nullptr, &s_res->tlas_memory);
+                    vkBindBufferMemory(device, s_res->tlas_buffer, s_res->tlas_memory, 0);
+                    s_res->tlas_backing_size = sizes.accelerationStructureSize;
+                }
+
+                // Create the TLAS handle if it was destroyed (or never existed).
+                if (s_res->tlas == VK_NULL_HANDLE) {
+                    VkAccelerationStructureCreateInfoKHR ci{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR};
+                    ci.buffer = s_res->tlas_buffer;
+                    ci.size   = s_res->tlas_backing_size;
+                    ci.type   = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+                    s_res->fn_create_as(device, &ci, nullptr, &s_res->tlas);
+                }
+
+                // Scratch: buildScratchSize is always >= updateScratchSize so one persistent
+                // buffer covers both modes.
+                ensure_scratch_buffer(sizes.buildScratchSize,
+                                      s_res->tlas_scratch_buffer, s_res->tlas_scratch_memory,
+                                      s_res->tlas_scratch_addr,   s_res->tlas_scratch_size);
+
+                s_res->tlas_mode_update        = false;
+                s_res->tlas_last_instance_count = prim_count;
+            } else {
+                // Same instance count — refit in place; scratch already sized from the initial build.
+                s_res->tlas_mode_update = true;
+            }
+
+            s_res->tlas_prim_count = prim_count;
+            return true;
+        }
+
+        // Records the TLAS build or refit into cmd, then emits an AS_WRITE → RT_READ barrier
+        // so the immediately-following vkCmdTraceRaysKHR can consume the result.
+        static void record_tlas_build(VkCommandBuffer cmd) {
             VkBufferDeviceAddressInfo addr_info{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
             addr_info.buffer = s_res->instance_buffer;
-            VkDeviceAddress instances_addr = s_res->fn_get_buf_addr(device, &addr_info);
+            VkDeviceAddress instances_addr = s_res->fn_get_buf_addr(s_res->vk_ctx->get_device(), &addr_info);
 
             VkAccelerationStructureGeometryInstancesDataKHR instances_data{};
             instances_data.sType           = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
@@ -737,103 +924,30 @@ namespace Honey {
             VkAccelerationStructureBuildGeometryInfoKHR build_info{};
             build_info.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
             build_info.type          = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-            build_info.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
-            build_info.geometryCount = 1;
-            build_info.pGeometries   = &geometry;
+            build_info.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR
+                                     | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+            build_info.mode                      = s_res->tlas_mode_update
+                                                       ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR
+                                                       : VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+            build_info.srcAccelerationStructure  = s_res->tlas_mode_update ? s_res->tlas : VK_NULL_HANDLE;
+            build_info.dstAccelerationStructure  = s_res->tlas;
+            build_info.geometryCount             = 1;
+            build_info.pGeometries               = &geometry;
+            build_info.scratchData.deviceAddress = s_res->tlas_scratch_addr;
 
-            uint32_t prim_count = (uint32_t)instances.size();
-            VkAccelerationStructureBuildSizesInfoKHR sizes{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR};
-            s_res->fn_get_as_sizes(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
-                                   &build_info, &prim_count, &sizes);
+            VkAccelerationStructureBuildRangeInfoKHR range{};
+            range.primitiveCount = s_res->tlas_prim_count;
+            const VkAccelerationStructureBuildRangeInfoKHR* range_ptr = &range;
+            s_res->fn_cmd_build_as(cmd, 1, &build_info, &range_ptr);
 
-            if (s_res->tlas != VK_NULL_HANDLE) {
-                s_res->fn_destroy_as(device, s_res->tlas, nullptr);
-                vkDestroyBuffer(device, s_res->tlas_buffer, nullptr);
-                vkFreeMemory(device, s_res->tlas_memory, nullptr);
-                s_res->tlas = VK_NULL_HANDLE;
-            }
-
-            {
-                VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-                bi.size        = sizes.accelerationStructureSize;
-                bi.usage       = VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
-                               | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-                bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-                vkCreateBuffer(device, &bi, nullptr, &s_res->tlas_buffer);
-
-                VkMemoryRequirements req{};
-                vkGetBufferMemoryRequirements(device, s_res->tlas_buffer, &req);
-
-                VkMemoryAllocateFlagsInfo flags_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO};
-                flags_info.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT_KHR;
-
-                VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-                ai.pNext           = &flags_info;
-                ai.allocationSize  = req.size;
-                ai.memoryTypeIndex = find_memory_type(physical_device, req.memoryTypeBits,
-                                                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-                vkAllocateMemory(device, &ai, nullptr, &s_res->tlas_memory);
-                vkBindBufferMemory(device, s_res->tlas_buffer, s_res->tlas_memory, 0);
-            }
-
-            VkAccelerationStructureCreateInfoKHR ci{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR};
-            ci.buffer = s_res->tlas_buffer;
-            ci.size   = sizes.accelerationStructureSize;
-            ci.type   = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-            s_res->fn_create_as(device, &ci, nullptr, &s_res->tlas);
-
-            VkBuffer scratch_buffer = VK_NULL_HANDLE;
-            VkDeviceMemory scratch_memory = VK_NULL_HANDLE;
-            {
-                VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-                bi.size        = sizes.buildScratchSize;
-                bi.usage       = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
-                               | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-                bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-                vkCreateBuffer(device, &bi, nullptr, &scratch_buffer);
-
-                VkMemoryRequirements req{};
-                vkGetBufferMemoryRequirements(device, scratch_buffer, &req);
-
-                VkMemoryAllocateFlagsInfo flags_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO};
-                flags_info.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT_KHR;
-
-                VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-                ai.pNext           = &flags_info;
-                ai.allocationSize  = req.size;
-                ai.memoryTypeIndex = find_memory_type(physical_device, req.memoryTypeBits,
-                                                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-                vkAllocateMemory(device, &ai, nullptr, &scratch_memory);
-                vkBindBufferMemory(device, scratch_buffer, scratch_memory, 0);
-            }
-
-            VkBufferDeviceAddressInfo scratch_addr_info{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
-            scratch_addr_info.buffer = scratch_buffer;
-            VkDeviceAddress scratch_addr = s_res->fn_get_buf_addr(device, &scratch_addr_info);
-
-            s_res->vk_ctx->submit_one_time_compute([&](VkCommandBuffer cmd) {
-                build_info.mode                      = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
-                build_info.dstAccelerationStructure  = s_res->tlas;
-                build_info.scratchData.deviceAddress = scratch_addr;
-
-                VkAccelerationStructureBuildRangeInfoKHR range{};
-                range.primitiveCount = prim_count;
-                const VkAccelerationStructureBuildRangeInfoKHR* range_ptr = &range;
-                s_res->fn_cmd_build_as(cmd, 1, &build_info, &range_ptr);
-
-                VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-                barrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
-                barrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
-                vkCmdPipelineBarrier(cmd,
-                    VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-                    VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-                    0, 1, &barrier, 0, nullptr, 0, nullptr);
-            });
-
-            vkDestroyBuffer(device, scratch_buffer, nullptr);
-            vkFreeMemory(device, scratch_memory, nullptr);
-
-            return true;
+            // TLAS write must complete before ray tracing reads the structure.
+            VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            barrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+            barrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+            vkCmdPipelineBarrier(cmd,
+                VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                0, 1, &barrier, 0, nullptr, 0, nullptr);
         }
 
         static void build_rt_pipeline() {
@@ -951,7 +1065,7 @@ namespace Honey {
             vkCreatePipelineLayout(device, &pl_ci, nullptr, &s_res->rt_pipeline_layout);
 
 
-            // Compile shaders and create shader modules TODO: use proper shader compilation flow here rather than handling it here 
+            // Compile shaders and create shader modules TODO: use proper shader compilation flow here rather than handling it here
             bool compile_ok = true;
             auto make_module = [&](const std::string& src, ShaderCompiler::ShaderStage stage, const char* name) -> VkShaderModule {
                 if (src.empty()) {
@@ -1084,7 +1198,7 @@ namespace Honey {
                 VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
                 ai.pNext           = &flags_info;
                 ai.allocationSize  = req.size;
-                ai.memoryTypeIndex = find_memory_type(physical_device, req.memoryTypeBits,
+                ai.memoryTypeIndex = find_memory_type(s_res->cached_mem_props, req.memoryTypeBits,
                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
                 vkAllocateMemory(device, &ai, nullptr, &s_res->sbt_memory);
                 vkBindBufferMemory(device, s_res->sbt_buffer, s_res->sbt_memory, 0);
@@ -1221,6 +1335,9 @@ namespace Honey {
 
         s_res->vk_ctx = ctx;
 
+        // Cache memory properties once; queried in find_memory_type throughout.
+        vkGetPhysicalDeviceMemoryProperties(ctx->get_physical_device(), &s_res->cached_mem_props);
+
         VkDevice device = ctx->get_device();
 #define LOAD(field, fn_name) s_res->field = reinterpret_cast<PFN_##fn_name>(vkGetDeviceProcAddr(device, #fn_name))
         LOAD(fn_create_as,          vkCreateAccelerationStructureKHR);
@@ -1248,7 +1365,7 @@ namespace Honey {
 
             VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
             ai.allocationSize  = req.size;
-            ai.memoryTypeIndex = find_memory_type(ctx->get_physical_device(), req.memoryTypeBits,
+            ai.memoryTypeIndex = find_memory_type(s_res->cached_mem_props, req.memoryTypeBits,
                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
             vkAllocateMemory(device, &ai, nullptr, &s_res->lights_memory);
             vkBindBufferMemory(device, s_res->lights_buffer, s_res->lights_memory, 0);
@@ -1272,10 +1389,20 @@ namespace Honey {
         }
         s_res->blas_cache.clear();
 
+        if (s_res->blas_scratch_buffer != VK_NULL_HANDLE) {
+            vkDestroyBuffer(device, s_res->blas_scratch_buffer, nullptr);
+            vkFreeMemory(device, s_res->blas_scratch_memory, nullptr);
+        }
+
         if (s_res->tlas != VK_NULL_HANDLE) {
             s_res->fn_destroy_as(device, s_res->tlas, nullptr);
             vkDestroyBuffer(device, s_res->tlas_buffer, nullptr);
             vkFreeMemory(device, s_res->tlas_memory, nullptr);
+        }
+
+        if (s_res->tlas_scratch_buffer != VK_NULL_HANDLE) {
+            vkDestroyBuffer(device, s_res->tlas_scratch_buffer, nullptr);
+            vkFreeMemory(device, s_res->tlas_scratch_memory, nullptr);
         }
 
         if (s_res->instance_buffer != VK_NULL_HANDLE) {
@@ -1363,14 +1490,35 @@ namespace Honey {
             vkFreeMemory(device, blas.memory, nullptr);
         }
         s_res->blas_cache.clear();
+        s_res->pending_blas.clear();
+
+        if (s_res->blas_scratch_buffer != VK_NULL_HANDLE) {
+            vkDestroyBuffer(device, s_res->blas_scratch_buffer, nullptr);
+            vkFreeMemory(device, s_res->blas_scratch_memory, nullptr);
+            s_res->blas_scratch_buffer = VK_NULL_HANDLE;
+            s_res->blas_scratch_memory = VK_NULL_HANDLE;
+            s_res->blas_scratch_addr   = 0;
+            s_res->blas_scratch_size   = 0;
+        }
 
         if (s_res->tlas != VK_NULL_HANDLE) {
             s_res->fn_destroy_as(device, s_res->tlas, nullptr);
             vkDestroyBuffer(device, s_res->tlas_buffer, nullptr);
             vkFreeMemory(device, s_res->tlas_memory, nullptr);
-            s_res->tlas        = VK_NULL_HANDLE;
-            s_res->tlas_buffer = VK_NULL_HANDLE;
-            s_res->tlas_memory = VK_NULL_HANDLE;
+            s_res->tlas              = VK_NULL_HANDLE;
+            s_res->tlas_buffer       = VK_NULL_HANDLE;
+            s_res->tlas_memory       = VK_NULL_HANDLE;
+            s_res->tlas_backing_size = 0;
+            s_res->tlas_last_instance_count = UINT32_MAX;
+        }
+
+        if (s_res->tlas_scratch_buffer != VK_NULL_HANDLE) {
+            vkDestroyBuffer(device, s_res->tlas_scratch_buffer, nullptr);
+            vkFreeMemory(device, s_res->tlas_scratch_memory, nullptr);
+            s_res->tlas_scratch_buffer = VK_NULL_HANDLE;
+            s_res->tlas_scratch_memory = VK_NULL_HANDLE;
+            s_res->tlas_scratch_addr   = 0;
+            s_res->tlas_scratch_size   = 0;
         }
 
         destroy_accum_image();
@@ -1381,8 +1529,10 @@ namespace Honey {
     void Renderer3DPathTracer::register_frame_graph_executors() {
         auto& registry = FrameGraphRegistry::get();
 
-        // Single pass: trace rays into accum_image (compute), then blit to editorViewport (graphics).
-        // Both submits block on the GPU so ordering is guaranteed.
+        // Single pass: BLAS builds (new meshes only) → TLAS build/refit → trace rays →
+        // SVGF denoise → blit to editorViewport.  All work goes into the live graphics
+        // command buffer via submit_vulkan_graphics_raw, eliminating the per-submit
+        // vkWaitForFences stalls that the old submit_vulkan_compute path imposed.
         registry.register_executor("pathtracing.trace", [](FrameGraphPassContext& ctx) {
             if (!s_res || !s_res->pipeline_built)
                 return;
@@ -1404,31 +1554,37 @@ namespace Honey {
             if (w != s_res->accum_width || h != s_res->accum_height || s_res->accum_image == VK_NULL_HANDLE)
                 create_accum_image(w, h);
 
-            if (!build_tlas(scene))
+            // CPU work: gather scene data, prepare BLAS/TLAS state, upload to mapped buffers.
+            if (!prepare_tlas_cpu(scene))
                 return;
 
+            // Update descriptor sets now that TLAS handle and bound_textures are finalised.
+            // The descriptor write happens on the CPU; the GPU will see the result after the
+            // command buffer containing the build + trace is submitted.
             update_desc_set();
             if (s_res->svgf_pipeline_built)
                 update_svgf_desc_set();
 
-            glm::mat4 inv_view     = s_res->inv_view;
-            glm::mat4 inv_proj     = s_res->inv_proj;
-            uint32_t  frame_count  = s_res->accum_frame_count;
-            uint32_t  trace_w      = s_res->accum_width;
-            uint32_t  trace_h      = s_res->accum_height;
-            bool      need_init    = s_res->accum_needs_layout_init;
-            bool      gbuf_init    = s_res->gbuffer_needs_layout_init;
-            bool      ping_init    = s_res->ping_needs_layout_init;
+            // Snapshot frame-local values for capture by the GPU recording lambdas.
+            glm::mat4 inv_view      = s_res->inv_view;
+            glm::mat4 inv_proj      = s_res->inv_proj;
+            uint32_t  frame_count   = s_res->accum_frame_count;
+            uint32_t  trace_w       = s_res->accum_width;
+            uint32_t  trace_h       = s_res->accum_height;
+            bool      need_init     = s_res->accum_needs_layout_init;
+            bool      gbuf_init     = s_res->gbuffer_needs_layout_init;
+            bool      ping_init     = s_res->ping_needs_layout_init;
             bool      filtered_init = s_res->filtered_needs_layout_init;
-            bool      svgf_ready   = s_res->svgf_pipeline_built;
+            bool      svgf_ready    = s_res->svgf_pipeline_built;
             // blend_factor decays as temporal accumulation converges: full filter at frame 0,
             // half at frame 8, near-zero at frame 64 — avoids blurring a clean image.
-            float     blend_factor = std::min(1.0f, 8.0f / (float)(frame_count + 1));
+            float     blend_factor  = std::min(1.0f, 8.0f / (float)(frame_count + 1));
 
-            // --- Ray trace into accum_image + gbuffer_image ---
-            ctx.submit_vulkan_compute([inv_view, inv_proj, frame_count, trace_w, trace_h,
-                                       need_init, gbuf_init, ping_init, filtered_init](VkCommandBuffer cmd) {
-                // Transition any images that are still in UNDEFINED layout on first use.
+            // --- BLAS builds (new meshes) + TLAS build/refit + ray trace ---
+            // Everything goes into the live graphics command buffer; no fence stalls.
+            ctx.submit_vulkan_graphics_raw([inv_view, inv_proj, frame_count, trace_w, trace_h,
+                                            need_init, gbuf_init, ping_init, filtered_init](VkCommandBuffer cmd) {
+                // One-time layout transitions for images still in UNDEFINED.
                 auto transition_to_general = [&](VkImage img) {
                     VkImageMemoryBarrier imb{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
                     imb.oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -1446,6 +1602,14 @@ namespace Honey {
                 if (gbuf_init)     transition_to_general(s_res->gbuffer_image);
                 if (ping_init)     transition_to_general(s_res->ping_image);
                 if (filtered_init) transition_to_general(s_res->filtered_image);
+
+                // Record any BLAS builds for meshes not yet in the cache.
+                // Emits inter-build barriers and a final BLAS→TLAS barrier internally.
+                record_pending_blas_builds(cmd);
+
+                // Record the TLAS build (full rebuild or in-place refit).
+                // Emits an AS_WRITE → RT_READ barrier at the end.
+                record_tlas_build(cmd);
 
                 struct PC { glm::mat4 inv_view; glm::mat4 inv_proj; uint32_t frame_count; };
                 PC pc{ inv_view, inv_proj, frame_count };
@@ -1467,9 +1631,9 @@ namespace Honey {
             s_res->ping_needs_layout_init     = false;
             s_res->filtered_needs_layout_init = false;
 
-            // --- SVGF À-Trous denoise (4 passes, final result in filtered_image) ---
+            // --- SVGF À-Trous denoise (2 passes, final result in filtered_image) ---
             if (svgf_ready) {
-                ctx.submit_vulkan_compute([trace_w, trace_h, blend_factor](VkCommandBuffer cmd) {
+                ctx.submit_vulkan_graphics_raw([trace_w, trace_h, blend_factor](VkCommandBuffer cmd) {
                     VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
                     mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
                     mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;

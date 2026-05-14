@@ -1347,50 +1347,55 @@ namespace Honey {
         m_chunk_ds_index[m_current_frame] = 0;
 
         VkFence in_flight = m_in_flight_fences[m_current_frame];
-        VkResult wait_res = vkWaitForFences(reinterpret_cast<VkDevice>(m_device), 1, &in_flight, VK_TRUE, UINT64_MAX);
-        if (wait_res != VK_SUCCESS) {
-            HN_CORE_ERROR("vkWaitForFences failed before acquire: {0}", vk_result_to_string(wait_res));
-            return;
+        {
+            HN_PROFILE_SCOPE("WaitForFences");
+            VkResult wait_res = vkWaitForFences(reinterpret_cast<VkDevice>(m_device), 1, &in_flight, VK_TRUE, UINT64_MAX);
+            if (wait_res != VK_SUCCESS) {
+                HN_CORE_ERROR("vkWaitForFences failed before acquire: {0}", vk_result_to_string(wait_res));
+                return;
+            }
         }
 
-        reset_secondary_command_pools_for_frame(m_current_frame);
+        {
+            HN_PROFILE_SCOPE("ResetSecondaryCommandPools");
+            reset_secondary_command_pools_for_frame(m_current_frame);
+        }
 
         if (m_backend) {
+            HN_PROFILE_SCOPE("NotifyFrameCompleted");
             // One frame slot has definitely completed on GPU; allow backend to retire
             // deferred texture resources that are now safe to destroy.
             m_backend->notify_frame_completed();
         }
 
         uint32_t image_index = 0;
-        VkResult acquire_res = vkAcquireNextImageKHR(
-            reinterpret_cast<VkDevice>(m_device),
-            reinterpret_cast<VkSwapchainKHR>(m_swapchain),
-            UINT64_MAX,
-            m_image_available_semaphores[m_current_frame],
-            VK_NULL_HANDLE,
-            &image_index
-        );
+        {
+            HN_PROFILE_SCOPE("AcquireNextImage");
+            VkResult acquire_res = vkAcquireNextImageKHR(
+                reinterpret_cast<VkDevice>(m_device),
+                reinterpret_cast<VkSwapchainKHR>(m_swapchain),
+                UINT64_MAX,
+                m_image_available_semaphores[m_current_frame],
+                VK_NULL_HANDLE,
+                &image_index
+            );
 
-        if (acquire_res == VK_ERROR_OUT_OF_DATE_KHR) {
-            m_framebuffer_resized = true;
-            recreate_swapchain_if_needed();
-            return;
+            if (acquire_res == VK_ERROR_OUT_OF_DATE_KHR) {
+                m_framebuffer_resized = true;
+                recreate_swapchain_if_needed();
+                return;
+            }
+
+            HN_CORE_ASSERT(acquire_res == VK_SUCCESS || acquire_res == VK_SUBOPTIMAL_KHR,
+                           "vkAcquireNextImageKHR failed: {0}", vk_result_to_string(acquire_res));
         }
-
-        HN_CORE_ASSERT(acquire_res == VK_SUCCESS || acquire_res == VK_SUBOPTIMAL_KHR,
-                       "vkAcquireNextImageKHR failed: {0}", vk_result_to_string(acquire_res));
-
-        VkFence image_fence = m_images_in_flight[image_index];
-        if (image_fence != VK_NULL_HANDLE) {
-            vkWaitForFences(reinterpret_cast<VkDevice>(m_device), 1, &image_fence, VK_TRUE, UINT64_MAX);
-        }
-        m_images_in_flight[image_index] = in_flight;
 
         if (m_timestamp_query_pool &&
                 image_index < m_timestamp_written.size() &&
                 m_timestamp_written[image_index] &&
                 image_index < m_timestamp_written_this_frame.size() &&
                 m_timestamp_valid.size() == m_gpu_frame_time_ms.size()) {
+            HN_PROFILE_SCOPE("GPUTimestampReadback");
 
             uint32_t base = image_index * 2;
             uint64_t timestamps[2] = {};
@@ -1432,13 +1437,16 @@ namespace Honey {
 
         // Begin recording the frame's primary command buffer.
         VkCommandBuffer cmd = reinterpret_cast<VkCommandBuffer>(m_command_buffers[image_index]);
-        vkResetCommandBuffer(cmd, 0);
+        {
+            HN_PROFILE_SCOPE("BeginCommandBuffer");
+            vkResetCommandBuffer(cmd, 0);
 
-        VkCommandBufferBeginInfo cb_begin{};
-        cb_begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        cb_begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        VkResult res = vkBeginCommandBuffer(cmd, &cb_begin);
-        HN_CORE_ASSERT(res == VK_SUCCESS, "vkBeginCommandBuffer failed: {0}", vk_result_to_string(res));
+            VkCommandBufferBeginInfo cb_begin{};
+            cb_begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            cb_begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            VkResult res = vkBeginCommandBuffer(cmd, &cb_begin);
+            HN_CORE_ASSERT(res == VK_SUCCESS, "vkBeginCommandBuffer failed: {0}", vk_result_to_string(res));
+        }
 
         if (m_timestamp_query_pool) {
             const uint32_t base = image_index * 2;
@@ -2199,7 +2207,6 @@ namespace Honey {
         m_swapchain_extent_width  = extent.width;
         m_swapchain_extent_height = extent.height;
 
-        m_images_in_flight.assign(m_swapchain_images.size(), VK_NULL_HANDLE);
         m_current_frame = 0;
 
         // --- Per-swapchain-image "render finished" semaphores ---
@@ -2652,8 +2659,6 @@ namespace Honey {
         vkDeviceWaitIdle(m_device);
 
         //cleanup_pipeline();
-
-        m_images_in_flight.clear();
 
         // --- Depth resources ---
         for (VkImageView v : m_swapchain_depth_image_views) {
