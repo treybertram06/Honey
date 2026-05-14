@@ -280,6 +280,7 @@ namespace Honey {
         }
 
         update_world_transforms();
+        update_streamed_assets();
     }
 
     void Scene::on_update_editor(Timestep ts, EditorCamera& camera) {
@@ -302,6 +303,7 @@ namespace Honey {
         }
 
         update_world_transforms();
+        update_streamed_assets();
     }
 
     void Scene::render(const glm::mat4& view, const glm::mat4& view_proj, const glm::vec3& camera_pos,

@@ -909,7 +909,21 @@ namespace Honey {
             return {};
         }
 
-        return deserialize_entity_node(entity_node, true);
+        Entity entity = deserialize_entity_node(entity_node, true);
+
+        for (auto& t : m_pending_transforms) {
+            if (!t.entity.is_valid())
+                continue;
+            auto& tc = t.entity.get_component<TransformComponent>();
+            tc.translation    = t.translation;
+            tc.rotation       = t.rotation;
+            tc.scale          = t.scale;
+            tc.dirty          = true;
+            tc.collider_dirty = true;
+        }
+        m_pending_transforms.clear();
+
+        return entity;
     }
 
     bool SceneSerializer::deserialize_runtime(const std::filesystem::path &path) {
