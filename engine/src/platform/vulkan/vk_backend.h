@@ -220,6 +220,7 @@ namespace Honey {
         }
     private:
         bool m_initialized = false;
+        bool m_validation_enabled = false;
 
         VkInstance m_instance = VK_NULL_HANDLE;
         VkDebugUtilsMessengerEXT m_debug_messenger = VK_NULL_HANDLE;

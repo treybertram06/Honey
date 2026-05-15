@@ -1475,13 +1475,17 @@ namespace Honey {
         HN_CORE_ASSERT(res == VK_SUCCESS, "vkCreateInstance failed: {0}", vk_result_to_string(res));
 
         m_instance = instance;
+        m_validation_enabled = enable_validation_layers;
         HN_CORE_INFO("Vulkan instance created.");
     }
 
     void VulkanBackend::setup_debug_messenger() {
         HN_PROFILE_FUNCTION();
-        if (!k_enable_validation)
+        if (!m_validation_enabled) {
+            if (k_enable_validation)
+                HN_CORE_WARN("Validation layers requested, but VK_LAYER_KHRONOS_validation is not available! Skipping debug messenger setup.");
             return;
+        }
 
         HN_CORE_ASSERT(m_instance, "setup_debug_messenger called without instance");
 
