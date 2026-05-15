@@ -20,7 +20,7 @@ namespace Honey {
         void set_layout(const BufferLayout& layout) override { m_layout = layout; }
 
         void* get_vk_buffer() const { return m_buffer; }
-        void* get_native_vertex_buffer() const override { return m_buffer; }
+        void* get_native_buffer() const override { return m_buffer; }
 
     private:
         void allocate(uint32_t size, const void* initial_data);
@@ -48,6 +48,7 @@ namespace Honey {
         VkIndexType get_type() const { return m_type; }
 
         void* get_vk_buffer() const { return m_buffer; }
+        void* get_native_buffer() const override { return m_buffer; }
 
     private:
         void allocate(uint32_t bytes, const void* initial_data);
@@ -139,7 +140,7 @@ namespace Honey {
         const BufferLayout& get_layout() const override { return m_layout; }
         void set_layout(const BufferLayout& layout) override { m_layout = layout; }
 
-        void* get_native_vertex_buffer() const override { return m_storage->get_native_buffer(); }
+        void* get_native_buffer() const override { return m_storage->get_native_buffer(); }
 
     private:
         Ref<StorageBuffer> m_storage;

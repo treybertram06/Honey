@@ -58,7 +58,7 @@ namespace Honey {
     	glBufferSubData(GL_ARRAY_BUFFER, 0, size, data);
 	}
 
-    void* OpenGLVertexBuffer::get_native_vertex_buffer() const {
+    void* OpenGLVertexBuffer::get_native_buffer() const {
         HN_CORE_ASSERT(false, "OpenGLVertexBuffer::get_native_vertex_buffer is not implemented yet");
         return nullptr;
     }
@@ -110,6 +110,11 @@ namespace Honey {
         HN_PROFILE_FUNCTION();
 
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+    }
+
+    void* OpenGLIndexBuffer::get_native_buffer() const {
+        HN_CORE_ASSERT(false, "OpenGLIndexBuffer::get_native_buffer is not implemented yet");
+        return nullptr;
     }
 
     // Uniform Buffer //////////////////////////////////////////////////////

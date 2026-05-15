@@ -19,7 +19,7 @@ namespace Honey {
         virtual void set_layout(const BufferLayout& layout) override { m_layout = layout; }
         virtual const BufferLayout& get_layout() const override { return m_layout; }
 
-        virtual void* get_native_vertex_buffer() const override;
+        virtual void* get_native_buffer() const override;
 
     private:
         uint32_t m_renderer_id;
@@ -36,6 +36,8 @@ namespace Honey {
         virtual void unbind() const override;
 
         virtual uint32_t get_count() const override { return m_count; }
+
+        virtual void* get_native_buffer() const override;
 
     private:
         uint32_t m_renderer_id;
