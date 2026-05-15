@@ -385,7 +385,9 @@ namespace Honey {
         const bool dynamic    = !immutable && !readback;  // Default or Dynamic
         const bool as_vb      = static_cast<uint32_t>(usage) & static_cast<uint32_t>(StorageBufferUsage::VertexBuffer);
         const bool indirect   = static_cast<uint32_t>(usage) & static_cast<uint32_t>(StorageBufferUsage::Indirect);
-        const bool rt_geo     = static_cast<uint32_t>(usage) & static_cast<uint32_t>(StorageBufferUsage::RTGeometry);
+        bool       rt_geo     = static_cast<uint32_t>(usage) & static_cast<uint32_t>(StorageBufferUsage::RTGeometry);
+        if (!Application::get().get_vulkan_backend().is_rt_supported())
+            rt_geo = false;
 
         if (immutable) {
             buffer_usage |= VK_BUFFER_USAGE_TRANSFER_DST_BIT;

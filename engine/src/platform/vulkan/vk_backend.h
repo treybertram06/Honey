@@ -166,6 +166,8 @@ namespace Honey {
 
         bool debug_is_buffer_in_stream_jobs(VkBuffer buffer) const;
 
+        bool is_rt_supported() const { return m_ray_tracing_supported; }
+
     private:
         struct QueueFamilyInfo {
             uint32_t graphicsFamily = UINT32_MAX;
