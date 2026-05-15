@@ -247,6 +247,15 @@ namespace Honey {
         options.external_framebuffers.emplace("gBuffer", m_gbuffer_framebuffer);
         options.requested_output_resources.emplace_back("editorViewport");
 
+#ifdef HN_PLATFORM_MACOS
+        if (m_settings.renderer_type != RendererSettings::RendererType::forward) {
+            auto& renderer_settings = Settings::get().renderer;
+            renderer_settings.renderer_type = RendererSettings::RendererType::forward;
+            m_settings.renderer_type = RendererSettings::RendererType::forward;
+            HN_CORE_WARN("Only Forward renderer is supported on MacOS, renderer type selection will not be respected.");
+        }
+#endif
+
         std::string fg_file;
         switch (m_settings.renderer_type) {
             case RendererSettings::RendererType::deferred:
