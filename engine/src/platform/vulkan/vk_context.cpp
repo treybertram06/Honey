@@ -449,6 +449,20 @@ namespace Honey {
                                            | VK_SHADER_STAGE_TASK_BIT_EXT
                                            | VK_SHADER_STAGE_MESH_BIT_EXT;
 
+        // binding 8 => shadow cubemap array comparison sampler (fragment — forward pass shadow lookup)
+        VkDescriptorSetLayoutBinding shadow_cubemap_binding{};
+        shadow_cubemap_binding.binding         = binding_index++;
+        shadow_cubemap_binding.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        shadow_cubemap_binding.descriptorCount = 1;
+        shadow_cubemap_binding.stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        // binding 9 => directional shadow map 2D array comparison sampler (fragment — forward pass shadow lookup)
+        VkDescriptorSetLayoutBinding dir_shadow_map_binding{};
+        dir_shadow_map_binding.binding         = binding_index++;
+        dir_shadow_map_binding.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        dir_shadow_map_binding.descriptorCount = 1;
+        dir_shadow_map_binding.stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
         VkDescriptorSetLayoutBinding bindings[] = {
             camera_ubo_binding,
             lights_ubo_binding,
@@ -457,11 +471,13 @@ namespace Honey {
             tex_binding,
             tiled_lighting_binding,
             shadow_matrices_binding,
-            dir_shadow_matrices_binding
+            dir_shadow_matrices_binding,
+            shadow_cubemap_binding,
+            dir_shadow_map_binding
         };
 
         // ---- Descriptor indexing / bindless binding flags (variable descriptor count) ----
-        VkDescriptorBindingFlags binding_flags[8]{};
+        VkDescriptorBindingFlags binding_flags[10]{};
         binding_flags[0] = 0; // Camera UBO
         binding_flags[1] = 0; // Lights UBO
         binding_flags[2] = 0; // Material SSBO
@@ -472,6 +488,8 @@ namespace Honey {
         binding_flags[5] = 0; // Tiled lighting SSBO
         binding_flags[6] = 0; // Shadow matrices SSBO
         binding_flags[7] = 0; // Directional shadow SSBO
+        binding_flags[8] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT; // Shadow cubemap sampler
+        binding_flags[9] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT; // Directional shadow map sampler
 
         HN_CORE_ASSERT(sizeof(binding_flags) / sizeof(VkDescriptorBindingFlags) == binding_index &&
             sizeof(bindings) / sizeof(VkDescriptorSetLayoutBinding) == binding_index, "Inconsistency in "
@@ -496,7 +514,7 @@ namespace Honey {
             m_global_set_layout = reinterpret_cast<VkDescriptorSetLayout>(set_layout);
 
             // Descriptor pool sized for frames-in-flight:
-            VkDescriptorPoolSize pool_sizes[8]{};
+            VkDescriptorPoolSize pool_sizes[10]{};
             HN_CORE_ASSERT(sizeof(pool_sizes) / sizeof(VkDescriptorPoolSize) == binding_index,
                 "Inconsistency in descriptor pool size!");
 
@@ -532,6 +550,14 @@ namespace Honey {
             // Directional shadow SSBO (binding 7)
             pool_sizes[7].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             pool_sizes[7].descriptorCount = k_max_frames_in_flight * k_max_chunks_per_frame;
+
+            // Shadow cubemap comparison sampler (binding 8)
+            pool_sizes[8].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            pool_sizes[8].descriptorCount = k_max_frames_in_flight * k_max_chunks_per_frame;
+
+            // Directional shadow map comparison sampler (binding 9)
+            pool_sizes[9].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            pool_sizes[9].descriptorCount = k_max_frames_in_flight * k_max_chunks_per_frame;
 
             VkDescriptorPoolCreateInfo pool_ci{};
             pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -1198,6 +1224,23 @@ namespace Honey {
             m_gbuffer_last_fb[f] = nullptr;
             m_gbuffer_last_fb_generation[f] = 0;
         }
+        // Write into the global descriptor set (set=0, binding 8) for the forward pass.
+        if (!cube_array_view || !comparison_sampler) return;
+        VkDescriptorImageInfo img{};
+        img.sampler     = comparison_sampler;
+        img.imageView   = cube_array_view;
+        img.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        for (uint32_t f = 0; f < k_max_frames_in_flight; ++f) {
+            for (uint32_t c = 0; c < k_max_chunks_per_frame; ++c) {
+                VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+                w.dstSet          = m_global_descriptor_sets[f][c];
+                w.dstBinding      = 8;
+                w.descriptorCount = 1;
+                w.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                w.pImageInfo      = &img;
+                vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(m_device), 1, &w, 0, nullptr);
+            }
+        }
     }
 
     void VulkanContext::upload_directional_shadows(uint32_t frame, const DirectionalShadowSSBO& data) {
@@ -1216,10 +1259,27 @@ namespace Honey {
     void VulkanContext::set_dir_shadow_resources(VkImageView cube_array_view, VkSampler comparison_sampler) {
         m_dir_shadow_map_view           = cube_array_view;
         m_dir_shadow_comparison_sampler = comparison_sampler;
-        // Invalidate the gbuffer cache so binding 4 gets updated next frame.
+        // Invalidate the gbuffer cache so binding 5 gets updated next frame.
         for (uint32_t f = 0; f < k_max_frames_in_flight; ++f) {
             m_gbuffer_last_fb[f] = nullptr;
             m_gbuffer_last_fb_generation[f] = 0;
+        }
+        // Write into the global descriptor set (set=0, binding 9) for the forward pass.
+        if (!cube_array_view || !comparison_sampler) return;
+        VkDescriptorImageInfo img{};
+        img.sampler     = comparison_sampler;
+        img.imageView   = cube_array_view;
+        img.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        for (uint32_t f = 0; f < k_max_frames_in_flight; ++f) {
+            for (uint32_t c = 0; c < k_max_chunks_per_frame; ++c) {
+                VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+                w.dstSet          = m_global_descriptor_sets[f][c];
+                w.dstBinding      = 9;
+                w.descriptorCount = 1;
+                w.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                w.pImageInfo      = &img;
+                vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(m_device), 1, &w, 0, nullptr);
+            }
         }
     }
 

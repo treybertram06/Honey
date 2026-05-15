@@ -232,5 +232,24 @@ namespace Honey::Renderer3DInternal {
 
             g_renderer3d_data->stats.draw_calls++;
         }
+
+        // Populate classic shadow draw list
+        if (g_renderer3d_data->geometry_path == GeometryPath::Classic) {
+            g_renderer3d_data->shadow_draw_list.clear();
+            for (auto& ob : ordered_batches) {
+                const auto& vbs = ob.batch->va->get_vertex_buffers();
+                const auto& ib = ob.batch->va->get_index_buffer();
+                if (vbs.empty() || !ib) continue;
+
+                ClassicShadowDrawEntry entry{};
+                entry.vertex_buffer = reinterpret_cast<VkBuffer>(vbs[0]->get_native_buffer());
+                entry.index_buffer = reinterpret_cast<VkBuffer>(ib->get_native_buffer());
+                entry.index_count = ib->get_count();
+                entry.draw_data_base = ob.start_index;
+                entry.draw_count = (uint32_t)ob.batch->transforms.size();
+
+                g_renderer3d_data->classic_shadow_draw_list.push_back(entry);
+            }
+        }
     }
 }

@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "Honey/core/base.h"
+#include "Honey/core/settings.h"
 #include "Honey/renderer/buffer.h"
 #include "Honey/renderer/gpu_types.h"
 #include "Honey/renderer/material.h"
@@ -71,6 +72,14 @@ namespace Honey::Renderer3DInternal {
         uint32_t indirect_byte_offset = 0;       // byte offset into the frame's indirect buffer
     };
 
+    struct ClassicShadowDrawEntry {
+        VkBuffer vertex_buffer = VK_NULL_HANDLE;
+        VkBuffer index_buffer  = VK_NULL_HANDLE;
+        uint32_t index_count   = 0;
+        uint32_t draw_count    = 0;
+        uint32_t draw_data_base = 0;
+    };
+
     struct Renderer3DData {
         static constexpr uint32_t max_textures = 1024;
 
@@ -132,6 +141,7 @@ namespace Honey::Renderer3DInternal {
 
         // Populated during flush_meshlet_draws; consumed by shadow.draw executor (runs after GBuffer).
         std::vector<ShadowDrawEntry> shadow_draw_list;
+        std::vector<ClassicShadowDrawEntry> classic_shadow_draw_list;
 
         bool  directional_shadows_enabled  = false;
         float directional_shadow_distance  = 50.0f;

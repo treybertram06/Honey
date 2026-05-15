@@ -123,12 +123,12 @@ namespace Honey {
         VkBuffer     buffers[kMax]{};
         VkDeviceSize offsets[kMax]{};
         for (uint32_t i = 0; i < (uint32_t)base_vbs.size(); ++i) {
-            buffers[i] = reinterpret_cast<VkBuffer>(base_vbs[i]->get_native_vertex_buffer());
+            buffers[i] = reinterpret_cast<VkBuffer>(base_vbs[i]->get_native_buffer());
             offsets[i] = 0;
         }
         for (uint32_t i = 0; i < extra_vb_count; ++i) {
             const uint32_t idx = static_cast<uint32_t>(base_vbs.size()) + i;
-            buffers[idx] = reinterpret_cast<VkBuffer>(extra_vbs[i]->get_native_vertex_buffer());
+            buffers[idx] = reinterpret_cast<VkBuffer>(extra_vbs[i]->get_native_buffer());
             offsets[idx] = static_cast<VkDeviceSize>(extra_vb_offsets[i]);
         }
         vkCmdBindVertexBuffers(cmd, 0, total, buffers, offsets);

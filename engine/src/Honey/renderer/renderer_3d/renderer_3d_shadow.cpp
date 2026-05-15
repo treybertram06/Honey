@@ -14,6 +14,8 @@
 #include <vulkan/vulkan.h>
 #include <filesystem>
 
+#include "Honey/core/settings.h"
+
 namespace Honey {
 
     static const std::filesystem::path asset_root = ASSET_ROOT;
@@ -21,9 +23,16 @@ namespace Honey {
     namespace {
         struct ShadowResources {
             VulkanContext* vk_ctx = nullptr;
-            Ref<Pipeline>  shadow_pipeline_ref;                  // keeps VkPipeline alive
+
+            // Default, mesh shader path
+            Ref<Pipeline>  shadow_pipeline_ref; // keeps VkPipeline alive
             VkPipeline     shadow_pipeline = VK_NULL_HANDLE;
             VkPipelineLayout shadow_layout = VK_NULL_HANDLE;
+            // Classic geo path
+            Ref<Pipeline>  classic_pipeline_ref; // keeps VkPipeline alive
+            VkPipeline     classic_pipeline = VK_NULL_HANDLE;
+            VkPipelineLayout classic_layout = VK_NULL_HANDLE;
+
             bool           cubemap_first_frame = true;
             bool           shadow_resources_registered = false;
 
@@ -35,6 +44,8 @@ namespace Honey {
 
         static PFN_vkCmdDrawMeshTasksEXT         s_fn_draw_mesh_tasks          = nullptr;
         static PFN_vkCmdDrawMeshTasksIndirectEXT s_fn_draw_mesh_tasks_indirect = nullptr;
+        static PFN_vkCmdDrawIndexed              s_fn_draw_indexed             = nullptr;
+        static PFN_vkCmdDrawIndexedIndirect      s_fn_draw_indexed_indirect    = nullptr;
 
         glm::mat4 make_shadow_face_view(glm::vec3 pos, uint32_t face) {
             // Face order matches Vulkan cubemap layer convention (spec section 16.5.4):
@@ -103,6 +114,11 @@ namespace Honey {
             vkGetDeviceProcAddr(ctx->get_device(), "vkCmdDrawMeshTasksIndirectEXT"));
         HN_CORE_ASSERT(s_fn_draw_mesh_tasks_indirect,
             "Renderer3DShadow: vkCmdDrawMeshTasksIndirectEXT not available");
+
+        s_fn_draw_indexed = reinterpret_cast<PFN_vkCmdDrawIndexed>(
+            vkGetDeviceProcAddr(ctx->get_device(), "vkCmdDrawIndexed"));
+        s_fn_draw_indexed_indirect = reinterpret_cast<PFN_vkCmdDrawIndexedIndirect>(
+            vkGetDeviceProcAddr(ctx->get_device(), "vkCmdDrawIndexedIndirect"));
     }
 
     void Renderer3DShadow::shutdown() {
@@ -112,6 +128,8 @@ namespace Honey {
         s_res = nullptr;
         s_fn_draw_mesh_tasks          = nullptr;
         s_fn_draw_mesh_tasks_indirect = nullptr;
+        s_fn_draw_indexed             = nullptr;
+        s_fn_draw_indexed_indirect    = nullptr;
     }
 
     bool Renderer3DShadow::is_initialized() { return s_res != nullptr; }
@@ -163,40 +181,78 @@ namespace Honey {
         if (res->shadow_light_count == 0) return;
 
         // Lazily create the shadow pipeline on the first draw.
-        if (!res->shadow_pipeline) { HN_PROFILE_SCOPE("ShadowDraw::pipeline_create");
-            VkRenderPass shadow_rp = ctx.get_resource_render_pass("shadowCubemap");
-            if (!shadow_rp) {
-                HN_CORE_WARN("Renderer3DShadow: shadow render pass not available, skipping");
-                return;
+        const bool using_meshlet_path = Settings::get().renderer.geometry_path == GeometryPath::Meshlet;
+        if (using_meshlet_path) {
+            if (!res->shadow_pipeline) { HN_PROFILE_SCOPE("ShadowDraw::pipeline_create");
+                VkRenderPass shadow_rp = ctx.get_resource_render_pass("shadowCubemap");
+                if (!shadow_rp) {
+                    HN_CORE_WARN("Renderer3DShadow: shadow render pass not available, skipping");
+                    return;
+                }
+
+                void* meshlet_extra_layout = VulkanRendererAPI::get_or_create_meshlet_set_layout();
+
+                auto spec = PipelineSpec::from_shader(asset_root / "shaders" / "Renderer3D_ShadowCubemap.glsl");
+                spec.pipelineKind = PipelineKind::MeshShading;
+                spec.perColorAttachmentBlend.clear(); // depth-only — no color attachments
+                spec.depthStencil.depthTest  = true;
+                spec.depthStencil.depthWrite = true;
+                // Without the projection Y-flip, world-CCW (front) faces project to CW in Vulkan's
+                // Y-down viewport, so Vulkan sees them as "back faces". CullMode::Front therefore
+                // culls Vulkan-front = viewport-CCW = world-back faces, leaving world-front faces
+                // rendered — the standard shadow map approach.
+                // Rasterizer depth bias prevents self-shadowing acne on the front faces.
+                spec.cullMode                = CullMode::Front;
+                spec.depthBiasConstantFactor = 2.0f;
+                spec.depthBiasSlopeFactor    = 1.5f;
+
+                Ref<Pipeline> pipe = Pipeline::create(spec, shadow_rp, meshlet_extra_layout);
+                HN_CORE_ASSERT(pipe, "Renderer3DShadow: failed to create shadow pipeline");
+
+                res->shadow_pipeline_ref = pipe;  // keeps VkPipeline alive past this scope
+                res->shadow_pipeline = reinterpret_cast<VkPipeline>(pipe->get_native_pipeline());
+                res->shadow_layout   = reinterpret_cast<VkPipelineLayout>(pipe->get_native_pipeline_layout());
             }
 
-            void* meshlet_extra_layout = VulkanRendererAPI::get_or_create_meshlet_set_layout();
+            if (!res->shadow_pipeline) return;
+        } else {
+            if (!res->classic_pipeline) { HN_PROFILE_SCOPE("ShadowDraw::pipeline_create_classic");
+                VkRenderPass shadow_rp = ctx.get_resource_render_pass("shadowCubemap");
+                if (!shadow_rp) {
+                    HN_CORE_WARN("Renderer3DShadow: shadow render pass not available, skipping");
+                    return;
+                }
 
-            auto spec = PipelineSpec::from_shader(asset_root / "shaders" / "Renderer3D_ShadowCubemap.glsl");
-            spec.pipelineKind = PipelineKind::MeshShading;
-            spec.perColorAttachmentBlend.clear(); // depth-only — no color attachments
-            spec.depthStencil.depthTest  = true;
-            spec.depthStencil.depthWrite = true;
-            // Without the projection Y-flip, world-CCW (front) faces project to CW in Vulkan's
-            // Y-down viewport, so Vulkan sees them as "back faces". CullMode::Front therefore
-            // culls Vulkan-front = viewport-CCW = world-back faces, leaving world-front faces
-            // rendered — the standard shadow map approach.
-            // Rasterizer depth bias prevents self-shadowing acne on the front faces.
-            spec.cullMode                = CullMode::Front;
-            spec.depthBiasConstantFactor = 2.0f;
-            spec.depthBiasSlopeFactor    = 1.5f;
+                //void* meshlet_extra_layout = VulkanRendererAPI::get_or_create_meshlet_set_layout();
 
-            Ref<Pipeline> pipe = Pipeline::create(spec, shadow_rp, meshlet_extra_layout);
-            HN_CORE_ASSERT(pipe, "Renderer3DShadow: failed to create shadow pipeline");
+                auto spec = PipelineSpec::from_shader(asset_root / "shaders" / "Renderer3D_ShadowCubemap_Classic.glsl");
+                spec.pipelineKind = PipelineKind::Graphics;
+                spec.perColorAttachmentBlend.clear(); // depth-only — no color attachments
+                spec.depthStencil.depthTest  = true;
+                spec.depthStencil.depthWrite = true;
+                // Without the projection Y-flip, world-CCW (front) faces project to CW in Vulkan's
+                // Y-down viewport, so Vulkan sees them as "back faces". CullMode::Front therefore
+                // culls Vulkan-front = viewport-CCW = world-back faces, leaving world-front faces
+                // rendered — the standard shadow map approach.
+                // Rasterizer depth bias prevents self-shadowing acne on the front faces.
+                spec.cullMode                = CullMode::Front;
+                spec.depthBiasConstantFactor = 2.0f;
+                spec.depthBiasSlopeFactor    = 1.5f;
 
-            res->shadow_pipeline_ref = pipe;  // keeps VkPipeline alive past this scope
-            res->shadow_pipeline = reinterpret_cast<VkPipeline>(pipe->get_native_pipeline());
-            res->shadow_layout   = reinterpret_cast<VkPipelineLayout>(pipe->get_native_pipeline_layout());
+                Ref<Pipeline> pipe = Pipeline::create(spec, shadow_rp, nullptr);
+                HN_CORE_ASSERT(pipe, "Renderer3DShadow: failed to create classic shadow pipeline");
+
+                res->classic_pipeline_ref = pipe;  // keeps VkPipeline alive past this scope
+                res->classic_pipeline = reinterpret_cast<VkPipeline>(pipe->get_native_pipeline());
+                res->classic_layout   = reinterpret_cast<VkPipelineLayout>(pipe->get_native_pipeline_layout());
+            }
+
+            if (!res->classic_pipeline) return;
         }
+        if (using_meshlet_path && Renderer3DInternal::g_renderer3d_data->shadow_draw_list.empty()) return;
+        if (!using_meshlet_path && Renderer3DInternal::g_renderer3d_data->classic_shadow_draw_list.empty()) return;
 
-        if (!res->shadow_pipeline) return;
-        if (Renderer3DInternal::g_renderer3d_data->shadow_draw_list.empty()) return;
-        if (!Renderer3DInternal::g_renderer3d_data->indirect_buffers[frame]) return;
+        if (using_meshlet_path && !Renderer3DInternal::g_renderer3d_data->indirect_buffers[frame]) return;
 
         VkRenderPass rp    = ctx.get_resource_render_pass("shadowCubemap");
         VkImage      image = ctx.get_resource_vk_image("shadowCubemap");
@@ -225,12 +281,15 @@ namespace Honey {
                     0, 0, nullptr, 0, nullptr, 1, &imb);
             }
 
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, res->shadow_pipeline);
+            const VkPipeline       active_pipeline = using_meshlet_path ? res->shadow_pipeline  : res->classic_pipeline;
+            const VkPipelineLayout active_layout   = using_meshlet_path ? res->shadow_layout     : res->classic_layout;
+
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, active_pipeline);
 
             // Bind the global descriptor set at set=0 — the shadow matrices SSBO is at binding 6.
             VkDescriptorSet global_ds = res->vk_ctx->get_global_descriptor_set(frame);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                res->shadow_layout, 0, 1, &global_ds, 0, nullptr);
+                active_layout, 0, 1, &global_ds, 0, nullptr);
 
             const VkViewport vp{0.0f, 0.0f, (float)res_size, (float)res_size, 0.0f, 1.0f};
             const VkRect2D   sc{{0, 0}, {res_size, res_size}};
@@ -262,23 +321,40 @@ namespace Honey {
                         vkCmdSetViewport(cmd, 0, 1, &vp);
                         vkCmdSetScissor(cmd, 0, 1, &sc);
 
-                        {
+                        if (using_meshlet_path) {
                             HN_PROFILE_SCOPE("ShadowDraw::mesh_draw_calls");
                             for (const auto& group : Renderer3DInternal::g_renderer3d_data->shadow_draw_list) {
                                 if (group.mesh_descriptor_set != last_ds) {
                                     VkDescriptorSet mesh_ds = reinterpret_cast<VkDescriptorSet>(group.mesh_descriptor_set);
                                     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                        res->shadow_layout, 1, 1, &mesh_ds, 0, nullptr);
+                                        active_layout, 1, 1, &mesh_ds, 0, nullptr);
                                     last_ds = group.mesh_descriptor_set;
                                 }
 
                                 ShadowDrawPC pc{group.draw_data_base, (int32_t)li, fi, 0};
-                                vkCmdPushConstants(cmd, res->shadow_layout,
+                                vkCmdPushConstants(cmd, active_layout,
                                     VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_FRAGMENT_BIT,
                                     0, sizeof(ShadowDrawPC), &pc);
 
                                 s_fn_draw_mesh_tasks_indirect(cmd, indirect_vk,
                                     group.indirect_byte_offset, group.draw_count, 12u);
+                            }
+                        } else {
+                            HN_PROFILE_SCOPE("ShadowDraw::classic_draw_calls");
+                            VkBuffer inst_vk = reinterpret_cast<VkBuffer>(
+                                Renderer3DInternal::g_renderer3d_data->instance_vb->get_native_buffer());
+                            for (const auto& entry : Renderer3DInternal::g_renderer3d_data->classic_shadow_draw_list) {
+                                const VkDeviceSize offset = 0;
+                                vkCmdBindVertexBuffers(cmd, 0, 1, &entry.vertex_buffer, &offset);
+                                vkCmdBindVertexBuffers(cmd, 1, 1, &inst_vk, &offset);
+                                vkCmdBindIndexBuffer(cmd, entry.index_buffer, 0, VK_INDEX_TYPE_UINT32);
+
+                                ShadowDrawPC pc{entry.draw_data_base, (int32_t)li, fi, 0};
+                                vkCmdPushConstants(cmd, active_layout,
+                                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                    0, sizeof(ShadowDrawPC), &pc);
+
+                                s_fn_draw_indexed(cmd, entry.index_count, entry.draw_count, 0, 0, entry.draw_data_base);
                             }
                         }
 
@@ -315,6 +391,9 @@ namespace Honey {
         s_res->shadow_pipeline_ref.reset();
         s_res->shadow_pipeline = VK_NULL_HANDLE;
         s_res->shadow_layout   = VK_NULL_HANDLE;
+        s_res->classic_pipeline_ref.reset();
+        s_res->classic_pipeline = VK_NULL_HANDLE;
+        s_res->classic_layout   = VK_NULL_HANDLE;
         // Clear stale handles in VulkanContext before the old framebuffer is destroyed.
         if (s_res->vk_ctx)
             s_res->vk_ctx->set_shadow_cubemap_resources(VK_NULL_HANDLE, VK_NULL_HANDLE);
@@ -326,9 +405,15 @@ namespace Honey {
 
     namespace {
         struct DirShadowResources {
+            // Default, mesh path
             Ref<Pipeline> pipeline_ref;
             VkPipeline    pipeline    = VK_NULL_HANDLE;
             VkPipelineLayout layout   = VK_NULL_HANDLE;
+            // Classic geo
+            Ref<Pipeline> classic_pipeline_ref;
+            VkPipeline    classic_pipeline    = VK_NULL_HANDLE;
+            VkPipelineLayout classic_layout   = VK_NULL_HANDLE;
+
             bool resources_registered = false;
             bool first_frame          = true;
         };
@@ -523,37 +608,66 @@ namespace Honey {
         }
 
         if (!shadows_on) return;
-        if (data->shadow_draw_list.empty()) return;
+
+        const bool meshlet_path = Settings::get().renderer.geometry_path == GeometryPath::Meshlet;
+        if ( meshlet_path && data->shadow_draw_list.empty()) return;
+        if (!meshlet_path && data->classic_shadow_draw_list.empty()) return;
 
         // Lazily create the pipeline against the shadowDirMap render pass.
-        if (!s_dir->pipeline) { HN_PROFILE_SCOPE("DirShadow::pipeline_create");
-            VkRenderPass rp = ctx.get_resource_render_pass("shadowDirMap");
-            if (!rp) {
-                HN_CORE_WARN("Renderer3DShadow: dir shadow render pass not available, skipping");
-                return;
+        if (meshlet_path) {
+            if (!s_dir->pipeline) { HN_PROFILE_SCOPE("DirShadow::pipeline_create");
+                VkRenderPass rp = ctx.get_resource_render_pass("shadowDirMap");
+                if (!rp) {
+                    HN_CORE_WARN("Renderer3DShadow: dir shadow render pass not available, skipping");
+                    return;
+                }
+
+                void* meshlet_extra_layout = VulkanRendererAPI::get_or_create_meshlet_set_layout();
+
+                auto spec = PipelineSpec::from_shader(asset_root / "shaders" / "Renderer3D_ShadowDirectional.glsl");
+                spec.pipelineKind = PipelineKind::MeshShading;
+                spec.perColorAttachmentBlend.clear();
+                spec.depthStencil.depthTest  = true;
+                spec.depthStencil.depthWrite = true;
+                spec.cullMode                = CullMode::Front;
+                spec.depthBiasConstantFactor = 2.0f;
+                spec.depthBiasSlopeFactor    = 1.5f;
+
+                Ref<Pipeline> pipe = Pipeline::create(spec, rp, meshlet_extra_layout);
+                HN_CORE_ASSERT(pipe, "Renderer3DShadow: failed to create directional shadow pipeline");
+
+                s_dir->pipeline_ref = pipe;
+                s_dir->pipeline     = reinterpret_cast<VkPipeline>(pipe->get_native_pipeline());
+                s_dir->layout       = reinterpret_cast<VkPipelineLayout>(pipe->get_native_pipeline_layout());
             }
+            if (!s_dir->pipeline) return;
+            if (!data->indirect_buffers[frame]) return;
+        } else {
+            if (!s_dir->classic_pipeline) { HN_PROFILE_SCOPE("DirShadow::pipeline_create_classic");
+                VkRenderPass rp = ctx.get_resource_render_pass("shadowDirMap");
+                if (!rp) {
+                    HN_CORE_WARN("Renderer3DShadow: dir shadow render pass not available, skipping");
+                    return;
+                }
 
-            void* meshlet_extra_layout = VulkanRendererAPI::get_or_create_meshlet_set_layout();
+                auto spec = PipelineSpec::from_shader(asset_root / "shaders" / "Renderer3D_ShadowDirectional_Classic.glsl");
+                spec.pipelineKind = PipelineKind::Graphics;
+                spec.perColorAttachmentBlend.clear();
+                spec.depthStencil.depthTest  = true;
+                spec.depthStencil.depthWrite = true;
+                spec.cullMode                = CullMode::Front;
+                spec.depthBiasConstantFactor = 2.0f;
+                spec.depthBiasSlopeFactor    = 1.5f;
 
-            auto spec = PipelineSpec::from_shader(asset_root / "shaders" / "Renderer3D_ShadowDirectional.glsl");
-            spec.pipelineKind = PipelineKind::MeshShading;
-            spec.perColorAttachmentBlend.clear();
-            spec.depthStencil.depthTest  = true;
-            spec.depthStencil.depthWrite = true;
-            spec.cullMode                = CullMode::Front;
-            spec.depthBiasConstantFactor = 2.0f;
-            spec.depthBiasSlopeFactor    = 1.5f;
+                Ref<Pipeline> pipe = Pipeline::create(spec, rp, nullptr);
+                HN_CORE_ASSERT(pipe, "Renderer3DShadow: failed to create classic directional shadow pipeline");
 
-            Ref<Pipeline> pipe = Pipeline::create(spec, rp, meshlet_extra_layout);
-            HN_CORE_ASSERT(pipe, "Renderer3DShadow: failed to create directional shadow pipeline");
-
-            s_dir->pipeline_ref = pipe;
-            s_dir->pipeline     = reinterpret_cast<VkPipeline>(pipe->get_native_pipeline());
-            s_dir->layout       = reinterpret_cast<VkPipelineLayout>(pipe->get_native_pipeline_layout());
+                s_dir->classic_pipeline_ref = pipe;
+                s_dir->classic_pipeline     = reinterpret_cast<VkPipeline>(pipe->get_native_pipeline());
+                s_dir->classic_layout       = reinterpret_cast<VkPipelineLayout>(pipe->get_native_pipeline_layout());
+            }
+            if (!s_dir->classic_pipeline) return;
         }
-
-        if (!s_dir->pipeline) return;
-        if (!data->indirect_buffers[frame]) return;
 
         VkRenderPass  rp    = ctx.get_resource_render_pass("shadowDirMap");
         VkImage       image = ctx.get_resource_vk_image("shadowDirMap");
@@ -582,22 +696,26 @@ namespace Honey {
                     0, 0, nullptr, 0, nullptr, 1, &imb);
             }
 
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, s_dir->pipeline);
+            const VkPipeline       active_pipeline = meshlet_path ? s_dir->pipeline        : s_dir->classic_pipeline;
+            const VkPipelineLayout active_layout   = meshlet_path ? s_dir->layout           : s_dir->classic_layout;
+
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, active_pipeline);
 
             VkDescriptorSet global_ds = vk_ctx->get_global_descriptor_set(frame);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                s_dir->layout, 0, 1, &global_ds, 0, nullptr);
+                active_layout, 0, 1, &global_ds, 0, nullptr);
 
             const VkViewport viewport{0.f, 0.f, (float)res_size, (float)res_size, 0.f, 1.f};
             const VkRect2D   scissor{{0, 0}, {res_size, res_size}};
 
-            VkBuffer indirect_vk = reinterpret_cast<VkBuffer>(
-                data->indirect_buffers[frame]->get_native_buffer());
+            VkBuffer indirect_vk = meshlet_path
+                ? reinterpret_cast<VkBuffer>(data->indirect_buffers[frame]->get_native_buffer())
+                : VK_NULL_HANDLE;
 
             {
                 HN_PROFILE_SCOPE("DirShadow::cascade_draw_loop");
                 // Render one pass per cascade layer. face_index in the push constant carries
-                // the cascade index so the mesh shader looks up cascade_vp[face_index].
+                // the cascade index so the shader looks up cascade_vp[face_index].
                 // last_ds persists across cascades — descriptor set bindings survive render pass boundaries.
                 void* last_ds = nullptr;
                 for (uint32_t c = 0; c < k_csm_cascade_count; ++c) {
@@ -617,26 +735,39 @@ namespace Honey {
                     vkCmdSetViewport(cmd, 0, 1, &viewport);
                     vkCmdSetScissor(cmd,  0, 1, &scissor);
 
-                    {
+                    if (meshlet_path) {
                         HN_PROFILE_SCOPE("DirShadow::mesh_draw_calls");
                         for (const auto& group : data->shadow_draw_list) {
                             if (group.mesh_descriptor_set != last_ds) {
                                 VkDescriptorSet mesh_ds =
                                     reinterpret_cast<VkDescriptorSet>(group.mesh_descriptor_set);
                                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    s_dir->layout, 1, 1, &mesh_ds, 0, nullptr);
+                                    active_layout, 1, 1, &mesh_ds, 0, nullptr);
                                 last_ds = group.mesh_descriptor_set;
                             }
 
-                            // Reuse face_index to carry the cascade index into the shader.
                             ShadowDrawPC pc{group.draw_data_base, 0, c, 0};
-                            vkCmdPushConstants(cmd, s_dir->layout,
+                            vkCmdPushConstants(cmd, active_layout,
                                 VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT |
                                 VK_SHADER_STAGE_FRAGMENT_BIT,
                                 0, sizeof(ShadowDrawPC), &pc);
 
                             s_fn_draw_mesh_tasks_indirect(cmd, indirect_vk,
                                 group.indirect_byte_offset, group.draw_count, 12u);
+                        }
+                    } else {
+                        HN_PROFILE_SCOPE("DirShadow::classic_draw_calls");
+                        for (const auto& entry : data->classic_shadow_draw_list) {
+                            const VkDeviceSize vb_offset = 0;
+                            vkCmdBindVertexBuffers(cmd, 0, 1, &entry.vertex_buffer, &vb_offset);
+                            vkCmdBindIndexBuffer(cmd, entry.index_buffer, 0, VK_INDEX_TYPE_UINT32);
+
+                            ShadowDrawPC pc{entry.draw_data_base, 0, c, 0};
+                            vkCmdPushConstants(cmd, active_layout,
+                                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                0, sizeof(ShadowDrawPC), &pc);
+
+                            s_fn_draw_indexed(cmd, entry.index_count, entry.draw_count, 0, 0, entry.draw_data_base);
                         }
                     }
 
@@ -669,6 +800,9 @@ namespace Honey {
         s_dir->pipeline_ref.reset();
         s_dir->pipeline = VK_NULL_HANDLE;
         s_dir->layout   = VK_NULL_HANDLE;
+        s_dir->classic_pipeline_ref.reset();
+        s_dir->classic_pipeline = VK_NULL_HANDLE;
+        s_dir->classic_layout   = VK_NULL_HANDLE;
         if (s_res && s_res->vk_ctx)
             s_res->vk_ctx->set_dir_shadow_resources(VK_NULL_HANDLE, VK_NULL_HANDLE);
     }
