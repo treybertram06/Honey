@@ -29,6 +29,8 @@ namespace Honey {
             PFN_vkCmdTraceRaysKHR                     fn_cmd_trace_rays = nullptr;
             PFN_vkGetRayTracingShaderGroupHandlesKHR  fn_get_sbt_handles = nullptr;
             PFN_vkGetBufferDeviceAddressKHR           fn_get_buf_addr  = nullptr;
+            PFN_vkCmdWriteAccelerationStructuresPropertiesKHR fn_cmd_write_as_props = nullptr;
+            PFN_vkCmdCopyAccelerationStructureKHR             fn_cmd_copy_as        = nullptr;
 
             // Cached once at init — physical device memory properties never change.
             VkPhysicalDeviceMemoryProperties cached_mem_props{};
@@ -81,7 +83,7 @@ namespace Honey {
             VkDeviceAddress blas_scratch_addr   = 0;
             VkDeviceSize    blas_scratch_size   = 0;
 
-            // Pending BLAS builds accumulated by prepare_tlas_cpu(), consumed by record_pending_blas_builds().
+            // Pending BLAS builds accumulated by prepare_tlas_cpu(), consumed by build_and_compact_pending_blas().
             struct PendingBlas {
                 const Submesh* submesh_key; // look up handle in blas_cache during recording
                 VkDeviceAddress vbuf_addr;
@@ -90,6 +92,9 @@ namespace Honey {
                 uint32_t max_vertex;
             };
             std::vector<PendingBlas> pending_blas;
+
+            VkQueryPool blas_compact_query_pool     = VK_NULL_HANDLE;
+            uint32_t    blas_compact_query_capacity = 0;
 
             // Per-frame resources: double-buffered so frame N and frame N+1 can be in flight
             // simultaneously without WAW hazards on the TLAS buffer or host-visible SSBOs.
@@ -560,7 +565,7 @@ namespace Honey {
         }
 
         // Allocates a BLAS backing buffer and creates its AS handle on the CPU.
-        // Does NOT submit any GPU work — recording is deferred to record_pending_blas_builds().
+        // Does NOT submit any GPU work — building is deferred to build_and_compact_pending_blas().
         // Appends to s_res->pending_blas and grows s_res->blas_scratch_size as needed.
         static PathTracerResources::BlasEntry alloc_blas_entry(
                 const Submesh* submesh_key,
@@ -589,7 +594,8 @@ namespace Honey {
             VkAccelerationStructureBuildGeometryInfoKHR build_info{};
             build_info.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
             build_info.type          = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-            build_info.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+            build_info.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR
+                                     | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR;
             build_info.geometryCount = 1;
             build_info.pGeometries   = &geometry;
 
@@ -646,69 +652,208 @@ namespace Honey {
             return entry;
         }
 
-        // Records all pending BLAS builds into cmd, then clears pending_blas.
-        // Emits an inter-build barrier when reusing scratch sequentially, and a final
-        // AS_WRITE → AS_READ barrier so the TLAS build can consume the results.
-        static void record_pending_blas_builds(VkCommandBuffer cmd) {
+        // Builds all pending BLASes in a synchronous one-time submit, then compacts
+        // them into smaller allocations before the TLAS build consumes their device addresses.
+        // Stalls the CPU while GPU work completes — acceptable since this only runs when new
+        // meshes are added (one-time per unique Submesh*).
+        static void build_and_compact_pending_blas() {
             if (s_res->pending_blas.empty())
                 return;
 
-            const auto& pending = s_res->pending_blas;
-            for (size_t i = 0; i < pending.size(); ++i) {
-                const auto& pb = pending[i];
-                const PathTracerResources::BlasEntry& entry = s_res->blas_cache.at(pb.submesh_key);
+            VkDevice device = s_res->vk_ctx->get_device();
 
-                VkAccelerationStructureGeometryTrianglesDataKHR triangles{};
-                triangles.sType          = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
-                triangles.vertexFormat   = VK_FORMAT_R32G32B32_SFLOAT;
-                triangles.vertexData.deviceAddress = pb.vbuf_addr;
-                triangles.vertexStride   = 56;
-                triangles.maxVertex      = pb.max_vertex;
-                triangles.indexType      = VK_INDEX_TYPE_UINT32;
-                triangles.indexData.deviceAddress  = pb.ibuf_addr;
+            // Drain all in-flight GPU work before touching AS resources. This is a one-time
+            // stall per new mesh load — acceptable, and consistent with create_accum_image.
+            vkDeviceWaitIdle(device);
 
-                VkAccelerationStructureGeometryKHR geometry{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
-                geometry.geometryType       = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-                geometry.geometry.triangles = triangles;
-                geometry.flags              = VK_GEOMETRY_OPAQUE_BIT_KHR;
+            const uint32_t count = (uint32_t)s_res->pending_blas.size();
 
-                VkAccelerationStructureBuildGeometryInfoKHR build_info{};
-                build_info.sType                     = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
-                build_info.type                      = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-                build_info.flags                     = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
-                build_info.mode                      = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
-                build_info.dstAccelerationStructure  = entry.handle;
-                build_info.geometryCount             = 1;
-                build_info.pGeometries               = &geometry;
-                build_info.scratchData.deviceAddress = s_res->blas_scratch_addr; // offset 0, reused sequentially
-
-                VkAccelerationStructureBuildRangeInfoKHR range{};
-                range.primitiveCount = pb.tri_count;
-                const VkAccelerationStructureBuildRangeInfoKHR* range_ptr = &range;
-                s_res->fn_cmd_build_as(cmd, 1, &build_info, &range_ptr);
-
-                // Between sequential builds: ensure previous build's scratch writes are visible
-                // before the next build reads/writes scratch at offset 0.
-                if (i + 1 < pending.size()) {
-                    VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-                    mb.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
-                    mb.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR
-                                     | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
-                    vkCmdPipelineBarrier(cmd,
-                        VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-                        VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-                        0, 1, &mb, 0, nullptr, 0, nullptr);
-                }
+            // Grow the compaction query pool if needed.
+            if (count > s_res->blas_compact_query_capacity) {
+                if (s_res->blas_compact_query_pool != VK_NULL_HANDLE)
+                    vkDestroyQueryPool(device, s_res->blas_compact_query_pool, nullptr);
+                VkQueryPoolCreateInfo qci{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+                qci.queryType  = VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR;
+                qci.queryCount = count;
+                VkResult r = vkCreateQueryPool(device, &qci, nullptr, &s_res->blas_compact_query_pool);
+                HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateQueryPool failed (BLAS compaction)");
+                s_res->blas_compact_query_capacity = count;
             }
 
-            // Final barrier: all BLAS writes must be visible to the TLAS build.
-            VkMemoryBarrier final_mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-            final_mb.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
-            final_mb.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
-            vkCmdPipelineBarrier(cmd,
-                VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-                VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-                0, 1, &final_mb, 0, nullptr, 0, nullptr);
+            // --- Phase 1: build all BLASes and write compacted size queries ---
+            bool ok = s_res->vk_ctx->submit_one_time_graphics([count](VkCommandBuffer cmd) {
+                vkCmdResetQueryPool(cmd, s_res->blas_compact_query_pool, 0, count);
+
+                std::vector<VkAccelerationStructureKHR> built_handles;
+                built_handles.reserve(count);
+
+                const auto& pending = s_res->pending_blas;
+                for (size_t i = 0; i < pending.size(); ++i) {
+                    const auto& pb = pending[i];
+                    const PathTracerResources::BlasEntry& entry = s_res->blas_cache.at(pb.submesh_key);
+
+                    VkAccelerationStructureGeometryTrianglesDataKHR triangles{};
+                    triangles.sType          = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+                    triangles.vertexFormat   = VK_FORMAT_R32G32B32_SFLOAT;
+                    triangles.vertexData.deviceAddress = pb.vbuf_addr;
+                    triangles.vertexStride   = 56;
+                    triangles.maxVertex      = pb.max_vertex;
+                    triangles.indexType      = VK_INDEX_TYPE_UINT32;
+                    triangles.indexData.deviceAddress  = pb.ibuf_addr;
+
+                    VkAccelerationStructureGeometryKHR geometry{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
+                    geometry.geometryType       = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+                    geometry.geometry.triangles = triangles;
+                    geometry.flags              = VK_GEOMETRY_OPAQUE_BIT_KHR;
+
+                    VkAccelerationStructureBuildGeometryInfoKHR build_info{};
+                    build_info.sType                     = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+                    build_info.type                      = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+                    build_info.flags                     = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR
+                                                         | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR;
+                    build_info.mode                      = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+                    build_info.dstAccelerationStructure  = entry.handle;
+                    build_info.geometryCount             = 1;
+                    build_info.pGeometries               = &geometry;
+                    build_info.scratchData.deviceAddress = s_res->blas_scratch_addr;
+
+                    VkAccelerationStructureBuildRangeInfoKHR range{};
+                    range.primitiveCount = pb.tri_count;
+                    const VkAccelerationStructureBuildRangeInfoKHR* range_ptr = &range;
+                    s_res->fn_cmd_build_as(cmd, 1, &build_info, &range_ptr);
+
+                    built_handles.push_back(entry.handle);
+
+                    if (i + 1 < pending.size()) {
+                        VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+                        mb.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+                        mb.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+                        mb.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR
+                                         | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+                        vkCmdPipelineBarrier(cmd,
+                            VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                            VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                            0, 1, &mb, 0, nullptr, 0, nullptr);
+                    }
+                }
+
+                VkMemoryBarrier final_mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+                final_mb.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+                final_mb.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+                final_mb.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+                vkCmdPipelineBarrier(cmd,
+                    VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                    VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                    0, 1, &final_mb, 0, nullptr, 0, nullptr);
+
+                s_res->fn_cmd_write_as_props(cmd, count, built_handles.data(),
+                    VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR,
+                    s_res->blas_compact_query_pool, 0);
+            });
+            HN_CORE_ASSERT(ok, "BLAS build+query submit failed");
+
+            // Read compacted sizes — GPU finished, fence already waited in submit_one_time_graphics.
+            std::vector<VkDeviceSize> compact_sizes(count);
+            VkResult r = vkGetQueryPoolResults(device,
+                s_res->blas_compact_query_pool, 0, count,
+                count * sizeof(VkDeviceSize), compact_sizes.data(), sizeof(VkDeviceSize),
+                VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "vkGetQueryPoolResults failed (BLAS compaction)");
+
+            // --- Phase 2: allocate compact AS handles and copy ---
+            struct CompactOp {
+                PathTracerResources::BlasEntry compact;
+                const Submesh*             key;
+                VkAccelerationStructureKHR old_handle;
+                VkBuffer                   old_buffer;
+                VkDeviceMemory             old_memory;
+                VkDeviceAddress            old_device_address; // pre-compaction address written to instance buffer
+            };
+            std::vector<CompactOp> compact_ops;
+            compact_ops.reserve(count);
+
+            for (uint32_t i = 0; i < count; ++i) {
+                const auto& pb = s_res->pending_blas[i];
+                const PathTracerResources::BlasEntry& old_entry = s_res->blas_cache.at(pb.submesh_key);
+
+                PathTracerResources::BlasEntry compact{};
+                {
+                    VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+                    bi.size        = compact_sizes[i];
+                    bi.usage       = VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
+                                   | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+                    bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+                    VkResult br = vkCreateBuffer(device, &bi, nullptr, &compact.buffer);
+                    HN_CORE_ASSERT(br == VK_SUCCESS, "vkCreateBuffer failed (BLAS compact)");
+
+                    VkMemoryRequirements req{};
+                    vkGetBufferMemoryRequirements(device, compact.buffer, &req);
+
+                    VkMemoryAllocateFlagsInfo flags_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO};
+                    flags_info.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT_KHR;
+
+                    VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+                    ai.pNext           = &flags_info;
+                    ai.allocationSize  = req.size;
+                    ai.memoryTypeIndex = find_memory_type(s_res->cached_mem_props, req.memoryTypeBits,
+                                                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+                    br = vkAllocateMemory(device, &ai, nullptr, &compact.memory);
+                    HN_CORE_ASSERT(br == VK_SUCCESS, "vkAllocateMemory failed (BLAS compact)");
+                    vkBindBufferMemory(device, compact.buffer, compact.memory, 0);
+                }
+
+                VkAccelerationStructureCreateInfoKHR ci{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR};
+                ci.buffer = compact.buffer;
+                ci.size   = compact_sizes[i];
+                ci.type   = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+                VkResult cr = s_res->fn_create_as(device, &ci, nullptr, &compact.handle);
+                HN_CORE_ASSERT(cr == VK_SUCCESS, "vkCreateAccelerationStructureKHR failed (compact)");
+
+                VkAccelerationStructureDeviceAddressInfoKHR as_addr{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR};
+                as_addr.accelerationStructure = compact.handle;
+                compact.device_address = s_res->fn_get_as_addr(device, &as_addr);
+
+                compact_ops.push_back({ compact, pb.submesh_key,
+                    old_entry.handle, old_entry.buffer, old_entry.memory,
+                    old_entry.device_address });
+            }
+
+            ok = s_res->vk_ctx->submit_one_time_graphics([&compact_ops](VkCommandBuffer cmd) {
+                for (const auto& op : compact_ops) {
+                    VkCopyAccelerationStructureInfoKHR copy_info{VK_STRUCTURE_TYPE_COPY_ACCELERATION_STRUCTURE_INFO_KHR};
+                    copy_info.src  = op.old_handle;
+                    copy_info.dst  = op.compact.handle;
+                    copy_info.mode = VK_COPY_ACCELERATION_STRUCTURE_MODE_COMPACT_KHR;
+                    s_res->fn_cmd_copy_as(cmd, &copy_info);
+                }
+            });
+            HN_CORE_ASSERT(ok, "BLAS compaction copy submit failed");
+
+            // Swap handles in blas_cache and destroy the uncompacted buffers.
+            for (const auto& op : compact_ops) {
+                s_res->fn_destroy_as(device, op.old_handle, nullptr);
+                vkDestroyBuffer(device, op.old_buffer, nullptr);
+                vkFreeMemory(device, op.old_memory, nullptr);
+                s_res->blas_cache[op.key] = op.compact;
+            }
+
+            // The instance buffer was written by prepare_tlas_cpu() with pre-compaction
+            // addresses.  Patch it now so the TLAS build doesn't reference freed memory.
+            bool any_patched = false;
+            for (auto& inst : s_res->frame_instances) {
+                for (const auto& op : compact_ops) {
+                    if (inst.accelerationStructureReference == op.old_device_address) {
+                        inst.accelerationStructureReference = op.compact.device_address;
+                        any_patched = true;
+                        break;
+                    }
+                }
+            }
+            if (any_patched) {
+                auto& fs = s_res->frame_slots[s_res->current_slot];
+                memcpy(fs.instance_mapped, s_res->frame_instances.data(),
+                       s_res->frame_instances.size() * sizeof(VkAccelerationStructureInstanceKHR));
+            }
 
             s_res->pending_blas.clear();
         }
@@ -756,7 +901,7 @@ namespace Honey {
                     const VkDeviceAddress ibuf_addr = ibuf_base_addr
                         + (VkDeviceAddress)sm.meshlets->flat_index_first * 3u * sizeof(uint32_t);
 
-                    // Allocate BLAS if not cached — GPU build is deferred to record_pending_blas_builds().
+                    // Allocate BLAS if not cached — GPU build is deferred to build_and_compact_pending_blas().
                     if (!s_res->blas_cache.count(&sm))
                         s_res->blas_cache[&sm] = alloc_blas_entry(&sm, vbuf_addr, ibuf_addr, tri_count, max_vertex);
 
@@ -1390,7 +1535,9 @@ namespace Honey {
         LOAD(fn_get_buf_addr,       vkGetBufferDeviceAddressKHR);
         LOAD(fn_create_rt_pipeline, vkCreateRayTracingPipelinesKHR);
         LOAD(fn_cmd_trace_rays,     vkCmdTraceRaysKHR);
-        LOAD(fn_get_sbt_handles,    vkGetRayTracingShaderGroupHandlesKHR);
+        LOAD(fn_get_sbt_handles,      vkGetRayTracingShaderGroupHandlesKHR);
+        LOAD(fn_cmd_write_as_props,   vkCmdWriteAccelerationStructuresPropertiesKHR);
+        LOAD(fn_cmd_copy_as,          vkCmdCopyAccelerationStructureKHR);
 #undef LOAD
 
         // Allocate host-visible lights UBO (fixed size, mapped for lifetime of s_res)
@@ -1435,6 +1582,9 @@ namespace Honey {
             vkDestroyBuffer(device, s_res->blas_scratch_buffer, nullptr);
             vkFreeMemory(device, s_res->blas_scratch_memory, nullptr);
         }
+
+        if (s_res->blas_compact_query_pool != VK_NULL_HANDLE)
+            vkDestroyQueryPool(device, s_res->blas_compact_query_pool, nullptr);
 
         for (auto& fs : s_res->frame_slots) {
             if (fs.tlas != VK_NULL_HANDLE) {
@@ -1570,10 +1720,9 @@ namespace Honey {
     void Renderer3DPathTracer::register_frame_graph_executors() {
         auto& registry = FrameGraphRegistry::get();
 
-        // Single pass: BLAS builds (new meshes only) → TLAS build/refit → trace rays →
-        // SVGF denoise → blit to editorViewport.  All work goes into the live graphics
-        // command buffer via submit_vulkan_graphics_raw, eliminating the per-submit
-        // vkWaitForFences stalls that the old submit_vulkan_compute path imposed.
+        // New BLASes are built + compacted in a synchronous one-time submit before the main
+        // frame command buffer.  TLAS build/refit → trace rays → SVGF denoise → blit all run
+        // in the live graphics command buffer via submit_vulkan_graphics_raw.
         registry.register_executor("pathtracing.trace", [](FrameGraphPassContext& ctx) {
             if (!s_res || !s_res->pipeline_built)
                 return;
@@ -1626,8 +1775,11 @@ namespace Honey {
             // Capture the per-frame descriptor set handle for use in the recording lambda.
             VkDescriptorSet rt_desc_set = s_res->frame_slots[s_res->current_slot].rt_desc_set;
 
-            // --- BLAS builds (new meshes) + TLAS build/refit + ray trace ---
-            // Everything goes into the live graphics command buffer; no fence stalls.
+            // Build + compact any new BLASes before the main frame submission.
+            // This is a synchronous one-time cost (only runs when new meshes are added).
+            build_and_compact_pending_blas();
+
+            // --- TLAS build/refit + ray trace ---
             ctx.submit_vulkan_graphics_raw([inv_view, inv_proj, frame_count, trace_w, trace_h,
                                             need_init, gbuf_init, ping_init, filtered_init,
                                             rt_desc_set](VkCommandBuffer cmd) {
@@ -1650,10 +1802,9 @@ namespace Honey {
                 if (ping_init)     transition_to_general(s_res->ping_image);
                 if (filtered_init) transition_to_general(s_res->filtered_image);
 
-                // BLAS/TLAS build stage.
+                // TLAS build stage (BLASes already built and compacted above).
                 {
-                    HN_GPU_SCOPE(cmd, "BLAS/TLAS build");
-                    record_pending_blas_builds(cmd);
+                    HN_GPU_SCOPE(cmd, "TLAS build");
                     record_tlas_build(cmd);
                 }
 
