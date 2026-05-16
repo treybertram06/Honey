@@ -1603,13 +1603,12 @@ namespace Honey {
                 if (ping_init)     transition_to_general(s_res->ping_image);
                 if (filtered_init) transition_to_general(s_res->filtered_image);
 
-                // Record any BLAS builds for meshes not yet in the cache.
-                // Emits inter-build barriers and a final BLAS→TLAS barrier internally.
-                record_pending_blas_builds(cmd);
-
-                // Record the TLAS build (full rebuild or in-place refit).
-                // Emits an AS_WRITE → RT_READ barrier at the end.
-                record_tlas_build(cmd);
+                // BLAS/TLAS build stage.
+                {
+                    HN_GPU_SCOPE(cmd, "BLAS/TLAS build");
+                    record_pending_blas_builds(cmd);
+                    record_tlas_build(cmd);
+                }
 
                 struct PC { glm::mat4 inv_view; glm::mat4 inv_proj; uint32_t frame_count; };
                 PC pc{ inv_view, inv_proj, frame_count };
@@ -1620,9 +1619,13 @@ namespace Honey {
                 vkCmdPushConstants(cmd, s_res->rt_pipeline_layout,
                     VK_SHADER_STAGE_RAYGEN_BIT_KHR, 0, sizeof(PC), &pc);
 
-                s_res->fn_cmd_trace_rays(cmd,
-                    &s_res->sbt_raygen, &s_res->sbt_miss, &s_res->sbt_hit, &s_res->sbt_callable,
-                    trace_w, trace_h, 1);
+                // Ray tracing stage.
+                {
+                    HN_GPU_SCOPE(cmd, "TraceRays");
+                   s_res->fn_cmd_trace_rays(cmd,
+                       &s_res->sbt_raygen, &s_res->sbt_miss, &s_res->sbt_hit, &s_res->sbt_callable,
+                       trace_w, trace_h, 1);
+                }
             });
 
             s_res->accum_frame_count++;
@@ -1643,30 +1646,33 @@ namespace Honey {
                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                         0, 1, &mb, 0, nullptr, 0, nullptr);
 
-                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_res->svgf_pipeline);
-                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-                        s_res->svgf_pipeline_layout, 0, 1, &s_res->svgf_desc_set, 0, nullptr);
+                    {
+                        HN_GPU_SCOPE(cmd, "SVGF denoise");
+                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_res->svgf_pipeline);
+                        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                           s_res->svgf_pipeline_layout, 0, 1, &s_res->svgf_desc_set, 0, nullptr);
 
-                    uint32_t gx = (trace_w + 7) / 8;
-                    uint32_t gy = (trace_h + 7) / 8;
+                        uint32_t gx = (trace_w + 7) / 8;
+                        uint32_t gy = (trace_h + 7) / 8;
 
-                    // 2 passes: step 1 then 2. Result lands in filtered_image (pass_idx 0→ping, 1→filtered).
-                    // blend_factor on the last pass blends filtered↔original to avoid over-blurring
-                    // converged (many-frame) images.
-                    struct SVGF_PC { int32_t step_size; int32_t pass_idx; int32_t width; int32_t height; float blend_factor; };
-                    const int step_sizes[2] = { 1, 2 };
+                        // 2 passes: step 1 then 2. Result lands in filtered_image (pass_idx 0→ping, 1→filtered).
+                        // blend_factor on the last pass blends filtered↔original to avoid over-blurring
+                        // converged (many-frame) images.
+                        struct SVGF_PC { int32_t step_size; int32_t pass_idx; int32_t width; int32_t height; float blend_factor; };
+                        const int step_sizes[2] = { 1, 2 };
 
-                    for (int pass = 0; pass < 2; pass++) {
-                        SVGF_PC pc{ step_sizes[pass], pass, (int32_t)trace_w, (int32_t)trace_h, blend_factor };
-                        vkCmdPushConstants(cmd, s_res->svgf_pipeline_layout,
-                            VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(SVGF_PC), &pc);
-                        vkCmdDispatch(cmd, gx, gy, 1);
+                        for (int pass = 0; pass < 2; pass++) {
+                            SVGF_PC pc{ step_sizes[pass], pass, (int32_t)trace_w, (int32_t)trace_h, blend_factor };
+                            vkCmdPushConstants(cmd, s_res->svgf_pipeline_layout,
+                                VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(SVGF_PC), &pc);
+                            vkCmdDispatch(cmd, gx, gy, 1);
 
-                        if (pass < 1) {
-                            vkCmdPipelineBarrier(cmd,
-                                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                                0, 1, &mb, 0, nullptr, 0, nullptr);
+                            if (pass < 1) {
+                                vkCmdPipelineBarrier(cmd,
+                                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                    0, 1, &mb, 0, nullptr, 0, nullptr);
+                           }
                         }
                     }
                 });
@@ -1674,59 +1680,64 @@ namespace Honey {
 
             // --- Blit filtered_image (or accum_image if SVGF unavailable) → editorViewport ---
             ctx.submit_vulkan_graphics_raw([dst_image, trace_w, trace_h, svgf_ready](VkCommandBuffer cmd) {
-                VkImage src_image = svgf_ready ? s_res->filtered_image : s_res->accum_image;
 
-                VkImageMemoryBarrier src_bar{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-                src_bar.oldLayout        = VK_IMAGE_LAYOUT_GENERAL;
-                src_bar.newLayout        = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-                src_bar.image            = src_image;
-                src_bar.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-                src_bar.srcAccessMask    = VK_ACCESS_SHADER_WRITE_BIT;
-                src_bar.dstAccessMask    = VK_ACCESS_TRANSFER_READ_BIT;
+                {
+                    HN_GPU_SCOPE(cmd, "Blit");
+                    VkImage src_image = svgf_ready ? s_res->filtered_image : s_res->accum_image;
 
-                VkImageMemoryBarrier dst_bar{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-                dst_bar.oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED;
-                dst_bar.newLayout        = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-                dst_bar.image            = dst_image;
-                dst_bar.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-                dst_bar.srcAccessMask    = 0;
-                dst_bar.dstAccessMask    = VK_ACCESS_TRANSFER_WRITE_BIT;
+                   VkImageMemoryBarrier src_bar{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+                   src_bar.oldLayout        = VK_IMAGE_LAYOUT_GENERAL;
+                   src_bar.newLayout        = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+                   src_bar.image            = src_image;
+                   src_bar.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+                   src_bar.srcAccessMask    = VK_ACCESS_SHADER_WRITE_BIT;
+                   src_bar.dstAccessMask    = VK_ACCESS_TRANSFER_READ_BIT;
 
-                VkImageMemoryBarrier pre[2] = { src_bar, dst_bar };
-                vkCmdPipelineBarrier(cmd,
-                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR
-                    | VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                    VK_PIPELINE_STAGE_TRANSFER_BIT,
-                    0, 0, nullptr, 0, nullptr, 2, pre);
+                   VkImageMemoryBarrier dst_bar{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+                   dst_bar.oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED;
+                   dst_bar.newLayout        = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+                   dst_bar.image            = dst_image;
+                   dst_bar.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+                   dst_bar.srcAccessMask    = 0;
+                   dst_bar.dstAccessMask    = VK_ACCESS_TRANSFER_WRITE_BIT;
 
-                VkImageBlit blit{};
-                blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-                blit.srcOffsets[1]  = {(int32_t)trace_w, (int32_t)trace_h, 1};
-                blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-                blit.dstOffsets[1]  = {(int32_t)trace_w, (int32_t)trace_h, 1};
-                vkCmdBlitImage(cmd,
-                    src_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                    dst_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                    1, &blit, VK_FILTER_NEAREST);
+                   VkImageMemoryBarrier pre[2] = { src_bar, dst_bar };
+                   vkCmdPipelineBarrier(cmd,
+                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR
+                       | VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       0, 0, nullptr, 0, nullptr, 2, pre);
 
-                // Return src_image to GENERAL for next frame.
-                src_bar.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-                src_bar.newLayout     = VK_IMAGE_LAYOUT_GENERAL;
-                src_bar.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-                src_bar.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+                   VkImageBlit blit{};
+                   blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+                   blit.srcOffsets[1]  = {(int32_t)trace_w, (int32_t)trace_h, 1};
+                   blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+                   blit.dstOffsets[1]  = {(int32_t)trace_w, (int32_t)trace_h, 1};
+                   vkCmdBlitImage(cmd,
+                       src_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                       dst_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                       1, &blit, VK_FILTER_NEAREST);
 
-                // editorViewport → SHADER_READ_ONLY_OPTIMAL for ImGui.
-                dst_bar.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-                dst_bar.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                dst_bar.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-                dst_bar.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                   // Return src_image to GENERAL for next frame.
+                   src_bar.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+                   src_bar.newLayout     = VK_IMAGE_LAYOUT_GENERAL;
+                   src_bar.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+                   src_bar.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
 
-                VkImageMemoryBarrier post[2] = { src_bar, dst_bar };
-                vkCmdPipelineBarrier(cmd,
-                    VK_PIPELINE_STAGE_TRANSFER_BIT,
-                    VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
-                    | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                    0, 0, nullptr, 0, nullptr, 2, post);
+                   // editorViewport → SHADER_READ_ONLY_OPTIMAL for ImGui.
+                   dst_bar.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+                   dst_bar.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                   dst_bar.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                   dst_bar.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+                   VkImageMemoryBarrier post[2] = { src_bar, dst_bar };
+                   vkCmdPipelineBarrier(cmd,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
+                       | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                       0, 0, nullptr, 0, nullptr, 2, post);
+
+                }
             });
         });
     }

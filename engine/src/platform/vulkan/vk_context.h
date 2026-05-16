@@ -7,6 +7,7 @@
 #include <glm/glm.hpp>
 #include <functional>
 
+#include "vk_gpu_profiler.h"
 #include "vk_pipeline.h"
 #include "../../Honey/renderer/gpu_types.h"
 #include "Honey/renderer/framebuffer.h"
@@ -206,6 +207,12 @@ namespace Honey {
                               uint32_t band_table_byte_offset,
                               const void* curve_data,       uint32_t curve_bytes,
                               uint32_t curve_byte_offset);
+
+        GpuProfiler& get_gpu_profiler() { return m_gpu_profiler; }
+
+        uint32_t get_gpu_zone_count() const override { return m_gpu_profiler.get_slot_count(); }
+        const char* get_gpu_zone_name(uint32_t slot) const override { return m_gpu_profiler.get_slot_name(slot); }
+        double get_gpu_zone_time_ms(uint32_t slot) const override { return m_gpu_profiler.get_slot_time_ms(slot); }
 
     private:
         // Per-window only:
@@ -417,6 +424,8 @@ private:
         std::vector<double> m_gpu_frame_time_ms;
         std::vector<bool>  m_timestamp_written;
         std::vector<bool>  m_timestamp_written_this_frame;
+
+        GpuProfiler m_gpu_profiler;
 
         std::thread::id m_render_thread_id{};
     };

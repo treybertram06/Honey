@@ -1373,6 +1373,10 @@ namespace Honey {
 
         create_timing_query_pool();
 
+        m_gpu_profiler.init(m_device, m_physical_device,
+                    static_cast<uint32_t>(m_swapchain_images.size()));
+        GpuProfiler::set_active(&m_gpu_profiler);
+
         m_initialized = true;
     }
 
@@ -1415,6 +1419,9 @@ namespace Honey {
                 return;
             }
         }
+
+        m_gpu_profiler.readback(m_device, m_recording_image_index);
+        m_gpu_profiler.set_current_image_index(m_recording_image_index);
 
         {
             HN_PROFILE_SCOPE("ResetSecondaryCommandPools");
@@ -1507,6 +1514,8 @@ namespace Honey {
             VkResult res = vkBeginCommandBuffer(cmd, &cb_begin);
             HN_CORE_ASSERT(res == VK_SUCCESS, "vkBeginCommandBuffer failed: {0}", vk_result_to_string(res));
         }
+
+        m_gpu_profiler.reset_frame(cmd);
 
         if (m_timestamp_query_pool) {
             const uint32_t base = image_index * 2;
@@ -2840,6 +2849,9 @@ namespace Honey {
             m_image_available_semaphores.clear();
             m_render_finished_semaphores.clear();
             m_in_flight_fences.clear();
+
+            GpuProfiler::set_active(nullptr);
+            m_gpu_profiler.destroy(m_device);
 
             //cleanup_pipeline();
             cleanup_swapchain();

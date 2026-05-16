@@ -109,6 +109,8 @@ namespace Honey {
 
         bool imgui_initialized() const { return m_imgui_initialized; }
 
+        static const char* vk_result_to_string(VkResult res);
+
         // Streaming upload
         struct BufferUploadDesc {
             VkBuffer      dstBuffer  = VK_NULL_HANDLE;

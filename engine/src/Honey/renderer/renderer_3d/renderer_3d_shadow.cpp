@@ -15,6 +15,7 @@
 #include <filesystem>
 
 #include "Honey/core/settings.h"
+#include "platform/vulkan/vk_gpu_profiler.h"
 
 namespace Honey {
 
@@ -262,6 +263,7 @@ namespace Honey {
         {
             HN_PROFILE_SCOPE("ShadowDraw::record_commands");
             VkCommandBuffer cmd = ctx.cmd();
+            HN_GPU_SCOPE(cmd, "Shadow: Point Lights");
 
             {
                 HN_PROFILE_SCOPE("ShadowDraw::barrier_to_attachment");
@@ -678,6 +680,7 @@ namespace Honey {
         {
             HN_PROFILE_SCOPE("DirShadow::record_commands");
             VkCommandBuffer cmd = ctx.cmd();
+            HN_GPU_SCOPE(cmd, "Shadow: Dir Lights");
 
             {
                 HN_PROFILE_SCOPE("DirShadow::barrier_to_attachment");

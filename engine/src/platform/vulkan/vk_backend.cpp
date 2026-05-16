@@ -15,7 +15,7 @@ namespace Honey {
     // Local helpers
     // -----------------------------
 
-    static const char* vk_result_to_string(VkResult res) {
+    const char* VulkanBackend::vk_result_to_string(VkResult res) {
         switch (res) {
         case VK_SUCCESS: return "VK_SUCCESS";
         case VK_NOT_READY: return "VK_NOT_READY";

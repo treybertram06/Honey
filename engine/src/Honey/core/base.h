@@ -80,6 +80,8 @@
 // ——————————————————————————————————————————————————————————————————
 #define BIT(x) (1 << x)
 
+#define HN_CONCAT(a, b) a##b
+
 #define HN_BIND_EVENT_FN(fn) std::bind(&fn, this, std::placeholders::_1)
 
 namespace Honey {

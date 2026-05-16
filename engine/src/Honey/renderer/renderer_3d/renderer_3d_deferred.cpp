@@ -6,6 +6,7 @@
 #include "Honey/renderer/render_command.h"
 #include "Honey/renderer/renderer.h"
 #include "platform/vulkan/vk_framebuffer.h"
+#include "platform/vulkan/vk_gpu_profiler.h"
 
 static const std::filesystem::path asset_root = ASSET_ROOT;
 
@@ -109,6 +110,7 @@ namespace Honey {
 
         vk_ctx->queue_custom_vulkan_cmd(
             [vk_ctx, gbuffer_fb, pipe_layout](VkCommandBuffer cmd, uint32_t, uint32_t) {
+                HN_GPU_SCOPE(cmd, "Deferred Lighting");
                 auto* gbuffer_vk = dynamic_cast<VulkanFramebuffer*>(gbuffer_fb.get());
                 HN_CORE_ASSERT(gbuffer_vk, "flush_deferred_lighting: current_gbuffer_fb is not a VulkanFramebuffer");
 
