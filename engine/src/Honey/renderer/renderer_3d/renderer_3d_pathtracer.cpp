@@ -38,10 +38,6 @@ namespace Honey {
                 VkDeviceAddress vertex_buffer_addr;
                 VkDeviceAddress index_buffer_addr;
             };
-            VkBuffer geometry_lookup_buffer = VK_NULL_HANDLE;
-            VkDeviceMemory geometry_lookup_memory = VK_NULL_HANDLE;
-            void* geometry_lookup_mapped = nullptr;
-            uint32_t geometry_lookup_capacity = 0;
 
             // Material / texture data
             struct MaterialInfo {
@@ -58,11 +54,6 @@ namespace Honey {
             }; // 64 bytes. GLSL std430 must match exactly.
 
             static constexpr uint32_t k_max_rt_textures = 512;
-
-            VkBuffer material_buffer = VK_NULL_HANDLE;
-            VkDeviceMemory material_memory = VK_NULL_HANDLE;
-            void* material_mapped = nullptr;
-            uint32_t material_capacity = 0;
 
             // Texture descriptors — partially bound array, updated once per frame.
             // Keyed by VkImageView so we can detect changes without re-uploading.
@@ -100,28 +91,45 @@ namespace Honey {
             };
             std::vector<PendingBlas> pending_blas;
 
-            // TLAS — persistent handle and backing buffer; refitted when instance count is stable.
-            VkAccelerationStructureKHR tlas = VK_NULL_HANDLE;
-            VkBuffer tlas_buffer = VK_NULL_HANDLE;
-            VkDeviceMemory tlas_memory = VK_NULL_HANDLE;
-            VkDeviceSize   tlas_backing_size = 0;       // size of tlas_buffer allocation
-            uint32_t       tlas_last_instance_count = UINT32_MAX; // triggers rebuild on first frame
-
-            // Persistent TLAS scratch — sized to buildScratchSize (always >= updateScratchSize).
-            VkBuffer        tlas_scratch_buffer = VK_NULL_HANDLE;
-            VkDeviceMemory  tlas_scratch_memory = VK_NULL_HANDLE;
-            VkDeviceAddress tlas_scratch_addr   = 0;
-            VkDeviceSize    tlas_scratch_size   = 0;
-
-            // Per-frame TLAS state set by prepare_tlas_cpu(), consumed by record_tlas_build().
-            uint32_t tlas_prim_count  = 0;
-            bool     tlas_mode_update = false; // false = full build, true = refit
-
-            // Per-frame instance upload buffer (host visible)
-            VkBuffer instance_buffer = VK_NULL_HANDLE;
-            VkDeviceMemory instance_memory = VK_NULL_HANDLE;
-            void* instance_mapped = nullptr;
-            uint32_t instance_buffer_capacity = 0;
+            // Per-frame resources: double-buffered so frame N and frame N+1 can be in flight
+            // simultaneously without WAW hazards on the TLAS buffer or host-visible SSBOs.
+            // k_pt_frames must match VulkanContext::k_max_frames_in_flight.
+            static constexpr uint32_t k_pt_frames = 2;
+            struct PerFrameSlot {
+                // TLAS handle and backing buffer.
+                VkAccelerationStructureKHR tlas = VK_NULL_HANDLE;
+                VkBuffer       tlas_buffer       = VK_NULL_HANDLE;
+                VkDeviceMemory tlas_memory       = VK_NULL_HANDLE;
+                VkDeviceSize   tlas_backing_size = 0;
+                uint32_t       tlas_last_instance_count = UINT32_MAX;
+                // TLAS scratch buffer (buildScratchSize >= updateScratchSize, covers both modes).
+                VkBuffer        tlas_scratch_buffer = VK_NULL_HANDLE;
+                VkDeviceMemory  tlas_scratch_memory = VK_NULL_HANDLE;
+                VkDeviceAddress tlas_scratch_addr   = 0;
+                VkDeviceSize    tlas_scratch_size   = 0;
+                // State set by prepare_tlas_cpu(), consumed by record_tlas_build().
+                uint32_t tlas_prim_count  = 0;
+                bool     tlas_mode_update = false;
+                // Instance upload buffer (host visible, written CPU-side each frame).
+                VkBuffer       instance_buffer          = VK_NULL_HANDLE;
+                VkDeviceMemory instance_memory          = VK_NULL_HANDLE;
+                void*          instance_mapped          = nullptr;
+                uint32_t       instance_buffer_capacity = 0;
+                // Geometry lookup SSBO (host visible, written CPU-side each frame).
+                VkBuffer       geometry_lookup_buffer   = VK_NULL_HANDLE;
+                VkDeviceMemory geometry_lookup_memory   = VK_NULL_HANDLE;
+                void*          geometry_lookup_mapped   = nullptr;
+                uint32_t       geometry_lookup_capacity = 0;
+                // Material SSBO (host visible, written CPU-side each frame).
+                VkBuffer       material_buffer   = VK_NULL_HANDLE;
+                VkDeviceMemory material_memory   = VK_NULL_HANDLE;
+                void*          material_mapped   = nullptr;
+                uint32_t       material_capacity = 0;
+                // Per-frame RT descriptor set (references the per-frame TLAS + SSBOs).
+                VkDescriptorSet rt_desc_set = VK_NULL_HANDLE;
+            };
+            PerFrameSlot frame_slots[k_pt_frames]{};
+            uint32_t current_slot = 0; // set at the top of each executor frame
 
             // Per-frame reusable work vectors (avoid heap churn every frame).
             std::vector<VkAccelerationStructureInstanceKHR> frame_instances;
@@ -162,6 +170,7 @@ namespace Honey {
             VkDescriptorPool svgf_desc_pool = VK_NULL_HANDLE;
             VkDescriptorSet svgf_desc_set = VK_NULL_HANDLE;
             bool svgf_pipeline_built = false;
+            bool svgf_desc_dirty = true; // set when accum images are (re)created
 
             // Camera matrices for ray generation push constants.
             glm::mat4 inv_view{1.0f};
@@ -172,7 +181,7 @@ namespace Honey {
             VkPipelineLayout rt_pipeline_layout = VK_NULL_HANDLE;
             VkDescriptorSetLayout rt_desc_layout = VK_NULL_HANDLE;
             VkDescriptorPool rt_desc_pool = VK_NULL_HANDLE;
-            VkDescriptorSet rt_desc_set = VK_NULL_HANDLE;
+            // rt_desc_set is per-frame: see frame_slots[i].rt_desc_set
 
             // SBT buffer holds [raygen | miss | hit] regions contiguously.
             VkBuffer sbt_buffer = VK_NULL_HANDLE;
@@ -258,6 +267,10 @@ namespace Honey {
         }
 
         static void create_accum_image(uint32_t w, uint32_t h) {
+            // Wait for all in-flight frames to complete before destroying images that may
+            // still be referenced by in-flight command buffers or descriptor sets.
+            if (s_res->accum_image != VK_NULL_HANDLE)
+                vkDeviceWaitIdle(s_res->vk_ctx->get_device());
             destroy_accum_image();
 
             alloc_storage_image(w, h, VK_FORMAT_R32G32B32A32_SFLOAT,
@@ -278,11 +291,13 @@ namespace Honey {
             s_res->gbuffer_needs_layout_init  = true;
             s_res->ping_needs_layout_init     = true;
             s_res->filtered_needs_layout_init = true;
+            s_res->svgf_desc_dirty = true;
         }
 
         static void update_desc_set() {
-            HN_CORE_ASSERT(s_res->geometry_lookup_buffer != VK_NULL_HANDLE, "Geometry lookup buffer not created");
-            HN_CORE_ASSERT(s_res->rt_desc_set != VK_NULL_HANDLE, "RT descriptor set not created");
+            auto& fs = s_res->frame_slots[s_res->current_slot];
+            HN_CORE_ASSERT(fs.geometry_lookup_buffer != VK_NULL_HANDLE, "Geometry lookup buffer not created");
+            HN_CORE_ASSERT(fs.rt_desc_set != VK_NULL_HANDLE, "RT descriptor set not created");
             HN_CORE_ASSERT(s_res->accum_view != VK_NULL_HANDLE, "Accumulation image not created");
             HN_CORE_ASSERT(s_res->gbuffer_view != VK_NULL_HANDLE, "G-buffer image not created");
 
@@ -292,11 +307,11 @@ namespace Honey {
 
             VkWriteDescriptorSetAccelerationStructureKHR as_info{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR};
             as_info.accelerationStructureCount = 1;
-            as_info.pAccelerationStructures    = &s_res->tlas;
+            as_info.pAccelerationStructures    = &fs.tlas;
 
             writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             writes[0].pNext           = &as_info;
-            writes[0].dstSet          = s_res->rt_desc_set;
+            writes[0].dstSet          = fs.rt_desc_set;
             writes[0].dstBinding      = 0;
             writes[0].descriptorCount = 1;
             writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
@@ -306,7 +321,7 @@ namespace Honey {
             image_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
             writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[1].dstSet          = s_res->rt_desc_set;
+            writes[1].dstSet          = fs.rt_desc_set;
             writes[1].dstBinding      = 1;
             writes[1].descriptorCount = 1;
             writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -314,12 +329,12 @@ namespace Honey {
 
             // binding 2 - geometry info SSBO
             VkDescriptorBufferInfo geo_buf_info{};
-            geo_buf_info.buffer = s_res->geometry_lookup_buffer;
+            geo_buf_info.buffer = fs.geometry_lookup_buffer;
             geo_buf_info.offset = 0;
             geo_buf_info.range  = VK_WHOLE_SIZE;
 
             writes[2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[2].dstSet          = s_res->rt_desc_set;
+            writes[2].dstSet          = fs.rt_desc_set;
             writes[2].dstBinding      = 2;
             writes[2].descriptorCount = 1;
             writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -327,12 +342,12 @@ namespace Honey {
 
             // binding 3 - material SSBO
             VkDescriptorBufferInfo mat_buf_info{};
-            mat_buf_info.buffer = s_res->material_buffer;
+            mat_buf_info.buffer = fs.material_buffer;
             mat_buf_info.offset = 0;
             mat_buf_info.range  = VK_WHOLE_SIZE;
 
             writes[3].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[3].dstSet          = s_res->rt_desc_set;
+            writes[3].dstSet          = fs.rt_desc_set;
             writes[3].dstBinding      = 3;
             writes[3].descriptorCount = 1;
             writes[3].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -347,7 +362,7 @@ namespace Honey {
             }
             if (!img_infos.empty()) {
                 writes[4].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                writes[4].dstSet          = s_res->rt_desc_set;
+                writes[4].dstSet          = fs.rt_desc_set;
                 writes[4].dstBinding      = 4;
                 writes[4].dstArrayElement = 0;
                 writes[4].descriptorCount = (uint32_t)img_infos.size();
@@ -362,7 +377,7 @@ namespace Honey {
             lights_buf_info.range  = VK_WHOLE_SIZE;
 
             writes[5].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[5].dstSet          = s_res->rt_desc_set;
+            writes[5].dstSet          = fs.rt_desc_set;
             writes[5].dstBinding      = 5;
             writes[5].descriptorCount = 1;
             writes[5].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -374,7 +389,7 @@ namespace Honey {
             gbuffer_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
             writes[6].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[6].dstSet          = s_res->rt_desc_set;
+            writes[6].dstSet          = fs.rt_desc_set;
             writes[6].dstBinding      = 6;
             writes[6].descriptorCount = 1;
             writes[6].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -395,15 +410,16 @@ namespace Honey {
         static void ensure_instance_buffer(uint32_t count) {
             HN_PROFILE_FUNCTION();
 
-            if (count <= s_res->instance_buffer_capacity)
+            auto& fs = s_res->frame_slots[s_res->current_slot];
+            if (count <= fs.instance_buffer_capacity)
                 return;
 
             VkDevice device = s_res->vk_ctx->get_device();
 
-            if (s_res->instance_buffer != VK_NULL_HANDLE) {
-                vkUnmapMemory(device, s_res->instance_memory);
-                vkDestroyBuffer(device, s_res->instance_buffer, nullptr);
-                vkFreeMemory(device, s_res->instance_memory, nullptr);
+            if (fs.instance_buffer != VK_NULL_HANDLE) {
+                vkUnmapMemory(device, fs.instance_memory);
+                vkDestroyBuffer(device, fs.instance_buffer, nullptr);
+                vkFreeMemory(device, fs.instance_memory, nullptr);
             }
 
             VkDeviceSize size = count * sizeof(VkAccelerationStructureInstanceKHR);
@@ -413,10 +429,10 @@ namespace Honey {
             bi.usage     = VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
                          | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
             bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-            vkCreateBuffer(device, &bi, nullptr, &s_res->instance_buffer);
+            vkCreateBuffer(device, &bi, nullptr, &fs.instance_buffer);
 
             VkMemoryRequirements req{};
-            vkGetBufferMemoryRequirements(device, s_res->instance_buffer, &req);
+            vkGetBufferMemoryRequirements(device, fs.instance_buffer, &req);
 
             VkMemoryAllocateFlagsInfo flags_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO};
             flags_info.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT_KHR;
@@ -426,22 +442,23 @@ namespace Honey {
             ai.allocationSize  = req.size;
             ai.memoryTypeIndex = find_memory_type(s_res->cached_mem_props, req.memoryTypeBits,
                                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-            vkAllocateMemory(device, &ai, nullptr, &s_res->instance_memory);
-            vkBindBufferMemory(device, s_res->instance_buffer, s_res->instance_memory, 0);
-            vkMapMemory(device, s_res->instance_memory, 0, size, 0, &s_res->instance_mapped);
+            vkAllocateMemory(device, &ai, nullptr, &fs.instance_memory);
+            vkBindBufferMemory(device, fs.instance_buffer, fs.instance_memory, 0);
+            vkMapMemory(device, fs.instance_memory, 0, size, 0, &fs.instance_mapped);
 
-            s_res->instance_buffer_capacity = count;
+            fs.instance_buffer_capacity = count;
         }
 
         static void ensure_geometry_lookup_buffer(uint32_t count) {
-            if (count <= s_res->geometry_lookup_capacity)
+            auto& fs = s_res->frame_slots[s_res->current_slot];
+            if (count <= fs.geometry_lookup_capacity)
                 return;
 
             VkDevice device = s_res->vk_ctx->get_device();
-            if (s_res->geometry_lookup_buffer != VK_NULL_HANDLE) {
-                vkUnmapMemory(device, s_res->geometry_lookup_memory);
-                vkDestroyBuffer(device, s_res->geometry_lookup_buffer, nullptr);
-                vkFreeMemory(device, s_res->geometry_lookup_memory, nullptr);
+            if (fs.geometry_lookup_buffer != VK_NULL_HANDLE) {
+                vkUnmapMemory(device, fs.geometry_lookup_memory);
+                vkDestroyBuffer(device, fs.geometry_lookup_buffer, nullptr);
+                vkFreeMemory(device, fs.geometry_lookup_memory, nullptr);
             }
 
             VkDeviceSize size = count * sizeof(PathTracerResources::GeometryInfo);
@@ -449,30 +466,31 @@ namespace Honey {
             bi.size      = size;
             bi.usage     = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
             bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-            vkCreateBuffer(device, &bi, nullptr, &s_res->geometry_lookup_buffer);
+            vkCreateBuffer(device, &bi, nullptr, &fs.geometry_lookup_buffer);
 
             VkMemoryRequirements req{};
-            vkGetBufferMemoryRequirements(device, s_res->geometry_lookup_buffer, &req);
+            vkGetBufferMemoryRequirements(device, fs.geometry_lookup_buffer, &req);
 
             VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
             ai.allocationSize  = req.size;
             ai.memoryTypeIndex = find_memory_type(s_res->cached_mem_props, req.memoryTypeBits,
                                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-            vkAllocateMemory(device, &ai, nullptr, &s_res->geometry_lookup_memory);
-            vkBindBufferMemory(device, s_res->geometry_lookup_buffer, s_res->geometry_lookup_memory, 0);
-            vkMapMemory(device, s_res->geometry_lookup_memory, 0, size, 0, &s_res->geometry_lookup_mapped);
-            s_res->geometry_lookup_capacity = count;
+            vkAllocateMemory(device, &ai, nullptr, &fs.geometry_lookup_memory);
+            vkBindBufferMemory(device, fs.geometry_lookup_buffer, fs.geometry_lookup_memory, 0);
+            vkMapMemory(device, fs.geometry_lookup_memory, 0, size, 0, &fs.geometry_lookup_mapped);
+            fs.geometry_lookup_capacity = count;
         }
 
         static void ensure_material_buffer(uint32_t count) {
-            if (count <= s_res->material_capacity)
+            auto& fs = s_res->frame_slots[s_res->current_slot];
+            if (count <= fs.material_capacity)
                 return;
 
             VkDevice device = s_res->vk_ctx->get_device();
-            if (s_res->material_buffer != VK_NULL_HANDLE) {
-                vkUnmapMemory(device, s_res->material_memory);
-                vkDestroyBuffer(device, s_res->material_buffer, nullptr);
-                vkFreeMemory(device, s_res->material_memory, nullptr);
+            if (fs.material_buffer != VK_NULL_HANDLE) {
+                vkUnmapMemory(device, fs.material_memory);
+                vkDestroyBuffer(device, fs.material_buffer, nullptr);
+                vkFreeMemory(device, fs.material_memory, nullptr);
             }
 
             VkDeviceSize size = count * sizeof(PathTracerResources::MaterialInfo);
@@ -480,19 +498,19 @@ namespace Honey {
             bi.size      = size;
             bi.usage     = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
             bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-            vkCreateBuffer(device, &bi, nullptr, &s_res->material_buffer);
+            vkCreateBuffer(device, &bi, nullptr, &fs.material_buffer);
 
             VkMemoryRequirements req{};
-            vkGetBufferMemoryRequirements(device, s_res->material_buffer, &req);
+            vkGetBufferMemoryRequirements(device, fs.material_buffer, &req);
 
             VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
             ai.allocationSize  = req.size;
             ai.memoryTypeIndex = find_memory_type(s_res->cached_mem_props, req.memoryTypeBits,
                                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-            vkAllocateMemory(device, &ai, nullptr, &s_res->material_memory);
-            vkBindBufferMemory(device, s_res->material_buffer, s_res->material_memory, 0);
-            vkMapMemory(device, s_res->material_memory, 0, size, 0, &s_res->material_mapped);
-            s_res->material_capacity = count;
+            vkAllocateMemory(device, &ai, nullptr, &fs.material_memory);
+            vkBindBufferMemory(device, fs.material_buffer, fs.material_memory, 0);
+            vkMapMemory(device, fs.material_memory, 0, size, 0, &fs.material_mapped);
+            fs.material_capacity = count;
         }
 
         // Grows a generic device-local scratch buffer to at least `needed` bytes.
@@ -700,6 +718,7 @@ namespace Honey {
         // Returns false if the scene has no renderable instances.
         static bool prepare_tlas_cpu(Scene* scene) {
             VkDevice device = s_res->vk_ctx->get_device();
+            auto& fs = s_res->frame_slots[s_res->current_slot];
 
             s_res->frame_instances.clear();
             s_res->frame_geo_infos.clear();
@@ -794,12 +813,12 @@ namespace Honey {
             // Upload host data to persistently-mapped GPU-visible buffers.
             ensure_geometry_lookup_buffer((uint32_t)s_res->frame_geo_infos.size());
             if (!s_res->frame_geo_infos.empty())
-                memcpy(s_res->geometry_lookup_mapped, s_res->frame_geo_infos.data(),
+                memcpy(fs.geometry_lookup_mapped, s_res->frame_geo_infos.data(),
                        s_res->frame_geo_infos.size() * sizeof(PathTracerResources::GeometryInfo));
 
             ensure_material_buffer((uint32_t)s_res->frame_materials.size());
             if (!s_res->frame_materials.empty())
-                memcpy(s_res->material_mapped, s_res->frame_materials.data(),
+                memcpy(fs.material_mapped, s_res->frame_materials.data(),
                        s_res->frame_materials.size() * sizeof(PathTracerResources::MaterialInfo));
 
             if (s_res->frame_instances.empty()) {
@@ -812,13 +831,13 @@ namespace Honey {
             }
 
             ensure_instance_buffer((uint32_t)s_res->frame_instances.size());
-            memcpy(s_res->instance_mapped, s_res->frame_instances.data(),
+            memcpy(fs.instance_mapped, s_res->frame_instances.data(),
                    s_res->frame_instances.size() * sizeof(VkAccelerationStructureInstanceKHR));
 
             // Determine if a full rebuild or an in-place refit is needed.
             const uint32_t prim_count   = (uint32_t)s_res->frame_instances.size();
-            const bool count_changed    = (prim_count != s_res->tlas_last_instance_count);
-            const bool first_build      = (s_res->tlas == VK_NULL_HANDLE);
+            const bool count_changed    = (prim_count != fs.tlas_last_instance_count);
+            const bool first_build      = (fs.tlas == VK_NULL_HANDLE);
             const bool need_full_build  = first_build || count_changed;
 
             if (need_full_build) {
@@ -844,16 +863,14 @@ namespace Honey {
                                        &size_query, &prim_count, &sizes);
 
                 // Reallocate backing buffer only if it has grown beyond current capacity.
-                if (sizes.accelerationStructureSize > s_res->tlas_backing_size) {
-                    if (s_res->tlas != VK_NULL_HANDLE) {
-                        // The TLAS may still be in use — wait for all GPU work to complete
-                        // before destroying and reallocating.  This path only triggers when
-                        // the instance count grows past the previous high-water mark.
-                        vkDeviceWaitIdle(device);
-                        s_res->fn_destroy_as(device, s_res->tlas, nullptr);
-                        vkDestroyBuffer(device, s_res->tlas_buffer, nullptr);
-                        vkFreeMemory(device, s_res->tlas_memory, nullptr);
-                        s_res->tlas = VK_NULL_HANDLE;
+                // With per-frame TLAS slots, each slot's backing buffer is exclusive to that
+                // slot, so no other in-flight frame is using it when we rotate back here.
+                if (sizes.accelerationStructureSize > fs.tlas_backing_size) {
+                    if (fs.tlas != VK_NULL_HANDLE) {
+                        s_res->fn_destroy_as(device, fs.tlas, nullptr);
+                        vkDestroyBuffer(device, fs.tlas_buffer, nullptr);
+                        vkFreeMemory(device, fs.tlas_memory, nullptr);
+                        fs.tlas = VK_NULL_HANDLE;
                     }
 
                     VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
@@ -861,10 +878,10 @@ namespace Honey {
                     bi.usage       = VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
                                    | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
                     bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-                    vkCreateBuffer(device, &bi, nullptr, &s_res->tlas_buffer);
+                    vkCreateBuffer(device, &bi, nullptr, &fs.tlas_buffer);
 
                     VkMemoryRequirements req{};
-                    vkGetBufferMemoryRequirements(device, s_res->tlas_buffer, &req);
+                    vkGetBufferMemoryRequirements(device, fs.tlas_buffer, &req);
 
                     VkMemoryAllocateFlagsInfo flags_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO};
                     flags_info.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT_KHR;
@@ -874,42 +891,43 @@ namespace Honey {
                     ai.allocationSize  = req.size;
                     ai.memoryTypeIndex = find_memory_type(s_res->cached_mem_props, req.memoryTypeBits,
                                                           VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-                    vkAllocateMemory(device, &ai, nullptr, &s_res->tlas_memory);
-                    vkBindBufferMemory(device, s_res->tlas_buffer, s_res->tlas_memory, 0);
-                    s_res->tlas_backing_size = sizes.accelerationStructureSize;
+                    vkAllocateMemory(device, &ai, nullptr, &fs.tlas_memory);
+                    vkBindBufferMemory(device, fs.tlas_buffer, fs.tlas_memory, 0);
+                    fs.tlas_backing_size = sizes.accelerationStructureSize;
                 }
 
                 // Create the TLAS handle if it was destroyed (or never existed).
-                if (s_res->tlas == VK_NULL_HANDLE) {
+                if (fs.tlas == VK_NULL_HANDLE) {
                     VkAccelerationStructureCreateInfoKHR ci{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR};
-                    ci.buffer = s_res->tlas_buffer;
-                    ci.size   = s_res->tlas_backing_size;
+                    ci.buffer = fs.tlas_buffer;
+                    ci.size   = fs.tlas_backing_size;
                     ci.type   = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-                    s_res->fn_create_as(device, &ci, nullptr, &s_res->tlas);
+                    s_res->fn_create_as(device, &ci, nullptr, &fs.tlas);
                 }
 
                 // Scratch: buildScratchSize is always >= updateScratchSize so one persistent
                 // buffer covers both modes.
                 ensure_scratch_buffer(sizes.buildScratchSize,
-                                      s_res->tlas_scratch_buffer, s_res->tlas_scratch_memory,
-                                      s_res->tlas_scratch_addr,   s_res->tlas_scratch_size);
+                                      fs.tlas_scratch_buffer, fs.tlas_scratch_memory,
+                                      fs.tlas_scratch_addr,   fs.tlas_scratch_size);
 
-                s_res->tlas_mode_update        = false;
-                s_res->tlas_last_instance_count = prim_count;
+                fs.tlas_mode_update        = false;
+                fs.tlas_last_instance_count = prim_count;
             } else {
                 // Same instance count — refit in place; scratch already sized from the initial build.
-                s_res->tlas_mode_update = true;
+                fs.tlas_mode_update = true;
             }
 
-            s_res->tlas_prim_count = prim_count;
+            fs.tlas_prim_count = prim_count;
             return true;
         }
 
         // Records the TLAS build or refit into cmd, then emits an AS_WRITE → RT_READ barrier
         // so the immediately-following vkCmdTraceRaysKHR can consume the result.
         static void record_tlas_build(VkCommandBuffer cmd) {
+            auto& fs = s_res->frame_slots[s_res->current_slot];
             VkBufferDeviceAddressInfo addr_info{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
-            addr_info.buffer = s_res->instance_buffer;
+            addr_info.buffer = fs.instance_buffer;
             VkDeviceAddress instances_addr = s_res->fn_get_buf_addr(s_res->vk_ctx->get_device(), &addr_info);
 
             VkAccelerationStructureGeometryInstancesDataKHR instances_data{};
@@ -926,17 +944,17 @@ namespace Honey {
             build_info.type          = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
             build_info.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR
                                      | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
-            build_info.mode                      = s_res->tlas_mode_update
+            build_info.mode                      = fs.tlas_mode_update
                                                        ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR
                                                        : VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
-            build_info.srcAccelerationStructure  = s_res->tlas_mode_update ? s_res->tlas : VK_NULL_HANDLE;
-            build_info.dstAccelerationStructure  = s_res->tlas;
+            build_info.srcAccelerationStructure  = fs.tlas_mode_update ? fs.tlas : VK_NULL_HANDLE;
+            build_info.dstAccelerationStructure  = fs.tlas;
             build_info.geometryCount             = 1;
             build_info.pGeometries               = &geometry;
-            build_info.scratchData.deviceAddress = s_res->tlas_scratch_addr;
+            build_info.scratchData.deviceAddress = fs.tlas_scratch_addr;
 
             VkAccelerationStructureBuildRangeInfoKHR range{};
-            range.primitiveCount = s_res->tlas_prim_count;
+            range.primitiveCount = fs.tlas_prim_count;
             const VkAccelerationStructureBuildRangeInfoKHR* range_ptr = &range;
             s_res->fn_cmd_build_as(cmd, 1, &build_info, &range_ptr);
 
@@ -1009,14 +1027,18 @@ namespace Honey {
             bindings[6].descriptorCount = 1;
             bindings[6].stageFlags      = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
 
+            // All bindings updated each frame while the previous frame may still be in flight,
+            // so mark them UPDATE_AFTER_BIND to suppress the VUID-vkUpdateDescriptorSets-None-03047
+            // validation error.  The per-frame slot design means each frame writes its own copy.
+            static constexpr VkDescriptorBindingFlags k_uab = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
             VkDescriptorBindingFlags binding_flags[7] = {
-                0, // 0: TLAS
-                0, // 1: accum image
-                0, // 2: geometry SSBO
-                0, // 3: material SSBO
-                VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT, // 4: texture array
-                0, // 5: lights UBO
-                0, // 6: gbuffer image
+                k_uab,                                          // 0: TLAS
+                k_uab,                                          // 1: accum image
+                k_uab,                                          // 2: geometry SSBO
+                k_uab,                                          // 3: material SSBO
+                VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | k_uab, // 4: texture array
+                k_uab,                                          // 5: lights UBO
+                k_uab,                                          // 6: gbuffer image
             };
             VkDescriptorSetLayoutBindingFlagsCreateInfo flags_ci{
                 VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
@@ -1025,21 +1047,24 @@ namespace Honey {
 
             VkDescriptorSetLayoutCreateInfo layout_ci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
             layout_ci.pNext        = &flags_ci;
+            layout_ci.flags        = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
             layout_ci.bindingCount = std::size(bindings);
             layout_ci.pBindings    = bindings;
             vkCreateDescriptorSetLayout(device, &layout_ci, nullptr, &s_res->rt_desc_layout);
 
 
-            // Create descriptor pool and allocate the set
+            // Create descriptor pool — one set per frame slot so each frame writes its own copy
+            // without racing against the previous frame's in-flight submission.
             VkDescriptorPoolSize pool_sizes[5] = {
-                { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1 },
-                { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 }, // accum + gbuffer
-                { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 }, // geometry + material
-                { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, PathTracerResources::k_max_rt_textures },
-                { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 },
+                { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, PathTracerResources::k_pt_frames },
+                { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,              2 * PathTracerResources::k_pt_frames },
+                { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,             2 * PathTracerResources::k_pt_frames },
+                { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,     PathTracerResources::k_max_rt_textures * PathTracerResources::k_pt_frames },
+                { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,             PathTracerResources::k_pt_frames },
             };
             VkDescriptorPoolCreateInfo pool_ci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-            pool_ci.maxSets       = 1;
+            pool_ci.flags         = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
+            pool_ci.maxSets       = PathTracerResources::k_pt_frames;
             pool_ci.poolSizeCount = std::size(pool_sizes);
             pool_ci.pPoolSizes    = pool_sizes;
             vkCreateDescriptorPool(device, &pool_ci, nullptr, &s_res->rt_desc_pool);
@@ -1048,7 +1073,8 @@ namespace Honey {
             alloc_info.descriptorPool     = s_res->rt_desc_pool;
             alloc_info.descriptorSetCount = 1;
             alloc_info.pSetLayouts        = &s_res->rt_desc_layout;
-            vkAllocateDescriptorSets(device, &alloc_info, &s_res->rt_desc_set);
+            for (uint32_t i = 0; i < PathTracerResources::k_pt_frames; i++)
+                vkAllocateDescriptorSets(device, &alloc_info, &s_res->frame_slots[i].rt_desc_set);
 
 
             // Create pipeline layout
@@ -1232,7 +1258,9 @@ namespace Honey {
         static void build_svgf_pipeline() {
             VkDevice device = s_res->vk_ctx->get_device();
 
-            // Descriptor layout: 4 storage images (accum, ping, filtered, gbuffer)
+            // Descriptor layout: 4 storage images (accum, ping, filtered, gbuffer).
+            // UPDATE_AFTER_BIND because the descriptor is written once on first frame / after resize,
+            // but the previous frame may still be in flight at that point.
             VkDescriptorSetLayoutBinding svgf_bindings[4] = {};
             for (uint32_t i = 0; i < 4; i++) {
                 svgf_bindings[i].binding        = i;
@@ -1240,13 +1268,26 @@ namespace Honey {
                 svgf_bindings[i].descriptorCount = 1;
                 svgf_bindings[i].stageFlags     = VK_SHADER_STAGE_COMPUTE_BIT;
             }
+            VkDescriptorBindingFlags svgf_flags[4] = {
+                VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,
+                VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,
+                VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,
+                VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,
+            };
+            VkDescriptorSetLayoutBindingFlagsCreateInfo svgf_flags_ci{
+                VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
+            svgf_flags_ci.bindingCount  = 4;
+            svgf_flags_ci.pBindingFlags = svgf_flags;
             VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+            slci.pNext        = &svgf_flags_ci;
+            slci.flags        = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
             slci.bindingCount = 4;
             slci.pBindings    = svgf_bindings;
             vkCreateDescriptorSetLayout(device, &slci, nullptr, &s_res->svgf_desc_layout);
 
             VkDescriptorPoolSize pool_size{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4 };
             VkDescriptorPoolCreateInfo dpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+            dpci.flags         = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
             dpci.maxSets       = 1;
             dpci.poolSizeCount = 1;
             dpci.pPoolSizes    = &pool_size;
@@ -1325,6 +1366,7 @@ namespace Honey {
                 writes[i].pImageInfo      = &img_infos[i];
             }
             vkUpdateDescriptorSets(device, 4, writes, 0, nullptr);
+            s_res->svgf_desc_dirty = false;
         }
 
     } // anonymous namespace
@@ -1394,33 +1436,31 @@ namespace Honey {
             vkFreeMemory(device, s_res->blas_scratch_memory, nullptr);
         }
 
-        if (s_res->tlas != VK_NULL_HANDLE) {
-            s_res->fn_destroy_as(device, s_res->tlas, nullptr);
-            vkDestroyBuffer(device, s_res->tlas_buffer, nullptr);
-            vkFreeMemory(device, s_res->tlas_memory, nullptr);
-        }
-
-        if (s_res->tlas_scratch_buffer != VK_NULL_HANDLE) {
-            vkDestroyBuffer(device, s_res->tlas_scratch_buffer, nullptr);
-            vkFreeMemory(device, s_res->tlas_scratch_memory, nullptr);
-        }
-
-        if (s_res->instance_buffer != VK_NULL_HANDLE) {
-            vkUnmapMemory(device, s_res->instance_memory);
-            vkDestroyBuffer(device, s_res->instance_buffer, nullptr);
-            vkFreeMemory(device, s_res->instance_memory, nullptr);
-        }
-
-        if (s_res->geometry_lookup_buffer != VK_NULL_HANDLE) {
-            vkUnmapMemory(device, s_res->geometry_lookup_memory);
-            vkDestroyBuffer(device, s_res->geometry_lookup_buffer, nullptr);
-            vkFreeMemory(device, s_res->geometry_lookup_memory, nullptr);
-        }
-
-        if (s_res->material_buffer != VK_NULL_HANDLE) {
-            vkUnmapMemory(device, s_res->material_memory);
-            vkDestroyBuffer(device, s_res->material_buffer, nullptr);
-            vkFreeMemory(device, s_res->material_memory, nullptr);
+        for (auto& fs : s_res->frame_slots) {
+            if (fs.tlas != VK_NULL_HANDLE) {
+                s_res->fn_destroy_as(device, fs.tlas, nullptr);
+                vkDestroyBuffer(device, fs.tlas_buffer, nullptr);
+                vkFreeMemory(device, fs.tlas_memory, nullptr);
+            }
+            if (fs.tlas_scratch_buffer != VK_NULL_HANDLE) {
+                vkDestroyBuffer(device, fs.tlas_scratch_buffer, nullptr);
+                vkFreeMemory(device, fs.tlas_scratch_memory, nullptr);
+            }
+            if (fs.instance_buffer != VK_NULL_HANDLE) {
+                vkUnmapMemory(device, fs.instance_memory);
+                vkDestroyBuffer(device, fs.instance_buffer, nullptr);
+                vkFreeMemory(device, fs.instance_memory, nullptr);
+            }
+            if (fs.geometry_lookup_buffer != VK_NULL_HANDLE) {
+                vkUnmapMemory(device, fs.geometry_lookup_memory);
+                vkDestroyBuffer(device, fs.geometry_lookup_buffer, nullptr);
+                vkFreeMemory(device, fs.geometry_lookup_memory, nullptr);
+            }
+            if (fs.material_buffer != VK_NULL_HANDLE) {
+                vkUnmapMemory(device, fs.material_memory);
+                vkDestroyBuffer(device, fs.material_buffer, nullptr);
+                vkFreeMemory(device, fs.material_memory, nullptr);
+            }
         }
 
         if (s_res->lights_buffer != VK_NULL_HANDLE) {
@@ -1501,24 +1541,25 @@ namespace Honey {
             s_res->blas_scratch_size   = 0;
         }
 
-        if (s_res->tlas != VK_NULL_HANDLE) {
-            s_res->fn_destroy_as(device, s_res->tlas, nullptr);
-            vkDestroyBuffer(device, s_res->tlas_buffer, nullptr);
-            vkFreeMemory(device, s_res->tlas_memory, nullptr);
-            s_res->tlas              = VK_NULL_HANDLE;
-            s_res->tlas_buffer       = VK_NULL_HANDLE;
-            s_res->tlas_memory       = VK_NULL_HANDLE;
-            s_res->tlas_backing_size = 0;
-            s_res->tlas_last_instance_count = UINT32_MAX;
-        }
-
-        if (s_res->tlas_scratch_buffer != VK_NULL_HANDLE) {
-            vkDestroyBuffer(device, s_res->tlas_scratch_buffer, nullptr);
-            vkFreeMemory(device, s_res->tlas_scratch_memory, nullptr);
-            s_res->tlas_scratch_buffer = VK_NULL_HANDLE;
-            s_res->tlas_scratch_memory = VK_NULL_HANDLE;
-            s_res->tlas_scratch_addr   = 0;
-            s_res->tlas_scratch_size   = 0;
+        for (auto& fs : s_res->frame_slots) {
+            if (fs.tlas != VK_NULL_HANDLE) {
+                s_res->fn_destroy_as(device, fs.tlas, nullptr);
+                vkDestroyBuffer(device, fs.tlas_buffer, nullptr);
+                vkFreeMemory(device, fs.tlas_memory, nullptr);
+                fs.tlas              = VK_NULL_HANDLE;
+                fs.tlas_buffer       = VK_NULL_HANDLE;
+                fs.tlas_memory       = VK_NULL_HANDLE;
+                fs.tlas_backing_size = 0;
+                fs.tlas_last_instance_count = UINT32_MAX;
+            }
+            if (fs.tlas_scratch_buffer != VK_NULL_HANDLE) {
+                vkDestroyBuffer(device, fs.tlas_scratch_buffer, nullptr);
+                vkFreeMemory(device, fs.tlas_scratch_memory, nullptr);
+                fs.tlas_scratch_buffer = VK_NULL_HANDLE;
+                fs.tlas_scratch_memory = VK_NULL_HANDLE;
+                fs.tlas_scratch_addr   = 0;
+                fs.tlas_scratch_size   = 0;
+            }
         }
 
         destroy_accum_image();
@@ -1551,6 +1592,9 @@ namespace Honey {
             if (!vk_fb) return;
             VkImage dst_image = vk_fb->get_color_image(0);
 
+            // Select the per-frame resource slot for this frame.
+            s_res->current_slot = ctx.frame_index() % PathTracerResources::k_pt_frames;
+
             if (w != s_res->accum_width || h != s_res->accum_height || s_res->accum_image == VK_NULL_HANDLE)
                 create_accum_image(w, h);
 
@@ -1558,11 +1602,10 @@ namespace Honey {
             if (!prepare_tlas_cpu(scene))
                 return;
 
-            // Update descriptor sets now that TLAS handle and bound_textures are finalised.
-            // The descriptor write happens on the CPU; the GPU will see the result after the
-            // command buffer containing the build + trace is submitted.
+            // Update the per-frame RT descriptor set (TLAS handle + per-frame SSBOs changed).
+            // Update the SVGF descriptor set only when images are (re)created (svgf_desc_dirty).
             update_desc_set();
-            if (s_res->svgf_pipeline_built)
+            if (s_res->svgf_pipeline_built && s_res->svgf_desc_dirty)
                 update_svgf_desc_set();
 
             // Snapshot frame-local values for capture by the GPU recording lambdas.
@@ -1580,10 +1623,14 @@ namespace Honey {
             // half at frame 8, near-zero at frame 64 — avoids blurring a clean image.
             float     blend_factor  = std::min(1.0f, 8.0f / (float)(frame_count + 1));
 
+            // Capture the per-frame descriptor set handle for use in the recording lambda.
+            VkDescriptorSet rt_desc_set = s_res->frame_slots[s_res->current_slot].rt_desc_set;
+
             // --- BLAS builds (new meshes) + TLAS build/refit + ray trace ---
             // Everything goes into the live graphics command buffer; no fence stalls.
             ctx.submit_vulkan_graphics_raw([inv_view, inv_proj, frame_count, trace_w, trace_h,
-                                            need_init, gbuf_init, ping_init, filtered_init](VkCommandBuffer cmd) {
+                                            need_init, gbuf_init, ping_init, filtered_init,
+                                            rt_desc_set](VkCommandBuffer cmd) {
                 // One-time layout transitions for images still in UNDEFINED.
                 auto transition_to_general = [&](VkImage img) {
                     VkImageMemoryBarrier imb{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
@@ -1615,7 +1662,7 @@ namespace Honey {
 
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, s_res->rt_pipeline);
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR,
-                    s_res->rt_pipeline_layout, 0, 1, &s_res->rt_desc_set, 0, nullptr);
+                    s_res->rt_pipeline_layout, 0, 1, &rt_desc_set, 0, nullptr);
                 vkCmdPushConstants(cmd, s_res->rt_pipeline_layout,
                     VK_SHADER_STAGE_RAYGEN_BIT_KHR, 0, sizeof(PC), &pc);
 
