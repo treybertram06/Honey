@@ -214,7 +214,7 @@ std::vector<uint32_t> ShaderCompiler::compile_single_stage(const std::string& so
                                            const char* /*requesting_source*/,
                                            size_t) override {
             namespace fs = std::filesystem;
-            fs::path base = fs::path("assets/shaders");
+            fs::path base = fs::path(ASSET_ROOT) / "shaders";
             fs::path candidate = base / requested_source;
 
             auto* data = new IncludeData();

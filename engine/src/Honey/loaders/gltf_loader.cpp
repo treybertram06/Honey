@@ -18,6 +18,7 @@
 #include <tiny_gltf.h>
 
 #include <cstdint>
+#include <cstring>
 #include <unordered_map>
 #include <vector>
 
@@ -37,16 +38,83 @@ namespace Honey {
         using packed_vec3 = glm::vec<3, float, glm::packed_highp>;
         using packed_vec4 = glm::vec<4, float, glm::packed_highp>;
 
-        struct VertexPBR {
+        // Intermediate struct used only during loading and tangent generation.
+        struct VertexBuild {
             packed_vec3 position{0.0f};
             packed_vec3 normal{0.0f, 0.0f, 1.0f};
             packed_vec4 tangent{1.0f, 0.0f, 0.0f, 1.0f};
             packed_vec2 uv0{0.0f};
-            packed_vec2 uv1{0.0f};
         };
-        static constexpr size_t k_vertex_floats = sizeof(VertexPBR) / sizeof(float);
-        static_assert(sizeof(VertexPBR) % sizeof(float) == 0, "VertexPBR must be float-packed");
-        static_assert(sizeof(VertexPBR) == (14 * sizeof(float)), "VertexPBR size must match shader vertex packing");
+
+        // Final GPU layout: 24 bytes / 6 uint32s per vertex.
+        //   [0-2]  position  (3×f32)
+        //   [3]    normal    (oct-encoded, packSnorm2x16)
+        //   [4]    tangent   (oct xyz in bits 0-30, bitangent sign in bit 31)
+        //   [5]    uv0       (packHalf2x16)
+        struct VertexPBR {
+            packed_vec3 position{0.0f};
+            uint32_t    normal_packed{0};
+            uint32_t    tangent_packed{0};
+            uint32_t    uv0_packed{0};
+        };
+        static constexpr size_t k_vertex_floats = sizeof(VertexPBR) / sizeof(uint32_t);
+        static_assert(sizeof(VertexPBR) == (6 * sizeof(uint32_t)), "VertexPBR size must match shader VERTEX_STRIDE=6");
+
+        static glm::vec2 oct_encode(glm::vec3 n) {
+            float l1 = glm::abs(n.x) + glm::abs(n.y) + glm::abs(n.z);
+            glm::vec2 p = glm::vec2(n.x, n.y) / l1;
+            if (n.z <= 0.0f) {
+                float px = p.x, py = p.y;
+                p.x = (1.0f - glm::abs(py)) * (px >= 0.0f ? 1.0f : -1.0f);
+                p.y = (1.0f - glm::abs(px)) * (py >= 0.0f ? 1.0f : -1.0f);
+            }
+            return p;
+        }
+
+        static uint32_t pack_normal(glm::vec3 n) {
+            glm::vec2 oct = oct_encode(glm::normalize(n));
+            auto xi = (int32_t)glm::clamp((int)(oct.x * 32767.0f), -32767, 32767);
+            auto yi = (int32_t)glm::clamp((int)(oct.y * 32767.0f), -32767, 32767);
+            return (uint32_t)(uint16_t)(int16_t)xi | ((uint32_t)(uint16_t)(int16_t)yi << 16u);
+        }
+
+        static uint32_t pack_tangent(glm::vec3 t, float sign) {
+            glm::vec2 oct = oct_encode(glm::normalize(t));
+            auto xi = (int32_t)glm::clamp((int)(oct.x * 32767.0f), -32767, 32767);
+            auto yi = (int32_t)glm::clamp((int)(oct.y * 16383.0f), -16383, 16383);
+            uint32_t xu = (uint32_t)(uint16_t)(int16_t)xi;
+            uint32_t yu = (uint32_t)(yi & 0x7FFF);
+            uint32_t su = (sign < 0.0f) ? 0x80000000u : 0u;
+            return xu | (yu << 16u) | su;
+        }
+
+        static uint16_t f32_to_f16(float f) {
+            uint32_t x;
+            std::memcpy(&x, &f, 4);
+            uint16_t sign = (uint16_t)((x >> 16u) & 0x8000u);
+            int32_t  exponent = (int32_t)((x >> 23u) & 0xFFu) - 127 + 15;
+            uint32_t mantissa = x & 0x7FFFFFu;
+            if (exponent <= 0) {
+                if (exponent < -10) return sign;
+                mantissa = (mantissa | 0x800000u) >> (uint32_t)(1 - exponent);
+                return sign | (uint16_t)(mantissa >> 13u);
+            }
+            if (exponent >= 31) return sign | 0x7C00u;
+            return sign | (uint16_t)(exponent << 10) | (uint16_t)(mantissa >> 13u);
+        }
+
+        static uint32_t pack_uv(glm::vec2 uv) {
+            return (uint32_t)f32_to_f16(uv.x) | ((uint32_t)f32_to_f16(uv.y) << 16u);
+        }
+
+        static VertexPBR pack_vertex(const VertexBuild& b) {
+            VertexPBR v;
+            v.position       = b.position;
+            v.normal_packed  = pack_normal(b.normal);
+            v.tangent_packed = pack_tangent(b.tangent, b.tangent.w);
+            v.uv0_packed     = pack_uv(b.uv0);
+            return v;
+        }
 
         struct ImportedPrimitiveData {
             std::string name;
@@ -583,25 +651,23 @@ namespace Honey {
 
         static void set_default_layout_pnuv(const Ref<VertexBuffer>& vb) {
             vb->set_layout({
-                { ShaderDataType::Float3, "a_position" },
-                { ShaderDataType::Float3, "a_normal"   },
-                { ShaderDataType::Float4, "a_tangent"  },
-                { ShaderDataType::Float2, "a_uv0"      },
-                { ShaderDataType::Float2, "a_uv1"      },
+                { ShaderDataType::Float3, "a_position"       },
+                { ShaderDataType::UInt,   "a_normal_packed"  },
+                { ShaderDataType::UInt,   "a_tangent_packed" },
+                { ShaderDataType::UInt,   "a_uv0_packed"     },
             });
         }
 
         static BufferLayout make_pnuv_layout() {
             return {
-                { ShaderDataType::Float3, "a_position" },
-                { ShaderDataType::Float3, "a_normal"   },
-                { ShaderDataType::Float4, "a_tangent"  },
-                { ShaderDataType::Float2, "a_uv0"      },
-                { ShaderDataType::Float2, "a_uv1"      },
+                { ShaderDataType::Float3, "a_position"       },
+                { ShaderDataType::UInt,   "a_normal_packed"  },
+                { ShaderDataType::UInt,   "a_tangent_packed" },
+                { ShaderDataType::UInt,   "a_uv0_packed"     },
             };
         }
 
-        static void generate_tangents(std::vector<VertexPBR>& vertices, const std::vector<uint32_t>& indices) {
+        static void generate_tangents(std::vector<VertexBuild>& vertices, const std::vector<uint32_t>& indices) {
             if (vertices.empty() || indices.empty())
                 return;
 
@@ -1001,28 +1067,27 @@ namespace Honey {
             const tinygltf::Accessor* uvAcc = nullptr;
             if (auto it = prim.attributes.find("TEXCOORD_0"); it != prim.attributes.end())
                 uvAcc = find_accessor(model, it->second);
-            const tinygltf::Accessor* uv1Acc = nullptr;
-            if (auto it = prim.attributes.find("TEXCOORD_1"); it != prim.attributes.end())
-                uv1Acc = find_accessor(model, it->second);
             const tinygltf::Accessor* tanAcc = nullptr;
             if (auto it = prim.attributes.find("TANGENT"); it != prim.attributes.end())
                 tanAcc = find_accessor(model, it->second);
 
-            std::vector<VertexPBR> vertices(vcount);
+            std::vector<VertexBuild> build_vertices(vcount);
 
             for (size_t i = 0; i < vcount; ++i) {
-                if (!read_vec3_float(model, *posAcc, i, vertices[i].position))
+                if (!read_vec3_float(model, *posAcc, i, build_vertices[i].position))
                     return std::nullopt;
 
                 if (nrmAcc)
-                    read_vec3_float(model, *nrmAcc, i, vertices[i].normal);
+                    read_vec3_float(model, *nrmAcc, i, build_vertices[i].normal);
 
                 if (uvAcc)
-                    read_vec2_float(model, *uvAcc, i, vertices[i].uv0);
-                if (uv1Acc)
-                    read_vec2_float(model, *uv1Acc, i, vertices[i].uv1);
-                if (tanAcc)
-                    read_vec4_float(model, *tanAcc, i, vertices[i].tangent);
+                    read_vec2_float(model, *uvAcc, i, build_vertices[i].uv0);
+
+                if (tanAcc) {
+                    glm::vec4 tan4;
+                    read_vec4_float(model, *tanAcc, i, tan4);
+                    build_vertices[i].tangent = tan4;
+                }
             }
 
             // INDICES → ALWAYS uint32_t
@@ -1056,7 +1121,11 @@ namespace Honey {
             }
 
             if (!tanAcc)
-                generate_tangents(vertices, indices);
+                generate_tangents(build_vertices, indices);
+
+            std::vector<VertexPBR> vertices(vcount);
+            for (size_t i = 0; i < vcount; ++i)
+                vertices[i] = pack_vertex(build_vertices[i]);
 
             // MATERIAL
             out.material = build_material_from_gltf(
@@ -1114,25 +1183,24 @@ namespace Honey {
             const tinygltf::Accessor* uvAcc = nullptr;
             if (auto it = prim.attributes.find("TEXCOORD_0"); it != prim.attributes.end())
                 uvAcc = find_accessor(model, it->second);
-            const tinygltf::Accessor* uv1Acc = nullptr;
-            if (auto it = prim.attributes.find("TEXCOORD_1"); it != prim.attributes.end())
-                uv1Acc = find_accessor(model, it->second);
             const tinygltf::Accessor* tanAcc = nullptr;
             if (auto it = prim.attributes.find("TANGENT"); it != prim.attributes.end())
                 tanAcc = find_accessor(model, it->second);
 
-            std::vector<VertexPBR> vertices((size_t)posAcc->count);
-            for (size_t i = 0; i < vertices.size(); ++i) {
-                if (!read_vec3_float(model, *posAcc, i, vertices[i].position))
+            size_t vcount2 = (size_t)posAcc->count;
+            std::vector<VertexBuild> build_vertices2(vcount2);
+            for (size_t i = 0; i < vcount2; ++i) {
+                if (!read_vec3_float(model, *posAcc, i, build_vertices2[i].position))
                     return std::nullopt;
                 if (nrmAcc)
-                    read_vec3_float(model, *nrmAcc, i, vertices[i].normal);
+                    read_vec3_float(model, *nrmAcc, i, build_vertices2[i].normal);
                 if (uvAcc)
-                    read_vec2_float(model, *uvAcc, i, vertices[i].uv0);
-                if (uv1Acc)
-                    read_vec2_float(model, *uv1Acc, i, vertices[i].uv1);
-                if (tanAcc)
-                    read_vec4_float(model, *tanAcc, i, vertices[i].tangent);
+                    read_vec2_float(model, *uvAcc, i, build_vertices2[i].uv0);
+                if (tanAcc) {
+                    glm::vec4 tan4;
+                    read_vec4_float(model, *tanAcc, i, tan4);
+                    build_vertices2[i].tangent = tan4;
+                }
             }
 
             if (prim.indices < 0) {
@@ -1164,7 +1232,11 @@ namespace Honey {
             }
 
             if (!tanAcc)
-                generate_tangents(vertices, indices);
+                generate_tangents(build_vertices2, indices);
+
+            std::vector<VertexPBR> vertices(vcount2);
+            for (size_t i = 0; i < vcount2; ++i)
+                vertices[i] = pack_vertex(build_vertices2[i]);
 
             out.material = build_material_payload_from_gltf(
                 model,

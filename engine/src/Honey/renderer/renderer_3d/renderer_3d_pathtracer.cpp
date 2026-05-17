@@ -581,7 +581,7 @@ namespace Honey {
             triangles.sType          = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
             triangles.vertexFormat   = VK_FORMAT_R32G32B32_SFLOAT;
             triangles.vertexData.deviceAddress = vbuf_addr;
-            triangles.vertexStride   = 56; // sizeof(VertexPBR) from gltf_loader.cpp
+            triangles.vertexStride   = 24; // sizeof(VertexPBR) from gltf_loader.cpp
             triangles.maxVertex      = max_vertex;
             triangles.indexType      = VK_INDEX_TYPE_UINT32;
             triangles.indexData.deviceAddress  = ibuf_addr;
@@ -696,7 +696,7 @@ namespace Honey {
                     triangles.sType          = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
                     triangles.vertexFormat   = VK_FORMAT_R32G32B32_SFLOAT;
                     triangles.vertexData.deviceAddress = pb.vbuf_addr;
-                    triangles.vertexStride   = 56;
+                    triangles.vertexStride   = 24;
                     triangles.maxVertex      = pb.max_vertex;
                     triangles.indexType      = VK_INDEX_TYPE_UINT32;
                     triangles.indexData.deviceAddress  = pb.ibuf_addr;
@@ -889,7 +889,7 @@ namespace Honey {
                 addr_info.buffer = reinterpret_cast<VkBuffer>(bufs.flat_index_buffer->get_native_buffer());
                 const VkDeviceAddress ibuf_base_addr = s_res->fn_get_buf_addr(device, &addr_info);
 
-                const uint32_t max_vertex = bufs.vertex_buffer->get_size() / 56u - 1u;
+                const uint32_t max_vertex = bufs.vertex_buffer->get_size() / 24u - 1u;
 
                 const auto& submeshes = mrc.mesh->get_submeshes();
                 for (size_t si = 0; si < submeshes.size(); ++si) {
@@ -916,8 +916,9 @@ namespace Honey {
                         mat = sm.material;
 
                     if (mat) {
+                        const auto& pbr = mat->pbr();
                         mat_info.base_color_factor = mat->get_base_color_factor();
-                        mat_info.emissive_factor   = glm::vec4(mat->get_emissive_factor(), 0.0f);
+                        mat_info.emissive_factor   = glm::vec4(pbr.emissive_factor * pbr.extensions.emissive_strength.strength, 0.0f);
                         mat_info.metalness         = mat->get_metallic_factor();
                         mat_info.roughness         = mat->get_roughness_factor();
                         mat_info.normal_scale      = mat->get_normal_scale();

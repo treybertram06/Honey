@@ -26,6 +26,7 @@ namespace Honey {
         case ShaderDataType::Int4:   return VK_FORMAT_R32G32B32A32_SINT;
 
         case ShaderDataType::Bool:   return VK_FORMAT_R8_UINT;
+        case ShaderDataType::UInt:   return VK_FORMAT_R32_UINT;
 
         case ShaderDataType::Mat3:
         case ShaderDataType::Mat4:

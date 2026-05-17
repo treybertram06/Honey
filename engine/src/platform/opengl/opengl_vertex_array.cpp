@@ -19,6 +19,7 @@ namespace Honey {
             case ShaderDataType::Int3:      return GL_INT;
             case ShaderDataType::Int4:      return GL_INT;
             case ShaderDataType::Bool:      return GL_BOOL;
+            case ShaderDataType::UInt:      return GL_UNSIGNED_INT;
             case ShaderDataType::None:      return GL_NONE;
         }
         HN_CORE_ASSERT(false, "Unknown ShaderDataType!");

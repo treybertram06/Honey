@@ -488,8 +488,8 @@ namespace Honey {
         binding_flags[5] = 0; // Tiled lighting SSBO
         binding_flags[6] = 0; // Shadow matrices SSBO
         binding_flags[7] = 0; // Directional shadow SSBO
-        binding_flags[8] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT; // Shadow cubemap sampler
-        binding_flags[9] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT; // Directional shadow map sampler
+        binding_flags[8] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT; // Shadow cubemap sampler
+        binding_flags[9] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT; // Directional shadow map sampler
 
         HN_CORE_ASSERT(sizeof(binding_flags) / sizeof(VkDescriptorBindingFlags) == binding_index &&
             sizeof(bindings) / sizeof(VkDescriptorSetLayoutBinding) == binding_index, "Inconsistency in "
