@@ -184,18 +184,23 @@ std::vector<uint32_t> ShaderCompiler::compile_single_stage(const std::string& so
         }
 
     // Debug info in Debug builds, optimize in Release
-#ifdef BUILD_DEBUG
-    options.SetGenerateDebugInfo();
-    options.SetOptimizationLevel(shaderc_optimization_level_zero);
-    // Do not suppress warnings in Debug
-#else
-    options.SetOptimizationLevel(shaderc_optimization_level_performance);
-    // Suppress warnings in Release
-    options.SetSuppressWarnings();
-#endif
+//#ifdef BUILD_DEBUG
+//    options.SetGenerateDebugInfo();
+//    options.SetOptimizationLevel(shaderc_optimization_level_zero);
+//    // Do not suppress warnings in Debug
+//#else
+//    options.SetOptimizationLevel(shaderc_optimization_level_performance);
+//    // Suppress warnings in Release
+//    options.SetSuppressWarnings();
+//#endif
 
-    // Keep explicit bindings under our control
-    options.SetAutoBindUniforms(false);
+        // TEMP: Always keep debug info and performant optimization level
+        options.SetGenerateDebugInfo();
+        options.SetOptimizationLevel(shaderc_optimization_level_performance);
+
+
+        // Keep explicit bindings under our control
+        options.SetAutoBindUniforms(false);
 
         //const int k_required = 16;
         //const int slots_to_use = query_slots_clamped(k_required);
