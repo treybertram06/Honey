@@ -504,7 +504,7 @@ namespace Honey {
 
                 VkDescriptorSetLayoutBinding b[6] = {};
                 b[0] = { 0, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR,  1, kRT,     nullptr };
-                b[1] = { 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,               1, VK_SHADER_STAGE_RAYGEN_BIT_KHR, nullptr };
+                b[1] = { 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,               1, VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_COMPUTE_BIT, nullptr };
                 b[2] = { 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,              1, kRTComp, nullptr };
                 b[3] = { 3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,              1, kRTComp, nullptr };
                 b[4] = { 4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,      PathTracerResources::k_max_rt_textures, kRTComp, nullptr };
@@ -2495,9 +2495,9 @@ namespace Honey {
             bool      filtered_init = s_res->filtered_needs_layout_init;
             bool      svgf_ready    = s_res->svgf_pipeline_built;
             bool      do_path_reset = s_res->path_state_reset_remaining > 0;
-            // blend_factor decays as temporal accumulation converges: full filter at frame 0,
-            // half at frame 8, near-zero at frame 64 — avoids blurring a clean image.
-            float     blend_factor  = std::min(1.0f, 8.0f / (float)(frame_count + 1));
+            // blend_factor stays constant — EMA never fully converges so there's no point
+            // in decaying it. SVGF always runs at full strength.
+            float     blend_factor  = 1.0f;
 
             // Build + compact any new BLASes before the main frame submission.
             // This is a synchronous one-time cost (only runs when new meshes are added).
@@ -2554,10 +2554,9 @@ namespace Honey {
                         vkCmdFillBuffer(cmd, slot.queue_count_buf, 0, VK_WHOLE_SIZE, 0u);
                         if (do_path_reset) {
                             uint32_t N = trace_w * trace_h;
-                            vkCmdFillBuffer(cmd, slot.path_flags_buf,        0, N * 4u,  0x03030303u);
-                            vkCmdFillBuffer(cmd, slot.path_radiance_buf,     0, N * 16u, 0u);
-                            vkCmdFillBuffer(cmd, slot.path_shadow_start_buf, 0, N * 4u,  0u);
-                            vkCmdFillBuffer(cmd, slot.path_shadow_end_buf,   0, N * 4u,  0u);
+                            vkCmdFillBuffer(cmd, slot.path_flags_buf,        0, N * 4u, 0x03030303u);
+                            vkCmdFillBuffer(cmd, slot.path_shadow_start_buf, 0, N * 4u, 0u);
+                            vkCmdFillBuffer(cmd, slot.path_shadow_end_buf,   0, N * 4u, 0u);
                         }
 
                         mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -2569,11 +2568,10 @@ namespace Honey {
                     }
 
                     // Step 2: Logic — resolve previous shadow results, write accum, enqueue live paths.
-                    // Skipped on reset frames: path state has just been re-initialized so there
-                    // are no valid results to write. Accum retains the previous frame's content
-                    // (no black flash). Logic runs on the first non-reset frame with fc=0
-                    // (overwrite mode) and writes the first correct new-camera sample.
-                    if (!do_path_reset) {
+                    // Always runs. On reset frames, flags are TERMINATED|NEEDS_REGEN and radiance
+                    // is stale; Logic writes it once (fc=0 → overwrite), then NewPath regenerates
+                    // all paths. EMA's floor alpha dilutes that stale sample within ~20 frames.
+                    {
                         HN_GPU_SCOPE(cmd, "WF: logic");
                         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_res->logic_pipeline);
                         VkDescriptorSet sets[] = { slot.wf_set1, slot.wf_set2_logic, slot.wf_set3 };
@@ -2677,11 +2675,7 @@ namespace Honey {
                 }
             });
 
-            // Don't advance frame_count during reset frames — Logic is skipped so no new
-            // sample was written. When Logic finally runs (first non-reset frame) it will
-            // see fc=0 and overwrite accum cleanly.
-            if (!do_path_reset)
-                s_res->accum_frame_count++;
+            s_res->accum_frame_count++;
             if (s_res->path_state_reset_remaining > 0)
                 s_res->path_state_reset_remaining--;
             s_res->accum_needs_layout_init    = false;
@@ -2710,9 +2704,8 @@ namespace Honey {
                         uint32_t gx = (trace_w + 7) / 8;
                         uint32_t gy = (trace_h + 7) / 8;
 
-                        // 2 passes: step 1 then 2. Result lands in filtered_image (pass_idx 0→ping, 1→filtered).
-                        // blend_factor on the last pass blends filtered↔original to avoid over-blurring
-                        // converged (many-frame) images.
+                        // 2 passes: step sizes 1, 2. Result lands in filtered_image.
+                        // pass_idx: 0→ping, 1→filtered (final).
                         struct SVGF_PC { int32_t step_size; int32_t pass_idx; int32_t width; int32_t height; float blend_factor; };
                         const int step_sizes[2] = { 1, 2 };
 
@@ -2727,7 +2720,7 @@ namespace Honey {
                                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                                     0, 1, &mb, 0, nullptr, 0, nullptr);
-                           }
+                            }
                         }
                     }
                 });
