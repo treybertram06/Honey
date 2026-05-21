@@ -198,6 +198,10 @@ namespace Honey {
             uint32_t accum_width = 0;
             uint32_t accum_height = 0;
             uint32_t accum_frame_count = 0;
+            // Counts down from k_pt_frames to 0; each frame the GPU path-state buffers are
+            // re-initialized (flags → TERMINATED|NEEDS_REGEN, radiance/shadow → 0) so that
+            // stale in-flight paths from before a camera/scene change don't pollute the new image.
+            uint32_t path_state_reset_remaining = 0;
             bool accum_needs_layout_init = true; // transition UNDEFINED → GENERAL on first trace
 
             // SVGF G-buffer: normal.xyz + linear depth.w (RGBA32F, written by raygen).
@@ -1004,7 +1008,7 @@ namespace Honey {
             });
             HN_CORE_ASSERT(ok, "BLAS build+query submit failed");
 
-            /*
+            /* TEMP: Disable BLAS compaction because it pmo rn
             // Read compacted sizes — GPU finished, fence already waited in submit_one_time_graphics.
             std::vector<VkDeviceSize> compact_sizes(count);
             VkResult r = vkGetQueryPoolResults(device,
@@ -2291,6 +2295,25 @@ namespace Honey {
                 vkDestroyBuffer(device, fs.material_buffer, nullptr);
                 vkFreeMemory(device, fs.material_memory, nullptr);
             }
+
+            // Wavefront path-state SOA buffers
+            free_device_local_buffer(fs.path_ray_origin_buf,   fs.path_ray_origin_mem);
+            free_device_local_buffer(fs.path_ray_dir_buf,      fs.path_ray_dir_mem);
+            free_device_local_buffer(fs.path_throughput_buf,   fs.path_throughput_mem);
+            free_device_local_buffer(fs.path_radiance_buf,     fs.path_radiance_mem);
+            free_device_local_buffer(fs.path_seed_buf,         fs.path_seed_mem);
+            free_device_local_buffer(fs.path_bounce_buf,       fs.path_bounce_mem);
+            free_device_local_buffer(fs.path_flags_buf,        fs.path_flags_mem);
+            free_device_local_buffer(fs.path_shadow_start_buf, fs.path_shadow_start_mem);
+            free_device_local_buffer(fs.path_shadow_end_buf,   fs.path_shadow_end_mem);
+
+            // Wavefront queue + hit-record buffers
+            free_device_local_buffer(fs.extend_queue_buf,     fs.extend_queue_mem);
+            free_device_local_buffer(fs.hit_record_buf,       fs.hit_record_mem);
+            free_device_local_buffer(fs.queue_count_buf,      fs.queue_count_mem);
+            free_device_local_buffer(fs.shadow_queue_buf,     fs.shadow_queue_mem);
+            free_device_local_buffer(fs.occlusion_buf,        fs.occlusion_mem);
+            free_device_local_buffer(fs.pending_radiance_buf, fs.pending_radiance_mem);
         }
 
         if (s_res->lights_buffer != VK_NULL_HANDLE) {
@@ -2309,6 +2332,20 @@ namespace Honey {
             vkDestroyDescriptorPool(device, s_res->svgf_desc_pool, nullptr);
         if (s_res->svgf_desc_layout != VK_NULL_HANDLE)
             vkDestroyDescriptorSetLayout(device, s_res->svgf_desc_layout, nullptr);
+
+        // Wavefront RT pipelines and SBTs
+        if (s_res->shadow_rt_pipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, s_res->shadow_rt_pipeline, nullptr);
+        if (s_res->shadow_rt_layout   != VK_NULL_HANDLE) vkDestroyPipelineLayout(device, s_res->shadow_rt_layout, nullptr);
+        if (s_res->shadow_sbt_buf     != VK_NULL_HANDLE) {
+            vkDestroyBuffer(device, s_res->shadow_sbt_buf, nullptr);
+            vkFreeMemory(device, s_res->shadow_sbt_mem, nullptr);
+        }
+        if (s_res->extend_rt_pipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, s_res->extend_rt_pipeline, nullptr);
+        if (s_res->extend_rt_layout   != VK_NULL_HANDLE) vkDestroyPipelineLayout(device, s_res->extend_rt_layout, nullptr);
+        if (s_res->extend_sbt_buf     != VK_NULL_HANDLE) {
+            vkDestroyBuffer(device, s_res->extend_sbt_buf, nullptr);
+            vkFreeMemory(device, s_res->extend_sbt_mem, nullptr);
+        }
 
         // Wavefront compute pipelines
         if (s_res->material_pipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, s_res->material_pipeline, nullptr);
@@ -2337,15 +2374,20 @@ namespace Honey {
     }
 
     void Renderer3DPathTracer::set_camera(const glm::mat4& inv_view, const glm::mat4& inv_proj) {
-        if (s_res) {
-            s_res->inv_view = inv_view;
-            s_res->inv_proj = inv_proj;
-        }
+        if (!s_res) return;
+        if (memcmp(&s_res->inv_view, &inv_view, sizeof(glm::mat4)) != 0 ||
+            memcmp(&s_res->inv_proj, &inv_proj, sizeof(glm::mat4)) != 0)
+            invalidate_accumulation();
+        s_res->inv_view = inv_view;
+        s_res->inv_proj = inv_proj;
     }
 
     void Renderer3DPathTracer::invalidate_accumulation() {
-        if (s_res)
-            s_res->accum_frame_count = 0;
+        if (!s_res) return;
+        s_res->accum_frame_count = 0;
+        // Schedule GPU path-state resets for the next k_pt_frames frames so both
+        // double-buffered slots get reinitialized (stale in-flight rays are discarded).
+        s_res->path_state_reset_remaining = PathTracerResources::k_pt_frames;
     }
 
     void Renderer3DPathTracer::set_lights(const LightsUBO& lights) {
@@ -2452,6 +2494,7 @@ namespace Honey {
             bool      ping_init     = s_res->ping_needs_layout_init;
             bool      filtered_init = s_res->filtered_needs_layout_init;
             bool      svgf_ready    = s_res->svgf_pipeline_built;
+            bool      do_path_reset = s_res->path_state_reset_remaining > 0;
             // blend_factor decays as temporal accumulation converges: full filter at frame 0,
             // half at frame 8, near-zero at frame 64 — avoids blurring a clean image.
             float     blend_factor  = std::min(1.0f, 8.0f / (float)(frame_count + 1));
@@ -2462,7 +2505,8 @@ namespace Honey {
 
             // --- Image layout init + TLAS build + wavefront dispatch ---
             ctx.submit_vulkan_graphics_raw([inv_view, inv_proj, frame_count, trace_w, trace_h,
-                                            need_init, gbuf_init, ping_init, filtered_init](VkCommandBuffer cmd) {
+                                            need_init, gbuf_init, ping_init, filtered_init,
+                                            do_path_reset](VkCommandBuffer cmd) {
                 // One-time layout transitions for images still in UNDEFINED.
                 auto transition_to_general = [&](VkImage img) {
                     VkImageMemoryBarrier imb{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
@@ -2502,10 +2546,19 @@ namespace Honey {
 
                     VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
 
-                    // Step 1: clear extend_count + shadow_count before Logic writes them
+                    // Step 1: clear extend_count + shadow_count before Logic writes them.
+                    // On invalidation frames (camera moved / scene changed), also reinitialize
+                    // path state so stale in-flight rays are discarded immediately.
                     {
                         HN_GPU_SCOPE(cmd, "WF: clear queues");
                         vkCmdFillBuffer(cmd, slot.queue_count_buf, 0, VK_WHOLE_SIZE, 0u);
+                        if (do_path_reset) {
+                            uint32_t N = trace_w * trace_h;
+                            vkCmdFillBuffer(cmd, slot.path_flags_buf,        0, N * 4u,  0x03030303u);
+                            vkCmdFillBuffer(cmd, slot.path_radiance_buf,     0, N * 16u, 0u);
+                            vkCmdFillBuffer(cmd, slot.path_shadow_start_buf, 0, N * 4u,  0u);
+                            vkCmdFillBuffer(cmd, slot.path_shadow_end_buf,   0, N * 4u,  0u);
+                        }
 
                         mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
                         mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
@@ -2515,8 +2568,12 @@ namespace Honey {
                             0, 1, &mb, 0, nullptr, 0, nullptr);
                     }
 
-                    // Step 2: Logic — resolve previous shadow results, write accum, enqueue live paths
-                    {
+                    // Step 2: Logic — resolve previous shadow results, write accum, enqueue live paths.
+                    // Skipped on reset frames: path state has just been re-initialized so there
+                    // are no valid results to write. Accum retains the previous frame's content
+                    // (no black flash). Logic runs on the first non-reset frame with fc=0
+                    // (overwrite mode) and writes the first correct new-camera sample.
+                    if (!do_path_reset) {
                         HN_GPU_SCOPE(cmd, "WF: logic");
                         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_res->logic_pipeline);
                         VkDescriptorSet sets[] = { slot.wf_set1, slot.wf_set2_logic, slot.wf_set3 };
@@ -2620,7 +2677,13 @@ namespace Honey {
                 }
             });
 
-            s_res->accum_frame_count++;
+            // Don't advance frame_count during reset frames — Logic is skipped so no new
+            // sample was written. When Logic finally runs (first non-reset frame) it will
+            // see fc=0 and overwrite accum cleanly.
+            if (!do_path_reset)
+                s_res->accum_frame_count++;
+            if (s_res->path_state_reset_remaining > 0)
+                s_res->path_state_reset_remaining--;
             s_res->accum_needs_layout_init    = false;
             s_res->gbuffer_needs_layout_init  = false;
             s_res->ping_needs_layout_init     = false;
