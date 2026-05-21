@@ -100,6 +100,7 @@ namespace Honey {
             // simultaneously without WAW hazards on the TLAS buffer or host-visible SSBOs.
             // k_pt_frames must match VulkanContext::k_max_frames_in_flight.
             static constexpr uint32_t k_pt_frames = 2;
+            static constexpr uint32_t k_max_shadow_per_path = 3;
             struct PerFrameSlot {
                 // TLAS handle and backing buffer.
                 VkAccelerationStructureKHR tlas = VK_NULL_HANDLE;
@@ -131,10 +132,59 @@ namespace Honey {
                 void*          material_mapped   = nullptr;
                 uint32_t       material_capacity = 0;
                 // Per-frame RT descriptor set (references the per-frame TLAS + SSBOs).
-                VkDescriptorSet rt_desc_set = VK_NULL_HANDLE;
+                VkDescriptorSet wf_set0;   // shared: TLAS + geometry + material + textures + lights
+                VkDescriptorSet wf_set1;   // path state SOA
+                VkDescriptorSet wf_set2_extend;  // queues for Extend.rgen + Material.comp
+                VkDescriptorSet wf_set2_shadow;  // queues for Shadow.rgen
+                VkDescriptorSet wf_set2_logic;   // queues for Logic.comp + NewPath.comp
+                VkDescriptorSet wf_set3;   // accum image (Logic.comp only)
+
+                // Path state buffers for SOA storage
+                VkBuffer path_ray_origin_buf = VK_NULL_HANDLE; // vec4[n]
+                VkDeviceMemory path_ray_origin_mem = VK_NULL_HANDLE;
+                VkBuffer path_ray_dir_buf = VK_NULL_HANDLE; // vec4[n]
+                VkDeviceMemory path_ray_dir_mem = VK_NULL_HANDLE;
+                VkBuffer path_throughput_buf = VK_NULL_HANDLE; // vec4[n]
+                VkDeviceMemory path_throughput_mem = VK_NULL_HANDLE;
+                VkBuffer path_radiance_buf = VK_NULL_HANDLE; // vec4[n]
+                VkDeviceMemory path_radiance_mem = VK_NULL_HANDLE;
+                VkBuffer path_seed_buf = VK_NULL_HANDLE; // uint[n]
+                VkDeviceMemory path_seed_mem = VK_NULL_HANDLE;
+                VkBuffer path_bounce_buf = VK_NULL_HANDLE; // uint[n]
+                VkDeviceMemory path_bounce_mem = VK_NULL_HANDLE;
+                VkBuffer path_flags_buf = VK_NULL_HANDLE; // uint[n]
+                VkDeviceMemory path_flags_mem = VK_NULL_HANDLE;
+                VkBuffer path_shadow_start_buf = VK_NULL_HANDLE; // uint[n]
+                VkDeviceMemory path_shadow_start_mem = VK_NULL_HANDLE;
+                VkBuffer path_shadow_end_buf = VK_NULL_HANDLE; // uint[n]
+                VkDeviceMemory path_shadow_end_mem = VK_NULL_HANDLE;
+                uint32_t path_buf_capacity = 0;
+                bool wf_desc_dirty = false;
+
+                // Queue + hit-record buffers
+                VkBuffer extend_queue_buf = VK_NULL_HANDLE; // uint[n]
+                VkDeviceMemory extend_queue_mem = VK_NULL_HANDLE;
+                VkBuffer hit_record_buf = VK_NULL_HANDLE; // HitRecord[n]
+                VkDeviceMemory hit_record_mem = VK_NULL_HANDLE;
+                VkBuffer queue_count_buf = VK_NULL_HANDLE; // extend_count at [0], shadow_count at [count_buf_shadow_offset]
+                VkDeviceMemory queue_count_mem = VK_NULL_HANDLE;
+                VkBuffer shadow_queue_buf = VK_NULL_HANDLE; // ShadowRayRequest[n * k_max_shadow_per_path]
+                VkDeviceMemory shadow_queue_mem = VK_NULL_HANDLE;
+                VkBuffer occlusion_buf = VK_NULL_HANDLE; // uint[n * k_max_shadow_per_path]
+                VkDeviceMemory occlusion_mem = VK_NULL_HANDLE;
+                VkBuffer pending_radiance_buf = VK_NULL_HANDLE; // vec4[n * k_max_shadow_per_path]
+                VkDeviceMemory pending_radiance_mem = VK_NULL_HANDLE;
             };
             PerFrameSlot frame_slots[k_pt_frames]{};
             uint32_t current_slot = 0; // set at the top of each executor frame
+
+            VkDescriptorSetLayout wf_set0_layout;
+            VkDescriptorSetLayout wf_set1_layout;
+            VkDescriptorSetLayout wf_set2_extend_layout;
+            VkDescriptorSetLayout wf_set2_shadow_layout;
+            VkDescriptorSetLayout wf_set2_logic_layout;
+            VkDescriptorSetLayout wf_set3_layout;
+            VkDescriptorPool      wf_desc_pool;
 
             // Per-frame reusable work vectors (avoid heap churn every frame).
             std::vector<VkAccelerationStructureInstanceKHR> frame_instances;
@@ -181,22 +231,41 @@ namespace Honey {
             glm::mat4 inv_view{1.0f};
             glm::mat4 inv_proj{1.0f};
 
-            // RT pipeline + SBT.
-            VkPipeline rt_pipeline = VK_NULL_HANDLE;
-            VkPipelineLayout rt_pipeline_layout = VK_NULL_HANDLE;
-            VkDescriptorSetLayout rt_desc_layout = VK_NULL_HANDLE;
-            VkDescriptorPool rt_desc_pool = VK_NULL_HANDLE;
-            // rt_desc_set is per-frame: see frame_slots[i].rt_desc_set
+            // RT pipelines
+            VkPipeline logic_pipeline = VK_NULL_HANDLE;
+            VkPipelineLayout logic_layout = VK_NULL_HANDLE;
+            VkPipeline new_path_pipeline = VK_NULL_HANDLE;
+            VkPipelineLayout new_path_layout = VK_NULL_HANDLE;
+            VkPipeline material_pipeline = VK_NULL_HANDLE;
+            VkPipelineLayout material_layout = VK_NULL_HANDLE;
+            VkPipeline extend_rt_pipeline = VK_NULL_HANDLE;
+            VkPipelineLayout extend_rt_layout = VK_NULL_HANDLE;
+            VkPipeline shadow_rt_pipeline = VK_NULL_HANDLE;
+            VkPipelineLayout shadow_rt_layout = VK_NULL_HANDLE;
 
-            // SBT buffer holds [raygen | miss | hit] regions contiguously.
-            VkBuffer sbt_buffer = VK_NULL_HANDLE;
-            VkDeviceMemory sbt_memory = VK_NULL_HANDLE;
-            VkStridedDeviceAddressRegionKHR sbt_raygen{};
-            VkStridedDeviceAddressRegionKHR sbt_miss{};
-            VkStridedDeviceAddressRegionKHR sbt_hit{};
-            VkStridedDeviceAddressRegionKHR sbt_callable{}; // unused, must be zeroed
+            VkBuffer extend_sbt_buf = VK_NULL_HANDLE;
+            VkDeviceMemory extend_sbt_mem = VK_NULL_HANDLE;
+            VkStridedDeviceAddressRegionKHR extend_sbt_raygen{};
+            VkStridedDeviceAddressRegionKHR extend_sbt_miss{};
+            VkStridedDeviceAddressRegionKHR extend_sbt_hit{};
+            VkStridedDeviceAddressRegionKHR extend_sbt_callable{};
 
-            bool pipeline_built = false;
+            VkBuffer shadow_sbt_buf = VK_NULL_HANDLE;
+            VkDeviceMemory shadow_sbt_mem = VK_NULL_HANDLE;
+            VkStridedDeviceAddressRegionKHR shadow_sbt_raygen{};
+            VkStridedDeviceAddressRegionKHR shadow_sbt_miss{};
+            VkStridedDeviceAddressRegionKHR shadow_sbt_hit{};
+            VkStridedDeviceAddressRegionKHR shadow_sbt_callable{};
+
+            bool extend_built = false;
+            bool shadow_built = false;
+
+            VkDescriptorSetLayout empty_set_layout = VK_NULL_HANDLE;
+            VkDescriptorSet       wf_dummy_set     = VK_NULL_HANDLE;
+
+            // Byte offset of shadow_count inside queue_count_buf, aligned to
+            // minStorageBufferOffsetAlignment. Queried once in init().
+            VkDeviceSize count_buf_shadow_offset = 256;
         };
 
         static PathTracerResources* s_res = nullptr;
@@ -211,6 +280,297 @@ namespace Honey {
             }
             HN_CORE_ASSERT(false, "Failed to find suitable Vulkan memory type");
             return 0;
+        }
+
+        static std::pair<VkBuffer, VkDeviceMemory> alloc_device_local_buffer(VkDeviceSize size, VkBufferUsageFlags usage) {
+            HN_PROFILE_FUNCTION();
+
+            VkBuffer buf = VK_NULL_HANDLE;
+            VkDeviceMemory mem = VK_NULL_HANDLE;
+            VkDevice device = s_res->vk_ctx->get_device();
+
+            VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+            bi.size      = size;
+            bi.usage     = usage;
+            bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            vkCreateBuffer(device, &bi, nullptr, &buf);
+
+            VkMemoryRequirements req{};
+            vkGetBufferMemoryRequirements(device, buf, &req);
+
+            VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+            ai.allocationSize  = req.size;
+            ai.memoryTypeIndex = find_memory_type(s_res->cached_mem_props, req.memoryTypeBits,
+                                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            vkAllocateMemory(device, &ai, nullptr, &mem);
+            vkBindBufferMemory(device, buf, mem, 0);
+
+            return {buf, mem};
+        }
+
+        static void free_device_local_buffer(VkBuffer& buf, VkDeviceMemory& mem) {
+            HN_PROFILE_FUNCTION();
+
+            if (buf != VK_NULL_HANDLE) {
+                vkDestroyBuffer(s_res->vk_ctx->get_device(), buf, nullptr);
+                buf = VK_NULL_HANDLE;
+            }
+            if (mem != VK_NULL_HANDLE) {
+                vkFreeMemory(s_res->vk_ctx->get_device(), mem, nullptr);
+                mem = VK_NULL_HANDLE;
+            }
+        }
+
+        static void alloc_wavefront_buffers(uint32_t w, uint32_t h) {
+            HN_PROFILE_FUNCTION();
+
+            uint32_t N = w * h;
+            VkDevice device = s_res->vk_ctx->get_device();
+            constexpr uint32_t k_shadow = PathTracerResources::k_max_shadow_per_path;
+
+            for (uint8_t i = 0; i < PathTracerResources::k_pt_frames; i++) {
+                if (N == s_res->frame_slots[i].path_buf_capacity) continue;
+
+                vkDeviceWaitIdle(device);
+
+                auto& slot = s_res->frame_slots[i];
+
+                // free all existing wavefront buffers
+                free_device_local_buffer(slot.path_ray_origin_buf,    slot.path_ray_origin_mem);
+                free_device_local_buffer(slot.path_ray_dir_buf,       slot.path_ray_dir_mem);
+                free_device_local_buffer(slot.path_throughput_buf,    slot.path_throughput_mem);
+                free_device_local_buffer(slot.path_radiance_buf,      slot.path_radiance_mem);
+                free_device_local_buffer(slot.path_seed_buf,          slot.path_seed_mem);
+                free_device_local_buffer(slot.path_bounce_buf,        slot.path_bounce_mem);
+                free_device_local_buffer(slot.path_flags_buf,         slot.path_flags_mem);
+                free_device_local_buffer(slot.path_shadow_start_buf,  slot.path_shadow_start_mem);
+                free_device_local_buffer(slot.path_shadow_end_buf,    slot.path_shadow_end_mem);
+                free_device_local_buffer(slot.extend_queue_buf,       slot.extend_queue_mem);
+                free_device_local_buffer(slot.hit_record_buf,         slot.hit_record_mem);
+                free_device_local_buffer(slot.queue_count_buf,        slot.queue_count_mem);
+                free_device_local_buffer(slot.shadow_queue_buf,       slot.shadow_queue_mem);
+                free_device_local_buffer(slot.occlusion_buf,          slot.occlusion_mem);
+                free_device_local_buffer(slot.pending_radiance_buf,   slot.pending_radiance_mem);
+
+                constexpr VkBufferUsageFlags kStorage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+
+                // path state SOA — vec4 = 16 bytes, uint = 4 bytes
+                std::tie(slot.path_ray_origin_buf,   slot.path_ray_origin_mem)   = alloc_device_local_buffer(N * 16, kStorage);
+                std::tie(slot.path_ray_dir_buf,       slot.path_ray_dir_mem)      = alloc_device_local_buffer(N * 16, kStorage);
+                std::tie(slot.path_throughput_buf,    slot.path_throughput_mem)   = alloc_device_local_buffer(N * 16, kStorage);
+                std::tie(slot.path_radiance_buf,      slot.path_radiance_mem)     = alloc_device_local_buffer(N * 16, kStorage);
+                std::tie(slot.path_seed_buf,          slot.path_seed_mem)         = alloc_device_local_buffer(N * 4,  kStorage);
+                std::tie(slot.path_bounce_buf,        slot.path_bounce_mem)       = alloc_device_local_buffer(N * 4,  kStorage);
+                std::tie(slot.path_flags_buf,         slot.path_flags_mem)        = alloc_device_local_buffer(N * 4,  kStorage);
+                std::tie(slot.path_shadow_start_buf,  slot.path_shadow_start_mem) = alloc_device_local_buffer(N * 4,  kStorage);
+                std::tie(slot.path_shadow_end_buf,    slot.path_shadow_end_mem)   = alloc_device_local_buffer(N * 4,  kStorage);
+
+                // queue + hit-record buffers
+                std::tie(slot.extend_queue_buf,     slot.extend_queue_mem)     = alloc_device_local_buffer(N * 4,          kStorage);
+                std::tie(slot.hit_record_buf,       slot.hit_record_mem)       = alloc_device_local_buffer(N * 64,         kStorage);
+                std::tie(slot.queue_count_buf,      slot.queue_count_mem)      = alloc_device_local_buffer(
+                    s_res->count_buf_shadow_offset + sizeof(uint32_t), kStorage);
+                std::tie(slot.shadow_queue_buf,     slot.shadow_queue_mem)     = alloc_device_local_buffer(N * k_shadow * 48, kStorage);
+                std::tie(slot.occlusion_buf,        slot.occlusion_mem)        = alloc_device_local_buffer(N * k_shadow * 4,  kStorage);
+                std::tie(slot.pending_radiance_buf, slot.pending_radiance_mem) = alloc_device_local_buffer(N * k_shadow * 16, kStorage);
+
+                // Initialize path_flags to FLAG_TERMINATED | FLAG_NEEDS_REGEN (0x3) so
+                // Logic ignores shadow slots and NewPath regenerates all paths on frame 0.
+                s_res->vk_ctx->submit_one_time_graphics([&slot, N](VkCommandBuffer cmd) {
+                    vkCmdFillBuffer(cmd, slot.path_flags_buf, 0, N * 4, 0x03030303u);
+                    vkCmdFillBuffer(cmd, slot.path_shadow_start_buf, 0, N * 4, 0u);
+                    vkCmdFillBuffer(cmd, slot.path_shadow_end_buf,   0, N * 4, 0u);
+                });
+
+                slot.path_buf_capacity = N;
+                slot.wf_desc_dirty = true;
+            }
+        }
+
+        static void alloc_wavefront_desc_sets() {
+            HN_PROFILE_FUNCTION();
+
+            VkDevice device = s_res->vk_ctx->get_device();
+            constexpr uint32_t F = PathTracerResources::k_pt_frames;
+
+            // Count each descriptor type needed across all frame slots.
+            // set0: 1 AS + 1 storage_image(gbuffer) + 2 SSBO + 512 CIS + 1 UBO  per slot
+            // set1: 9 SSBO per slot
+            // set2_extend: 6 SSBO per slot
+            // set2_shadow: 3 SSBO per slot
+            // set2_logic: 4 SSBO per slot
+            // set3: 1 storage_image(accum) per slot
+            // plus 1 set for wf_dummy_set (empty layout)
+
+            VkDescriptorPoolSize pool_sizes[] = {
+                { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, F * 1 },
+                { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,              F * 2 },          // gbuffer + accum
+                { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,             F * (9 + 6 + 3 + 4 + 2) + 4 }, // all SSBOs + headroom
+                { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,     F * PathTracerResources::k_max_rt_textures },
+                { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,             F * 1 },
+            };
+
+            VkDescriptorPoolCreateInfo pool_ci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+            pool_ci.flags         = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
+            pool_ci.maxSets       = F * 6 + 1; // 6 sets per slot + 1 dummy
+            pool_ci.poolSizeCount = static_cast<uint32_t>(std::size(pool_sizes));
+            pool_ci.pPoolSizes    = pool_sizes;
+            VkResult r = vkCreateDescriptorPool(device, &pool_ci, nullptr, &s_res->wf_desc_pool);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "alloc_wavefront_desc_sets: vkCreateDescriptorPool failed");
+
+            // Allocate dummy set from empty_set_layout (used as placeholder when binding).
+            {
+                VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+                ai.descriptorPool     = s_res->wf_desc_pool;
+                ai.descriptorSetCount = 1;
+                ai.pSetLayouts        = &s_res->empty_set_layout;
+                r = vkAllocateDescriptorSets(device, &ai, &s_res->wf_dummy_set);
+                HN_CORE_ASSERT(r == VK_SUCCESS, "alloc_wavefront_desc_sets: dummy set alloc failed");
+            }
+
+            // Allocate 6 descriptor sets per frame slot.
+            for (uint32_t i = 0; i < F; i++) {
+                auto& slot = s_res->frame_slots[i];
+
+                VkDescriptorSetLayout layouts[6] = {
+                    s_res->wf_set0_layout,
+                    s_res->wf_set1_layout,
+                    s_res->wf_set2_extend_layout,
+                    s_res->wf_set2_shadow_layout,
+                    s_res->wf_set2_logic_layout,
+                    s_res->wf_set3_layout,
+                };
+                VkDescriptorSet sets[6] = {};
+
+                VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+                ai.descriptorPool     = s_res->wf_desc_pool;
+                ai.descriptorSetCount = 6;
+                ai.pSetLayouts        = layouts;
+                r = vkAllocateDescriptorSets(device, &ai, sets);
+                HN_CORE_ASSERT(r == VK_SUCCESS, "alloc_wavefront_desc_sets: slot alloc failed");
+
+                slot.wf_set0         = sets[0];
+                slot.wf_set1         = sets[1];
+                slot.wf_set2_extend  = sets[2];
+                slot.wf_set2_shadow  = sets[3];
+                slot.wf_set2_logic   = sets[4];
+                slot.wf_set3         = sets[5];
+            }
+
+            HN_CORE_INFO("[PathTracer] Wavefront descriptor sets allocated");
+        }
+
+        static void build_wavefront_layouts() {
+            HN_PROFILE_FUNCTION();
+
+            VkDevice device = s_res->vk_ctx->get_device();
+
+            constexpr VkDescriptorBindingFlags k_uab  = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
+            constexpr VkDescriptorBindingFlags k_part = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | k_uab;
+            constexpr VkDescriptorSetLayoutCreateFlags k_pool_bit =
+                VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
+
+            auto make_layout = [&](VkDescriptorSetLayoutBinding* b, VkDescriptorBindingFlags* f,
+                                   uint32_t count, VkDescriptorSetLayout& out) {
+                VkDescriptorSetLayoutBindingFlagsCreateInfo flags_ci{
+                    VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
+                flags_ci.bindingCount  = count;
+                flags_ci.pBindingFlags = f;
+
+                VkDescriptorSetLayoutCreateInfo ci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+                ci.pNext        = &flags_ci;
+                ci.flags        = k_pool_bit;
+                ci.bindingCount = count;
+                ci.pBindings    = b;
+                vkCreateDescriptorSetLayout(device, &ci, nullptr, &out);
+            };
+
+            // empty layout — placeholder for unused set slots in pipeline layouts
+            {
+                VkDescriptorSetLayoutCreateInfo ci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+                ci.flags        = k_pool_bit;
+                ci.bindingCount = 0;
+                vkCreateDescriptorSetLayout(device, &ci, nullptr, &s_res->empty_set_layout);
+            }
+
+            // wf_set0: TLAS, gbuffer image, geometry SSBO, material SSBO, texture array, lights UBO
+            {
+                constexpr VkShaderStageFlags kRT     = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+                constexpr VkShaderStageFlags kRTComp = kRT | VK_SHADER_STAGE_COMPUTE_BIT;
+
+                VkDescriptorSetLayoutBinding b[6] = {};
+                b[0] = { 0, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR,  1, kRT,     nullptr };
+                b[1] = { 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,               1, VK_SHADER_STAGE_RAYGEN_BIT_KHR, nullptr };
+                b[2] = { 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,              1, kRTComp, nullptr };
+                b[3] = { 3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,              1, kRTComp, nullptr };
+                b[4] = { 4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,      PathTracerResources::k_max_rt_textures, kRTComp, nullptr };
+                b[5] = { 5, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,              1, kRTComp, nullptr };
+
+                VkDescriptorBindingFlags f[6] = { k_uab, k_uab, k_uab, k_uab, k_part, k_uab };
+                make_layout(b, f, 6, s_res->wf_set0_layout);
+            }
+
+            // wf_set1: path state SOA — nine SSBOs, bindings 0-8
+            {
+                constexpr VkShaderStageFlags kStages =
+                    VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
+                VkDescriptorSetLayoutBinding b[9] = {};
+                VkDescriptorBindingFlags     f[9] = {};
+                for (uint32_t i = 0; i < 9; i++) {
+                    b[i] = { i, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kStages, nullptr };
+                    f[i] = k_uab;
+                }
+                make_layout(b, f, 9, s_res->wf_set1_layout);
+            }
+
+            // wf_set2_extend: queues for Extend.rgen + Material.comp, bindings 0-5
+            {
+                constexpr VkShaderStageFlags kStages =
+                    VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
+                VkDescriptorSetLayoutBinding b[6] = {};
+                VkDescriptorBindingFlags     f[6] = {};
+                for (uint32_t i = 0; i < 6; i++) {
+                    b[i] = { i, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kStages, nullptr };
+                    f[i] = k_uab;
+                }
+                make_layout(b, f, 6, s_res->wf_set2_extend_layout);
+            }
+
+            // wf_set2_shadow: queues for Shadow.rgen, bindings 0-2
+            {
+                VkDescriptorSetLayoutBinding b[3] = {};
+                VkDescriptorBindingFlags     f[3] = {};
+                for (uint32_t i = 0; i < 3; i++) {
+                    b[i] = { i, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR, nullptr };
+                    f[i] = k_uab;
+                }
+                make_layout(b, f, 3, s_res->wf_set2_shadow_layout);
+            }
+
+            // wf_set2_logic: queues for Logic + NewPath — only bindings 2, 3, 4, 5 exist
+            {
+                const uint32_t indices[4] = { 2, 3, 4, 5 };
+                VkDescriptorSetLayoutBinding b[4] = {};
+                VkDescriptorBindingFlags     f[4] = {};
+                for (uint32_t i = 0; i < 4; i++) {
+                    b[i] = { indices[i], VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr };
+                    f[i] = k_uab;
+                }
+                make_layout(b, f, 4, s_res->wf_set2_logic_layout);
+            }
+
+            // wf_set3: accum storage image, binding 0, Logic.comp only
+            {
+                VkDescriptorSetLayoutBinding b = { 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr };
+                VkDescriptorBindingFlags     f = k_uab;
+                make_layout(&b, &f, 1, s_res->wf_set3_layout);
+            }
+
+            HN_CORE_INFO("[PathTracer] Wavefront descriptor set layouts built");
+
+            alloc_wavefront_desc_sets();
         }
 
         static VkTransformMatrixKHR to_vk_transform(const glm::mat4& mat) {
@@ -289,6 +649,8 @@ namespace Honey {
                 VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                 s_res->filtered_image, s_res->filtered_memory, s_res->filtered_view);
 
+            alloc_wavefront_buffers(w, h);
+
             s_res->accum_width    = w;
             s_res->accum_height   = h;
             s_res->accum_frame_count      = 0;
@@ -299,118 +661,6 @@ namespace Honey {
             s_res->svgf_desc_dirty = true;
         }
 
-        static void update_desc_set() {
-            auto& fs = s_res->frame_slots[s_res->current_slot];
-            HN_CORE_ASSERT(fs.geometry_lookup_buffer != VK_NULL_HANDLE, "Geometry lookup buffer not created");
-            HN_CORE_ASSERT(fs.rt_desc_set != VK_NULL_HANDLE, "RT descriptor set not created");
-            HN_CORE_ASSERT(s_res->accum_view != VK_NULL_HANDLE, "Accumulation image not created");
-            HN_CORE_ASSERT(s_res->gbuffer_view != VK_NULL_HANDLE, "G-buffer image not created");
-
-            VkDevice device = s_res->vk_ctx->get_device();
-
-            VkWriteDescriptorSet writes[7] = {};
-
-            VkWriteDescriptorSetAccelerationStructureKHR as_info{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR};
-            as_info.accelerationStructureCount = 1;
-            as_info.pAccelerationStructures    = &fs.tlas;
-
-            writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[0].pNext           = &as_info;
-            writes[0].dstSet          = fs.rt_desc_set;
-            writes[0].dstBinding      = 0;
-            writes[0].descriptorCount = 1;
-            writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-
-            VkDescriptorImageInfo image_info{};
-            image_info.imageView   = s_res->accum_view;
-            image_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-
-            writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[1].dstSet          = fs.rt_desc_set;
-            writes[1].dstBinding      = 1;
-            writes[1].descriptorCount = 1;
-            writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-            writes[1].pImageInfo      = &image_info;
-
-            // binding 2 - geometry info SSBO
-            VkDescriptorBufferInfo geo_buf_info{};
-            geo_buf_info.buffer = fs.geometry_lookup_buffer;
-            geo_buf_info.offset = 0;
-            geo_buf_info.range  = VK_WHOLE_SIZE;
-
-            writes[2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[2].dstSet          = fs.rt_desc_set;
-            writes[2].dstBinding      = 2;
-            writes[2].descriptorCount = 1;
-            writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            writes[2].pBufferInfo     = &geo_buf_info;
-
-            // binding 3 - material SSBO
-            VkDescriptorBufferInfo mat_buf_info{};
-            mat_buf_info.buffer = fs.material_buffer;
-            mat_buf_info.offset = 0;
-            mat_buf_info.range  = VK_WHOLE_SIZE;
-
-            writes[3].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[3].dstSet          = fs.rt_desc_set;
-            writes[3].dstBinding      = 3;
-            writes[3].descriptorCount = 1;
-            writes[3].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            writes[3].pBufferInfo     = &mat_buf_info;
-
-            // binding 4 — texture array (write only the occupied slots)
-            std::vector<VkDescriptorImageInfo> img_infos(s_res->bound_textures.size());
-            for (size_t i = 0; i < s_res->bound_textures.size(); i++) {
-                img_infos[i].imageView   = s_res->bound_textures[i].first;
-                img_infos[i].sampler     = s_res->bound_textures[i].second;
-                img_infos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            }
-            if (!img_infos.empty()) {
-                writes[4].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                writes[4].dstSet          = fs.rt_desc_set;
-                writes[4].dstBinding      = 4;
-                writes[4].dstArrayElement = 0;
-                writes[4].descriptorCount = (uint32_t)img_infos.size();
-                writes[4].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-                writes[4].pImageInfo      = img_infos.data();
-            }
-
-            // binding 5 - lights UBO
-            VkDescriptorBufferInfo lights_buf_info{};
-            lights_buf_info.buffer = s_res->lights_buffer;
-            lights_buf_info.offset = 0;
-            lights_buf_info.range  = VK_WHOLE_SIZE;
-
-            writes[5].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[5].dstSet          = fs.rt_desc_set;
-            writes[5].dstBinding      = 5;
-            writes[5].descriptorCount = 1;
-            writes[5].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            writes[5].pBufferInfo     = &lights_buf_info;
-
-            // binding 6 - G-buffer image
-            VkDescriptorImageInfo gbuffer_info{};
-            gbuffer_info.imageView   = s_res->gbuffer_view;
-            gbuffer_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-
-            writes[6].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[6].dstSet          = fs.rt_desc_set;
-            writes[6].dstBinding      = 6;
-            writes[6].descriptorCount = 1;
-            writes[6].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-            writes[6].pImageInfo      = &gbuffer_info;
-
-            // writes[4] is only valid when img_infos is non-empty; slide slots when empty.
-            uint32_t write_count;
-            if (img_infos.empty()) {
-                writes[4] = writes[5];
-                writes[5] = writes[6];
-                write_count = 6;
-            } else {
-                write_count = 7;
-            }
-            vkUpdateDescriptorSets(device, write_count, writes, 0, nullptr);
-        }
 
         static void ensure_instance_buffer(uint32_t count) {
             HN_PROFILE_FUNCTION();
@@ -662,9 +912,11 @@ namespace Honey {
 
             VkDevice device = s_res->vk_ctx->get_device();
 
-            // Drain all in-flight GPU work before touching AS resources. This is a one-time
-            // stall per new mesh load — acceptable, and consistent with create_accum_image.
-            vkDeviceWaitIdle(device);
+            // No vkDeviceWaitIdle here — these BLASes are brand new (never referenced by any
+            // in-flight TLAS), so there is nothing to drain. Each submit_one_time_graphics call
+            // waits on its own fence, which is sufficient. Calling vkDeviceWaitIdle from this
+            // thread while the upload thread is concurrently calling vkQueueSubmit on the same
+            // queue is a Vulkan threading violation (VkQueue is externally synchronized).
 
             const uint32_t count = (uint32_t)s_res->pending_blas.size();
 
@@ -709,8 +961,8 @@ namespace Honey {
                     VkAccelerationStructureBuildGeometryInfoKHR build_info{};
                     build_info.sType                     = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
                     build_info.type                      = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-                    build_info.flags                     = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR
-                                                         | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR;
+                    build_info.flags                     = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+                                                         //| VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR;
                     build_info.mode                      = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
                     build_info.dstAccelerationStructure  = entry.handle;
                     build_info.geometryCount             = 1;
@@ -746,12 +998,13 @@ namespace Honey {
                     VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
                     0, 1, &final_mb, 0, nullptr, 0, nullptr);
 
-                s_res->fn_cmd_write_as_props(cmd, count, built_handles.data(),
-                    VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR,
-                    s_res->blas_compact_query_pool, 0);
+                //s_res->fn_cmd_write_as_props(cmd, count, built_handles.data(),
+                //    VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR,
+                //    s_res->blas_compact_query_pool, 0);
             });
             HN_CORE_ASSERT(ok, "BLAS build+query submit failed");
 
+            /*
             // Read compacted sizes — GPU finished, fence already waited in submit_one_time_graphics.
             std::vector<VkDeviceSize> compact_sizes(count);
             VkResult r = vkGetQueryPoolResults(device,
@@ -759,7 +1012,9 @@ namespace Honey {
                 count * sizeof(VkDeviceSize), compact_sizes.data(), sizeof(VkDeviceSize),
                 VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
             HN_CORE_ASSERT(r == VK_SUCCESS, "vkGetQueryPoolResults failed (BLAS compaction)");
+            */
 
+            /*
             // --- Phase 2: allocate compact AS handles and copy ---
             struct CompactOp {
                 PathTracerResources::BlasEntry compact;
@@ -854,6 +1109,7 @@ namespace Honey {
                 memcpy(fs.instance_mapped, s_res->frame_instances.data(),
                        s_res->frame_instances.size() * sizeof(VkAccelerationStructureInstanceKHR));
             }
+            */
 
             s_res->pending_blas.clear();
         }
@@ -1049,6 +1305,8 @@ namespace Honey {
                     ci.size   = fs.tlas_backing_size;
                     ci.type   = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
                     s_res->fn_create_as(device, &ci, nullptr, &fs.tlas);
+                    // New handle — descriptors that reference this slot's TLAS must be re-written.
+                    fs.wf_desc_dirty = true;
                 }
 
                 // Scratch: buildScratchSize is always >= updateScratchSize so one persistent
@@ -1114,291 +1372,135 @@ namespace Honey {
                 0, 1, &barrier, 0, nullptr, 0, nullptr);
         }
 
-        static void build_rt_pipeline() {
+
+        // Push constant layout shared by all three wavefront compute shaders:
+        //   uint total_path_count (4) + uint frame_count (4) + uint width (4) + uint height (4)
+        //   + mat4 inv_view (64) + mat4 inv_proj (64) = 144 bytes
+        static constexpr uint32_t k_wf_pc_size = 144;
+
+        struct WavefrontPC {
+            uint32_t  total_path_count;
+            uint32_t  frame_count;
+            uint32_t  width;
+            uint32_t  height;
+            glm::mat4 inv_view;
+            glm::mat4 inv_proj;
+        };
+        static_assert(sizeof(WavefrontPC) == k_wf_pc_size, "WavefrontPC size mismatch");
+
+        // Returns {VkPipeline, VkPipelineLayout}. Caller stores them in PathTracerResources.
+        // layouts must cover set indices 0..layout_count-1 (use empty_set_layout as placeholder).
+        // pc_size=0 means no push constants.
+        static std::pair<VkPipeline, VkPipelineLayout> build_compute_pipeline(
+                const std::filesystem::path& shader_path,
+                VkDescriptorSetLayout* layouts,
+                uint32_t layout_count,
+                uint32_t pc_size) {
+            HN_PROFILE_FUNCTION();
+
             VkDevice device = s_res->vk_ctx->get_device();
-            VkPhysicalDevice physical_device = s_res->vk_ctx->get_physical_device();
 
-            // Query RT pipeline properties
-            VkPhysicalDeviceRayTracingPipelinePropertiesKHR rt_props{};
-            rt_props.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR;
-            VkPhysicalDeviceProperties2 props2{};
-            props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
-            props2.pNext = &rt_props;
-            vkGetPhysicalDeviceProperties2(physical_device, &props2);
-
-            uint32_t handle_size = rt_props.shaderGroupHandleSize;
-            uint32_t base_align  = rt_props.shaderGroupBaseAlignment;
-
-            auto align_up = [](uint32_t value, uint32_t align) -> uint32_t {
-                return (value + align - 1) & ~(align - 1);
-            };
-
-            uint32_t region_size = align_up(handle_size, base_align);
-            uint32_t sbt_total   = region_size * 4; // raygen + miss_primary + miss_shadow + hit
-
-            VkDescriptorSetLayoutBinding bindings[7] = {};
-            bindings[0].binding         = 0;
-            bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-            bindings[0].descriptorCount = 1;
-            bindings[0].stageFlags      = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
-            // binding 1 - Accumulation image
-            bindings[1].binding         = 1;
-            bindings[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-            bindings[1].descriptorCount = 1;
-            bindings[1].stageFlags      = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
-            // binding 2 - Geometry Info SSBO (closest hit)
-            bindings[2].binding         = 2;
-            bindings[2].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            bindings[2].descriptorCount = 1;
-            bindings[2].stageFlags      = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
-            // binding 3 - material info SSBO (closest hit)
-            bindings[3].binding         = 3;
-            bindings[3].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            bindings[3].descriptorCount = 1;
-            bindings[3].stageFlags      = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
-            // binding 4 - texture array (closest hit) - partially bound
-            bindings[4].binding         = 4;
-            bindings[4].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            bindings[4].descriptorCount = PathTracerResources::k_max_rt_textures;
-            bindings[4].stageFlags      = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
-            bindings[4].pImmutableSamplers = nullptr;
-            // binding 5 - lights UBO
-            bindings[5].binding         = 5;
-            bindings[5].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            bindings[5].descriptorCount = 1;
-            bindings[5].stageFlags      = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR;
-            // binding 6 - G-buffer image (normal.xyz + depth.w), written by raygen for SVGF
-            bindings[6].binding         = 6;
-            bindings[6].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-            bindings[6].descriptorCount = 1;
-            bindings[6].stageFlags      = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
-
-            // All bindings updated each frame while the previous frame may still be in flight,
-            // so mark them UPDATE_AFTER_BIND to suppress the VUID-vkUpdateDescriptorSets-None-03047
-            // validation error.  The per-frame slot design means each frame writes its own copy.
-            static constexpr VkDescriptorBindingFlags k_uab = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
-            VkDescriptorBindingFlags binding_flags[7] = {
-                k_uab,                                          // 0: TLAS
-                k_uab,                                          // 1: accum image
-                k_uab,                                          // 2: geometry SSBO
-                k_uab,                                          // 3: material SSBO
-                VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | k_uab, // 4: texture array
-                k_uab,                                          // 5: lights UBO
-                k_uab,                                          // 6: gbuffer image
-            };
-            VkDescriptorSetLayoutBindingFlagsCreateInfo flags_ci{
-                VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
-            flags_ci.bindingCount  = 7;
-            flags_ci.pBindingFlags = binding_flags;
-
-            VkDescriptorSetLayoutCreateInfo layout_ci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-            layout_ci.pNext        = &flags_ci;
-            layout_ci.flags        = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
-            layout_ci.bindingCount = std::size(bindings);
-            layout_ci.pBindings    = bindings;
-            vkCreateDescriptorSetLayout(device, &layout_ci, nullptr, &s_res->rt_desc_layout);
-
-
-            // Create descriptor pool — one set per frame slot so each frame writes its own copy
-            // without racing against the previous frame's in-flight submission.
-            VkDescriptorPoolSize pool_sizes[5] = {
-                { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, PathTracerResources::k_pt_frames },
-                { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,              2 * PathTracerResources::k_pt_frames },
-                { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,             2 * PathTracerResources::k_pt_frames },
-                { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,     PathTracerResources::k_max_rt_textures * PathTracerResources::k_pt_frames },
-                { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,             PathTracerResources::k_pt_frames },
-            };
-            VkDescriptorPoolCreateInfo pool_ci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-            pool_ci.flags         = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
-            pool_ci.maxSets       = PathTracerResources::k_pt_frames;
-            pool_ci.poolSizeCount = std::size(pool_sizes);
-            pool_ci.pPoolSizes    = pool_sizes;
-            vkCreateDescriptorPool(device, &pool_ci, nullptr, &s_res->rt_desc_pool);
-
-            VkDescriptorSetAllocateInfo alloc_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-            alloc_info.descriptorPool     = s_res->rt_desc_pool;
-            alloc_info.descriptorSetCount = 1;
-            alloc_info.pSetLayouts        = &s_res->rt_desc_layout;
-            for (uint32_t i = 0; i < PathTracerResources::k_pt_frames; i++)
-                vkAllocateDescriptorSets(device, &alloc_info, &s_res->frame_slots[i].rt_desc_set);
-
-
-            // Create pipeline layout
-            VkPushConstantRange pc_range{};
-            pc_range.stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
-            pc_range.offset     = 0;
-            pc_range.size       = sizeof(glm::mat4) * 2 + sizeof(uint32_t);
-
-            VkPipelineLayoutCreateInfo pl_ci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-            pl_ci.setLayoutCount         = 1;
-            pl_ci.pSetLayouts            = &s_res->rt_desc_layout;
-            pl_ci.pushConstantRangeCount = 1;
-            pl_ci.pPushConstantRanges    = &pc_range;
-            vkCreatePipelineLayout(device, &pl_ci, nullptr, &s_res->rt_pipeline_layout);
-
-
-            // Compile shaders and create shader modules TODO: use proper shader compilation flow here rather than handling it here
-            bool compile_ok = true;
-            auto make_module = [&](const std::string& src, ShaderCompiler::ShaderStage stage, const char* name) -> VkShaderModule {
-                if (src.empty()) {
-                    HN_CORE_ERROR("[PathTracer] Failed to read shader source for '{}'", name);
-                    compile_ok = false;
-                    return VK_NULL_HANDLE;
-                }
-                auto spirv = ShaderCompiler::compile_single_stage(src, stage);
-                if (spirv.empty()) {
-                    HN_CORE_ERROR("[PathTracer] SPIRV compilation failed for '{}'", name);
-                    compile_ok = false;
-                    return VK_NULL_HANDLE;
-                }
-                VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-                ci.codeSize = spirv.size() * 4;
-                ci.pCode    = spirv.data();
-                VkShaderModule mod = VK_NULL_HANDLE;
-                VkResult r = vkCreateShaderModule(device, &ci, nullptr, &mod);
-                if (r != VK_SUCCESS) {
-                    HN_CORE_ERROR("[PathTracer] vkCreateShaderModule failed for '{}' ({})", name, (int)r);
-                    compile_ok = false;
-                    return VK_NULL_HANDLE;
-                }
-                return mod;
-            };
-
-            std::filesystem::path assets_dir(ASSET_ROOT);
-            VkShaderModule raygen_module      = make_module(ShaderCompiler::read_file(
-                (assets_dir / "shaders" / "PathTrace_RayGen.rgen")),       ShaderCompiler::ShaderStage::RayGen,    "PathTrace_RayGen.rgen");
-            VkShaderModule miss_module        = make_module(ShaderCompiler::read_file(
-                (assets_dir / "shaders" / "PathTrace_Miss.rmiss")),        ShaderCompiler::ShaderStage::Miss,      "PathTrace_Miss.rmiss");
-            VkShaderModule shadow_miss_module = make_module(ShaderCompiler::read_file(
-                (assets_dir / "shaders" / "PathTrace_ShadowMiss.rmiss")),  ShaderCompiler::ShaderStage::Miss,      "PathTrace_ShadowMiss.rmiss");
-            VkShaderModule hit_module         = make_module(ShaderCompiler::read_file(
-                (assets_dir / "shaders" / "PathTrace_ClosestHit.rchit")),  ShaderCompiler::ShaderStage::ClosestHit,"PathTrace_ClosestHit.rchit");
-
-            if (!compile_ok) {
-                HN_CORE_ERROR("[PathTracer] Shader compilation failed — RT pipeline will not be built");
-                if (raygen_module)      vkDestroyShaderModule(device, raygen_module,      nullptr);
-                if (miss_module)        vkDestroyShaderModule(device, miss_module,        nullptr);
-                if (shadow_miss_module) vkDestroyShaderModule(device, shadow_miss_module, nullptr);
-                if (hit_module)         vkDestroyShaderModule(device, hit_module,         nullptr);
-                return;
+            std::string src = ShaderCompiler::read_file(shader_path);
+            if (src.empty()) {
+                HN_CORE_ERROR("[PathTracer] build_compute_pipeline: failed to read {}", shader_path.string());
+                return {};
+            }
+            auto spirv = ShaderCompiler::compile_single_stage(src, ShaderCompiler::ShaderStage::Compute);
+            if (spirv.empty()) {
+                HN_CORE_ERROR("[PathTracer] build_compute_pipeline: SPIRV compilation failed for {}", shader_path.string());
+                return {};
             }
 
+            VkShaderModuleCreateInfo smci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+            smci.codeSize = spirv.size() * 4;
+            smci.pCode    = spirv.data();
+            VkShaderModule mod = VK_NULL_HANDLE;
+            vkCreateShaderModule(device, &smci, nullptr, &mod);
 
-            // Stages: 0=raygen, 1=primary_miss, 2=shadow_miss, 3=closest_hit
-            VkPipelineShaderStageCreateInfo stages[4] = {};
-            stages[0].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-            stages[0].stage  = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
-            stages[0].module = raygen_module;
-            stages[0].pName  = "main";
-            stages[1].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-            stages[1].stage  = VK_SHADER_STAGE_MISS_BIT_KHR;
-            stages[1].module = miss_module;
-            stages[1].pName  = "main";
-            stages[2].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-            stages[2].stage  = VK_SHADER_STAGE_MISS_BIT_KHR;
-            stages[2].module = shadow_miss_module;
-            stages[2].pName  = "main";
-            stages[3].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-            stages[3].stage  = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
-            stages[3].module = hit_module;
-            stages[3].pName  = "main";
+            VkPipelineLayoutCreateInfo plci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+            plci.setLayoutCount = layout_count;
+            plci.pSetLayouts    = layouts;
 
-            // Groups: 0=raygen, 1=primary_miss, 2=shadow_miss, 3=closest_hit
-            VkRayTracingShaderGroupCreateInfoKHR groups[4] = {};
-            groups[0] = {VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR};
-            groups[0].type             = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
-            groups[0].generalShader    = 0;
-            groups[0].closestHitShader = groups[0].anyHitShader = groups[0].intersectionShader = VK_SHADER_UNUSED_KHR;
+            VkPushConstantRange pc_range{};
+            if (pc_size > 0) {
+                pc_range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+                pc_range.offset     = 0;
+                pc_range.size       = pc_size;
+                plci.pushConstantRangeCount = 1;
+                plci.pPushConstantRanges    = &pc_range;
+            }
 
-            groups[1] = {VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR};
-            groups[1].type             = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
-            groups[1].generalShader    = 1;
-            groups[1].closestHitShader = groups[1].anyHitShader = groups[1].intersectionShader = VK_SHADER_UNUSED_KHR;
+            VkPipelineLayout layout = VK_NULL_HANDLE;
+            vkCreatePipelineLayout(device, &plci, nullptr, &layout);
 
-            groups[2] = {VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR};
-            groups[2].type             = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
-            groups[2].generalShader    = 2;
-            groups[2].closestHitShader = groups[2].anyHitShader = groups[2].intersectionShader = VK_SHADER_UNUSED_KHR;
+            VkComputePipelineCreateInfo cpci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+            cpci.stage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            cpci.stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
+            cpci.stage.module = mod;
+            cpci.stage.pName  = "main";
+            cpci.layout       = layout;
 
-            groups[3] = {VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR};
-            groups[3].type             = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
-            groups[3].generalShader    = VK_SHADER_UNUSED_KHR;
-            groups[3].closestHitShader = 3;
-            groups[3].anyHitShader     = groups[3].intersectionShader = VK_SHADER_UNUSED_KHR;
-
-            VkRayTracingPipelineCreateInfoKHR rt_ci{VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR};
-            rt_ci.stageCount                   = 4;
-            rt_ci.pStages                      = stages;
-            rt_ci.groupCount                   = 4;
-            rt_ci.pGroups                      = groups;
-            rt_ci.maxPipelineRayRecursionDepth = 2; // allows shadow ray from within closest hit
-            rt_ci.layout                       = s_res->rt_pipeline_layout;
-
-            VkResult r = s_res->fn_create_rt_pipeline(device, VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &rt_ci, nullptr, &s_res->rt_pipeline);
-
-            vkDestroyShaderModule(device, raygen_module,      nullptr);
-            vkDestroyShaderModule(device, miss_module,        nullptr);
-            vkDestroyShaderModule(device, shadow_miss_module, nullptr);
-            vkDestroyShaderModule(device, hit_module,         nullptr);
+            VkPipeline pipeline = VK_NULL_HANDLE;
+            VkResult r = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &cpci, nullptr, &pipeline);
+            vkDestroyShaderModule(device, mod, nullptr);
 
             if (r != VK_SUCCESS) {
-                HN_CORE_ERROR("[PathTracer] vkCreateRayTracingPipelinesKHR failed ({})", (int)r);
-                return;
+                HN_CORE_ERROR("[PathTracer] build_compute_pipeline: vkCreateComputePipelines failed for {} ({})",
+                              shader_path.filename().string(), (int)r);
+                return {};
             }
 
-            // Retrieve shader handles from pipeline (4 groups: raygen, miss, shadow_miss, hit)
-            std::vector<uint8_t> handles(handle_size * 4);
-            r = s_res->fn_get_sbt_handles(device, s_res->rt_pipeline, 0, 4, handle_size * 4, handles.data());
-            HN_CORE_ASSERT(r == VK_SUCCESS, "vkGetRayTracingShaderGroupHandlesKHR failed");
+            HN_CORE_INFO("[PathTracer] Compute pipeline built: {}", shader_path.filename().string());
+            return { pipeline, layout };
+        }
 
+        static void build_wavefront_compute_pipelines() {
+            HN_PROFILE_FUNCTION();
 
-            // Allocate host-visible sbt buffer
+            std::filesystem::path shaders = std::filesystem::path(ASSET_ROOT) / "shaders" / "PathTrace";
+
+            // Logic.comp uses sets 1, 2, 3. Set 0 is an empty placeholder so that
+            // the layout indices align: pSetLayouts[0]=empty, [1]=set1, [2]=set2_logic, [3]=set3.
             {
-                VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-                bi.size        = sbt_total;
-                bi.usage       = VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR
-                               | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-                bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-                vkCreateBuffer(device, &bi, nullptr, &s_res->sbt_buffer);
-
-                VkMemoryRequirements req{};
-                vkGetBufferMemoryRequirements(device, s_res->sbt_buffer, &req);
-
-                VkMemoryAllocateFlagsInfo flags_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO};
-                flags_info.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT_KHR;
-
-                VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-                ai.pNext           = &flags_info;
-                ai.allocationSize  = req.size;
-                ai.memoryTypeIndex = find_memory_type(s_res->cached_mem_props, req.memoryTypeBits,
-                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-                vkAllocateMemory(device, &ai, nullptr, &s_res->sbt_memory);
-                vkBindBufferMemory(device, s_res->sbt_buffer, s_res->sbt_memory, 0);
+                VkDescriptorSetLayout layouts[4] = {
+                    s_res->empty_set_layout,
+                    s_res->wf_set1_layout,
+                    s_res->wf_set2_logic_layout,
+                    s_res->wf_set3_layout,
+                };
+                auto [pipeline, layout] = build_compute_pipeline(
+                    shaders / "PathTrace_Logic.comp", layouts, 4, k_wf_pc_size);
+                s_res->logic_pipeline = pipeline;
+                s_res->logic_layout   = layout;
             }
 
+            // NewPath.comp uses sets 1 and 2 (logic layout). Set 0 is empty placeholder.
+            {
+                VkDescriptorSetLayout layouts[3] = {
+                    s_res->empty_set_layout,
+                    s_res->wf_set1_layout,
+                    s_res->wf_set2_logic_layout,
+                };
+                auto [pipeline, layout] = build_compute_pipeline(
+                    shaders / "PathTrace_NewPath.comp", layouts, 3, k_wf_pc_size);
+                s_res->new_path_pipeline = pipeline;
+                s_res->new_path_layout   = layout;
+            }
 
-            // Copy handles: [raygen | miss_primary | miss_shadow | hit]
-            void* mapped = nullptr;
-            vkMapMemory(device, s_res->sbt_memory, 0, sbt_total, 0, &mapped);
-            uint8_t* dst = static_cast<uint8_t*>(mapped);
-            memcpy(dst + 0 * region_size, handles.data() + 0 * handle_size, handle_size);
-            memcpy(dst + 1 * region_size, handles.data() + 1 * handle_size, handle_size);
-            memcpy(dst + 2 * region_size, handles.data() + 2 * handle_size, handle_size);
-            memcpy(dst + 3 * region_size, handles.data() + 3 * handle_size, handle_size);
-            vkUnmapMemory(device, s_res->sbt_memory);
+            // Material.comp uses sets 0, 1, 2 (extend layout).
+            {
+                VkDescriptorSetLayout layouts[3] = {
+                    s_res->wf_set0_layout,
+                    s_res->wf_set1_layout,
+                    s_res->wf_set2_extend_layout,
+                };
+                auto [pipeline, layout] = build_compute_pipeline(
+                    shaders / "PathTrace_Material.comp", layouts, 3, k_wf_pc_size);
+                s_res->material_pipeline = pipeline;
+                s_res->material_layout   = layout;
+            }
 
-            VkBufferDeviceAddressInfo sbt_addr_info{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
-            sbt_addr_info.buffer = s_res->sbt_buffer;
-            VkDeviceAddress sbt_base = s_res->fn_get_buf_addr(device, &sbt_addr_info);
-
-            // miss region covers 2 entries (primary + shadow) with stride=region_size
-            // so traceRayEXT(..., missIndex=1) selects the shadow miss shader
-            s_res->sbt_raygen = { sbt_base + 0 * region_size, region_size, region_size };
-            s_res->sbt_miss   = { sbt_base + 1 * region_size, region_size, 2 * region_size };
-            s_res->sbt_hit    = { sbt_base + 3 * region_size, region_size, region_size };
-
-            s_res->pipeline_built = true;
-            HN_CORE_INFO("[PathTracer] RT pipeline built successfully");
+            HN_CORE_INFO("[PathTracer] Wavefront compute pipelines built");
         }
 
         static void build_svgf_pipeline() {
@@ -1493,6 +1595,571 @@ namespace Honey {
             HN_CORE_INFO("[PathTracer] SVGF compute pipeline built successfully");
         }
 
+        static void build_extend_pipeline() {
+            HN_PROFILE_FUNCTION();
+
+            VkDevice device = s_res->vk_ctx->get_device();
+            VkPhysicalDevice physical_device = s_res->vk_ctx->get_physical_device();
+
+            // Query RT pipeline properties
+            VkPhysicalDeviceRayTracingPipelinePropertiesKHR rt_props{};
+            rt_props.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR;
+            VkPhysicalDeviceProperties2 props2{};
+            props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+            props2.pNext = &rt_props;
+            vkGetPhysicalDeviceProperties2(physical_device, &props2);
+
+            uint32_t handle_size = rt_props.shaderGroupHandleSize;
+            uint32_t base_align  = rt_props.shaderGroupBaseAlignment;
+
+            auto align_up = [](uint32_t value, uint32_t align) -> uint32_t {
+                return (value + align - 1) & ~(align - 1);
+            };
+
+            uint32_t region_size = align_up(handle_size, base_align);
+            uint32_t sbt_total   = region_size * 3;
+
+
+            // Create pipeline layout
+            VkDescriptorSetLayout extend_layouts[] = {
+                s_res->wf_set0_layout,
+                s_res->wf_set1_layout,
+                s_res->wf_set2_extend_layout,
+            };
+
+            VkPipelineLayoutCreateInfo pl_ci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+            pl_ci.setLayoutCount         = 3;
+            pl_ci.pSetLayouts            = extend_layouts;
+            pl_ci.pushConstantRangeCount = 0;
+            pl_ci.pPushConstantRanges    = nullptr;
+            vkCreatePipelineLayout(device, &pl_ci, nullptr, &s_res->extend_rt_layout);
+
+
+            // Compile shaders and create shader modules TODO: use proper shader compilation flow here rather than handling it here
+            bool compile_ok = true;
+            auto make_module = [&](const std::string& src, ShaderCompiler::ShaderStage stage, const char* name) -> VkShaderModule {
+                if (src.empty()) {
+                    HN_CORE_ERROR("[PathTracer] Failed to read shader source for '{}'", name);
+                    compile_ok = false;
+                    return VK_NULL_HANDLE;
+                }
+                auto spirv = ShaderCompiler::compile_single_stage(src, stage);
+                if (spirv.empty()) {
+                    HN_CORE_ERROR("[PathTracer] SPIRV compilation failed for '{}'", name);
+                    compile_ok = false;
+                    return VK_NULL_HANDLE;
+                }
+                VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+                ci.codeSize = spirv.size() * 4;
+                ci.pCode    = spirv.data();
+                VkShaderModule mod = VK_NULL_HANDLE;
+                VkResult r = vkCreateShaderModule(device, &ci, nullptr, &mod);
+                if (r != VK_SUCCESS) {
+                    HN_CORE_ERROR("[PathTracer] vkCreateShaderModule failed for '{}' ({})", name, (int)r);
+                    compile_ok = false;
+                    return VK_NULL_HANDLE;
+                }
+                return mod;
+            };
+
+            std::filesystem::path assets_dir(ASSET_ROOT);
+            VkShaderModule extend_module = make_module(ShaderCompiler::read_file(
+                (assets_dir / "shaders" / "PathTrace" / "PathTrace_Extend.rgen")), ShaderCompiler::ShaderStage::RayGen, "PathTrace_Extend");
+            VkShaderModule miss_module = make_module(ShaderCompiler::read_file(
+                (assets_dir / "shaders" / "PathTrace" / "PathTrace_Miss.rmiss")), ShaderCompiler::ShaderStage::Miss, "PathTrace_Miss");
+            VkShaderModule hit_module = make_module(ShaderCompiler::read_file(
+                (assets_dir / "shaders" / "PathTrace" / "PathTrace_ClosestHit.rchit")), ShaderCompiler::ShaderStage::ClosestHit, "PathTrace_ClosestHit");
+
+            if (!compile_ok) {
+                HN_CORE_ERROR("[PathTracer] Shader compilation failed — Extend pipeline will not be built");
+                if (extend_module)      vkDestroyShaderModule(device, extend_module,      nullptr);
+                if (miss_module)        vkDestroyShaderModule(device, miss_module,        nullptr);
+                if (hit_module)         vkDestroyShaderModule(device, hit_module,         nullptr);
+                return;
+            }
+
+
+            // Stages: 0=raygen, 1=miss, 2=hit
+            VkPipelineShaderStageCreateInfo stages[3] = {};
+            stages[0].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            stages[0].stage  = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+            stages[0].module = extend_module;
+            stages[0].pName  = "main";
+            stages[1].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            stages[1].stage  = VK_SHADER_STAGE_MISS_BIT_KHR;
+            stages[1].module = miss_module;
+            stages[1].pName  = "main";
+            stages[2].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            stages[2].stage  = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+            stages[2].module = hit_module;
+            stages[2].pName  = "main";
+
+
+            // Groups: 0=raygen, 1=miss, 2=hit
+            VkRayTracingShaderGroupCreateInfoKHR groups[3] = {};
+            groups[0] = {VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR};
+            groups[0].type             = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+            groups[0].generalShader    = 0;
+            groups[0].closestHitShader = groups[0].anyHitShader = groups[0].intersectionShader = VK_SHADER_UNUSED_KHR;
+
+            groups[1] = {VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR};
+            groups[1].type             = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+            groups[1].generalShader    = 1;
+            groups[1].closestHitShader = groups[1].anyHitShader = groups[1].intersectionShader = VK_SHADER_UNUSED_KHR;
+
+            groups[2] = {VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR};
+            groups[2].type             = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
+            groups[2].generalShader    = VK_SHADER_UNUSED_KHR;
+            groups[2].closestHitShader = 2;
+            groups[2].anyHitShader     = groups[2].intersectionShader = VK_SHADER_UNUSED_KHR;
+
+
+            VkRayTracingPipelineCreateInfoKHR rt_ci{VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR};
+            rt_ci.stageCount                   = 3;
+            rt_ci.pStages                      = stages;
+            rt_ci.groupCount                   = 3;
+            rt_ci.pGroups                      = groups;
+            rt_ci.maxPipelineRayRecursionDepth = 1;
+            rt_ci.layout                       = s_res->extend_rt_layout;
+
+            VkResult r = s_res->fn_create_rt_pipeline(device, VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &rt_ci, nullptr, &s_res->extend_rt_pipeline);
+
+            vkDestroyShaderModule(device, hit_module,         nullptr);
+            vkDestroyShaderModule(device, miss_module,        nullptr);
+            vkDestroyShaderModule(device, extend_module,      nullptr);
+
+            if (r != VK_SUCCESS) {
+                HN_CORE_ERROR("[PathTracer] vkCreateRayTracingPipelinesKHR failed ({})", (int)r);
+                return;
+            }
+
+            // Retrieve shader handles from pipeline (3 groups: raygen, hit, miss)
+            std::vector<uint8_t> handles(handle_size * 3);
+            r = s_res->fn_get_sbt_handles(device, s_res->extend_rt_pipeline, 0, 3, handle_size * 3, handles.data());
+            HN_CORE_ASSERT(r == VK_SUCCESS, "vkGetRayTracingShaderGroupHandlesKHR failed");
+
+
+            // Allocate host-visible sbt buffer
+            {
+                VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+                bi.size        = sbt_total;
+                bi.usage       = VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR
+                               | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+                bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+                vkCreateBuffer(device, &bi, nullptr, &s_res->extend_sbt_buf);
+
+                VkMemoryRequirements req{};
+                vkGetBufferMemoryRequirements(device, s_res->extend_sbt_buf, &req);
+
+                VkMemoryAllocateFlagsInfo flags_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO};
+                flags_info.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT_KHR;
+
+                VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+                ai.pNext           = &flags_info;
+                ai.allocationSize  = req.size;
+                ai.memoryTypeIndex = find_memory_type(s_res->cached_mem_props, req.memoryTypeBits,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                vkAllocateMemory(device, &ai, nullptr, &s_res->extend_sbt_mem);
+                vkBindBufferMemory(device, s_res->extend_sbt_buf, s_res->extend_sbt_mem, 0);
+            }
+
+
+            // Copy handles: [raygen | miss | hit] - This raygen -> miss -> hit order is required per Vulkan spec
+            void* mapped = nullptr;
+            vkMapMemory(device, s_res->extend_sbt_mem, 0, sbt_total, 0, &mapped);
+            uint8_t* dst = static_cast<uint8_t*>(mapped);
+            memcpy(dst + 0 * region_size, handles.data() + 0 * handle_size, handle_size);
+            memcpy(dst + 1 * region_size, handles.data() + 1 * handle_size, handle_size);
+            memcpy(dst + 2 * region_size, handles.data() + 2 * handle_size, handle_size);
+            vkUnmapMemory(device, s_res->extend_sbt_mem);
+
+            VkBufferDeviceAddressInfo sbt_addr_info{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
+            sbt_addr_info.buffer = s_res->extend_sbt_buf;
+            VkDeviceAddress sbt_base = s_res->fn_get_buf_addr(device, &sbt_addr_info);
+
+            s_res->extend_sbt_raygen = { sbt_base + 0 * region_size, region_size, region_size };
+            s_res->extend_sbt_miss   = { sbt_base + 1 * region_size, region_size, region_size };
+            s_res->extend_sbt_hit    = { sbt_base + 2 * region_size, region_size, region_size };
+
+            s_res->extend_built = true;
+            HN_CORE_INFO("[PathTracer] Extend RT pipeline built successfully");
+        }
+
+        static void build_shadow_pipeline() {
+            HN_PROFILE_FUNCTION();
+
+            VkDevice device = s_res->vk_ctx->get_device();
+            VkPhysicalDevice physical_device = s_res->vk_ctx->get_physical_device();
+
+            // Query RT pipeline properties
+            VkPhysicalDeviceRayTracingPipelinePropertiesKHR rt_props{};
+            rt_props.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR;
+            VkPhysicalDeviceProperties2 props2{};
+            props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+            props2.pNext = &rt_props;
+            vkGetPhysicalDeviceProperties2(physical_device, &props2);
+
+            uint32_t handle_size = rt_props.shaderGroupHandleSize;
+            uint32_t base_align  = rt_props.shaderGroupBaseAlignment;
+
+            auto align_up = [](uint32_t value, uint32_t align) -> uint32_t {
+                return (value + align - 1) & ~(align - 1);
+            };
+
+            uint32_t region_size = align_up(handle_size, base_align);
+            uint32_t sbt_total   = region_size * 3; // Will contain an empty hit shader
+
+
+            // Create pipeline layout
+            VkDescriptorSetLayout shadow_layouts[] = {
+                s_res->wf_set0_layout,
+                s_res->empty_set_layout,
+                s_res->wf_set2_shadow_layout,
+            };
+
+            VkPipelineLayoutCreateInfo pl_ci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+            pl_ci.setLayoutCount         = 3;
+            pl_ci.pSetLayouts            = shadow_layouts;
+            pl_ci.pushConstantRangeCount = 0;
+            pl_ci.pPushConstantRanges    = nullptr;
+            vkCreatePipelineLayout(device, &pl_ci, nullptr, &s_res->shadow_rt_layout);
+
+
+            // Compile shaders and create shader modules TODO: use proper shader compilation flow here rather than handling it here
+            bool compile_ok = true;
+            auto make_module = [&](const std::string& src, ShaderCompiler::ShaderStage stage, const char* name) -> VkShaderModule {
+                if (src.empty()) {
+                    HN_CORE_ERROR("[PathTracer] Failed to read shader source for '{}'", name);
+                    compile_ok = false;
+                    return VK_NULL_HANDLE;
+                }
+                auto spirv = ShaderCompiler::compile_single_stage(src, stage);
+                if (spirv.empty()) {
+                    HN_CORE_ERROR("[PathTracer] SPIRV compilation failed for '{}'", name);
+                    compile_ok = false;
+                    return VK_NULL_HANDLE;
+                }
+                VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+                ci.codeSize = spirv.size() * 4;
+                ci.pCode    = spirv.data();
+                VkShaderModule mod = VK_NULL_HANDLE;
+                VkResult r = vkCreateShaderModule(device, &ci, nullptr, &mod);
+                if (r != VK_SUCCESS) {
+                    HN_CORE_ERROR("[PathTracer] vkCreateShaderModule failed for '{}' ({})", name, (int)r);
+                    compile_ok = false;
+                    return VK_NULL_HANDLE;
+                }
+                return mod;
+            };
+
+            std::filesystem::path assets_dir(ASSET_ROOT);
+            VkShaderModule shadow_module = make_module(ShaderCompiler::read_file(
+                (assets_dir / "shaders" / "PathTrace" / "PathTrace_Shadow.rgen")), ShaderCompiler::ShaderStage::RayGen, "PathTrace_Shadow");
+            VkShaderModule miss_module = make_module(ShaderCompiler::read_file(
+                (assets_dir / "shaders" / "PathTrace" / "PathTrace_ShadowMiss.rmiss")), ShaderCompiler::ShaderStage::Miss, "PathTrace_ShadowMiss");
+            if (!compile_ok) {
+                HN_CORE_ERROR("[PathTracer] Shader compilation failed — Shadow pipeline will not be built");
+                if (shadow_module)      vkDestroyShaderModule(device, shadow_module,      nullptr);
+                if (miss_module)        vkDestroyShaderModule(device, miss_module,        nullptr);
+                return;
+            }
+
+
+            // Stages: 0=raygen, 1=miss
+            VkPipelineShaderStageCreateInfo stages[2] = {};
+            stages[0].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            stages[0].stage  = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+            stages[0].module = shadow_module;
+            stages[0].pName  = "main";
+            stages[1].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            stages[1].stage  = VK_SHADER_STAGE_MISS_BIT_KHR;
+            stages[1].module = miss_module;
+            stages[1].pName  = "main";
+
+
+            // Groups: 0=raygen, 1=miss, 2=hit
+            VkRayTracingShaderGroupCreateInfoKHR groups[3] = {};
+            groups[0] = {VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR};
+            groups[0].type             = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+            groups[0].generalShader    = 0;
+            groups[0].closestHitShader = groups[0].anyHitShader = groups[0].intersectionShader = VK_SHADER_UNUSED_KHR;
+
+            groups[1] = {VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR};
+            groups[1].type             = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+            groups[1].generalShader    = 1;
+            groups[1].closestHitShader = groups[1].anyHitShader = groups[1].intersectionShader = VK_SHADER_UNUSED_KHR;
+
+            groups[2] = {VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR};
+            groups[2].type             = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
+            groups[2].generalShader    = VK_SHADER_UNUSED_KHR;
+            groups[2].closestHitShader = VK_SHADER_UNUSED_KHR;
+            groups[2].anyHitShader     = groups[2].intersectionShader = VK_SHADER_UNUSED_KHR;
+
+
+            VkRayTracingPipelineCreateInfoKHR rt_ci{VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR};
+            rt_ci.stageCount                   = 2;
+            rt_ci.pStages                      = stages;
+            rt_ci.groupCount                   = 3;
+            rt_ci.pGroups                      = groups;
+            rt_ci.maxPipelineRayRecursionDepth = 1;
+            rt_ci.layout                       = s_res->shadow_rt_layout;
+
+            VkResult r = s_res->fn_create_rt_pipeline(device, VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &rt_ci, nullptr, &s_res->shadow_rt_pipeline);
+
+            vkDestroyShaderModule(device, shadow_module,      nullptr);
+            vkDestroyShaderModule(device, miss_module,        nullptr);
+
+            if (r != VK_SUCCESS) {
+                HN_CORE_ERROR("[PathTracer] vkCreateRayTracingPipelinesKHR failed ({})", (int)r);
+                return;
+            }
+
+            // Retrieve shader handles from pipeline (3 groups: raygen, miss, hit)
+            std::vector<uint8_t> handles(handle_size * 3);
+            r = s_res->fn_get_sbt_handles(device, s_res->shadow_rt_pipeline, 0, 3, handle_size * 3, handles.data());
+            HN_CORE_ASSERT(r == VK_SUCCESS, "vkGetRayTracingShaderGroupHandlesKHR failed");
+
+
+            // Allocate host-visible sbt buffer
+            {
+                VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+                bi.size        = sbt_total;
+                bi.usage       = VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR
+                               | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+                bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+                vkCreateBuffer(device, &bi, nullptr, &s_res->shadow_sbt_buf);
+
+                VkMemoryRequirements req{};
+                vkGetBufferMemoryRequirements(device, s_res->shadow_sbt_buf, &req);
+
+                VkMemoryAllocateFlagsInfo flags_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO};
+                flags_info.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT_KHR;
+
+                VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+                ai.pNext           = &flags_info;
+                ai.allocationSize  = req.size;
+                ai.memoryTypeIndex = find_memory_type(s_res->cached_mem_props, req.memoryTypeBits,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                vkAllocateMemory(device, &ai, nullptr, &s_res->shadow_sbt_mem);
+                vkBindBufferMemory(device, s_res->shadow_sbt_buf, s_res->shadow_sbt_mem, 0);
+            }
+
+
+            // Copy handles: [raygen | miss | hit] - This raygen -> miss -> hit order is required per Vulkan spec
+            void* mapped = nullptr;
+            vkMapMemory(device, s_res->shadow_sbt_mem, 0, sbt_total, 0, &mapped);
+            uint8_t* dst = static_cast<uint8_t*>(mapped);
+            memcpy(dst + 0 * region_size, handles.data() + 0 * handle_size, handle_size);
+            memcpy(dst + 1 * region_size, handles.data() + 1 * handle_size, handle_size);
+            memcpy(dst + 2 * region_size, handles.data() + 2 * handle_size, handle_size);
+            vkUnmapMemory(device, s_res->shadow_sbt_mem);
+
+            VkBufferDeviceAddressInfo sbt_addr_info{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
+            sbt_addr_info.buffer = s_res->shadow_sbt_buf;
+            VkDeviceAddress sbt_base = s_res->fn_get_buf_addr(device, &sbt_addr_info);
+
+            s_res->shadow_sbt_raygen = { sbt_base + 0 * region_size, region_size, region_size };
+            s_res->shadow_sbt_miss   = { sbt_base + 1 * region_size, region_size, region_size };
+            s_res->shadow_sbt_hit    = { sbt_base + 2 * region_size, region_size, region_size };
+
+            s_res->shadow_built = true;
+            HN_CORE_INFO("[PathTracer] Shadow RT pipeline built successfully");
+        }
+
+        static void update_wavefront_desc_sets(uint32_t slot_idx) {
+            HN_PROFILE_FUNCTION();
+
+            auto& slot = s_res->frame_slots[slot_idx];
+            if (!slot.wf_desc_dirty) return;
+
+            // Guard: geometry and material buffers are allocated by prepare_tlas_cpu;
+            // if they're null there are no scene instances and we can't write valid descriptors.
+            if (slot.geometry_lookup_buffer == VK_NULL_HANDLE || slot.material_buffer == VK_NULL_HANDLE)
+                return;
+
+            VkDevice device = s_res->vk_ctx->get_device();
+
+            // --- set0: TLAS, gbuffer, geometry, material, textures, lights ---
+            {
+                VkAccelerationStructureKHR tlas_handle = slot.tlas;
+                VkWriteDescriptorSetAccelerationStructureKHR as_write{
+                    VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR};
+                as_write.accelerationStructureCount = 1;
+                as_write.pAccelerationStructures    = &tlas_handle;
+
+                VkDescriptorImageInfo  gbuffer_info{ VK_NULL_HANDLE, s_res->gbuffer_view, VK_IMAGE_LAYOUT_GENERAL };
+                VkDescriptorBufferInfo geo_info    { slot.geometry_lookup_buffer, 0, VK_WHOLE_SIZE };
+                VkDescriptorBufferInfo mat_info    { slot.material_buffer,         0, VK_WHOLE_SIZE };
+                VkDescriptorBufferInfo lights_info { s_res->lights_buffer,         0, VK_WHOLE_SIZE };
+
+                const uint32_t tex_count = (uint32_t)s_res->bound_textures.size();
+                std::vector<VkDescriptorImageInfo> tex_infos(tex_count);
+                for (uint32_t i = 0; i < tex_count; i++) {
+                    tex_infos[i] = { s_res->bound_textures[i].second,
+                                     s_res->bound_textures[i].first,
+                                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+                }
+
+                VkWriteDescriptorSet writes[6] = {};
+                uint32_t wc = 0;
+
+                writes[wc].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writes[wc].pNext           = &as_write;
+                writes[wc].dstSet          = slot.wf_set0;
+                writes[wc].dstBinding      = 0;
+                writes[wc].descriptorCount = 1;
+                writes[wc].descriptorType  = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+                wc++;
+
+                writes[wc].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writes[wc].dstSet          = slot.wf_set0;
+                writes[wc].dstBinding      = 1;
+                writes[wc].descriptorCount = 1;
+                writes[wc].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+                writes[wc].pImageInfo      = &gbuffer_info;
+                wc++;
+
+                writes[wc].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writes[wc].dstSet          = slot.wf_set0;
+                writes[wc].dstBinding      = 2;
+                writes[wc].descriptorCount = 1;
+                writes[wc].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                writes[wc].pBufferInfo     = &geo_info;
+                wc++;
+
+                writes[wc].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writes[wc].dstSet          = slot.wf_set0;
+                writes[wc].dstBinding      = 3;
+                writes[wc].descriptorCount = 1;
+                writes[wc].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                writes[wc].pBufferInfo     = &mat_info;
+                wc++;
+
+                if (tex_count > 0) {
+                    writes[wc].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                    writes[wc].dstSet          = slot.wf_set0;
+                    writes[wc].dstBinding      = 4;
+                    writes[wc].descriptorCount = tex_count;
+                    writes[wc].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                    writes[wc].pImageInfo      = tex_infos.data();
+                    wc++;
+                }
+
+                writes[wc].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writes[wc].dstSet          = slot.wf_set0;
+                writes[wc].dstBinding      = 5;
+                writes[wc].descriptorCount = 1;
+                writes[wc].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+                writes[wc].pBufferInfo     = &lights_info;
+                wc++;
+
+                vkUpdateDescriptorSets(device, wc, writes, 0, nullptr);
+            }
+
+            // --- set1: path state SOA (bindings 0-8) ---
+            {
+                VkDescriptorBufferInfo buf_infos[9] = {
+                    { slot.path_ray_origin_buf,   0, VK_WHOLE_SIZE },
+                    { slot.path_ray_dir_buf,       0, VK_WHOLE_SIZE },
+                    { slot.path_throughput_buf,    0, VK_WHOLE_SIZE },
+                    { slot.path_radiance_buf,      0, VK_WHOLE_SIZE },
+                    { slot.path_seed_buf,          0, VK_WHOLE_SIZE },
+                    { slot.path_bounce_buf,        0, VK_WHOLE_SIZE },
+                    { slot.path_flags_buf,         0, VK_WHOLE_SIZE },
+                    { slot.path_shadow_start_buf,  0, VK_WHOLE_SIZE },
+                    { slot.path_shadow_end_buf,    0, VK_WHOLE_SIZE },
+                };
+                VkWriteDescriptorSet writes[9] = {};
+                for (uint32_t i = 0; i < 9; i++) {
+                    writes[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                    writes[i].dstSet          = slot.wf_set1;
+                    writes[i].dstBinding      = i;
+                    writes[i].descriptorCount = 1;
+                    writes[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                    writes[i].pBufferInfo     = &buf_infos[i];
+                }
+                vkUpdateDescriptorSets(device, 9, writes, 0, nullptr);
+            }
+
+            // --- set2_extend: queues for Extend.rgen + Material.comp (bindings 0-5) ---
+            // extend_count and shadow_count share queue_count_buf at aligned offsets.
+            {
+                const VkDeviceSize shadow_off = s_res->count_buf_shadow_offset;
+                VkDescriptorBufferInfo infos[6] = {
+                    { slot.queue_count_buf,      0,          sizeof(uint32_t) }, // extend_count
+                    { slot.extend_queue_buf,     0,          VK_WHOLE_SIZE    }, // extend_paths
+                    { slot.hit_record_buf,       0,          VK_WHOLE_SIZE    }, // hit_record
+                    { slot.queue_count_buf,      shadow_off, sizeof(uint32_t) }, // shadow_count
+                    { slot.shadow_queue_buf,     0,          VK_WHOLE_SIZE    }, // shadow_rays
+                    { slot.pending_radiance_buf, 0,          VK_WHOLE_SIZE    }, // pending_radiance
+                };
+                VkWriteDescriptorSet writes[6] = {};
+                for (uint32_t i = 0; i < 6; i++) {
+                    writes[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                    writes[i].dstSet          = slot.wf_set2_extend;
+                    writes[i].dstBinding      = i;
+                    writes[i].descriptorCount = 1;
+                    writes[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                    writes[i].pBufferInfo     = &infos[i];
+                }
+                vkUpdateDescriptorSets(device, 6, writes, 0, nullptr);
+            }
+
+            // --- set2_shadow: queues for Shadow.rgen (bindings 0-2) ---
+            {
+                VkDescriptorBufferInfo infos[3] = {
+                    { slot.queue_count_buf, s_res->count_buf_shadow_offset, sizeof(uint32_t) }, // shadow_count
+                    { slot.shadow_queue_buf, 0,                VK_WHOLE_SIZE    }, // shadow_rays
+                    { slot.occlusion_buf,    0,                VK_WHOLE_SIZE    }, // occlusion
+                };
+                VkWriteDescriptorSet writes[3] = {};
+                for (uint32_t i = 0; i < 3; i++) {
+                    writes[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                    writes[i].dstSet          = slot.wf_set2_shadow;
+                    writes[i].dstBinding      = i;
+                    writes[i].descriptorCount = 1;
+                    writes[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                    writes[i].pBufferInfo     = &infos[i];
+                }
+                vkUpdateDescriptorSets(device, 3, writes, 0, nullptr);
+            }
+
+            // --- set2_logic: queues for Logic + NewPath (bindings 2, 3, 4, 5 only) ---
+            {
+                VkDescriptorBufferInfo infos[4] = {
+                    { slot.occlusion_buf,        0,                VK_WHOLE_SIZE    }, // binding 2
+                    { slot.queue_count_buf,      0,                sizeof(uint32_t) }, // binding 3: extend_count
+                    { slot.extend_queue_buf,     0,                VK_WHOLE_SIZE    }, // binding 4
+                    { slot.pending_radiance_buf, 0,                VK_WHOLE_SIZE    }, // binding 5
+                };
+                VkWriteDescriptorSet writes[4] = {};
+                for (uint32_t i = 0; i < 4; i++) {
+                    writes[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                    writes[i].dstSet          = slot.wf_set2_logic;
+                    writes[i].dstBinding      = i + 2; // bindings 2, 3, 4, 5
+                    writes[i].descriptorCount = 1;
+                    writes[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                    writes[i].pBufferInfo     = &infos[i];
+                }
+                vkUpdateDescriptorSets(device, 4, writes, 0, nullptr);
+            }
+
+            // --- set3: accum storage image (binding 0) ---
+            {
+                VkDescriptorImageInfo accum_info{ VK_NULL_HANDLE, s_res->accum_view, VK_IMAGE_LAYOUT_GENERAL };
+                VkWriteDescriptorSet write{};
+                write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                write.dstSet          = slot.wf_set3;
+                write.dstBinding      = 0;
+                write.descriptorCount = 1;
+                write.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+                write.pImageInfo      = &accum_info;
+                vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+            }
+
+            slot.wf_desc_dirty = false;
+        }
+
         static void update_svgf_desc_set() {
             VkDevice device = s_res->vk_ctx->get_device();
 
@@ -1525,6 +2192,15 @@ namespace Honey {
 
         // Cache memory properties once; queried in find_memory_type throughout.
         vkGetPhysicalDeviceMemoryProperties(ctx->get_physical_device(), &s_res->cached_mem_props);
+
+        // Align shadow_count's offset inside queue_count_buf to the device's
+        // minStorageBufferOffsetAlignment so descriptor writes are valid.
+        {
+            VkPhysicalDeviceProperties props{};
+            vkGetPhysicalDeviceProperties(ctx->get_physical_device(), &props);
+            VkDeviceSize align = props.limits.minStorageBufferOffsetAlignment;
+            s_res->count_buf_shadow_offset = align; // one aligned stride past extend_count at [0]
+        }
 
         VkDevice device = ctx->get_device();
 #define LOAD(field, fn_name) s_res->field = reinterpret_cast<PFN_##fn_name>(vkGetDeviceProcAddr(device, #fn_name))
@@ -1562,8 +2238,11 @@ namespace Honey {
             vkMapMemory(device, s_res->lights_memory, 0, lights_size, 0, &s_res->lights_mapped);
         }
 
-        build_rt_pipeline();
         build_svgf_pipeline();
+        build_wavefront_layouts();
+        build_wavefront_compute_pipelines();
+        build_extend_pipeline();
+        build_shadow_pipeline();
     }
 
     void Renderer3DPathTracer::shutdown() {
@@ -1622,19 +2301,6 @@ namespace Honey {
 
         destroy_accum_image();
 
-        if (s_res->sbt_buffer != VK_NULL_HANDLE) {
-            vkDestroyBuffer(device, s_res->sbt_buffer, nullptr);
-            vkFreeMemory(device, s_res->sbt_memory, nullptr);
-        }
-        if (s_res->rt_pipeline != VK_NULL_HANDLE)
-            vkDestroyPipeline(device, s_res->rt_pipeline, nullptr);
-        if (s_res->rt_pipeline_layout != VK_NULL_HANDLE)
-            vkDestroyPipelineLayout(device, s_res->rt_pipeline_layout, nullptr);
-        if (s_res->rt_desc_pool != VK_NULL_HANDLE)
-            vkDestroyDescriptorPool(device, s_res->rt_desc_pool, nullptr);
-        if (s_res->rt_desc_layout != VK_NULL_HANDLE)
-            vkDestroyDescriptorSetLayout(device, s_res->rt_desc_layout, nullptr);
-
         if (s_res->svgf_pipeline != VK_NULL_HANDLE)
             vkDestroyPipeline(device, s_res->svgf_pipeline, nullptr);
         if (s_res->svgf_pipeline_layout != VK_NULL_HANDLE)
@@ -1643,6 +2309,24 @@ namespace Honey {
             vkDestroyDescriptorPool(device, s_res->svgf_desc_pool, nullptr);
         if (s_res->svgf_desc_layout != VK_NULL_HANDLE)
             vkDestroyDescriptorSetLayout(device, s_res->svgf_desc_layout, nullptr);
+
+        // Wavefront compute pipelines
+        if (s_res->material_pipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, s_res->material_pipeline, nullptr);
+        if (s_res->material_layout   != VK_NULL_HANDLE) vkDestroyPipelineLayout(device, s_res->material_layout, nullptr);
+        if (s_res->new_path_pipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, s_res->new_path_pipeline, nullptr);
+        if (s_res->new_path_layout   != VK_NULL_HANDLE) vkDestroyPipelineLayout(device, s_res->new_path_layout, nullptr);
+        if (s_res->logic_pipeline    != VK_NULL_HANDLE) vkDestroyPipeline(device, s_res->logic_pipeline, nullptr);
+        if (s_res->logic_layout      != VK_NULL_HANDLE) vkDestroyPipelineLayout(device, s_res->logic_layout, nullptr);
+
+        // Wavefront descriptor pool and set layouts (pool destruction frees all sets automatically)
+        if (s_res->wf_desc_pool           != VK_NULL_HANDLE) vkDestroyDescriptorPool(device, s_res->wf_desc_pool, nullptr);
+        if (s_res->wf_set3_layout         != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device, s_res->wf_set3_layout, nullptr);
+        if (s_res->wf_set2_logic_layout   != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device, s_res->wf_set2_logic_layout, nullptr);
+        if (s_res->wf_set2_shadow_layout  != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device, s_res->wf_set2_shadow_layout, nullptr);
+        if (s_res->wf_set2_extend_layout  != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device, s_res->wf_set2_extend_layout, nullptr);
+        if (s_res->wf_set1_layout         != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device, s_res->wf_set1_layout, nullptr);
+        if (s_res->wf_set0_layout         != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device, s_res->wf_set0_layout, nullptr);
+        if (s_res->empty_set_layout       != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device, s_res->empty_set_layout, nullptr);
 
         delete s_res;
         s_res = nullptr;
@@ -1725,7 +2409,7 @@ namespace Honey {
         // frame command buffer.  TLAS build/refit → trace rays → SVGF denoise → blit all run
         // in the live graphics command buffer via submit_vulkan_graphics_raw.
         registry.register_executor("pathtracing.trace", [](FrameGraphPassContext& ctx) {
-            if (!s_res || !s_res->pipeline_built)
+            if (!s_res)
                 return;
 
             Scene* scene = Scene::get_active_scene();
@@ -1752,11 +2436,10 @@ namespace Honey {
             if (!prepare_tlas_cpu(scene))
                 return;
 
-            // Update the per-frame RT descriptor set (TLAS handle + per-frame SSBOs changed).
-            // Update the SVGF descriptor set only when images are (re)created (svgf_desc_dirty).
-            update_desc_set();
             if (s_res->svgf_pipeline_built && s_res->svgf_desc_dirty)
                 update_svgf_desc_set();
+
+            update_wavefront_desc_sets(s_res->current_slot);
 
             // Snapshot frame-local values for capture by the GPU recording lambdas.
             glm::mat4 inv_view      = s_res->inv_view;
@@ -1773,17 +2456,13 @@ namespace Honey {
             // half at frame 8, near-zero at frame 64 — avoids blurring a clean image.
             float     blend_factor  = std::min(1.0f, 8.0f / (float)(frame_count + 1));
 
-            // Capture the per-frame descriptor set handle for use in the recording lambda.
-            VkDescriptorSet rt_desc_set = s_res->frame_slots[s_res->current_slot].rt_desc_set;
-
             // Build + compact any new BLASes before the main frame submission.
             // This is a synchronous one-time cost (only runs when new meshes are added).
             build_and_compact_pending_blas();
 
-            // --- TLAS build/refit + ray trace ---
+            // --- Image layout init + TLAS build + wavefront dispatch ---
             ctx.submit_vulkan_graphics_raw([inv_view, inv_proj, frame_count, trace_w, trace_h,
-                                            need_init, gbuf_init, ping_init, filtered_init,
-                                            rt_desc_set](VkCommandBuffer cmd) {
+                                            need_init, gbuf_init, ping_init, filtered_init](VkCommandBuffer cmd) {
                 // One-time layout transitions for images still in UNDEFINED.
                 auto transition_to_general = [&](VkImage img) {
                     VkImageMemoryBarrier imb{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
@@ -1809,21 +2488,135 @@ namespace Honey {
                     record_tlas_build(cmd);
                 }
 
-                struct PC { glm::mat4 inv_view; glm::mat4 inv_proj; uint32_t frame_count; };
-                PC pc{ inv_view, inv_proj, frame_count };
+                if (s_res->extend_built && s_res->shadow_built) {
+                    uint32_t total_paths = trace_w * trace_h;
+                    auto& slot = s_res->frame_slots[s_res->current_slot];
 
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, s_res->rt_pipeline);
-                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR,
-                    s_res->rt_pipeline_layout, 0, 1, &rt_desc_set, 0, nullptr);
-                vkCmdPushConstants(cmd, s_res->rt_pipeline_layout,
-                    VK_SHADER_STAGE_RAYGEN_BIT_KHR, 0, sizeof(PC), &pc);
+                    WavefrontPC pc{};
+                    pc.total_path_count = total_paths;
+                    pc.frame_count      = frame_count;
+                    pc.width            = trace_w;
+                    pc.height           = trace_h;
+                    pc.inv_view         = inv_view;
+                    pc.inv_proj         = inv_proj;
 
-                // Ray tracing stage.
-                {
-                    HN_GPU_SCOPE(cmd, "TraceRays");
-                   s_res->fn_cmd_trace_rays(cmd,
-                       &s_res->sbt_raygen, &s_res->sbt_miss, &s_res->sbt_hit, &s_res->sbt_callable,
-                       trace_w, trace_h, 1);
+                    VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+
+                    // Step 1: clear extend_count + shadow_count before Logic writes them
+                    {
+                        HN_GPU_SCOPE(cmd, "WF: clear queues");
+                        vkCmdFillBuffer(cmd, slot.queue_count_buf, 0, VK_WHOLE_SIZE, 0u);
+
+                        mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                        mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+                        vkCmdPipelineBarrier(cmd,
+                            VK_PIPELINE_STAGE_TRANSFER_BIT,
+                            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                            0, 1, &mb, 0, nullptr, 0, nullptr);
+                    }
+
+                    // Step 2: Logic — resolve previous shadow results, write accum, enqueue live paths
+                    {
+                        HN_GPU_SCOPE(cmd, "WF: logic");
+                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_res->logic_pipeline);
+                        VkDescriptorSet sets[] = { slot.wf_set1, slot.wf_set2_logic, slot.wf_set3 };
+                        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                            s_res->logic_layout, 1, 3, sets, 0, nullptr);
+                        vkCmdPushConstants(cmd, s_res->logic_layout,
+                            VK_SHADER_STAGE_COMPUTE_BIT, 0, k_wf_pc_size, &pc);
+                        vkCmdDispatch(cmd, (total_paths + 63) / 64, 1, 1);
+
+                        mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+                        mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+                        vkCmdPipelineBarrier(cmd,
+                            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                            0, 1, &mb, 0, nullptr, 0, nullptr);
+                    }
+
+                    // Step 3: NewPath — regenerate terminated paths and push them into the extend queue
+                    {
+                        HN_GPU_SCOPE(cmd, "WF: new path");
+                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_res->new_path_pipeline);
+                        VkDescriptorSet sets[] = { slot.wf_set1, slot.wf_set2_logic };
+                        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                            s_res->new_path_layout, 1, 2, sets, 0, nullptr);
+                        vkCmdPushConstants(cmd, s_res->new_path_layout,
+                            VK_SHADER_STAGE_COMPUTE_BIT, 0, k_wf_pc_size, &pc);
+                        vkCmdDispatch(cmd, (total_paths + 63) / 64, 1, 1);
+
+                        mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+                        mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                        vkCmdPipelineBarrier(cmd,
+                            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                            VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                            0, 1, &mb, 0, nullptr, 0, nullptr);
+                    }
+
+                    // Step 4: Extend RT — trace rays for all queued paths, write hit records + gbuffer
+                    {
+                        HN_GPU_SCOPE(cmd, "WF: extend RT");
+                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR,
+                            s_res->extend_rt_pipeline);
+                        VkDescriptorSet sets[] = { slot.wf_set0, slot.wf_set1, slot.wf_set2_extend };
+                        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR,
+                            s_res->extend_rt_layout, 0, 3, sets, 0, nullptr);
+                        s_res->fn_cmd_trace_rays(cmd,
+                            &s_res->extend_sbt_raygen, &s_res->extend_sbt_miss,
+                            &s_res->extend_sbt_hit,    &s_res->extend_sbt_callable,
+                            total_paths, 1, 1);
+
+                        mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+                        mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                        vkCmdPipelineBarrier(cmd,
+                            VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                            0, 1, &mb, 0, nullptr, 0, nullptr);
+                    }
+
+                    // Step 5: Material — evaluate BSDFs, write updated path state + shadow queue
+                    {
+                        HN_GPU_SCOPE(cmd, "WF: material");
+                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_res->material_pipeline);
+                        VkDescriptorSet sets[] = { slot.wf_set0, slot.wf_set1, slot.wf_set2_extend };
+                        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                            s_res->material_layout, 0, 3, sets, 0, nullptr);
+                        vkCmdPushConstants(cmd, s_res->material_layout,
+                            VK_SHADER_STAGE_COMPUTE_BIT, 0, k_wf_pc_size, &pc);
+                        vkCmdDispatch(cmd, (total_paths + 63) / 64, 1, 1);
+
+                        mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+                        mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                        vkCmdPipelineBarrier(cmd,
+                            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                            VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                            0, 1, &mb, 0, nullptr, 0, nullptr);
+                    }
+
+                    // Step 6: Shadow RT — test occlusion for every shadow ray request
+                    {
+                        HN_GPU_SCOPE(cmd, "WF: shadow RT");
+                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR,
+                            s_res->shadow_rt_pipeline);
+                        // Set 1 (path state) unused by Shadow.rgen; bind dummy to satisfy layout.
+                        VkDescriptorSet sets[] = {
+                            slot.wf_set0, s_res->wf_dummy_set, slot.wf_set2_shadow
+                        };
+                        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR,
+                            s_res->shadow_rt_layout, 0, 3, sets, 0, nullptr);
+                        s_res->fn_cmd_trace_rays(cmd,
+                            &s_res->shadow_sbt_raygen, &s_res->shadow_sbt_miss,
+                            &s_res->shadow_sbt_hit,    &s_res->shadow_sbt_callable,
+                            total_paths * PathTracerResources::k_max_shadow_per_path, 1, 1);
+
+                        // occlusion[] writes must be visible to next-frame Logic.comp.
+                        mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+                        mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                        vkCmdPipelineBarrier(cmd,
+                            VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                            0, 1, &mb, 0, nullptr, 0, nullptr);
+                    }
                 }
             });
 
@@ -1839,9 +2632,9 @@ namespace Honey {
                     VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
                     mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
                     mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-                    // Wait for raygen to finish writing accum_image and gbuffer_image.
+                    // accum_image written by Logic.comp (compute); gbuffer by Extend.rgen (RT).
                     vkCmdPipelineBarrier(cmd,
-                        VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                         0, 1, &mb, 0, nullptr, 0, nullptr);
 
