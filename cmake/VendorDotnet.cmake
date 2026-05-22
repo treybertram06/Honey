@@ -1,4 +1,4 @@
-set(DOTNET_VERSION "9.0.4" CACHE STRING "Pinned .NET hosting version")
+set(DOTNET_VERSION "10.0.8" CACHE STRING "Pinned .NET hosting version")
 
 # Detect the NuGet runtime identifier for the current platform
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -95,11 +95,59 @@ foreach(_hdr IN LISTS _DOTNET_HEADERS)
     endif()
 endforeach()
 
+# ------------------------------------------------------------------------------
+# Bundle the full .NET runtime so no system installation is required at runtime
+# ------------------------------------------------------------------------------
+set(DOTNET_RUNTIME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/dotnet/runtime")
+
+if(NOT EXISTS "${DOTNET_RUNTIME_DIR}/host")
+    if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+        set(_DOTNET_ARCHIVE_EXT "zip")
+    else()
+        set(_DOTNET_ARCHIVE_EXT "tar.gz")
+    endif()
+
+    set(_DOTNET_ARCHIVE "dotnet-runtime-${DOTNET_VERSION}-${DOTNET_RID}.${_DOTNET_ARCHIVE_EXT}")
+    set(_DOTNET_RUNTIME_URL
+        "https://dotnetcli.azureedge.net/dotnet/Runtime/${DOTNET_VERSION}/${_DOTNET_ARCHIVE}"
+    )
+    set(_DOTNET_RUNTIME_ARCHIVE "${CMAKE_BINARY_DIR}/_dotnet_host/${_DOTNET_ARCHIVE}")
+
+    message(STATUS "[Honey] Downloading bundled .NET ${DOTNET_VERSION} runtime for ${DOTNET_RID}...")
+    file(DOWNLOAD "${_DOTNET_RUNTIME_URL}" "${_DOTNET_RUNTIME_ARCHIVE}"
+        STATUS _RT_STATUS
+        SHOW_PROGRESS
+    )
+    list(GET _RT_STATUS 0 _RT_CODE)
+    if(NOT _RT_CODE EQUAL 0)
+        list(GET _RT_STATUS 1 _RT_ERR)
+        message(FATAL_ERROR "[Honey] Failed to download .NET runtime: ${_RT_ERR}")
+    endif()
+
+    message(STATUS "[Honey] Extracting .NET runtime to vendor/dotnet/runtime/...")
+    file(MAKE_DIRECTORY "${DOTNET_RUNTIME_DIR}")
+    file(ARCHIVE_EXTRACT
+        INPUT       "${_DOTNET_RUNTIME_ARCHIVE}"
+        DESTINATION "${DOTNET_RUNTIME_DIR}"
+    )
+    message(STATUS "[Honey] Bundled .NET runtime ready at ${DOTNET_RUNTIME_DIR}")
+endif()
+
+# ------------------------------------------------------------------------------
 # Expose an imported target: Honey::DotnetHost
+# ------------------------------------------------------------------------------
 add_library(Honey::DotnetHost STATIC IMPORTED GLOBAL)
 set_target_properties(Honey::DotnetHost PROPERTIES
         IMPORTED_LOCATION             "${DOTNET_LIB_PATH}"
         INTERFACE_INCLUDE_DIRECTORIES "${DOTNET_INCLUDE_DIR}"
+)
+
+# Bake the absolute runtime root path in so dotnet_host.cpp can find libhostfxr
+# without relying on a system .NET installation.
+# For shipped games this should be replaced with a path relative to the executable.
+set_property(TARGET Honey::DotnetHost APPEND PROPERTY
+        INTERFACE_COMPILE_DEFINITIONS
+        HN_DOTNET_RUNTIME_ROOT="${DOTNET_RUNTIME_DIR}"
 )
 
 # Linux needs dl and pthread for the hosting APIs
@@ -108,3 +156,4 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             INTERFACE_LINK_LIBRARIES dl pthread
     )
 endif()
+

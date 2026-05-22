@@ -233,6 +233,8 @@ add_library(engine STATIC
         src/Honey/renderer/renderer_3d/renderer_3d_pathtracer.cpp
         src/platform/vulkan/vk_gpu_profiler.h
         src/platform/vulkan/vk_gpu_profiler.cpp
+        src/Honey/scripting/csharp/dotnet_host.h
+        src/Honey/scripting/csharp/dotnet_host.cpp
 )
 
 # Apply MSVC runtime to engine itself
