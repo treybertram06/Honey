@@ -351,6 +351,12 @@ target_include_directories(sol2 INTERFACE ${HN_SOL2_DIR}/include)
 target_link_libraries(engine PRIVATE lua sol2)
 
 # ------------------------------------------------------------------------------
+# Vendor Dotnet runtime
+# ------------------------------------------------------------------------------
+include(../cmake/VendorDotnet.cmake)
+target_link_libraries(engine PRIVATE Honey::DotnetHost)
+
+# ------------------------------------------------------------------------------
 # Objective-C++ bridge only on macOS
 # ------------------------------------------------------------------------------
 if(APPLE)
