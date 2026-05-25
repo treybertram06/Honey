@@ -17,6 +17,7 @@
 #include "Honey/math/math.h"
 #include "../renderer/renderer_3d/renderer_3d.h"
 #include "Honey/scripting/script_engine.h"
+#include "Honey/scripting/csharp/csharp_script_engine.h"
 #include "cloth_system.h"
 #include "platform/vulkan/vk_renderer_api.h"
 #include "../renderer/gpu_types.h"
@@ -110,7 +111,11 @@ namespace Honey {
             }
         }
 
-        ScriptEngine::on_destroy_entity(entity);
+        if (entity.has_component<ScriptComponent>() &&
+            CSharpScriptEngine::entity_class_exists(entity.get_component<ScriptComponent>().script_name))
+            CSharpScriptEngine::on_destroy_entity(entity);
+        else
+            ScriptEngine::on_destroy_entity(entity);
         release_audio_for_entity(entity);
 
         m_registry.destroy(entity);
@@ -165,14 +170,7 @@ namespace Honey {
         // Scripting
         {
             ScriptEngine::on_runtime_start(this);
-            // Instantiate all script entities
-
-            //auto view = m_registry.view<ScriptComponent>();
-            //for (auto e : view) {
-            //    Entity entity = { e, this };
-            //    ScriptEngine::on_create_entity(entity);
-            //
-            //} // Every entities on_create is called automatically if its 'initialized' flag is false
+            CSharpScriptEngine::on_runtime_start(this);
         }
     }
 
@@ -182,6 +180,7 @@ namespace Honey {
         m_cloth_system->on_stop(m_registry);
         clear_state();
         ScriptEngine::on_runtime_stop();
+        CSharpScriptEngine::on_runtime_stop();
         AudioSystem::shutdown();
     }
 
@@ -646,11 +645,17 @@ namespace Honey {
             auto& sc = entity.get_component<ScriptComponent>();
 
             if (!sc.initialized) {
-                ScriptEngine::on_create_entity(entity);
+                if (CSharpScriptEngine::entity_class_exists(sc.script_name))
+                    CSharpScriptEngine::on_create_entity(entity);
+                else
+                    ScriptEngine::on_create_entity(entity);
                 sc.initialized = true;
             }
 
-            ScriptEngine::on_update_entity(entity, ts);
+            if (CSharpScriptEngine::entity_class_exists(sc.script_name))
+                CSharpScriptEngine::on_update_entity(entity, ts);
+            else
+                ScriptEngine::on_update_entity(entity, ts);
         }
 
         // C++ scripts
@@ -740,8 +745,15 @@ namespace Honey {
                 Entity entity_b = get_entity(uuid_b);
 
                 if (entity_a.is_valid() && entity_b.is_valid()) {
-                    ScriptEngine::on_collision_begin(entity_a, entity_b); // I could be checking if entity_a has a script component before calling this
-                    ScriptEngine::on_collision_begin(entity_b, entity_a); // Likewise but entity_b
+                    auto dispatch_begin = [&](Entity a, Entity b) {
+                        if (a.has_component<ScriptComponent>() &&
+                            CSharpScriptEngine::entity_class_exists(a.get_component<ScriptComponent>().script_name))
+                            CSharpScriptEngine::on_collision_begin(a, b);
+                        else
+                            ScriptEngine::on_collision_begin(a, b);
+                    };
+                    dispatch_begin(entity_a, entity_b);
+                    dispatch_begin(entity_b, entity_a);
                 }
             }
             for (int i = 0; i < events.endCount; i++) {
@@ -757,8 +769,15 @@ namespace Honey {
                 Entity entity_b = get_entity(uuid_b);
 
                 if (entity_a.is_valid() && entity_b.is_valid()) {
-                    ScriptEngine::on_collision_end(entity_a, entity_b);
-                    ScriptEngine::on_collision_end(entity_b, entity_a);
+                    auto dispatch_end = [&](Entity a, Entity b) {
+                        if (a.has_component<ScriptComponent>() &&
+                            CSharpScriptEngine::entity_class_exists(a.get_component<ScriptComponent>().script_name))
+                            CSharpScriptEngine::on_collision_end(a, b);
+                        else
+                            ScriptEngine::on_collision_end(a, b);
+                    };
+                    dispatch_end(entity_a, entity_b);
+                    dispatch_end(entity_b, entity_a);
                 }
             }
 

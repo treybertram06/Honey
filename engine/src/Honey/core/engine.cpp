@@ -4,6 +4,7 @@
 #include "input.h"
 #include "Honey/renderer/renderer.h"
 #include "Honey/scripting/script_engine.h"
+#include "Honey/scripting/csharp/csharp_script_engine.h"
 #include "settings.h"
 #include "task_system.h"
 
@@ -65,7 +66,7 @@ namespace Honey {
         push_overlay(m_imgui_layer);
 
         ScriptEngine::init();
-
+        CSharpScriptEngine::init();
 
     }
 
@@ -96,6 +97,7 @@ namespace Honey {
 
         Renderer::shutdown();
         ScriptEngine::shutdown();
+        CSharpScriptEngine::shutdown();
         Texture2D::shutdown_cache();
 
         for (Layer* layer : m_layer_stack) {

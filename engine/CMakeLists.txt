@@ -235,6 +235,10 @@ add_library(engine STATIC
         src/platform/vulkan/vk_gpu_profiler.cpp
         src/Honey/scripting/csharp/dotnet_host.h
         src/Honey/scripting/csharp/dotnet_host.cpp
+        src/Honey/scripting/csharp/csharp_script_glue.h
+        src/Honey/scripting/csharp/csharp_script_glue.cpp
+        src/Honey/scripting/csharp/csharp_script_engine.h
+        src/Honey/scripting/csharp/csharp_script_engine.cpp
 )
 
 # Apply MSVC runtime to engine itself
