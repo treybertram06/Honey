@@ -614,7 +614,6 @@ namespace Honey {
     }
 
     void Scene::on_update_scripts(Timestep ts) {
-        // Lua scripts
         //auto view = m_registry.view<ScriptComponent>();
         //for (auto e : view) {
         //    Entity entity = { e, this };
