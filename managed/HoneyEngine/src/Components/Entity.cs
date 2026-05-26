@@ -9,5 +9,9 @@ public readonly struct Entity {
         ID = id;
     }
 
+    public bool IsValid => ID != 0;
+
     public Transform Transform => new Transform(ID);
+
+    public void Destroy() => NativeBindings.Entity_Destroy(ID);
 }

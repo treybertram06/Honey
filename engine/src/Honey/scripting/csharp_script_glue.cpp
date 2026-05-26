@@ -37,6 +37,11 @@ namespace Honey {
         float   (*Input_GetMouseX)                 ();
         float   (*Input_GetMouseY)                 ();
         uint8_t (*Input_IsMouseCaptured)           ();
+
+        void    (*Entity_Destroy)                  (uint64_t);
+        uint64_t (*Scene_FindEntityByName)         (const char*);
+        float   (*Input_GetMouseDeltaX)            ();
+        float   (*Input_GetMouseDeltaY)            ();
     };
 
     // -----------------------------------------------------------------------
@@ -156,6 +161,30 @@ namespace Honey {
 
     static uint8_t glue_input_is_mouse_captured() { return (uint8_t)Input::is_cursor_locked(); }
 
+    static float glue_input_get_mouse_delta_x() { return Input::get_mouse_delta_x(); }
+    static float glue_input_get_mouse_delta_y() { return Input::get_mouse_delta_y(); }
+
+    // -----------------------------------------------------------------------
+    // Entity lifecycle glue
+    // -----------------------------------------------------------------------
+    static void glue_entity_destroy(uint64_t id) {
+        Scene* scene = get_scene();
+        HN_CORE_ASSERT(scene, "CSharpScriptGlue: no active scene");
+        Entity e = scene->get_entity(UUID{id});
+        if (e.is_valid())
+            scene->destroy_entity(e);
+    }
+
+    // -----------------------------------------------------------------------
+    // Scene query glue
+    // -----------------------------------------------------------------------
+    static uint64_t glue_scene_find_entity_by_name(const char* name) {
+        Scene* scene = get_scene();
+        HN_CORE_ASSERT(scene, "CSharpScriptGlue: no active scene");
+        Entity e = scene->find_entity_by_name(name);
+        return e.is_valid() ? (uint64_t)e.get_uuid() : 0;
+    }
+
     // -----------------------------------------------------------------------
     // Public API
     // -----------------------------------------------------------------------
@@ -190,6 +219,16 @@ namespace Honey {
             glue_input_get_mouse_x,
             glue_input_get_mouse_y,
             glue_input_is_mouse_captured,
+
+            // Entity lifecycle
+            glue_entity_destroy,
+
+            // Scene queries
+            glue_scene_find_entity_by_name,
+
+            // Mouse delta
+            glue_input_get_mouse_delta_x,
+            glue_input_get_mouse_delta_y,
         };
 
         using BootstrapFn = void(*)(NativeFunctionTable*);

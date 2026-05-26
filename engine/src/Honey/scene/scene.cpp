@@ -136,6 +136,15 @@ namespace Honey {
         return {};
     }
 
+    Entity Scene::find_entity_by_name(const std::string& name) {
+        auto view = m_registry.view<TagComponent>();
+        for (auto e : view) {
+            if (view.get<TagComponent>(e).tag == name)
+                return Entity{ e, this };
+        }
+        return {};
+    }
+
     void Scene::on_physics_2D_start() {
         b2WorldDef world_def = b2DefaultWorldDef();
         world_def.gravity = {0.0f, -9.81f};

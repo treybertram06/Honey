@@ -105,6 +105,34 @@ internal static unsafe class NativeBindings {
         }
     }
 
+    // --- Entity lifecycle ---
+
+    internal static void Entity_Destroy(ulong id) {
+        InternalCalls.s_table.Entity_Destroy(id);
+    }
+
+    // --- Scene queries ---
+
+    internal static ulong Scene_FindEntityByName(string name) {
+        int maxBytes = Encoding.UTF8.GetMaxByteCount(name.Length) + 1;
+        if (maxBytes <= 512) {
+            byte* buf = stackalloc byte[512];
+            int written = Encoding.UTF8.GetBytes(name, new Span<byte>(buf, 511));
+            buf[written] = 0;
+            return InternalCalls.s_table.Scene_FindEntityByName(buf);
+        } else {
+            byte[] bytes = Encoding.UTF8.GetBytes(name);
+            fixed (byte* p = bytes) {
+                byte* buf = (byte*)Marshal.AllocHGlobal(bytes.Length + 1);
+                Buffer.MemoryCopy(p, buf, bytes.Length + 1, bytes.Length);
+                buf[bytes.Length] = 0;
+                ulong result = InternalCalls.s_table.Scene_FindEntityByName(buf);
+                Marshal.FreeHGlobal((nint)buf);
+                return result;
+            }
+        }
+    }
+
     // --- Input ---
 
     internal static bool Input_IsKeyDown(int keyCode) {
@@ -126,4 +154,7 @@ internal static unsafe class NativeBindings {
     internal static bool Input_IsMouseCaptured() {
         return InternalCalls.s_table.Input_IsMouseCaptured() != 0;
     }
+
+    internal static float Input_GetMouseDeltaX() => InternalCalls.s_table.Input_GetMouseDeltaX();
+    internal static float Input_GetMouseDeltaY() => InternalCalls.s_table.Input_GetMouseDeltaY();
 }

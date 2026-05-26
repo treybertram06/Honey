@@ -26,6 +26,7 @@ namespace Honey {
         Entity create_child_for(Entity parent, const std::string& name = "");
 
         Entity get_entity(UUID uuid);
+        Entity find_entity_by_name(const std::string& name);
 
         void on_physics_2D_start();
         void on_physics_2D_stop();

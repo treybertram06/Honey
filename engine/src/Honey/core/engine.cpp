@@ -169,6 +169,8 @@ namespace Honey {
             // Execute main thread tasks
             TaskSystem::pump_main();
 
+            Input::update_mouse_delta();
+
             float time = (float)glfwGetTime();
             Timestep timestep = time - m_last_frame_time;
             m_last_frame_time = time;

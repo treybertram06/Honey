@@ -26,6 +26,11 @@ public unsafe struct NativeFunctionTable {
     public delegate* unmanaged<float>                        Input_GetMouseX;
     public delegate* unmanaged<float>                        Input_GetMouseY;
     public delegate* unmanaged<byte>                         Input_IsMouseCaptured;
+
+    public delegate* unmanaged<ulong, void>                  Entity_Destroy;
+    public delegate* unmanaged<byte*, ulong>                 Scene_FindEntityByName;
+    public delegate* unmanaged<float>                        Input_GetMouseDeltaX;
+    public delegate* unmanaged<float>                        Input_GetMouseDeltaY;
 }
 
 public static unsafe class InternalCalls {

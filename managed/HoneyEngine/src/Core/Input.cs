@@ -78,4 +78,7 @@ public static class Input {
     public static float GetMouseX() => NativeBindings.Input_GetMouseX();
     public static float GetMouseY() => NativeBindings.Input_GetMouseY();
     public static bool IsMouseCaptured() => NativeBindings.Input_IsMouseCaptured();
+
+    public static float GetMouseDeltaX() => NativeBindings.Input_GetMouseDeltaX();
+    public static float GetMouseDeltaY() => NativeBindings.Input_GetMouseDeltaY();
 }
