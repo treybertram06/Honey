@@ -16,8 +16,7 @@
 #include "Honey/core/task_system.h"
 #include "Honey/math/math.h"
 #include "../renderer/renderer_3d/renderer_3d.h"
-#include "Honey/scripting/script_engine.h"
-#include "Honey/scripting/csharp/csharp_script_engine.h"
+#include "../scripting/csharp_script_engine.h"
 #include "cloth_system.h"
 #include "platform/vulkan/vk_renderer_api.h"
 #include "../renderer/gpu_types.h"
@@ -111,11 +110,9 @@ namespace Honey {
             }
         }
 
-        if (entity.has_component<ScriptComponent>() &&
-            CSharpScriptEngine::entity_class_exists(entity.get_component<ScriptComponent>().script_name))
+        if (entity.has_component<ScriptComponent>())
             CSharpScriptEngine::on_destroy_entity(entity);
-        else
-            ScriptEngine::on_destroy_entity(entity);
+
         release_audio_for_entity(entity);
 
         m_registry.destroy(entity);
@@ -169,7 +166,6 @@ namespace Honey {
 
         // Scripting
         {
-            ScriptEngine::on_runtime_start(this);
             CSharpScriptEngine::on_runtime_start(this);
         }
     }
@@ -179,7 +175,6 @@ namespace Honey {
         on_physics_2D_stop();
         m_cloth_system->on_stop(m_registry);
         clear_state();
-        ScriptEngine::on_runtime_stop();
         CSharpScriptEngine::on_runtime_stop();
         AudioSystem::shutdown();
     }
@@ -647,15 +642,11 @@ namespace Honey {
             if (!sc.initialized) {
                 if (CSharpScriptEngine::entity_class_exists(sc.script_name))
                     CSharpScriptEngine::on_create_entity(entity);
-                else
-                    ScriptEngine::on_create_entity(entity);
                 sc.initialized = true;
             }
 
             if (CSharpScriptEngine::entity_class_exists(sc.script_name))
                 CSharpScriptEngine::on_update_entity(entity, ts);
-            else
-                ScriptEngine::on_update_entity(entity, ts);
         }
 
         // C++ scripts
@@ -746,11 +737,8 @@ namespace Honey {
 
                 if (entity_a.is_valid() && entity_b.is_valid()) {
                     auto dispatch_begin = [&](Entity a, Entity b) {
-                        if (a.has_component<ScriptComponent>() &&
-                            CSharpScriptEngine::entity_class_exists(a.get_component<ScriptComponent>().script_name))
+                        if (a.has_component<ScriptComponent>())
                             CSharpScriptEngine::on_collision_begin(a, b);
-                        else
-                            ScriptEngine::on_collision_begin(a, b);
                     };
                     dispatch_begin(entity_a, entity_b);
                     dispatch_begin(entity_b, entity_a);
@@ -770,11 +758,8 @@ namespace Honey {
 
                 if (entity_a.is_valid() && entity_b.is_valid()) {
                     auto dispatch_end = [&](Entity a, Entity b) {
-                        if (a.has_component<ScriptComponent>() &&
-                            CSharpScriptEngine::entity_class_exists(a.get_component<ScriptComponent>().script_name))
+                        if (a.has_component<ScriptComponent>())
                             CSharpScriptEngine::on_collision_end(a, b);
-                        else
-                            ScriptEngine::on_collision_end(a, b);
                     };
                     dispatch_end(entity_a, entity_b);
                     dispatch_end(entity_b, entity_a);

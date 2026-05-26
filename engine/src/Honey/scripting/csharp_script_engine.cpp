@@ -61,12 +61,13 @@ namespace Honey {
 
         // Build absolute, normalized paths from CMake-injected defines.
         const fs::path asset_root   = fs::path(ASSET_ROOT).lexically_normal();
+        const fs::path config_root  = fs::path(CONFIG_ROOT).lexically_normal();
         const fs::path project_root = asset_root.parent_path();
 
-        const std::string runtimeconfig = (asset_root / "test.runtimeconfig.json").string();
+        const std::string runtimeconfig = (config_root / "HoneyScripting.runtimeconfig.json").string();
         const std::string dotnet_root   = fs::path(HN_DOTNET_RUNTIME_ROOT).lexically_normal().string();
         const std::string honey_dll     = (project_root / "Honey/managed/HoneyEngine/bin/Release/net10.0/HoneyEngine.dll").string();
-        s_data->user_scripts_dll        = (asset_root  / "scripts-cs/bin/Debug/net10.0/UserScripts.dll").string();
+        s_data->user_scripts_dll        = (asset_root  / "scripts/bin/Debug/net10.0/UserScripts.dll").string();
 
         HN_CORE_INFO("[CSharpScriptEngine] init — runtimeconfig: {}", runtimeconfig);
         HN_CORE_INFO("[CSharpScriptEngine] init — HoneyEngine.dll: {}", honey_dll);

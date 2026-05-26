@@ -154,15 +154,6 @@ add_library(engine STATIC
         src/Honey/scene/script_registry.h
         src/Honey/core/uuid.h
         src/Honey/core/uuid.cpp
-        src/Honey/scripting/script_engine.h
-        src/Honey/scripting/script_engine.cpp
-        src/Honey/scripting/script_glue.h
-        src/Honey/scripting/script_glue.cpp
-        src/Honey/scripting/type_proxies.h
-        src/Honey/scripting/script_properties_loader.h
-        src/Honey/scripting/script_properties_loader.cpp
-        src/Honey/scripting/script_properties_writer.h
-        src/Honey/scripting/script_properties_writer.cpp
         src/Honey/core/settings.h
         src/Honey/renderer/sprite.h
         src/Honey/renderer/sprite.cpp
@@ -233,12 +224,12 @@ add_library(engine STATIC
         src/Honey/renderer/renderer_3d/renderer_3d_pathtracer.cpp
         src/platform/vulkan/vk_gpu_profiler.h
         src/platform/vulkan/vk_gpu_profiler.cpp
-        src/Honey/scripting/csharp/dotnet_host.h
-        src/Honey/scripting/csharp/dotnet_host.cpp
-        src/Honey/scripting/csharp/csharp_script_glue.h
-        src/Honey/scripting/csharp/csharp_script_glue.cpp
-        src/Honey/scripting/csharp/csharp_script_engine.h
-        src/Honey/scripting/csharp/csharp_script_engine.cpp
+        src/Honey/scripting/dotnet_host.h
+        src/Honey/scripting/dotnet_host.cpp
+        src/Honey/scripting/csharp_script_glue.h
+        src/Honey/scripting/csharp_script_glue.cpp
+        src/Honey/scripting/csharp_script_engine.h
+        src/Honey/scripting/csharp_script_engine.cpp
 )
 
 # Apply MSVC runtime to engine itself
@@ -297,64 +288,6 @@ target_include_directories(meshoptimizer PUBLIC ${HN_MESHOPT_DIR})
 hn_force_msvc_runtime(meshoptimizer)
 
 target_link_libraries(engine PRIVATE meshoptimizer)
-
-# ------------------------------------------------------------------------------
-# Lua (vendored) + sol2 (header-only)
-# Assumes:
-#   - Lua sources are in: ${CMAKE_CURRENT_SOURCE_DIR}/vendor/lua
-#   - sol2 headers are in: ${CMAKE_CURRENT_SOURCE_DIR}/vendor/sol2/include
-#
-# If your lua.c files live in a "src" subfolder, change ${HN_LUA_DIR}/lapi.c to
-# ${HN_LUA_DIR}/src/lapi.c, etc.
-# ------------------------------------------------------------------------------
-set(HN_LUA_DIR  "${CMAKE_CURRENT_SOURCE_DIR}/vendor/lua-5.4.8/src"  CACHE PATH "Vendored Lua source root")
-set(HN_SOL2_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/sol2" CACHE PATH "Vendored sol2 root")
-
-add_library(lua STATIC
-        ${HN_LUA_DIR}/lapi.c
-        ${HN_LUA_DIR}/lcode.c
-        ${HN_LUA_DIR}/lctype.c
-        ${HN_LUA_DIR}/ldebug.c
-        ${HN_LUA_DIR}/ldo.c
-        ${HN_LUA_DIR}/ldump.c
-        ${HN_LUA_DIR}/lfunc.c
-        ${HN_LUA_DIR}/lgc.c
-        ${HN_LUA_DIR}/llex.c
-        ${HN_LUA_DIR}/lmem.c
-        ${HN_LUA_DIR}/lobject.c
-        ${HN_LUA_DIR}/lopcodes.c
-        ${HN_LUA_DIR}/lparser.c
-        ${HN_LUA_DIR}/lstate.c
-        ${HN_LUA_DIR}/lstring.c
-        ${HN_LUA_DIR}/ltable.c
-        ${HN_LUA_DIR}/ltm.c
-        ${HN_LUA_DIR}/lundump.c
-        ${HN_LUA_DIR}/lvm.c
-        ${HN_LUA_DIR}/lzio.c
-        ${HN_LUA_DIR}/lauxlib.c
-        ${HN_LUA_DIR}/lbaselib.c
-        ${HN_LUA_DIR}/lcorolib.c
-        ${HN_LUA_DIR}/ldblib.c
-        ${HN_LUA_DIR}/liolib.c
-        ${HN_LUA_DIR}/lmathlib.c
-        ${HN_LUA_DIR}/loslib.c
-        ${HN_LUA_DIR}/lstrlib.c
-        ${HN_LUA_DIR}/ltablib.c
-        ${HN_LUA_DIR}/lutf8lib.c
-        ${HN_LUA_DIR}/loadlib.c
-        ${HN_LUA_DIR}/linit.c
-)
-
-target_include_directories(lua PUBLIC ${HN_LUA_DIR})
-
-# Make sure Lua uses the same CRT on MSVC
-hn_force_msvc_runtime(lua)
-
-add_library(sol2 INTERFACE)
-target_include_directories(sol2 INTERFACE ${HN_SOL2_DIR}/include)
-
-# Link engine against Lua + sol2
-target_link_libraries(engine PRIVATE lua sol2)
 
 # ------------------------------------------------------------------------------
 # Vendor Dotnet runtime
