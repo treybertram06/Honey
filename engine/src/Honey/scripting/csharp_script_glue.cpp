@@ -16,17 +16,27 @@ namespace Honey {
     // Internal layout — must exactly mirror NativeFunctionTable in InternalCalls.cs
     // -----------------------------------------------------------------------
     struct NativeFunctionTable {
+        // return type - name - params
         void    (*Entity_GetTranslation)           (uint64_t, float*);
         void    (*Entity_SetTranslation)           (uint64_t, float*);
         void    (*Entity_GetRotation)              (uint64_t, float*);
         void    (*Entity_SetRotation)              (uint64_t, float*);
         void    (*Entity_GetScale)                 (uint64_t, float*);
         void    (*Entity_SetScale)                 (uint64_t, float*);
+
+        uint64_t (*Scene_InstantiatePrefab)         (const char*);
+
         void    (*Rigidbody2D_ApplyLinearImpulse)  (uint64_t, float, float, float);
+
         void    (*Log_Info)                        (const char*);
         void    (*Log_Warn)                        (const char*);
         void    (*Log_Error)                       (const char*);
+
         uint8_t (*Input_IsKeyDown)                 (int);
+        uint8_t (*Input_IsMouseButtonDown)         (int);
+        float   (*Input_GetMouseX)                 ();
+        float   (*Input_GetMouseY)                 ();
+        uint8_t (*Input_IsMouseCaptured)           ();
     };
 
     // -----------------------------------------------------------------------
@@ -102,6 +112,16 @@ namespace Honey {
     }
 
     // -----------------------------------------------------------------------
+    // Scene glue
+    // -----------------------------------------------------------------------
+    static uint64_t glue_scene_instantiate_prefab(const char* path) {
+        Scene* scene = get_scene();
+        HN_CORE_ASSERT(scene, "CSharpScriptGlue: no active scene");
+        Entity e = scene->instantiate_prefab(path);
+        return e.is_valid() ? (uint64_t)e.get_uuid() : 0;
+    }
+
+    // -----------------------------------------------------------------------
     // Physics glue
     // -----------------------------------------------------------------------
     static void glue_rigidbody2d_apply_linear_impulse(uint64_t id, float x, float y, float wake) {
@@ -127,6 +147,14 @@ namespace Honey {
     static uint8_t glue_input_is_key_down(int key) {
         return (uint8_t)Input::is_key_pressed((KeyCode)key);
     }
+    static uint8_t glue_input_is_mouse_button_down(int button) {
+        return (uint8_t)Input::is_mouse_button_pressed((MouseButton)button);
+    }
+
+    static float glue_input_get_mouse_x() { return Input::get_mouse_x(); }
+    static float glue_input_get_mouse_y() { return Input::get_mouse_y(); }
+
+    static uint8_t glue_input_is_mouse_captured() { return (uint8_t)Input::is_cursor_locked(); }
 
     // -----------------------------------------------------------------------
     // Public API
@@ -137,17 +165,31 @@ namespace Honey {
 
     void CSharpScriptGlue::register_functions(DotNetHost& host, std::string_view dll_path) {
         static NativeFunctionTable table = {
+            // Entity transform
             glue_entity_get_translation,
             glue_entity_set_translation,
             glue_entity_get_rotation,
             glue_entity_set_rotation,
             glue_entity_get_scale,
             glue_entity_set_scale,
+
+            // Scene
+            glue_scene_instantiate_prefab,
+
+            // Physics
             glue_rigidbody2d_apply_linear_impulse,
+
+            // Logging
             glue_log_info,
             glue_log_warn,
             glue_log_error,
+
+            // Input
             glue_input_is_key_down,
+            glue_input_is_mouse_button_down,
+            glue_input_get_mouse_x,
+            glue_input_get_mouse_y,
+            glue_input_is_mouse_captured,
         };
 
         using BootstrapFn = void(*)(NativeFunctionTable*);

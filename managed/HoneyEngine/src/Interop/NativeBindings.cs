@@ -45,6 +45,29 @@ internal static unsafe class NativeBindings {
         InternalCalls.s_table.Entity_SetScale(id, xyz);
     }
 
+    // --- Scene ---
+    internal static ulong Scene_InstantiatePrefab(string path) {
+        // Encode the path as a null-terminated UTF-8 byte buffer.
+        int maxBytes = Encoding.UTF8.GetMaxByteCount(path.Length) + 1;
+        if (maxBytes <= 512) {
+            byte* buf = stackalloc byte[512];
+            int written = Encoding.UTF8.GetBytes(path, new Span<byte>(buf, 511));
+            buf[written] = 0;
+            return InternalCalls.s_table.Scene_InstantiatePrefab(buf);
+        } else {
+            // Fallback for unusually long paths
+            byte[] bytes = Encoding.UTF8.GetBytes(path);
+            fixed (byte* p = bytes) {
+                byte* buf = (byte*)Marshal.AllocHGlobal(bytes.Length + 1);
+                Buffer.MemoryCopy(p, buf, bytes.Length + 1, bytes.Length);
+                buf[bytes.Length] = 0;
+                ulong result = InternalCalls.s_table.Scene_InstantiatePrefab(buf);
+                Marshal.FreeHGlobal((nint)buf);
+                return result;
+            }
+        }
+    }
+
     // --- Physics ---
 
     internal static void Rigidbody2D_ApplyLinearImpulse(ulong id, float x, float y, float wake) {
@@ -86,5 +109,21 @@ internal static unsafe class NativeBindings {
 
     internal static bool Input_IsKeyDown(int keyCode) {
         return InternalCalls.s_table.Input_IsKeyDown(keyCode) != 0;
+    }
+
+    internal static bool Input_IsMouseButtonDown(int button) {
+        return InternalCalls.s_table.Input_IsMouseButtonDown(button) != 0;
+    }
+
+    internal static float Input_GetMouseX() {
+        return InternalCalls.s_table.Input_GetMouseX();
+    }
+
+    internal static float Input_GetMouseY() {
+        return InternalCalls.s_table.Input_GetMouseY();
+    }
+
+    internal static bool Input_IsMouseCaptured() {
+        return InternalCalls.s_table.Input_IsMouseCaptured() != 0;
     }
 }

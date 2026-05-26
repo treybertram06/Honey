@@ -46,13 +46,19 @@ public static unsafe class ScriptRegistry {
         Log.Info($"ScriptRegistry: loaded {s_types.Count} script(s) from '{path}'");
     }
 
-    // Disposes the collectible ALC. The assembly is not immediately gone — the GC
-    // collects it once all references to types from that assembly are released.
+    // Disposes the collectible ALC. Clear type references first so the GC can collect
+    // the ALC promptly; then force a collection so the old DLL file is released before
+    // the next RegisterAssembly call maps the new one.
     [UnmanagedCallersOnly]
     public static void UnloadScriptAssembly() {
-        if (s_scriptAlc?.TryGetTarget(out var alc) == true)
-            alc.Unload();
         s_types.Clear();
+        if (s_scriptAlc?.TryGetTarget(out var alc) == true) {
+            alc.Unload();
+            s_scriptAlc = null;
+        }
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
     }
 
     // Creates a script instance by class name and returns a GCHandle as an IntPtr.

@@ -47,6 +47,8 @@ namespace Honey {
 
         // Per-entity GCHandles (nint stored as intptr_t)
         std::unordered_map<UUID, intptr_t> entity_instances;
+
+        bool assembly_loaded = false;
     };
 
     std::unique_ptr<CSharpScriptEngine::Data> CSharpScriptEngine::s_data = nullptr;
@@ -120,13 +122,15 @@ namespace Honey {
         s_data->scene_context = scene;
         CSharpScriptGlue::set_scene_context(scene);
 
-        if (!std::filesystem::exists(s_data->user_scripts_dll)) {
-            HN_CORE_WARN("[CSharpScriptEngine] UserScripts.dll not found at '{}' — build the script project first",
-                s_data->user_scripts_dll);
-            return;
+        if (!s_data->assembly_loaded) {
+            if (!std::filesystem::exists(s_data->user_scripts_dll)) {
+                HN_CORE_WARN("[CSharpScriptEngine] UserScripts.dll not found at '{}' — build the script project first",
+                    s_data->user_scripts_dll);
+                return;
+            }
+            s_data->register_assembly(s_data->user_scripts_dll.c_str());
+            s_data->assembly_loaded = true;
         }
-
-        s_data->register_assembly(s_data->user_scripts_dll.c_str());
     }
 
     void CSharpScriptEngine::on_runtime_stop() {
@@ -139,6 +143,7 @@ namespace Honey {
         s_data->entity_instances.clear();
 
         s_data->unload_assembly();
+        s_data->assembly_loaded = false;
         CSharpScriptGlue::set_scene_context(nullptr);
         s_data->scene_context = nullptr;
     }
@@ -237,10 +242,13 @@ namespace Honey {
         s_data->entity_instances.clear();
 
         s_data->unload_assembly();
+        s_data->assembly_loaded = false;
 
-        if (std::filesystem::exists(s_data->user_scripts_dll))
+        if (std::filesystem::exists(s_data->user_scripts_dll)) {
             s_data->register_assembly(s_data->user_scripts_dll.c_str());
-        else
+            s_data->assembly_loaded = true;
+        } else {
             HN_CORE_WARN("[CSharpScriptEngine] reload: DLL not found at '{}'", s_data->user_scripts_dll);
+        }
     }
 }

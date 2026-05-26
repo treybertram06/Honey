@@ -49,6 +49,21 @@ if (UNIX)
 endif ()
 
 
+set(HONEY_MANAGED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/managed/HoneyEngine")
+set(HONEY_MANAGED_DLL "${HONEY_MANAGED_DIR}/bin/Release/net10.0/HoneyEngine.dll")
+
+file(GLOB_RECURSE HONEY_MANAGED_SOURCES "${HONEY_MANAGED_DIR}/src/*.cs")
+
+add_custom_command(
+    OUTPUT "${HONEY_MANAGED_DLL}"
+    COMMAND dotnet build -c Release
+    WORKING_DIRECTORY "${HONEY_MANAGED_DIR}"
+    DEPENDS ${HONEY_MANAGED_SOURCES} "${HONEY_MANAGED_DIR}/HoneyEngine.csproj"
+    COMMENT "Building HoneyEngine managed assembly"
+)
+
+add_custom_target(HoneyManaged ALL DEPENDS "${HONEY_MANAGED_DLL}")
+
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/engine/vendor/spdlog)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/engine/vendor/glfw)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/engine/vendor/glm)
@@ -56,6 +71,8 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/vendor/yaml-cpp)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/vendor/imguizmo)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/vendor/box2d)
 add_subdirectory(engine)
+
+add_dependencies(engine HoneyManaged)
 
 target_link_libraries(engine PUBLIC
         spdlog_header_only
