@@ -2,6 +2,7 @@
 #include "renderer.h"
 #include "renderer_2d.h"
 #include "renderer_3d/renderer_3d.h"
+#include "renderer_3d/debug_renderer_3d.h"
 #include "texture_cache.h"
 #include "Honey/core/engine.h"
 #include "platform/opengl/opengl_shader.h"
@@ -33,11 +34,13 @@ namespace Honey {
         case RendererAPI::API::opengl:
             Renderer2D::init();
             Renderer3D::init();
+            DebugRenderer3D::init();
             break;
 
         case RendererAPI::API::vulkan:
             Renderer2D::init();
             Renderer3D::init();
+            DebugRenderer3D::init();
             //HN_CORE_INFO("Renderer::init - Vulkan selected (skipping Renderer2D/3D init for now).");
             break;
 
@@ -54,11 +57,13 @@ namespace Honey {
 
         switch (get_api()) {
         case RendererAPI::API::opengl:
+            DebugRenderer3D::shutdown();
             Renderer2D::shutdown();
             Renderer3D::shutdown();
             break;
 
         case RendererAPI::API::vulkan:
+            DebugRenderer3D::shutdown();
             Renderer2D::shutdown();
             Renderer3D::shutdown();
             //HN_CORE_INFO("Renderer::init - Vulkan selected (skipping Renderer2D/3D init for now).");

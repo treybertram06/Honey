@@ -55,7 +55,7 @@ namespace Honey {
     struct PhysicsSettings {
         bool enabled = true;
         int substeps = 6;
-        //bool single_step = false;
+        bool show_jolt_debug_draw = false;
     };
 
     struct EngineSettings {

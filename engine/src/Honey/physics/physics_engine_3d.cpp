@@ -11,6 +11,12 @@
 #include "Jolt/Physics/Collision/Shape/CapsuleShape.h"
 #include "Jolt/Physics/Collision/Shape/SphereShape.h"
 
+#ifdef JPH_DEBUG_RENDERER
+#include "jolt_debug_renderer.h"
+#include <Jolt/Renderer/DebugRenderer.h>
+#include <Jolt/Physics/Body/BodyManager.h>
+#endif
+
 static void jolt_trace(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -51,6 +57,11 @@ namespace Honey {
 
         m_contact_listener = std::make_unique<JoltContactListener>(scene, m_system.get());
         m_system->SetContactListener(m_contact_listener.get());
+
+#ifdef JPH_DEBUG_RENDERER
+        if (!m_jolt_debug_renderer)
+            m_jolt_debug_renderer = std::make_unique<JoltDebugRenderer>();
+#endif
 
         // Create a body for every entity that already has a RigidbodyComponent
         auto view = scene->get_registry().view<RigidbodyComponent>();
@@ -213,6 +224,25 @@ namespace Honey {
     uint32_t PhysicsEngine3D::get_active_body_count() const {
         if (!m_system) return 0;
         return m_system->GetNumActiveBodies(JPH::EBodyType::RigidBody);
+    }
+
+    void PhysicsEngine3D::draw_debug()
+    {
+#ifdef JPH_DEBUG_RENDERER
+        if (!m_system || !m_jolt_debug_renderer)
+            return;
+
+        JPH::BodyManager::DrawSettings draw_settings;
+        draw_settings.mDrawShape              = true;
+        draw_settings.mDrawShapeWireframe     = true;
+        draw_settings.mDrawBoundingBox        = false;
+        draw_settings.mDrawVelocity           = false;
+        draw_settings.mDrawMassAndInertia     = false;
+        draw_settings.mDrawSleepStats         = false;
+
+        m_system->DrawBodies(draw_settings, m_jolt_debug_renderer.get());
+        m_system->DrawConstraints(m_jolt_debug_renderer.get());
+#endif
     }
 
     PhysicsEngine3D& PhysicsEngine3D::get() {

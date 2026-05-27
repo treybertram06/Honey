@@ -9,6 +9,9 @@ namespace Honey {
     class Scene;
     class JoltJobSystem;
     class JoltContactListener;
+#ifdef JPH_DEBUG_RENDERER
+    class JoltDebugRenderer;
+#endif
 
     namespace Layers {
         static constexpr JPH::ObjectLayer NON_MOVING = 0;
@@ -87,6 +90,10 @@ namespace Honey {
         uint32_t get_body_count() const;
         uint32_t get_active_body_count() const;
 
+        // Debug rendering — call between DebugRenderer3D::begin_scene() / end_scene().
+        // No-op when JPH_DEBUG_RENDERER is not defined.
+        void draw_debug();
+
         static PhysicsEngine3D& get();
 
     private:
@@ -99,6 +106,9 @@ namespace Honey {
         std::unique_ptr<JoltJobSystem>              m_job_system;
         std::unique_ptr<JoltContactListener>        m_contact_listener;
         std::unique_ptr<JPH::TempAllocatorImpl>     m_temp_allocator;
+#ifdef JPH_DEBUG_RENDERER
+        std::unique_ptr<JoltDebugRenderer>          m_jolt_debug_renderer;
+#endif
 
         // Jolt requires these two allocation objects to outlive the system
         BPLayerInterfaceImpl    m_bp_layer_interface;

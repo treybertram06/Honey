@@ -118,6 +118,8 @@ add_library(engine STATIC
         src/Honey/renderer/renderer_3d/renderer_3d_meshlet.cpp
         src/Honey/renderer/renderer_3d/renderer_3d_shadow.h
         src/Honey/renderer/renderer_3d/renderer_3d_shadow.cpp
+        src/Honey/renderer/renderer_3d/debug_renderer_3d.h
+        src/Honey/renderer/renderer_3d/debug_renderer_3d.cpp
         src/Honey/renderer/sub_texture_2d.h
         src/Honey/renderer/sub_texture_2d.cpp
         src/Honey/renderer/framebuffer.h
@@ -236,6 +238,8 @@ add_library(engine STATIC
         src/Honey/physics/physics_engine_3d.cpp
         src/Honey/physics/jolt_contact_listener.h
         src/Honey/physics/jolt_contact_listener.cpp
+        src/Honey/physics/jolt_debug_renderer.cpp
+        src/Honey/physics/jolt_debug_renderer.h
 )
 
 # Apply MSVC runtime to engine itself
