@@ -117,6 +117,7 @@ namespace Honey::Renderer3DInternal {
         glm::mat4 scene_view_proj{1.0f};
         glm::mat4 scene_view{1.0f};
         glm::vec3 scene_camera_pos{};
+        float scene_camera_exposure = 1.0f;
         LightsUBO scene_lights{};
         TiledLightingData scene_tiled_lighting{};
         Ref<Framebuffer> current_gbuffer_fb;

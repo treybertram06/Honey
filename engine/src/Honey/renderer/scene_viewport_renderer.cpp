@@ -280,7 +280,7 @@ namespace Honey {
 
     void SceneViewportRenderer::execute_scene_pass(const SceneViewportRenderContext& context) const {
         HN_CORE_ASSERT(context.scene, "SceneViewportRenderer requires a valid scene");
-        context.scene->render(context.view, context.projection * context.view, context.camera_position, m_width, m_height);
+        context.scene->render(context.view, context.projection * context.view, context.camera_position, m_width, m_height, context.camera_exposure);
         if (context.post_scene_overlay_render)
             context.post_scene_overlay_render();
     }

@@ -202,6 +202,10 @@ namespace Honey {
             if (auto n = renderer_node["DirShadowDistance"]) {
                 s.renderer.dir_shadow_distance = n.as<float>(s.renderer.dir_shadow_distance);
             }
+
+            if (auto n = renderer_node["EditorCameraExposure"]) {
+                s.renderer.editor_camera_exposure = n.as<float>(s.renderer.editor_camera_exposure);
+            }
         }
 
         // ---------------- Physics ----------------
@@ -276,7 +280,8 @@ namespace Honey {
         out << YAML::Key << "CullMode"
             << YAML::Value << cull_mode_to_string(s.renderer.cull_mode);
 
-        out << YAML::Key << "DirShadowDistance" << YAML::Value << s.renderer.dir_shadow_distance;
+        out << YAML::Key << "DirShadowDistance"       << YAML::Value << s.renderer.dir_shadow_distance;
+        out << YAML::Key << "EditorCameraExposure"    << YAML::Value << s.renderer.editor_camera_exposure;
 
         out << YAML::EndMap; // Renderer
 

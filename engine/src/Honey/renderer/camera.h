@@ -20,6 +20,9 @@ namespace Honey {
         const float get_aspect_ratio() const { return m_aspect_ratio; }
         void set_aspect_ratio(const float aspect_ratio) { m_aspect_ratio = aspect_ratio; recalc_projection_matrix(); }
 
+        float get_exposure() const { return m_exposure; }
+        void set_exposure(const float exposure) { m_exposure = exposure; }
+
     protected:
         virtual void recalc_view_matrix() = 0;
         virtual void recalc_projection_matrix() = 0;
@@ -27,6 +30,7 @@ namespace Honey {
         glm::mat4 m_projection_matrix;
         glm::mat4 m_view_matrix;
         glm::mat4 m_view_projection_matrix;
+        float m_exposure = 1.0f;
 
         glm::vec3 m_position;
 

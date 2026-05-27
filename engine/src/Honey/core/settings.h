@@ -51,6 +51,7 @@ namespace Honey {
         TextureFilter texture_filter = TextureFilter::nearest;
 
         float dir_shadow_distance = 50.0f;
+        float editor_camera_exposure = 1.0f;
 
     };
 

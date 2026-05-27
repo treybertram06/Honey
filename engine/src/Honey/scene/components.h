@@ -186,6 +186,8 @@ namespace Honey {
         bool fixed_aspect_ratio = false;
         bool primary = false;
 
+        float exposure = 1.0f;
+
         CameraComponent() {
             // Create default orthographic camera
             camera = std::make_unique<OrthographicCamera>(orthographic_size, 1.6f, orthographic_near, orthographic_far);

@@ -39,7 +39,7 @@ namespace Honey {
         void on_update_editor(Timestep ts, EditorCamera& camera);
         void on_update_simulation(Timestep ts, EditorCamera& camera, bool paused = false);
         void render(const glm::mat4& view, const glm::mat4& view_proj, const glm::vec3& camera_pos,
-                    uint32_t viewport_w = 1280, uint32_t viewport_h = 720);
+                    uint32_t viewport_w = 1280, uint32_t viewport_h = 720, float camera_exposure = 1.0f);
 
         Entity get_primary_camera() const;
 
@@ -100,7 +100,7 @@ namespace Honey {
         void on_update_physics_2d(Timestep ts);
         void on_update_physics_3d(Timestep ts);
         void on_update_render(const glm::mat4& view, const glm::mat4& view_proj, const glm::vec3& camera_pos,
-                              uint32_t viewport_w, uint32_t viewport_h);
+                              uint32_t viewport_w, uint32_t viewport_h, float camera_exposure = 1.0f);
         void update_world_transforms();
 
         void update_streamed_assets();

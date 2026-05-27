@@ -190,6 +190,7 @@ namespace Honey {
             // Serialize common parameters
             out << YAML::Key << "FixedAspectRatio" << YAML::Value << camera_component.fixed_aspect_ratio;
             out << YAML::Key << "Primary" << YAML::Value << camera_component.primary;
+            out << YAML::Key << "Exposure" << YAML::Value << camera_component.exposure;
 
             // Serialize camera-specific data
             auto* camera = camera_component.get_camera();
@@ -724,6 +725,11 @@ namespace Honey {
                     // Set aspect ratio
                     if (camera_data_node["AspectRatio"]) {
                         camera->set_aspect_ratio(camera_data_node["AspectRatio"].as<float>());
+                    }
+
+                    if (camera_data_node["Exposure"]) {
+                        camera_component.exposure = camera_data_node["Exposure"].as<float>();
+                        camera->set_exposure(camera_component.exposure);
                     }
 
                     // Handle type-specific camera properties

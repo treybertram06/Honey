@@ -44,7 +44,7 @@ namespace Honey {
     struct CameraUBO {
         glm::mat4 view_proj{};
         glm::vec3 position{};
-        float _pad0 = 0;
+        float exposure = 0.0f;
         glm::mat4 inv_view_proj{};  // inverse VP for deferred lighting position reconstruction
         glm::mat4 view{};
     };

@@ -30,6 +30,7 @@ namespace Honey {
         glm::mat4 view{1.0f};
         glm::mat4 projection{1.0f};
         glm::vec3 camera_position{0.0f};
+        float camera_exposure = 1.0f;
         bool scene_is_runtime_camera = false;
         std::function<void()> post_scene_overlay_render;
     };

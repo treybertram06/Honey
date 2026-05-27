@@ -36,7 +36,7 @@ namespace Honey {
 		static void begin_scene(const PerspectiveCamera& camera);
 		static void begin_scene(const EditorCamera& camera);
 		static void begin_scene(const Camera& camera, const glm::mat4& transform);
-		static void begin_scene(const glm::mat4& view_proj, const glm::vec3& position, const glm::mat4& view = glm::mat4(1.0f));
+		static void begin_scene(const glm::mat4& view_proj, const glm::vec3& position, const glm::mat4& view = glm::mat4(1.0f), float exposure = 1.0f);
 
 		static void end_scene();
 

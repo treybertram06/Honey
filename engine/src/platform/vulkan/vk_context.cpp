@@ -1980,6 +1980,7 @@ namespace Honey {
             CameraUBO gpu_camera{};
             gpu_camera.view_proj = correction * g.cameraUBO.view_proj;
             gpu_camera.position = g.cameraUBO.position;
+            gpu_camera.exposure = g.cameraUBO.exposure;
             gpu_camera.inv_view_proj = glm::inverse(gpu_camera.view_proj);
             gpu_camera.view = g.cameraUBO.view;
 
