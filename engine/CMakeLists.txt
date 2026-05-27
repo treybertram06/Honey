@@ -230,6 +230,12 @@ add_library(engine STATIC
         src/Honey/scripting/csharp_script_glue.cpp
         src/Honey/scripting/csharp_script_engine.h
         src/Honey/scripting/csharp_script_engine.cpp
+        src/Honey/physics/jolt_job_system.h
+        src/Honey/physics/jolt_job_system.cpp
+        src/Honey/physics/physics_engine_3d.h
+        src/Honey/physics/physics_engine_3d.cpp
+        src/Honey/physics/jolt_contact_listener.h
+        src/Honey/physics/jolt_contact_listener.cpp
 )
 
 # Apply MSVC runtime to engine itself
@@ -273,6 +279,24 @@ hn_force_msvc_runtime(enkiTS)
 
 # Link engine against enkiTS
 target_link_libraries(engine PRIVATE enkiTS)
+
+# ------------------------------------------------------------------------------
+# JoltPhysics (vendored)
+# ------------------------------------------------------------------------------
+# Jolt build options — set before add_subdirectory
+set(JPH_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(JPH_ENABLE_ASSERTS ON CACHE BOOL "" FORCE)
+set(JPH_USE_VK OFF CACHE BOOL "" FORCE)
+set(JPH_USE_DX12 OFF CACHE BOOL "" FORCE)
+set(JPH_USE_MTL OFF CACHE BOOL "" FORCE)
+set(JPH_USE_CPU_COMPUTE OFF CACHE BOOL "" FORCE)
+set(CPP_RTTI_ENABLED ON CACHE BOOL "" FORCE)
+
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/vendor/JoltPhysics/Build)
+
+target_link_libraries(engine PRIVATE Jolt)
+target_include_directories(engine PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/JoltPhysics)
 
 # ------------------------------------------------------------------------------
 # meshoptimizer (vendored)

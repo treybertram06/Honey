@@ -320,6 +320,68 @@ namespace Honey {
         CircleCollider2DComponent(const CircleCollider2DComponent&) = default;
     };
 
+    // 3D Physics
+
+    struct RigidbodyComponent {
+        enum class BodyType { Static = 0, Dynamic, Kinematic };
+        BodyType body_type = BodyType::Static;
+
+        float mass        = 1.0f;
+        float friction    = 0.5f;
+        float restitution = 0.0f;
+        float linear_damping  = 0.0f;
+        float angular_damping = 0.05f;
+
+        bool gravity_factor = true;   // set to false for zero-g
+        bool is_sensor      = false;  // trigger volume (no collision response)
+
+        glm::vec3 initial_linear_velocity  = {0, 0, 0};
+        glm::vec3 initial_angular_velocity = {0, 0, 0};
+
+        // Runtime — not serialized
+        uint32_t runtime_body_id = 0xFFFFFFFF;   // JPH::BodyID::cInvalidBodyID
+
+        RigidbodyComponent() = default;
+        RigidbodyComponent(const RigidbodyComponent&) = default;
+    };
+
+    struct BoxCollider3DComponent {
+        glm::vec3 offset    = {0, 0, 0};
+        glm::vec3 half_size = {0.5f, 0.5f, 0.5f};
+
+        float density     = 1.0f;   // used when no RigidbodyComponent (static)
+        float friction    = 0.5f;
+        float restitution = 0.0f;
+
+        BoxCollider3DComponent() = default;
+        BoxCollider3DComponent(const BoxCollider3DComponent&) = default;
+    };
+
+    struct SphereCollider3DComponent {
+        glm::vec3 offset = {0, 0, 0};
+        float     radius = 0.5f;
+
+        float density     = 1.0f;
+        float friction    = 0.5f;
+        float restitution = 0.0f;
+
+        SphereCollider3DComponent() = default;
+        SphereCollider3DComponent(const SphereCollider3DComponent&) = default;
+    };
+
+    struct CapsuleCollider3DComponent {
+        glm::vec3 offset       = {0, 0, 0};
+        float     radius       = 0.5f;
+        float     half_height  = 1.0f;   // half of the cylindrical section
+
+        float density     = 1.0f;
+        float friction    = 0.5f;
+        float restitution = 0.0f;
+
+        CapsuleCollider3DComponent() = default;
+        CapsuleCollider3DComponent(const CapsuleCollider3DComponent&) = default;
+    };
+
     struct ClothComponent {
         uint32_t grid_width  = 128;
         uint32_t grid_height = 128;

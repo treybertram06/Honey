@@ -54,3 +54,6 @@
 [submodule "engine/vendor/tracy"]
 	path = engine/vendor/tracy
 	url = https://github.com/treybertram06/tracy.git
+[submodule "engine/vendor/JoltPhysics"]
+	path = engine/vendor/JoltPhysics
+	url = https://github.com/treybertram06/JoltPhysics.git

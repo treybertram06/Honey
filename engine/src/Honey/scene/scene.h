@@ -30,6 +30,8 @@ namespace Honey {
 
         void on_physics_2D_start();
         void on_physics_2D_stop();
+        void on_physics_3D_start();
+        void on_physics_3D_stop();
         void on_runtime_start();
         void on_runtime_stop();
 
@@ -96,6 +98,7 @@ namespace Honey {
         void on_update_scripts(Timestep ts);
         void on_update_audio(Timestep ts);
         void on_update_physics_2d(Timestep ts);
+        void on_update_physics_3d(Timestep ts);
         void on_update_render(const glm::mat4& view, const glm::mat4& view_proj, const glm::vec3& camera_pos,
                               uint32_t viewport_w, uint32_t viewport_h);
         void update_world_transforms();

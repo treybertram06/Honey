@@ -375,6 +375,68 @@ namespace Honey {
             out << YAML::EndMap;
         }
 
+        if (entity.has_component<RigidbodyComponent>()) {
+            out << YAML::Key << "RigidbodyComponent";
+            out << YAML::BeginMap;
+
+            auto& rb = entity.get_component<RigidbodyComponent>();
+            out << YAML::Key << "BodyType"        << YAML::Value << (int)rb.body_type;
+            out << YAML::Key << "Mass"            << YAML::Value << rb.mass;
+            out << YAML::Key << "Friction"        << YAML::Value << rb.friction;
+            out << YAML::Key << "Restitution"     << YAML::Value << rb.restitution;
+            out << YAML::Key << "LinearDamping"   << YAML::Value << rb.linear_damping;
+            out << YAML::Key << "AngularDamping"  << YAML::Value << rb.angular_damping;
+            out << YAML::Key << "GravityFactor"   << YAML::Value << rb.gravity_factor;
+            out << YAML::Key << "IsSensor"        << YAML::Value << rb.is_sensor;
+            out << YAML::Key << "InitialLinearVelocity"  << YAML::Value << rb.initial_linear_velocity;
+            out << YAML::Key << "InitialAngularVelocity" << YAML::Value << rb.initial_angular_velocity;
+
+            out << YAML::EndMap;
+        }
+
+        if (entity.has_component<BoxCollider3DComponent>()) {
+            out << YAML::Key << "BoxCollider3DComponent";
+            out << YAML::BeginMap;
+
+            auto& bc = entity.get_component<BoxCollider3DComponent>();
+            out << YAML::Key << "Offset"      << YAML::Value << bc.offset;
+            out << YAML::Key << "HalfSize"    << YAML::Value << bc.half_size;
+            out << YAML::Key << "Density"     << YAML::Value << bc.density;
+            out << YAML::Key << "Friction"    << YAML::Value << bc.friction;
+            out << YAML::Key << "Restitution" << YAML::Value << bc.restitution;
+
+            out << YAML::EndMap;
+        }
+
+        if (entity.has_component<SphereCollider3DComponent>()) {
+            out << YAML::Key << "SphereCollider3DComponent";
+            out << YAML::BeginMap;
+
+            auto& sc = entity.get_component<SphereCollider3DComponent>();
+            out << YAML::Key << "Offset"      << YAML::Value << sc.offset;
+            out << YAML::Key << "Radius"      << YAML::Value << sc.radius;
+            out << YAML::Key << "Density"     << YAML::Value << sc.density;
+            out << YAML::Key << "Friction"    << YAML::Value << sc.friction;
+            out << YAML::Key << "Restitution" << YAML::Value << sc.restitution;
+
+            out << YAML::EndMap;
+        }
+
+        if (entity.has_component<CapsuleCollider3DComponent>()) {
+            out << YAML::Key << "CapsuleCollider3DComponent";
+            out << YAML::BeginMap;
+
+            auto& cc = entity.get_component<CapsuleCollider3DComponent>();
+            out << YAML::Key << "Offset"      << YAML::Value << cc.offset;
+            out << YAML::Key << "Radius"      << YAML::Value << cc.radius;
+            out << YAML::Key << "HalfHeight"  << YAML::Value << cc.half_height;
+            out << YAML::Key << "Density"     << YAML::Value << cc.density;
+            out << YAML::Key << "Friction"    << YAML::Value << cc.friction;
+            out << YAML::Key << "Restitution" << YAML::Value << cc.restitution;
+
+            out << YAML::EndMap;
+        }
+
         out <<YAML::EndMap; // Entity
     }
 
@@ -815,6 +877,52 @@ namespace Honey {
 
             plc.enabled = spot_light_node["Enabled"].as<bool>();
             plc.shadows = spot_light_node["Shadows"].as<bool>();
+        }
+
+        auto rigidbody_3d_node = entity_node["RigidbodyComponent"];
+        if (rigidbody_3d_node) {
+            auto& rb = deserialized_entity.add_component<RigidbodyComponent>();
+            rb.body_type        = (RigidbodyComponent::BodyType)rigidbody_3d_node["BodyType"].as<int>();
+            rb.mass             = rigidbody_3d_node["Mass"].as<float>();
+            rb.friction         = rigidbody_3d_node["Friction"].as<float>();
+            rb.restitution      = rigidbody_3d_node["Restitution"].as<float>();
+            rb.linear_damping   = rigidbody_3d_node["LinearDamping"].as<float>();
+            rb.angular_damping  = rigidbody_3d_node["AngularDamping"].as<float>();
+            rb.gravity_factor   = rigidbody_3d_node["GravityFactor"].as<bool>();
+            rb.is_sensor        = rigidbody_3d_node["IsSensor"].as<bool>();
+            rb.initial_linear_velocity  = rigidbody_3d_node["InitialLinearVelocity"].as<glm::vec3>();
+            rb.initial_angular_velocity = rigidbody_3d_node["InitialAngularVelocity"].as<glm::vec3>();
+        }
+
+        auto box_collider_3d_node = entity_node["BoxCollider3DComponent"];
+        if (box_collider_3d_node) {
+            auto& bc = deserialized_entity.add_component<BoxCollider3DComponent>();
+            bc.offset      = box_collider_3d_node["Offset"].as<glm::vec3>();
+            bc.half_size   = box_collider_3d_node["HalfSize"].as<glm::vec3>();
+            bc.density     = box_collider_3d_node["Density"].as<float>();
+            bc.friction    = box_collider_3d_node["Friction"].as<float>();
+            bc.restitution = box_collider_3d_node["Restitution"].as<float>();
+        }
+
+        auto sphere_collider_3d_node = entity_node["SphereCollider3DComponent"];
+        if (sphere_collider_3d_node) {
+            auto& sc = deserialized_entity.add_component<SphereCollider3DComponent>();
+            sc.offset      = sphere_collider_3d_node["Offset"].as<glm::vec3>();
+            sc.radius      = sphere_collider_3d_node["Radius"].as<float>();
+            sc.density     = sphere_collider_3d_node["Density"].as<float>();
+            sc.friction    = sphere_collider_3d_node["Friction"].as<float>();
+            sc.restitution = sphere_collider_3d_node["Restitution"].as<float>();
+        }
+
+        auto capsule_collider_3d_node = entity_node["CapsuleCollider3DComponent"];
+        if (capsule_collider_3d_node) {
+            auto& cc = deserialized_entity.add_component<CapsuleCollider3DComponent>();
+            cc.offset      = capsule_collider_3d_node["Offset"].as<glm::vec3>();
+            cc.radius      = capsule_collider_3d_node["Radius"].as<float>();
+            cc.half_height = capsule_collider_3d_node["HalfHeight"].as<float>();
+            cc.density     = capsule_collider_3d_node["Density"].as<float>();
+            cc.friction    = capsule_collider_3d_node["Friction"].as<float>();
+            cc.restitution = capsule_collider_3d_node["Restitution"].as<float>();
         }
 
         return deserialized_entity;

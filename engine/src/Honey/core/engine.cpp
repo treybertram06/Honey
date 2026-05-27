@@ -9,6 +9,8 @@
 
 #include <GLFW/glfw3.h>
 
+#include "Honey/physics/physics_engine_3d.h"
+
 
 namespace Honey {
 
@@ -30,6 +32,8 @@ namespace Honey {
         TaskSystem::run_async([] {
             HN_CORE_INFO("TaskSystem init complete. Running test async task.");
         });
+
+        PhysicsEngine3D::init();
 
         const std::filesystem::path asset_root = ASSET_ROOT;
         Settings::load_from_file( asset_root / ".." / "config" / "settings.yaml" );
@@ -111,6 +115,7 @@ namespace Honey {
 
         Settings::save_to_file(std::filesystem::path(ASSET_ROOT) / ".." / "config" / "settings.yaml");
 
+        PhysicsEngine3D::shutdown();
         TaskSystem::shutdown();
     }
 
