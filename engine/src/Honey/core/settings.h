@@ -50,6 +50,8 @@ namespace Honey {
 
         TextureFilter texture_filter = TextureFilter::nearest;
 
+        float dir_shadow_distance = 50.0f;
+
     };
 
     struct PhysicsSettings {

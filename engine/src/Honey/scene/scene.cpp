@@ -956,7 +956,7 @@ namespace Honey {
                 dir_shadows_enabled = dl.shadows;
                 break;
             }
-            Renderer3D::set_directional_shadow_enabled(dir_shadows_enabled);
+            Renderer3D::set_directional_shadow_enabled(dir_shadows_enabled, Settings::get().renderer.dir_shadow_distance);
 
             auto point_light_group = m_registry.group<PointLightComponent>(entt::get<TransformComponent>);
             for (auto entity : point_light_group) {

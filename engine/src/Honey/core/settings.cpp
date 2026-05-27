@@ -198,6 +198,10 @@ namespace Honey {
             if (auto n = renderer_node["CullMode"]) {
                 s.renderer.cull_mode = string_to_cull_mode(n.as<std::string>());
             }
+
+            if (auto n = renderer_node["DirShadowDistance"]) {
+                s.renderer.dir_shadow_distance = n.as<float>(s.renderer.dir_shadow_distance);
+            }
         }
 
         // ---------------- Physics ----------------
@@ -271,6 +275,8 @@ namespace Honey {
             << YAML::Value << texture_filter_to_string(s.renderer.texture_filter);
         out << YAML::Key << "CullMode"
             << YAML::Value << cull_mode_to_string(s.renderer.cull_mode);
+
+        out << YAML::Key << "DirShadowDistance" << YAML::Value << s.renderer.dir_shadow_distance;
 
         out << YAML::EndMap; // Renderer
 
