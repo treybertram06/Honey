@@ -16,10 +16,11 @@
 #include "Honey/core/task_system.h"
 #include "Honey/math/math.h"
 #include "../renderer/renderer_3d/renderer_3d.h"
-#include "Honey/scripting/script_engine.h"
+#include "../scripting/csharp_script_engine.h"
 #include "cloth_system.h"
 #include "platform/vulkan/vk_renderer_api.h"
 #include "../renderer/gpu_types.h"
+#include "Honey/physics/physics_engine_3d.h"
 //#include "Honey/scripting/mono_script_engine.h"
 
 namespace Honey {
@@ -110,7 +111,9 @@ namespace Honey {
             }
         }
 
-        ScriptEngine::on_destroy_entity(entity);
+        if (entity.has_component<ScriptComponent>())
+            CSharpScriptEngine::on_destroy_entity(entity);
+
         release_audio_for_entity(entity);
 
         m_registry.destroy(entity);
@@ -134,6 +137,15 @@ namespace Honey {
         return {};
     }
 
+    Entity Scene::find_entity_by_name(const std::string& name) {
+        auto view = m_registry.view<TagComponent>();
+        for (auto e : view) {
+            if (view.get<TagComponent>(e).tag == name)
+                return Entity{ e, this };
+        }
+        return {};
+    }
+
     void Scene::on_physics_2D_start() {
         b2WorldDef world_def = b2DefaultWorldDef();
         world_def.gravity = {0.0f, -9.81f};
@@ -154,34 +166,36 @@ namespace Honey {
         }
     }
 
+    void Scene::on_physics_3D_start() {
+        PhysicsEngine3D::get().on_scene_start(this);
+    }
+
+    void Scene::on_physics_3D_stop() {
+        PhysicsEngine3D::get().on_scene_stop();
+    }
+
     void Scene::on_runtime_start() {
         s_active_scene = this;
         clear_state();
         on_physics_2D_start();
+        on_physics_3D_start();
         m_cloth_system->on_start(m_registry);
 
         AudioSystem::init();
 
         // Scripting
         {
-            ScriptEngine::on_runtime_start(this);
-            // Instantiate all script entities
-
-            //auto view = m_registry.view<ScriptComponent>();
-            //for (auto e : view) {
-            //    Entity entity = { e, this };
-            //    ScriptEngine::on_create_entity(entity);
-            //
-            //} // Every entities on_create is called automatically if its 'initialized' flag is false
+            CSharpScriptEngine::on_runtime_start(this);
         }
     }
 
     void Scene::on_runtime_stop() {
         s_active_scene = nullptr;
         on_physics_2D_stop();
+        on_physics_3D_stop();
         m_cloth_system->on_stop(m_registry);
         clear_state();
-        ScriptEngine::on_runtime_stop();
+        CSharpScriptEngine::on_runtime_stop();
         AudioSystem::shutdown();
     }
 
@@ -277,6 +291,7 @@ namespace Honey {
             on_update_scripts(ts);
             on_update_audio(ts);
             on_update_physics_2d(ts);
+            on_update_physics_3d(ts);
         }
 
         update_world_transforms();
@@ -300,6 +315,7 @@ namespace Honey {
             on_update_scripts(ts);
             on_update_audio(ts);
             on_update_physics_2d(ts);
+            on_update_physics_3d(ts);
         }
 
         update_world_transforms();
@@ -362,19 +378,29 @@ namespace Honey {
         }
 
         copy_component<TransformComponent>          (dst_scene_registry, src_scene_registry, entt_map);
+
+        copy_component<CameraComponent>             (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<SpriteRendererComponent>     (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<CircleRendererComponent>     (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<LineRendererComponent>       (dst_scene_registry, src_scene_registry, entt_map);
-        copy_component<CameraComponent>             (dst_scene_registry, src_scene_registry, entt_map);
+        copy_component<TextRendererComponent>       (dst_scene_registry, src_scene_registry, entt_map);
+        copy_component<MeshRendererComponent>       (dst_scene_registry, src_scene_registry, entt_map);
+
         copy_component<NativeScriptComponent>       (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<ScriptComponent>             (dst_scene_registry, src_scene_registry, entt_map);
+
         copy_component<Rigidbody2DComponent>        (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<BoxCollider2DComponent>      (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<CircleCollider2DComponent>   (dst_scene_registry, src_scene_registry, entt_map);
+        copy_component<RigidbodyComponent>          (dst_scene_registry, src_scene_registry, entt_map);
+        copy_component<BoxCollider3DComponent>      (dst_scene_registry, src_scene_registry, entt_map);
+        copy_component<SphereCollider3DComponent>   (dst_scene_registry, src_scene_registry, entt_map);
+        copy_component<CapsuleCollider3DComponent>  (dst_scene_registry, src_scene_registry, entt_map);
+
         copy_component<AudioSourceComponent>        (dst_scene_registry, src_scene_registry, entt_map);
-        copy_component<TextRendererComponent>       (dst_scene_registry, src_scene_registry, entt_map);
-        copy_component<MeshRendererComponent>       (dst_scene_registry, src_scene_registry, entt_map);
+
         copy_component<ClothComponent>              (dst_scene_registry, src_scene_registry, entt_map);
+
         copy_component<PointLightComponent>         (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<DirectionalLightComponent>   (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<SpotLightComponent>          (dst_scene_registry, src_scene_registry, entt_map);
@@ -416,21 +442,32 @@ namespace Honey {
         std::string new_name = entity.get_tag() + " (copy)";
         Entity new_entity = create_entity(new_name);
 
+        copy_component_if_exists<RelationshipComponent>         (new_entity, entity); // TODO: This is not a correct way to handle this
+
         copy_component_if_exists<TransformComponent>            (new_entity, entity);
+
+        copy_component_if_exists<CameraComponent>               (new_entity, entity);
         copy_component_if_exists<SpriteRendererComponent>       (new_entity, entity);
         copy_component_if_exists<CircleRendererComponent>       (new_entity, entity);
         copy_component_if_exists<LineRendererComponent>         (new_entity, entity);
-        copy_component_if_exists<CameraComponent>               (new_entity, entity);
+        copy_component_if_exists<TextRendererComponent>         (new_entity, entity);
+        copy_component_if_exists<MeshRendererComponent>         (new_entity, entity);
+
         copy_component_if_exists<NativeScriptComponent>         (new_entity, entity);
         copy_component_if_exists<ScriptComponent>               (new_entity, entity);
-        copy_component_if_exists<RelationshipComponent>         (new_entity, entity);
+
         copy_component_if_exists<Rigidbody2DComponent>          (new_entity, entity);
         copy_component_if_exists<BoxCollider2DComponent>        (new_entity, entity);
         copy_component_if_exists<CircleCollider2DComponent>     (new_entity, entity);
+        copy_component_if_exists<RigidbodyComponent>            (new_entity, entity);
+        copy_component_if_exists<BoxCollider3DComponent>        (new_entity, entity);
+        copy_component_if_exists<SphereCollider3DComponent>     (new_entity, entity);
+        copy_component_if_exists<CapsuleCollider3DComponent>    (new_entity, entity);
+
         copy_component_if_exists<AudioSourceComponent>          (new_entity, entity);
-        copy_component_if_exists<TextRendererComponent>         (new_entity, entity);
-        copy_component_if_exists<MeshRendererComponent>         (new_entity, entity);
+
         copy_component_if_exists<ClothComponent>                (new_entity, entity);
+
         copy_component_if_exists<DirectionalLightComponent>     (new_entity, entity);
         copy_component_if_exists<PointLightComponent>           (new_entity, entity);
         copy_component_if_exists<SpotLightComponent>            (new_entity, entity);
@@ -445,7 +482,13 @@ namespace Honey {
         SceneSerializer serializer(scene_ref);
 
         auto entity = serializer.deserialize_entity_prefab(path);
+        if (!entity.is_valid()) {
+            HN_CORE_ERROR("instantiate_prefab: failed to load prefab '{}'", path);
+            return {};
+        }
         create_physics_body(entity);
+        if (entity.has_component<RigidbodyComponent>())
+            PhysicsEngine3D::get().create_body(entity);
         //ScriptEngine::on_create_entity(entity); // Now handled by on_update
         return entity;
     }
@@ -480,6 +523,8 @@ namespace Honey {
     }
 
     void Scene::create_physics_body(Entity entity) {
+        if (!entity.is_valid())
+            return;
 
         if (entity.has_parent()) {
             HN_CORE_WARN("Rigidbody2D entity '{0}' has a parent. Detaching.", entity.get_tag());
@@ -620,7 +665,6 @@ namespace Honey {
     }
 
     void Scene::on_update_scripts(Timestep ts) {
-        // Lua scripts
         //auto view = m_registry.view<ScriptComponent>();
         //for (auto e : view) {
         //    Entity entity = { e, this };
@@ -646,11 +690,13 @@ namespace Honey {
             auto& sc = entity.get_component<ScriptComponent>();
 
             if (!sc.initialized) {
-                ScriptEngine::on_create_entity(entity);
+                if (CSharpScriptEngine::entity_class_exists(sc.script_name))
+                    CSharpScriptEngine::on_create_entity(entity);
                 sc.initialized = true;
             }
 
-            ScriptEngine::on_update_entity(entity, ts);
+            if (CSharpScriptEngine::entity_class_exists(sc.script_name))
+                CSharpScriptEngine::on_update_entity(entity, ts);
         }
 
         // C++ scripts
@@ -740,8 +786,12 @@ namespace Honey {
                 Entity entity_b = get_entity(uuid_b);
 
                 if (entity_a.is_valid() && entity_b.is_valid()) {
-                    ScriptEngine::on_collision_begin(entity_a, entity_b); // I could be checking if entity_a has a script component before calling this
-                    ScriptEngine::on_collision_begin(entity_b, entity_a); // Likewise but entity_b
+                    auto dispatch_begin = [&](Entity a, Entity b) {
+                        if (a.has_component<ScriptComponent>())
+                            CSharpScriptEngine::on_collision_begin(a, b);
+                    };
+                    dispatch_begin(entity_a, entity_b);
+                    dispatch_begin(entity_b, entity_a);
                 }
             }
             for (int i = 0; i < events.endCount; i++) {
@@ -757,8 +807,12 @@ namespace Honey {
                 Entity entity_b = get_entity(uuid_b);
 
                 if (entity_a.is_valid() && entity_b.is_valid()) {
-                    ScriptEngine::on_collision_end(entity_a, entity_b);
-                    ScriptEngine::on_collision_end(entity_b, entity_a);
+                    auto dispatch_end = [&](Entity a, Entity b) {
+                        if (a.has_component<ScriptComponent>())
+                            CSharpScriptEngine::on_collision_end(a, b);
+                    };
+                    dispatch_end(entity_a, entity_b);
+                    dispatch_end(entity_b, entity_a);
                 }
             }
 
@@ -806,8 +860,37 @@ namespace Honey {
         }
     }
 
+    void Scene::on_update_physics_3d(Timestep ts) {
+        auto& settings = Settings::get().physics;
+        if (!settings.enabled) return;
+
+        auto& engine = PhysicsEngine3D::get();
+
+        // Push editor-moved transforms into Jolt
+        auto view = m_registry.view<RigidbodyComponent, TransformComponent>();
+        for (auto e : view) {
+            auto& tc = m_registry.get<TransformComponent>(e);
+            if (!tc.dirty) continue;
+            auto& rb = view.get<RigidbodyComponent>(e);
+            if (rb.body_type == RigidbodyComponent::BodyType::Static) continue;
+            // Only push if the transform was dirtied by the editor this frame
+            engine.sync_transform_to_body(Entity{e, this});
+            tc.dirty = false;
+        }
+
+        engine.step(ts);
+
+        // Pull Jolt transforms back into ECS
+        for (auto e : view) {
+            auto& rb = view.get<RigidbodyComponent>(e);
+            if (rb.body_type == RigidbodyComponent::BodyType::Static) continue;
+            if (rb.runtime_body_id == 0xFFFFFFFF) continue;
+            engine.sync_body_to_transform(Entity{e, this});
+        }
+    }
+
     void Scene::on_update_render(const glm::mat4& view, const glm::mat4& view_proj, const glm::vec3& camera_pos,
-                                  uint32_t viewport_w, uint32_t viewport_h) {
+                                 uint32_t viewport_w, uint32_t viewport_h) {
         HN_PROFILE_FUNCTION();
 
         bool parallel_mesh_submit_enabled = Settings::get().renderer.enable_parallel_mesh_submission;

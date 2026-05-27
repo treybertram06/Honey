@@ -53,6 +53,27 @@ namespace Honey {
         return y;
     }
 
+    static float s_delta_x = 0.0f;
+    static float s_delta_y = 0.0f;
+    static float s_prev_x  = 0.0f;
+    static float s_prev_y  = 0.0f;
+    static bool  s_first_delta = true;
+
+    void Input::update_mouse_delta() {
+        auto [x, y] = get_mouse_position();
+        if (s_first_delta) {
+            s_prev_x = x;
+            s_prev_y = y;
+            s_first_delta = false;
+        }
+        s_delta_x = x - s_prev_x;
+        s_delta_y = y - s_prev_y;
+        s_prev_x  = x;
+        s_prev_y  = y;
+    }
+
+    float Input::get_mouse_delta_x() { return s_delta_x; }
+    float Input::get_mouse_delta_y() { return s_delta_y; }
 
 } // namespace Honey
 

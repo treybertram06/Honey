@@ -15,5 +15,9 @@ namespace Honey {
         static bool is_cursor_locked();
         static float get_mouse_x();
         static float get_mouse_y();
+
+        static void  update_mouse_delta();
+        static float get_mouse_delta_x();
+        static float get_mouse_delta_y();
     };
 }

@@ -3,11 +3,13 @@
 #include "engine.h"
 #include "input.h"
 #include "Honey/renderer/renderer.h"
-#include "Honey/scripting/script_engine.h"
+#include "../scripting/csharp_script_engine.h"
 #include "settings.h"
 #include "task_system.h"
 
 #include <GLFW/glfw3.h>
+
+#include "Honey/physics/physics_engine_3d.h"
 
 
 namespace Honey {
@@ -30,6 +32,8 @@ namespace Honey {
         TaskSystem::run_async([] {
             HN_CORE_INFO("TaskSystem init complete. Running test async task.");
         });
+
+        PhysicsEngine3D::init();
 
         const std::filesystem::path asset_root = ASSET_ROOT;
         Settings::load_from_file( asset_root / ".." / "config" / "settings.yaml" );
@@ -64,8 +68,7 @@ namespace Honey {
         m_imgui_layer = new ImGuiLayer();
         push_overlay(m_imgui_layer);
 
-        ScriptEngine::init();
-
+        CSharpScriptEngine::init();
 
     }
 
@@ -95,7 +98,7 @@ namespace Honey {
         }
 
         Renderer::shutdown();
-        ScriptEngine::shutdown();
+        CSharpScriptEngine::shutdown();
         Texture2D::shutdown_cache();
 
         for (Layer* layer : m_layer_stack) {
@@ -112,6 +115,7 @@ namespace Honey {
 
         Settings::save_to_file(std::filesystem::path(ASSET_ROOT) / ".." / "config" / "settings.yaml");
 
+        PhysicsEngine3D::shutdown();
         TaskSystem::shutdown();
     }
 
@@ -169,6 +173,8 @@ namespace Honey {
 
             // Execute main thread tasks
             TaskSystem::pump_main();
+
+            Input::update_mouse_delta();
 
             float time = (float)glfwGetTime();
             Timestep timestep = time - m_last_frame_time;
