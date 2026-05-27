@@ -12,6 +12,7 @@ public readonly struct Entity {
     public bool IsValid => ID != 0;
 
     public Transform Transform => new Transform(ID);
+    public Rigidbody Rigidbody => new Rigidbody(ID);
 
     public void Destroy() => NativeBindings.Entity_Destroy(ID);
 }

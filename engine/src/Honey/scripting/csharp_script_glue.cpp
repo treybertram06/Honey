@@ -9,6 +9,10 @@
 #include <cstdint>
 #include <cstring>
 
+#include "csharp_script_engine.h"
+#include "Honey/physics/physics_engine_3d.h"
+#include "Jolt/Physics/Body/BodyID.h"
+
 namespace Honey {
     Scene* CSharpScriptGlue::s_scene_context = nullptr;
 
@@ -27,6 +31,10 @@ namespace Honey {
         uint64_t (*Scene_InstantiatePrefab)         (const char*);
 
         void    (*Rigidbody2D_ApplyLinearImpulse)  (uint64_t, float, float, float);
+        void    (*Rigidbody_ApplyForce)            (uint64_t, float, float, float);
+        void    (*Rigidbody_ApplyImpulse)          (uint64_t, float, float, float);
+        void    (*Rigidbody_GetVelocity)           (uint64_t, float*);
+        void    (*Rigidbody_SetVelocity)           (uint64_t, float, float, float);
 
         void    (*Log_Info)                        (const char*);
         void    (*Log_Warn)                        (const char*);
@@ -139,6 +147,43 @@ namespace Honey {
         b2Body_ApplyLinearImpulseToCenter(body, { x, y }, wake != 0.0f);
     }
 
+    static void glue_rigidbody_apply_force(uint64_t entity_id, float x, float y, float z) {
+        Entity e = CSharpScriptEngine::get_scene_context()->get_entity(UUID{entity_id});
+        if (!e.has_component<RigidbodyComponent>()) return;
+        auto& rb = e.get_component<RigidbodyComponent>();
+        JPH::BodyID id{rb.runtime_body_id};
+        PhysicsEngine3D::get().apply_force(id, { x, y, z });
+    }
+
+    static void glue_rigidbody_apply_impulse(uint64_t entity_id, float x, float y, float z) {
+        Entity e = CSharpScriptEngine::get_scene_context()->get_entity(UUID{entity_id});
+        if (!e.has_component<RigidbodyComponent>()) return;
+        auto& rb = e.get_component<RigidbodyComponent>();
+        JPH::BodyID id{rb.runtime_body_id};
+        PhysicsEngine3D::get().apply_impulse(id, { x, y, z });
+    }
+
+    static void glue_rigidbody_get_velocity(uint64_t entity_id, float* out_xyz) {
+        Entity e = CSharpScriptEngine::get_scene_context()->get_entity(UUID{entity_id});
+        if (!e.has_component<RigidbodyComponent>()) return;
+        auto& rb = e.get_component<RigidbodyComponent>();
+        JPH::BodyID id{rb.runtime_body_id};
+
+        glm::vec3 vel = PhysicsEngine3D::get().get_velocity(id);
+        HN_CORE_ASSERT(sizeof(out_xyz) == sizeof(glm::vec3), "CSharpScriptGlue: invalid output size");
+        out_xyz[0] = vel.x;
+        out_xyz[1] = vel.y;
+        out_xyz[2] = vel.z;
+    }
+
+    static void glue_rigidbody_set_velocity(uint64_t entity_id, float x, float y, float z) {
+        Entity e = CSharpScriptEngine::get_scene_context()->get_entity(UUID{entity_id});
+        if (!e.has_component<RigidbodyComponent>()) return;
+        auto& rb = e.get_component<RigidbodyComponent>();
+        JPH::BodyID id{rb.runtime_body_id};
+        PhysicsEngine3D::get().set_velocity(id, { x, y, z });
+    }
+
     // -----------------------------------------------------------------------
     // Logging glue
     // -----------------------------------------------------------------------
@@ -207,6 +252,10 @@ namespace Honey {
 
             // Physics
             glue_rigidbody2d_apply_linear_impulse,
+            glue_rigidbody_apply_force,
+            glue_rigidbody_apply_impulse,
+            glue_rigidbody_get_velocity,
+            glue_rigidbody_set_velocity,
 
             // Logging
             glue_log_info,

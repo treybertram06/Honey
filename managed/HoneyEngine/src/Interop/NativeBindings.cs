@@ -74,6 +74,24 @@ internal static unsafe class NativeBindings {
         InternalCalls.s_table.Rigidbody2D_ApplyLinearImpulse(id, x, y, wake);
     }
 
+    internal static void Rigidbody_ApplyForce(ulong id, float x, float y, float z) {
+        InternalCalls.s_table.Rigidbody_ApplyForce(id, x, y, z);
+    }
+
+    internal static void Rigidbody_ApplyImpulse(ulong id, float x, float y, float z) {
+        InternalCalls.s_table.Rigidbody_ApplyImpulse(id, x, y, z);
+    }
+
+    internal static Vector3 Rigidbody_GetVelocity(ulong id) {
+        float* xyz = stackalloc float[3];
+        InternalCalls.s_table.Rigidbody_GetVelocity(id, xyz);
+        return new Vector3(xyz[0], xyz[1], xyz[2]);
+    }
+
+    internal static void Rigidbody_SetVelocity(ulong id, Vector3 v) {
+        InternalCalls.s_table.Rigidbody_SetVelocity(id, v.X, v.Y, v.Z);
+    }
+
     // --- Logging ---
     // Strings must be encoded as UTF-8 bytes before crossing the native boundary.
     // stackalloc avoids heap allocation for something called as often as logging.
