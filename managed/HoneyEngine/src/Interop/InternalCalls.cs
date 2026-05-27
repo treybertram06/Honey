@@ -20,6 +20,7 @@ public unsafe struct NativeFunctionTable {
     public delegate* unmanaged<ulong, float, float, float, void> Rigidbody_ApplyImpulse;
     public delegate* unmanaged<ulong, float*, void>              Rigidbody_GetVelocity;
     public delegate* unmanaged<ulong, float, float, float, void> Rigidbody_SetVelocity;
+    public delegate* unmanaged<ulong, float, float, float, void> Rigidbody_SetPosition;
 
     public delegate* unmanaged<byte*, void>                  Log_Info;
     public delegate* unmanaged<byte*, void>                  Log_Warn;

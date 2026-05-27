@@ -92,6 +92,10 @@ internal static unsafe class NativeBindings {
         InternalCalls.s_table.Rigidbody_SetVelocity(id, v.X, v.Y, v.Z);
     }
 
+    internal static void Rigidbody_SetPosition(ulong id, Vector3 v) {
+        InternalCalls.s_table.Rigidbody_SetPosition(id, v.X, v.Y, v.Z);
+    }
+
     // --- Logging ---
     // Strings must be encoded as UTF-8 bytes before crossing the native boundary.
     // stackalloc avoids heap allocation for something called as often as logging.

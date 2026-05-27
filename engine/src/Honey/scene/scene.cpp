@@ -482,7 +482,13 @@ namespace Honey {
         SceneSerializer serializer(scene_ref);
 
         auto entity = serializer.deserialize_entity_prefab(path);
+        if (!entity.is_valid()) {
+            HN_CORE_ERROR("instantiate_prefab: failed to load prefab '{}'", path);
+            return {};
+        }
         create_physics_body(entity);
+        if (entity.has_component<RigidbodyComponent>())
+            PhysicsEngine3D::get().create_body(entity);
         //ScriptEngine::on_create_entity(entity); // Now handled by on_update
         return entity;
     }
@@ -517,6 +523,8 @@ namespace Honey {
     }
 
     void Scene::create_physics_body(Entity entity) {
+        if (!entity.is_valid())
+            return;
 
         if (entity.has_parent()) {
             HN_CORE_WARN("Rigidbody2D entity '{0}' has a parent. Detaching.", entity.get_tag());
@@ -876,6 +884,7 @@ namespace Honey {
         for (auto e : view) {
             auto& rb = view.get<RigidbodyComponent>(e);
             if (rb.body_type == RigidbodyComponent::BodyType::Static) continue;
+            if (rb.runtime_body_id == 0xFFFFFFFF) continue;
             engine.sync_body_to_transform(Entity{e, this});
         }
     }

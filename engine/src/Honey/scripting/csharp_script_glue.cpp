@@ -35,6 +35,7 @@ namespace Honey {
         void    (*Rigidbody_ApplyImpulse)          (uint64_t, float, float, float);
         void    (*Rigidbody_GetVelocity)           (uint64_t, float*);
         void    (*Rigidbody_SetVelocity)           (uint64_t, float, float, float);
+        void    (*Rigidbody_SetPosition)           (uint64_t, float, float, float);
 
         void    (*Log_Info)                        (const char*);
         void    (*Log_Warn)                        (const char*);
@@ -184,6 +185,15 @@ namespace Honey {
         PhysicsEngine3D::get().set_velocity(id, { x, y, z });
     }
 
+    static void glue_rigidbody_set_position(uint64_t entity_id, float x, float y, float z) {
+        Entity e = CSharpScriptEngine::get_scene_context()->get_entity(UUID{entity_id});
+        if (!e.has_component<RigidbodyComponent>()) return;
+        auto& tc = e.get_component<TransformComponent>();
+        tc.translation = { x, y, z };
+        tc.dirty = false;
+        PhysicsEngine3D::get().sync_transform_to_body(e);
+    }
+
     // -----------------------------------------------------------------------
     // Logging glue
     // -----------------------------------------------------------------------
@@ -256,6 +266,7 @@ namespace Honey {
             glue_rigidbody_apply_impulse,
             glue_rigidbody_get_velocity,
             glue_rigidbody_set_velocity,
+            glue_rigidbody_set_position,
 
             // Logging
             glue_log_info,
