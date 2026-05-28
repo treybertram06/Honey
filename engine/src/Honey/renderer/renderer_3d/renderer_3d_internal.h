@@ -113,9 +113,11 @@ namespace Honey::Renderer3DInternal {
         std::unordered_map<PipelineVariantKey, Ref<Pipeline>, PipelineVariantKeyHash> vk_meshlet_gbuffer_pipelines;
         std::unordered_map<PipelineVariantKey, Ref<Pipeline>, PipelineVariantKeyHash> vk_gbuffer_pipelines;
         std::unordered_map<PipelineVariantKey, Ref<Pipeline>, PipelineVariantKeyHash> vk_lighting_pipelines;
+        std::unordered_map<PipelineVariantKey, Ref<Pipeline>, PipelineVariantKeyHash> vk_ssao_pipelines;
 
         glm::mat4 scene_view_proj{1.0f};
         glm::mat4 scene_view{1.0f};
+        glm::mat4 scene_projection{1.0f};
         glm::vec3 scene_camera_pos{};
         float scene_camera_exposure = 1.0f;
         LightsUBO scene_lights{};

@@ -64,10 +64,13 @@ namespace Honey {
         camera_ubo.position = camera.get_position();
         camera_ubo.view_proj = camera.get_view_projection_matrix();
         camera_ubo.view = camera.get_view_matrix();
+        camera_ubo.projection = camera.get_projection_matrix();
         camera_ubo.exposure = camera.get_exposure();
+        // Inverse matrices are calculated when the CPU side struct is copied to the GPU
 
         data.scene_view_proj           = camera_ubo.view_proj;
         data.scene_view                = camera_ubo.view;
+        data.scene_projection          = camera_ubo.projection;
         data.scene_camera_pos          = camera_ubo.position;
         data.scene_camera_exposure     = camera_ubo.exposure;
         data.scene_camera_near         = camera.get_near_clip();
@@ -113,7 +116,7 @@ namespace Honey {
         data.meshlet_draws.clear();
     }
 
-    void Renderer3D::begin_scene(const glm::mat4& view_proj, const glm::vec3& position, const glm::mat4& view, float exposure) {
+    void Renderer3D::begin_scene(const glm::mat4& view_proj, const glm::vec3& position, const glm::mat4& view, const glm::mat4& projection, float exposure) {
         HN_PROFILE_FUNCTION();
         reset_stats();
 
@@ -123,10 +126,12 @@ namespace Honey {
         camera_ubo.position = position;
         camera_ubo.view_proj = view_proj;
         camera_ubo.view = view;
+        camera_ubo.projection = projection;
         camera_ubo.exposure = exposure;
 
         data.scene_view_proj = view_proj;
         data.scene_view      = view;
+        data.scene_projection = projection;
         data.scene_camera_pos = position;
         data.scene_camera_exposure = exposure;
 

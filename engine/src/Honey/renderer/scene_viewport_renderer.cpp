@@ -10,6 +10,7 @@
 #include "Honey/renderer/renderer_2d.h"
 #include "Honey/renderer/renderer_3d/renderer_3d_shadow.h"
 #include "Honey/renderer/renderer_3d/renderer_3d_pathtracer.h"
+#include "Honey/renderer/renderer_3d/renderer_3d_ssao.h"
 #include "Honey/renderer/gpu_types.h"
 #include "Honey/scene/components.h"
 #include "Honey/scene/scene.h"
@@ -35,6 +36,7 @@ namespace Honey {
 
             Renderer3DShadow::register_frame_graph_executors();
             Renderer3DPathTracer::register_frame_graph_executors();
+            Renderer3DSSAO::register_frame_graph_executors();
 
             auto& registry = FrameGraphRegistry::get();
 
@@ -71,12 +73,15 @@ namespace Honey {
         ensure_scene_viewport_frame_graph_executors_registered();
 
         // Initialize shadow system (requires mesh shader support)
-        if (Application::get().get_vulkan_backend().supports_mesh_shader()) {
-            auto* base = Application::get().get_window().get_context();
+        {
+            auto* base   = Application::get().get_window().get_context();
             auto* vk_ctx = dynamic_cast<VulkanContext*>(base);
             if (vk_ctx) {
-                Renderer3DShadow::init(vk_ctx);
-                Renderer3DPathTracer::init(vk_ctx);
+                if (Application::get().get_vulkan_backend().supports_mesh_shader()) {
+                    Renderer3DShadow::init(vk_ctx);
+                    Renderer3DPathTracer::init(vk_ctx);
+                }
+                Renderer3DSSAO::init(vk_ctx);
             }
         }
 
@@ -105,6 +110,7 @@ namespace Honey {
     void SceneViewportRenderer::shutdown() {
         Renderer3DShadow::shutdown();
         Renderer3DPathTracer::shutdown();
+        Renderer3DSSAO::shutdown();
         m_frame_graph.reset();
         m_output_framebuffer.reset();
         m_gbuffer_framebuffer.reset();
@@ -280,7 +286,7 @@ namespace Honey {
 
     void SceneViewportRenderer::execute_scene_pass(const SceneViewportRenderContext& context) const {
         HN_CORE_ASSERT(context.scene, "SceneViewportRenderer requires a valid scene");
-        context.scene->render(context.view, context.projection * context.view, context.camera_position, m_width, m_height, context.camera_exposure);
+        context.scene->render(context.view, context.projection, context.projection * context.view, context.camera_position, m_width, m_height, context.camera_exposure);
         if (context.post_scene_overlay_render)
             context.post_scene_overlay_render();
     }

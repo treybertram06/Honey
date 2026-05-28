@@ -95,6 +95,7 @@ namespace Honey {
         CameraUBO cam_ubo{};
         cam_ubo.view_proj = data->scene_view_proj;
         cam_ubo.view      = data->scene_view;
+        cam_ubo.projection = data->scene_projection;
         cam_ubo.position  = data->scene_camera_pos;
         cam_ubo.exposure  = data->scene_camera_exposure;
         VulkanRendererAPI::submit_camera(cam_ubo);

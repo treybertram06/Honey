@@ -240,6 +240,8 @@ add_library(engine STATIC
         src/Honey/physics/jolt_contact_listener.cpp
         src/Honey/physics/jolt_debug_renderer.cpp
         src/Honey/physics/jolt_debug_renderer.h
+        src/Honey/renderer/renderer_3d/renderer_3d_ssao.h
+        src/Honey/renderer/renderer_3d/renderer_3d_ssao.cpp
 )
 
 # Apply MSVC runtime to engine itself

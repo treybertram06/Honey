@@ -47,6 +47,8 @@ namespace Honey {
         float exposure = 0.0f;
         glm::mat4 inv_view_proj{};  // inverse VP for deferred lighting position reconstruction
         glm::mat4 view{};
+        glm::mat4 projection{};
+        glm::mat4 inv_projection{};
     };
 
     struct alignas(16) GPUMaterial {

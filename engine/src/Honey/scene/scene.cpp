@@ -322,10 +322,10 @@ namespace Honey {
         update_streamed_assets();
     }
 
-    void Scene::render(const glm::mat4& view, const glm::mat4& view_proj, const glm::vec3& camera_pos,
+    void Scene::render(const glm::mat4& view, const glm::mat4& projection, const glm::mat4& view_proj, const glm::vec3& camera_pos,
                        uint32_t viewport_w, uint32_t viewport_h, float camera_exposure) {
         s_active_scene = this;
-        on_update_render(view, view_proj, camera_pos, viewport_w, viewport_h, camera_exposure);
+        on_update_render(view, projection, view_proj, camera_pos, viewport_w, viewport_h, camera_exposure);
     }
 
     void Scene::on_viewport_resize(uint32_t width, uint32_t height) {
@@ -889,7 +889,7 @@ namespace Honey {
         }
     }
 
-    void Scene::on_update_render(const glm::mat4& view, const glm::mat4& view_proj, const glm::vec3& camera_pos,
+    void Scene::on_update_render(const glm::mat4& view, const glm::mat4& projection, const glm::mat4& view_proj, const glm::vec3& camera_pos,
                                  uint32_t viewport_w, uint32_t viewport_h, float camera_exposure) {
         HN_PROFILE_FUNCTION();
 
@@ -1088,7 +1088,7 @@ namespace Honey {
 
             Renderer3D::submit_lights(lights_ubo);
             Renderer3D::submit_tiled_lighting_data(tiled_data);
-            Renderer3D::begin_scene(view_proj, camera_pos, view, camera_exposure);
+            Renderer3D::begin_scene(view_proj, camera_pos, view, projection, camera_exposure);
 
             if (!parallel_mesh_submit_enabled) {
                 HN_PROFILE_SCOPE("Render3DScene::MeshSubmissionLoop"); // This loop is INCREDIBLY slow when application is built in debug mode
