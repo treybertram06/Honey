@@ -122,6 +122,7 @@ namespace Honey::Renderer3DInternal {
         float scene_camera_exposure = 1.0f;
         LightsUBO scene_lights{};
         TiledLightingData scene_tiled_lighting{};
+        Ref<Framebuffer> current_ssao_fb;
         Ref<Framebuffer> current_gbuffer_fb;
 
         Ref<Material> default_material;

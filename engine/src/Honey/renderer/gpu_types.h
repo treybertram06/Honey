@@ -147,4 +147,12 @@ namespace Honey {
         uint32_t _pad;
     };
 
+    struct SSAOKernelUBOData {
+        glm::vec4 samples[32];   // 512 bytes
+        glm::vec2 noise_scale;   //   8 bytes
+        float     radius;        //   4 bytes
+        float     bias;          //   4 bytes
+    };
+    static_assert(sizeof(SSAOKernelUBOData) == 528, "SSAOKernelUBOData size mismatch");
+
 } // namespace Honey

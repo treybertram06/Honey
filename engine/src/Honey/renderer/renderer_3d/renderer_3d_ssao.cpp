@@ -19,17 +19,6 @@ namespace Honey {
 
     static const std::filesystem::path asset_root = ASSET_ROOT;
 
-    // ---------------------------------------------------------------------------
-    // GPU-side SSAO kernel layout (must match Renderer3D_SSAO.glsl)
-    // ---------------------------------------------------------------------------
-    struct SSAOKernelUBOData {
-        glm::vec4 samples[32];   // 512 bytes
-        glm::vec2 noise_scale;   //   8 bytes
-        float     radius;        //   4 bytes
-        float     bias;          //   4 bytes
-    };
-    static_assert(sizeof(SSAOKernelUBOData) == 528, "SSAOKernelUBOData size mismatch");
-
     namespace {
 
         static uint32_t find_memory_type_ssao(VkPhysicalDevice phys, uint32_t type_filter, VkMemoryPropertyFlags props) {
@@ -68,10 +57,6 @@ namespace Honey {
             std::unordered_map<void*, Ref<Pipeline>> blur_pipelines;
         };
         static SSAOResources* s_res = nullptr;
-
-        // -------------------------------------------------------------------
-        // Pipeline helpers
-        // -------------------------------------------------------------------
 
         Ref<Pipeline> get_or_create_ssao_pipeline(void* rp_native) {
             HN_CORE_ASSERT(s_res->ssao_set_layout != VK_NULL_HANDLE, "ssao_set_layout is null");
@@ -114,9 +99,6 @@ namespace Honey {
             return pipeline;
         }
 
-        // -------------------------------------------------------------------
-        // Resource creation helpers
-        // -------------------------------------------------------------------
 
         static void generate_ssao_kernel(glm::vec4* out, uint32_t count) {
             std::mt19937 rng{42};
@@ -138,11 +120,10 @@ namespace Honey {
             const VkPhysicalDevice phys    = s_res->vk_ctx->get_physical_device();
             const VulkanBackend*   backend = s_res->vk_ctx->get_backend();
 
-            // -----------------------------------------------------------
-            // 1. SSAO draw descriptor set layout
+            // SSAO draw descriptor set layout
             //    binding 0,1,2 = COMBINED_IMAGE_SAMPLER
             //    binding 3     = UNIFORM_BUFFER (SSAOKernelUBO)
-            // -----------------------------------------------------------
+
             static constexpr uint32_t k_ssao_binding_count = 4;
 
             VkDescriptorSetLayoutBinding bindings[k_ssao_binding_count]{};
@@ -211,11 +192,7 @@ namespace Honey {
                     s_res->ssao_sets[f] = sets[f];
             }
 
-            // -----------------------------------------------------------
-            // 2. Noise rotation texture (4x4 RGBA8 via Texture2D)
-            //    Texture2D::create + set_data handles all upload/layout complexity.
-            //    Shader reads .rg as unorm [0,1] then transforms with * 2.0 - 1.0 → [-1,1].
-            // -----------------------------------------------------------
+            // Noise rotation texture (4x4 RGBA8)
             {
                 std::mt19937 rng{7};
                 std::uniform_int_distribution<int> dist(0, 255);
@@ -231,9 +208,7 @@ namespace Honey {
                 s_res->noise_texture->set_data(noise_pixels.data(), static_cast<uint32_t>(sizeof(noise_pixels)));
             }
 
-            // -----------------------------------------------------------
-            // 3. Per-frame SSAOKernelUBO (HOST_VISIBLE | HOST_COHERENT, persistently mapped)
-            // -----------------------------------------------------------
+            // Per-frame SSAOKernelUBO (HOST_VISIBLE | HOST_COHERENT, persistently mapped)
             {
                 // Generate hemisphere samples once
                 SSAOKernelUBOData template_ubo{};
@@ -275,9 +250,7 @@ namespace Honey {
                 }
             }
 
-            // -----------------------------------------------------------
-            // 4. Write SSAO draw descriptor sets (bindings 0-3)
-            // -----------------------------------------------------------
+            // Write SSAO draw descriptors
             {
                 VkSampler sampler = backend->get_sampler_nearest();
                 HN_CORE_ASSERT(sampler, "create_ssao_resources: sampler is null");
@@ -319,9 +292,7 @@ namespace Honey {
                 }
             }
 
-            // -----------------------------------------------------------
-            // 5. Blur descriptor set layout (set=1, binding=0: COMBINED_IMAGE_SAMPLER)
-            // -----------------------------------------------------------
+            // Write blur descriptors
             {
                 VkDescriptorSetLayoutBinding blur_binding{};
                 blur_binding.binding        = 0;
@@ -484,11 +455,7 @@ namespace Honey {
 
             vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
         }
-    } // anonymous namespace
-
-    // =========================================================================
-    // Public API
-    // =========================================================================
+    }
 
     void Renderer3DSSAO::init(VulkanContext* ctx) {
         if (s_res) return;
@@ -575,11 +542,6 @@ namespace Honey {
         VkImageView ssao_raw_view = ssao_raw_vk->get_color_image_view(0);
 
         update_blur_descriptors(frame, ssao_raw_view);
-
-        // Register the blurred result with the deferred lighting pass via vk_context
-        VkImageView blurred_view = vk_fb->get_color_image_view(0);
-        VkSampler   sampler      = s_res->vk_ctx->get_backend()->get_sampler_linear();
-        s_res->vk_ctx->set_ssao_resources(blurred_view, sampler);
 
         VkPipelineLayout pipe_layout = static_cast<VkPipelineLayout>(pipe->get_native_pipeline_layout());
 

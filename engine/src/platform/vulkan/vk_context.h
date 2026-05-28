@@ -64,7 +64,7 @@ namespace Honey {
         VkDescriptorSet get_gbuffer_descriptor_set(uint32_t frame) const { return m_gbuffer_sets[frame]; }
         // Updates the G-buffer descriptor set for the given frame with the current attachments of fb.
         // Lazily no-ops if fb hasn't changed since the last call for this frame.
-        void update_gbuffer_descriptors(uint32_t frame, class VulkanFramebuffer* fb);
+        void update_gbuffer_descriptors(uint32_t frame, class VulkanFramebuffer* gbuffer_fb);
 
         // Shadow matrices SSBO (binding 6 in global set) — call once per frame before rendering.
         void upload_shadow_matrices(uint32_t frame, const ShadowMatricesSSBO& data);
@@ -74,9 +74,6 @@ namespace Honey {
         // Directional shadows SSBO (binding 7) - call once before rendering
         void upload_directional_shadows(uint32_t frame, const DirectionalShadowSSBO& data);
         void set_dir_shadow_resources(VkImageView cube_array_view, VkSampler comparison_sampler);
-
-        // SSAO result (binding 6 in gbuffer set) — set each frame by the SSAO blur executor.
-        void set_ssao_resources(VkImageView ssao_view, VkSampler sampler);
 
         // RenderDoc / debug label helpers — no-ops when debug utils extension is absent.
         void cmd_begin_debug_label(VkCommandBuffer cmd, const char* name,
@@ -393,9 +390,6 @@ private:
 
         VkImageView m_dir_shadow_map_view             = VK_NULL_HANDLE;
         VkSampler   m_dir_shadow_comparison_sampler   = VK_NULL_HANDLE;
-
-        VkImageView m_ssao_image_view = VK_NULL_HANDLE;
-        VkSampler   m_ssao_sampler    = VK_NULL_HANDLE;
 
         std::vector<void*> m_last_bound_textures[k_max_frames_in_flight];  // up to VulkanRendererAPI::k_max_texture_slots entries
         uint32_t m_last_bound_texture_count[k_max_frames_in_flight]{};

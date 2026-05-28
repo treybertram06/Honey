@@ -1148,53 +1148,47 @@ namespace Honey {
         }
     }
 
-    void VulkanContext::update_gbuffer_descriptors(uint32_t frame, VulkanFramebuffer* fb) {
+    void VulkanContext::update_gbuffer_descriptors(uint32_t frame, VulkanFramebuffer* gbuffer_fb) {
         HN_CORE_ASSERT(frame < k_max_frames_in_flight, "update_gbuffer_descriptors: frame index out of range");
-        HN_CORE_ASSERT(fb, "update_gbuffer_descriptors: fb is null");
+        HN_CORE_ASSERT(gbuffer_fb, "update_gbuffer_descriptors: fb is null");
         HN_CORE_ASSERT(m_gbuffer_sets[frame] != VK_NULL_HANDLE, "update_gbuffer_descriptors: descriptor set not allocated");
 
-        const uint64_t fb_generation = fb->get_resource_generation();
-        if (fb == m_gbuffer_last_fb[frame] &&
+        const uint64_t fb_generation = gbuffer_fb->get_resource_generation();
+        if (gbuffer_fb == m_gbuffer_last_fb[frame] &&
             fb_generation == m_gbuffer_last_fb_generation[frame])
             return;  // already up-to-date for this frame
 
         VkSampler sampler = m_backend->get_sampler_linear();
         HN_CORE_ASSERT(sampler, "update_gbuffer_descriptors: sampler is null");
 
-        // Build 7 image infos: gAlbedo (0), gNormal (1), gPBRParams (2), gDepth (3),
-        // shadowCubemap (4), directionalShadow (5), SSAO (6).
+        // Build 6 image infos: gAlbedo (0), gNormal (1), gPBRParams (2), gDepth (3),
+        // shadowCubemap (4), directionalShadow (5)
         // Color attachments are in SHADER_READ_ONLY_OPTIMAL after the G-buffer pass.
         // Depth is in DEPTH_STENCIL_READ_ONLY_OPTIMAL (finalLayout changed in vk_framebuffer.cpp).
-        VkDescriptorImageInfo image_infos[7]{};
+        VkDescriptorImageInfo image_infos[6]{};
         for (uint32_t i = 0; i < 3; ++i) {
             image_infos[i].sampler     = sampler;
-            image_infos[i].imageView   = fb->get_color_image_view(i);
+            image_infos[i].imageView   = gbuffer_fb->get_color_image_view(i);
             image_infos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         }
         image_infos[3].sampler     = sampler;
-        image_infos[3].imageView   = fb->get_depth_sampler_image_view();
+        image_infos[3].imageView   = gbuffer_fb->get_depth_sampler_image_view();
         image_infos[3].imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
 
         // binding 4: shadow cubemap — use comparison sampler + cube-array view if available.
         // Falls back to a dummy (linear sampler, gDepth view) when shadow resources aren't set yet.
         image_infos[4].sampler     = m_shadow_comparison_sampler ? m_shadow_comparison_sampler : sampler;
-        image_infos[4].imageView   = m_shadow_cube_array_view    ? m_shadow_cube_array_view    : fb->get_depth_sampler_image_view();
+        image_infos[4].imageView   = m_shadow_cube_array_view    ? m_shadow_cube_array_view    : gbuffer_fb->get_depth_sampler_image_view();
         image_infos[4].imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
 
         // binding 5: directional shadow map.
         // Falls back to a dummy (linear sampler, gDepth view) when shadow resources aren't set yet.
         image_infos[5].sampler     = m_dir_shadow_comparison_sampler ? m_dir_shadow_comparison_sampler : sampler;
-        image_infos[5].imageView   = m_dir_shadow_map_view           ? m_dir_shadow_map_view           : fb->get_depth_sampler_image_view();
+        image_infos[5].imageView   = m_dir_shadow_map_view           ? m_dir_shadow_map_view           : gbuffer_fb->get_depth_sampler_image_view();
         image_infos[5].imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
 
-        // binding 6: SSAO result — falls back to a white (depth) dummy when SSAO hasn't run yet.
-        image_infos[6].sampler     = m_ssao_sampler    ? m_ssao_sampler    : sampler;
-        image_infos[6].imageView   = m_ssao_image_view ? m_ssao_image_view : fb->get_depth_sampler_image_view();
-        image_infos[6].imageLayout = m_ssao_image_view ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-                                                       : VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-
-        constexpr uint32_t write_count = 7u;
-        VkWriteDescriptorSet writes[7]{};
+        constexpr uint32_t write_count = 6u;
+        VkWriteDescriptorSet writes[6]{};
         for (uint32_t i = 0; i < write_count; ++i) {
             writes[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             writes[i].dstSet          = m_gbuffer_sets[frame];
@@ -1206,7 +1200,7 @@ namespace Honey {
         }
 
         vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(m_device), write_count, writes, 0, nullptr);
-        m_gbuffer_last_fb[frame] = fb;
+        m_gbuffer_last_fb[frame] = gbuffer_fb;
         m_gbuffer_last_fb_generation[frame] = fb_generation;
     }
 
@@ -1288,16 +1282,6 @@ namespace Honey {
                 vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(m_device), 1, &w, 0, nullptr);
             }
         }
-    }
-
-    void VulkanContext::set_ssao_resources(VkImageView ssao_view, VkSampler sampler) {
-        if (m_ssao_image_view == ssao_view && m_ssao_sampler == sampler)
-            return;
-        m_ssao_image_view = ssao_view;
-        m_ssao_sampler    = sampler;
-        // Invalidate the gbuffer cache so binding 6 gets refreshed next frame.
-        for (uint32_t f = 0; f < k_max_frames_in_flight; ++f)
-            m_gbuffer_last_fb[f] = nullptr;
     }
 
     void VulkanContext::init() {

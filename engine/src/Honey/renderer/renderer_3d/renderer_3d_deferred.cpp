@@ -58,7 +58,12 @@ namespace Honey::Renderer3DInternal {
 
 namespace Honey {
 
-    void Renderer3D::begin_deferred_lighting_scene(Ref<Framebuffer> gbuffer_fb) {
+    void Renderer3D::write_ssao_fb_to_renderer_state(Ref<Framebuffer> ssao_fb) {
+        HN_CORE_ASSERT(Renderer3DInternal::g_renderer3d_data, "Renderer3D not initialized");
+        Renderer3DInternal::g_renderer3d_data->current_ssao_fb = ssao_fb;
+    }
+
+    void Renderer3D::write_gbuffer_to_renderer_state(Ref<Framebuffer> gbuffer_fb) {
         HN_CORE_ASSERT(Renderer3DInternal::g_renderer3d_data, "Renderer3D not initialized");
         Renderer3DInternal::g_renderer3d_data->current_gbuffer_fb = gbuffer_fb;
     }
@@ -67,7 +72,9 @@ namespace Honey {
         auto* data = Renderer3DInternal::g_renderer3d_data;
         HN_CORE_ASSERT(data, "Renderer3D not initialized");
         HN_CORE_ASSERT(data->current_gbuffer_fb,
-                       "flush_deferred_lighting: no gbuffer_fb set - call begin_deferred_lighting_scene first");
+                        "flush_deferred_lighting: no gbuffer_fb set - call write_gbuffer_to_renderer_state first");
+        HN_CORE_ASSERT(data->current_ssao_fb,
+                        "flush_deferred_lighting: no ssao_fb set - call write_ssao_fb_to_renderer_state first");
 
         if (Renderer::get_api() != RendererAPI::API::vulkan)
             return;
@@ -109,16 +116,33 @@ namespace Honey {
 
         VkPipelineLayout pipe_layout = static_cast<VkPipelineLayout>(pipe->get_native_pipeline_layout());
         Ref<Framebuffer> gbuffer_fb = data->current_gbuffer_fb;
+        Ref<Framebuffer> ssao_fb = data->current_ssao_fb;
 
         vk_ctx->queue_custom_vulkan_cmd(
-            [vk_ctx, gbuffer_fb, pipe_layout](VkCommandBuffer cmd, uint32_t, uint32_t) {
+            [vk_ctx, gbuffer_fb, ssao_fb, pipe_layout](VkCommandBuffer cmd, uint32_t, uint32_t) {
                 HN_GPU_SCOPE(cmd, "Deferred Lighting");
+
                 auto* gbuffer_vk = dynamic_cast<VulkanFramebuffer*>(gbuffer_fb.get());
                 HN_CORE_ASSERT(gbuffer_vk, "flush_deferred_lighting: current_gbuffer_fb is not a VulkanFramebuffer");
+                auto* ssao_vk = dynamic_cast<VulkanFramebuffer*>(ssao_fb.get());
+                HN_CORE_ASSERT(ssao_vk, "flush_deferred_lighting: current_ssao_fb is not a VulkanFramebuffer");
 
                 uint32_t frame = vk_ctx->get_current_frame();
                 vk_ctx->update_gbuffer_descriptors(frame, gbuffer_vk);
+
                 VkDescriptorSet gbuf_ds = vk_ctx->get_gbuffer_descriptor_set(frame);
+                VkDescriptorImageInfo ssao_info{};
+                ssao_info.sampler     = vk_ctx->get_backend()->get_sampler_linear();
+                ssao_info.imageView   = ssao_vk->get_color_image_view(0);
+                ssao_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                VkWriteDescriptorSet ssao_write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+                ssao_write.dstSet          = gbuf_ds;
+                ssao_write.dstBinding      = 6;
+                ssao_write.descriptorCount = 1;
+                ssao_write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                ssao_write.pImageInfo      = &ssao_info;
+                vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(vk_ctx->get_device()), 1, &ssao_write, 0, nullptr);
+
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe_layout, 1, 1, &gbuf_ds, 0, nullptr);
                 vkCmdDraw(cmd, 3, 1, 0, 0);
             });

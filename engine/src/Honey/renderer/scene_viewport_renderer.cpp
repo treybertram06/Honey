@@ -56,12 +56,14 @@ namespace Honey {
 
             registry.register_executor("deferred.lighting", [](FrameGraphPassContext& ctx) {
                 Ref<Framebuffer> gbuffer_fb = ctx.get_input_framebuffer("gBuffer");
-                if (!gbuffer_fb) {
-                    HN_CORE_WARN("deferred.lighting: could not get GBuffer framebuffer");
+                Ref<Framebuffer> ssao_fb = ctx.get_input_framebuffer("ssaoTexture");
+                if (!gbuffer_fb || !ssao_fb) {
+                    HN_CORE_WARN("deferred.lighting: could not get a frame graph owned framebuffer! Skipping executor");
                     return;
                 }
 
-                Renderer3D::begin_deferred_lighting_scene(gbuffer_fb);
+                Renderer3D::write_ssao_fb_to_renderer_state(ssao_fb);
+                Renderer3D::write_gbuffer_to_renderer_state(gbuffer_fb);
                 Renderer3D::flush_deferred_lighting();
             });
 

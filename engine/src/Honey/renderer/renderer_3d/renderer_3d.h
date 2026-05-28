@@ -44,7 +44,8 @@ namespace Honey {
 		static void submit_tiled_lighting_data(const TiledLightingData& data);
 
 		// Deferred lighting pass — call after begin_scene/submit_lights for the GBuffer pass.
-		static void begin_deferred_lighting_scene(Ref<Framebuffer> gbuffer_fb);
+		static void write_ssao_fb_to_renderer_state(Ref<Framebuffer> ssao_fb);
+		static void write_gbuffer_to_renderer_state(Ref<Framebuffer> gbuffer_fb);
 		static void flush_deferred_lighting();
 
 		// Generic mesh rendering
