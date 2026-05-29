@@ -31,6 +31,172 @@ namespace Honey::Renderer3DInternal {
     }
 
     namespace {
+        struct GBufferDescriptors {
+            VkDescriptorSetLayout layout = VK_NULL_HANDLE;
+            VkDescriptorPool      pool   = VK_NULL_HANDLE;
+            VkDescriptorSet       sets[VulkanContext::k_max_frames_in_flight]{};
+
+            VulkanFramebuffer* last_fb[VulkanContext::k_max_frames_in_flight]{};
+            uint64_t           last_fb_gen[VulkanContext::k_max_frames_in_flight]{};
+
+            void init(VkDevice device) {
+                HN_PROFILE_FUNCTION();
+                HN_CORE_ASSERT(device, "GBufferDescriptors::init() called without device");
+
+                // 7 bindings: gAlbedo (b=0), gNormal (b=1), gPBRParams (b=2), gDepth (b=3), shadowCubemap (b=4), directionalShadow (b=5), SSAO (b=6)
+                // All COMBINED_IMAGE_SAMPLER, FRAGMENT stage.
+                static constexpr uint32_t k_gbuffer_binding_count = 7;
+
+                VkDescriptorSetLayoutBinding bindings[k_gbuffer_binding_count]{};
+                for (uint32_t i = 0; i < k_gbuffer_binding_count; ++i) {
+                    bindings[i].binding         = i;
+                    bindings[i].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                    bindings[i].descriptorCount = 1;
+                    bindings[i].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+                }
+
+                VkDescriptorBindingFlags binding_flags[k_gbuffer_binding_count]{};  // all zero
+
+                VkDescriptorSetLayoutBindingFlagsCreateInfo binding_flags_ci{};
+                binding_flags_ci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+                binding_flags_ci.bindingCount  = k_gbuffer_binding_count;
+                binding_flags_ci.pBindingFlags = binding_flags;
+
+                VkDescriptorSetLayoutCreateInfo layout_ci{};
+                layout_ci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+                layout_ci.pNext        = &binding_flags_ci;
+                layout_ci.bindingCount = k_gbuffer_binding_count;
+                layout_ci.pBindings    = bindings;
+
+                {
+                    VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
+                    VkResult r = vkCreateDescriptorSetLayout(reinterpret_cast<VkDevice>(device), &layout_ci, nullptr, &set_layout);
+                    HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateDescriptorSetLayout (gbuffer) failed");
+                    layout = set_layout;
+                }
+
+                {
+                    VkDescriptorPoolSize pool_size{};
+                    pool_size.type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                    pool_size.descriptorCount = VulkanContext::k_max_frames_in_flight * k_gbuffer_binding_count;
+
+                    VkDescriptorPoolCreateInfo pool_ci{};
+                    pool_ci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+                    pool_ci.maxSets       = VulkanContext::k_max_frames_in_flight;
+                    pool_ci.poolSizeCount = 1;
+                    pool_ci.pPoolSizes    = &pool_size;
+
+                    VkResult r = vkCreateDescriptorPool(reinterpret_cast<VkDevice>(device), &pool_ci, nullptr, &pool);
+                    HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateDescriptorPool (gbuffer) failed");
+                }
+
+                std::vector<VkDescriptorSetLayout> layouts(VulkanContext::k_max_frames_in_flight, layout);
+
+                VkDescriptorSetAllocateInfo alloc{};
+                alloc.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+                alloc.descriptorPool     = pool;
+                alloc.descriptorSetCount = VulkanContext::k_max_frames_in_flight;
+                alloc.pSetLayouts        = layouts.data();
+
+                std::vector<VkDescriptorSet> vk_sets(VulkanContext::k_max_frames_in_flight);
+                VkResult r = vkAllocateDescriptorSets(reinterpret_cast<VkDevice>(device), &alloc, vk_sets.data());
+                HN_CORE_ASSERT(r == VK_SUCCESS, "vkAllocateDescriptorSets (gbuffer) failed");
+
+                for (uint32_t f = 0; f < VulkanContext::k_max_frames_in_flight; ++f) {
+                    sets[f]        = vk_sets[f];
+                    last_fb[f]     = nullptr;
+                    last_fb_gen[f] = 0;
+                }
+            }
+            void shutdown(VkDevice device) {
+                HN_PROFILE_FUNCTION();
+                if (!device) return;
+
+                for (uint32_t f = 0; f < VulkanContext::k_max_frames_in_flight; ++f) {
+                    sets[f]    = VK_NULL_HANDLE;
+                    last_fb[f] = nullptr;
+                    last_fb_gen[f] = 0;
+                }
+
+                if (pool) {
+                    vkDestroyDescriptorPool(reinterpret_cast<VkDevice>(device),
+                                            reinterpret_cast<VkDescriptorPool>(pool), nullptr);
+                    pool = nullptr;
+                }
+                if (layout) {
+                    vkDestroyDescriptorSetLayout(reinterpret_cast<VkDevice>(device),
+                                                 reinterpret_cast<VkDescriptorSetLayout>(layout), nullptr);
+                    layout = nullptr;
+                }
+            }
+            void update(uint32_t frame, VkDevice device, VkSampler linear,
+                        VulkanFramebuffer* gbuffer_fb,
+                        VulkanFramebuffer* shadow_cube_fb,
+                        VulkanFramebuffer* shadow_dir_fb) {
+                HN_CORE_ASSERT(frame < VulkanContext::k_max_frames_in_flight, "GBufferDescriptors::update(): frame index out of range");
+                HN_CORE_ASSERT(gbuffer_fb, "GBufferDescriptors::update(): fb is null");
+                HN_CORE_ASSERT(sets[frame] != VK_NULL_HANDLE, "GBufferDescriptors::update(): descriptor set not allocated");
+
+                const uint64_t fb_generation = gbuffer_fb->get_resource_generation();
+                if (gbuffer_fb == last_fb[frame] &&
+                    fb_generation == last_fb_gen[frame])
+                    return;  // already up-to-date for this frame
+
+                HN_CORE_ASSERT(linear, "GBufferDescriptors::update(): sampler is null");
+
+                // Build 6 image infos: gAlbedo (0), gNormal (1), gPBRParams (2), gDepth (3),
+                // shadowCubemap (4), directionalShadow (5)
+                // Color attachments are in SHADER_READ_ONLY_OPTIMAL after the G-buffer pass.
+                // Depth is in DEPTH_STENCIL_READ_ONLY_OPTIMAL (finalLayout changed in vk_framebuffer.cpp).
+                VkDescriptorImageInfo image_infos[6]{};
+                for (uint32_t i = 0; i < 3; ++i) {
+                    image_infos[i].sampler     = linear;
+                    image_infos[i].imageView   = gbuffer_fb->get_color_image_view(i);
+                    image_infos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                }
+                image_infos[3].sampler     = linear;
+                image_infos[3].imageView   = gbuffer_fb->get_depth_sampler_image_view();
+                image_infos[3].imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+
+                // binding 4: shadow cubemap. Must use get_cube_array_view() (VK_IMAGE_VIEW_TYPE_CUBE_ARRAY)
+                // to match samplerCubeArray in the shader; get_depth_sampler_image_view() is 2D_ARRAY which
+                // violates VUID-vkCmdDraw-viewType-07752. Use comparison sampler presence as the guard since
+                // it implies cube_compatible (get_cube_array_view() asserts if not cube_compatible).
+                {
+                    VkSampler cube_cmp = shadow_cube_fb->get_depth_comparison_sampler();
+                    image_infos[4].sampler   = cube_cmp ? cube_cmp : linear;
+                    image_infos[4].imageView = cube_cmp ? shadow_cube_fb->get_cube_array_view()
+                                                        : gbuffer_fb->get_depth_sampler_image_view();
+                }
+                image_infos[4].imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+
+                // binding 5: directional shadow map.
+                // Falls back to a dummy (linear sampler, gDepth view) when shadow resources aren't set yet.
+                image_infos[5].sampler     = shadow_dir_fb->get_depth_comparison_sampler()
+                ? shadow_dir_fb->get_depth_comparison_sampler() : linear;
+                image_infos[5].imageView   = shadow_dir_fb->get_depth_sampler_image_view()
+                ? shadow_dir_fb->get_depth_sampler_image_view() : gbuffer_fb->get_depth_sampler_image_view();
+                image_infos[5].imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+
+                constexpr uint32_t write_count = 6u;
+                VkWriteDescriptorSet writes[6]{};
+                for (uint32_t i = 0; i < write_count; ++i) {
+                    writes[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                    writes[i].dstSet          = sets[frame];
+                    writes[i].dstBinding      = i;
+                    writes[i].dstArrayElement = 0;
+                    writes[i].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                    writes[i].descriptorCount = 1;
+                    writes[i].pImageInfo      = &image_infos[i];
+                }
+
+                vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(device), write_count, writes, 0, nullptr);
+                last_fb[frame] = gbuffer_fb;
+                last_fb_gen[frame] = fb_generation;
+            }
+        };
+        static GBufferDescriptors* s_gbuf = nullptr;
+
         Ref<Pipeline> get_or_create_lighting_pipeline(void* rp_native) {
             PipelineVariantKey key{rp_native, 0, 0};
             auto it = g_renderer3d_data->vk_lighting_pipelines.find(key);
@@ -41,7 +207,12 @@ namespace Honey::Renderer3DInternal {
             auto* vk = dynamic_cast<VulkanContext*>(base);
             HN_CORE_ASSERT(vk, "get_or_create_lighting_pipeline: VulkanContext is null");
 
-            void* gbuffer_layout = vk->get_gbuffer_set_layout();
+            if (!s_gbuf) {
+                s_gbuf = new GBufferDescriptors();
+                s_gbuf->init(vk->get_device());
+            }
+
+            void* gbuffer_layout = s_gbuf->layout;
 
             auto spec = PipelineSpec::from_shader(asset_root / "shaders" / "Renderer3D_DeferredLighting.glsl");
             spec.depthStencil.depthTest = false;
@@ -52,6 +223,24 @@ namespace Honey::Renderer3DInternal {
             auto pipeline = Pipeline::create(spec, rp_native, gbuffer_layout);
             g_renderer3d_data->vk_lighting_pipelines.emplace(key, pipeline);
             return pipeline;
+        }
+    }
+
+
+    void shutdown_gbuffer_descriptors() {
+        if (!s_gbuf) return;
+        auto* base = Application::get().get_window().get_context();
+        if (auto* vk = dynamic_cast<VulkanContext*>(base))
+            s_gbuf->shutdown(vk->get_device());
+        delete s_gbuf;
+        s_gbuf = nullptr;
+    }
+
+    void invalidate_gbuffer_descriptors() {
+        if (!s_gbuf) return;
+        for (uint32_t f = 0; f < VulkanContext::k_max_frames_in_flight; ++f) {
+            s_gbuf->last_fb[f]     = nullptr;
+            s_gbuf->last_fb_gen[f] = 0;
         }
     }
 }
@@ -68,7 +257,7 @@ namespace Honey {
         Renderer3DInternal::g_renderer3d_data->current_gbuffer_fb = gbuffer_fb;
     }
 
-    void Renderer3D::flush_deferred_lighting() {
+    void Renderer3D::flush_deferred_lighting(Ref<Framebuffer> shadow_cube_fb, Ref<Framebuffer> shadow_dir_fb) {
         auto* data = Renderer3DInternal::g_renderer3d_data;
         HN_CORE_ASSERT(data, "Renderer3D not initialized");
         HN_CORE_ASSERT(data->current_gbuffer_fb,
@@ -119,18 +308,22 @@ namespace Honey {
         Ref<Framebuffer> ssao_fb = data->current_ssao_fb;
 
         vk_ctx->queue_custom_vulkan_cmd(
-            [vk_ctx, gbuffer_fb, ssao_fb, pipe_layout](VkCommandBuffer cmd, uint32_t, uint32_t) {
+            [vk_ctx, gbuffer_fb, ssao_fb, pipe_layout, shadow_cube_fb, shadow_dir_fb](VkCommandBuffer cmd, uint32_t, uint32_t) {
                 HN_GPU_SCOPE(cmd, "Deferred Lighting");
 
                 auto* gbuffer_vk = dynamic_cast<VulkanFramebuffer*>(gbuffer_fb.get());
                 HN_CORE_ASSERT(gbuffer_vk, "flush_deferred_lighting: current_gbuffer_fb is not a VulkanFramebuffer");
                 auto* ssao_vk = dynamic_cast<VulkanFramebuffer*>(ssao_fb.get());
                 HN_CORE_ASSERT(ssao_vk, "flush_deferred_lighting: current_ssao_fb is not a VulkanFramebuffer");
+                auto* shadow_cube_vk = dynamic_cast<VulkanFramebuffer*>(shadow_cube_fb.get());
+                HN_CORE_ASSERT(shadow_cube_vk, "flush_deferred_lighting: shadow_cube_fb is not a VulkanFramebuffer");
+                auto* shadow_dir_vk = dynamic_cast<VulkanFramebuffer*>(shadow_dir_fb.get());
+                HN_CORE_ASSERT(shadow_dir_vk, "flush_deferred_lighting: shadow_dir_fb is not a VulkanFramebuffer");
 
                 uint32_t frame = vk_ctx->get_current_frame();
-                vk_ctx->update_gbuffer_descriptors(frame, gbuffer_vk);
+                Renderer3DInternal::s_gbuf->update(frame, vk_ctx->get_device(), vk_ctx->get_backend()->get_sampler_linear(), gbuffer_vk, shadow_cube_vk, shadow_dir_vk);
+                VkDescriptorSet gbuf_ds = Renderer3DInternal::s_gbuf->sets[frame];
 
-                VkDescriptorSet gbuf_ds = vk_ctx->get_gbuffer_descriptor_set(frame);
                 VkDescriptorImageInfo ssao_info{};
                 ssao_info.sampler     = vk_ctx->get_backend()->get_sampler_linear();
                 ssao_info.imageView   = ssao_vk->get_color_image_view(0);

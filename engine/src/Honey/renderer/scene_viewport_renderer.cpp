@@ -8,6 +8,7 @@
 #include "Honey/renderer/frame_graph_registry.h"
 #include "Honey/renderer/renderer.h"
 #include "Honey/renderer/renderer_2d.h"
+#include "Honey/renderer/renderer_3d/renderer_3d.h"
 #include "Honey/renderer/renderer_3d/renderer_3d_shadow.h"
 #include "Honey/renderer/renderer_3d/renderer_3d_pathtracer.h"
 #include "Honey/renderer/renderer_3d/renderer_3d_ssao.h"
@@ -57,14 +58,16 @@ namespace Honey {
             registry.register_executor("deferred.lighting", [](FrameGraphPassContext& ctx) {
                 Ref<Framebuffer> gbuffer_fb = ctx.get_input_framebuffer("gBuffer");
                 Ref<Framebuffer> ssao_fb = ctx.get_input_framebuffer("ssaoTexture");
-                if (!gbuffer_fb || !ssao_fb) {
-                    HN_CORE_WARN("deferred.lighting: could not get a frame graph owned framebuffer! Skipping executor");
+                Ref<Framebuffer> shadow_cube_fb = ctx.get_input_framebuffer("shadowCubemap");
+                Ref<Framebuffer> shadow_dir_fb = ctx.get_input_framebuffer("shadowDirMap");
+                if (!gbuffer_fb || !ssao_fb || !shadow_cube_fb || !shadow_dir_fb) {
+                    HN_CORE_WARN("deferred.lighting: Missing frame graph inputs, skipping");
                     return;
                 }
 
                 Renderer3D::write_ssao_fb_to_renderer_state(ssao_fb);
                 Renderer3D::write_gbuffer_to_renderer_state(gbuffer_fb);
-                Renderer3D::flush_deferred_lighting();
+                Renderer3D::flush_deferred_lighting(shadow_cube_fb, shadow_dir_fb);
             });
 
             s_scene_viewport_executors_registered = true;
@@ -248,6 +251,7 @@ namespace Honey {
         Renderer3DShadow::invalidate_cubemap_resources();
         Renderer3DShadow::invalidate_dir_shadow_resources();
         Renderer3DPathTracer::invalidate_resources();
+        Renderer3D::invalidate_gbuffer_descriptors();
 
         FGCompileDiagnostics diags;
         FGCompileOptions options{};

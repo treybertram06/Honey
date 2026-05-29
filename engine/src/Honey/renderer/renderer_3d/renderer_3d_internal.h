@@ -122,6 +122,7 @@ namespace Honey::Renderer3DInternal {
         float scene_camera_exposure = 1.0f;
         LightsUBO scene_lights{};
         TiledLightingData scene_tiled_lighting{};
+
         Ref<Framebuffer> current_ssao_fb;
         Ref<Framebuffer> current_gbuffer_fb;
 
@@ -176,4 +177,6 @@ namespace Honey::Renderer3DInternal {
     Ref<Pipeline> get_or_create_meshlet_pipeline(void* rp_native, void* extra_layout, bool blend, bool cull_none);
     Ref<Pipeline> get_or_create_meshlet_gbuffer_pipeline(void* rp_native, void* extra_layout, bool cull_none);
     void flush_meshlet_draws();
+    void shutdown_gbuffer_descriptors();
+    void invalidate_gbuffer_descriptors();
 }

@@ -46,7 +46,9 @@ namespace Honey {
 		// Deferred lighting pass — call after begin_scene/submit_lights for the GBuffer pass.
 		static void write_ssao_fb_to_renderer_state(Ref<Framebuffer> ssao_fb);
 		static void write_gbuffer_to_renderer_state(Ref<Framebuffer> gbuffer_fb);
-		static void flush_deferred_lighting();
+		static void flush_deferred_lighting(Ref<Framebuffer> shadow_cube_fb, Ref<Framebuffer> shadow_dir_fb);
+		// Call when the frame graph is rebuilt so stale shadow views are re-written before the next lighting pass.
+		static void invalidate_gbuffer_descriptors();
 
 		// Generic mesh rendering
 		static void draw_mesh(const Ref<VertexArray>& vertex_array, const glm::mat4& transform, int entity_id = -1);

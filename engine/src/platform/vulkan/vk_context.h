@@ -60,19 +60,14 @@ namespace Honey {
         // Returns the font SSBO descriptor set for the given frame (all chunk sets are identical).
         VkDescriptorSet get_font_descriptor_set(uint32_t frame) const { return m_fonts_descriptor_sets[frame][0]; }
 
-        VkDescriptorSetLayout get_gbuffer_set_layout() const { return m_gbuffer_set_layout; }
-        VkDescriptorSet get_gbuffer_descriptor_set(uint32_t frame) const { return m_gbuffer_sets[frame]; }
-        // Updates the G-buffer descriptor set for the given frame with the current attachments of fb.
-        // Lazily no-ops if fb hasn't changed since the last call for this frame.
-        void update_gbuffer_descriptors(uint32_t frame, class VulkanFramebuffer* gbuffer_fb);
-
         // Shadow matrices SSBO (binding 6 in global set) — call once per frame before rendering.
         void upload_shadow_matrices(uint32_t frame, const ShadowMatricesSSBO& data);
-        // Shadow cubemap resources — set after frame graph compiles; stored for use in update_gbuffer_descriptors.
+        // Writes shadow cubemap view/sampler into set=0 binding 8 (forward pass global set).
         void set_shadow_cubemap_resources(VkImageView cube_array_view, VkSampler comparison_sampler);
 
         // Directional shadows SSBO (binding 7) - call once before rendering
         void upload_directional_shadows(uint32_t frame, const DirectionalShadowSSBO& data);
+        // Writes directional shadow map view/sampler into set=0 binding 9 (forward pass global set).
         void set_dir_shadow_resources(VkImageView cube_array_view, VkSampler comparison_sampler);
 
         // RenderDoc / debug label helpers — no-ops when debug utils extension is absent.
@@ -245,8 +240,6 @@ namespace Honey {
         void cleanup_global_descriptor_resources();
         void create_font_descriptor_resources();
         void cleanup_font_descriptor_resources();
-        void create_gbuffer_descriptor_resources();
-        void cleanup_gbuffer_descriptor_resources();
 
         bool submit_one_time_on_queue(
             VkQueue queue,
@@ -339,14 +332,6 @@ private:
         VkDescriptorPool m_font_descriptor_pool = nullptr;
         VkDescriptorSet m_fonts_descriptor_sets[k_max_frames_in_flight][k_max_chunks_per_frame]{};
 
-        // G-buffer (set=1 for deferred lighting)
-        VkDescriptorSetLayout m_gbuffer_set_layout = nullptr;
-        VkDescriptorPool      m_gbuffer_pool       = nullptr;
-        VkDescriptorSet       m_gbuffer_sets[k_max_frames_in_flight]{};
-        class VulkanFramebuffer* m_gbuffer_last_fb[k_max_frames_in_flight]{};
-        uint64_t              m_gbuffer_last_fb_generation[k_max_frames_in_flight]{};
-        //uint32_t m_chunk_ds_index[k_max_frames_in_flight]{};
-
         void* m_band_table_ubos[k_max_frames_in_flight]{};        // VkBuffer
         void* m_band_table_ubo_memories[k_max_frames_in_flight]{}; // VkDeviceMemory
         uint32_t m_band_table_ubo_size = 0;
@@ -384,12 +369,6 @@ private:
         void* m_dir_shadow_ssbos[k_max_frames_in_flight]{};        // VkBuffer
         void* m_dir_shadow_ssbo_memories[k_max_frames_in_flight]{}; // VkDeviceMemory
         uint32_t m_dir_shadow_ssbo_size = 0;
-
-        VkImageView m_shadow_cube_array_view      = VK_NULL_HANDLE;
-        VkSampler   m_shadow_comparison_sampler   = VK_NULL_HANDLE;
-
-        VkImageView m_dir_shadow_map_view             = VK_NULL_HANDLE;
-        VkSampler   m_dir_shadow_comparison_sampler   = VK_NULL_HANDLE;
 
         std::vector<void*> m_last_bound_textures[k_max_frames_in_flight];  // up to VulkanRendererAPI::k_max_texture_slots entries
         uint32_t m_last_bound_texture_count[k_max_frames_in_flight]{};

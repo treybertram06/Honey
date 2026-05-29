@@ -550,8 +550,7 @@ namespace Honey {
         if (!s_dir)
             s_dir = new DirShadowResources{};
 
-        // Register the shadow map's 2D view and comparison sampler with VulkanContext so
-        // update_gbuffer_descriptors can write them to set=1 binding=5 every frame.
+        // Register the shadow map's 2D view and comparison sampler with VulkanContext for set=0 binding=9 (forward pass).
         if (!s_dir->resources_registered) {
             VkImageView  map_view    = ctx.get_resource_depth_sampler_image_view("shadowDirMap");
             VkSampler    cmp_sampler = ctx.get_resource_depth_comparison_sampler("shadowDirMap");
