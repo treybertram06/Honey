@@ -18,6 +18,28 @@ namespace Honey {
         return std::min(required, static_cast<int>(max_units));
     }
 
+    ShaderCompiler::ShaderStage ShaderCompiler::get_stage_from_spirv_execution_model(
+        spv::ExecutionModel execution_model) {
+
+        switch (execution_model) {
+            case spv::ExecutionModel::ExecutionModelVertex:                 return ShaderStage::Vertex;
+            case spv::ExecutionModel::ExecutionModelFragment:               return ShaderStage::Fragment;
+            case spv::ExecutionModel::ExecutionModelGLCompute:              return ShaderStage::Compute;
+            case spv::ExecutionModel::ExecutionModelGeometry:               return ShaderStage::Geometry;
+            case spv::ExecutionModel::ExecutionModelTessellationControl:    return ShaderStage::TessellationControl;
+            case spv::ExecutionModel::ExecutionModelTessellationEvaluation: return ShaderStage::TessellationEvaluation;
+            case spv::ExecutionModel::ExecutionModelTaskEXT:
+            case spv::ExecutionModel::ExecutionModelTaskNV:                 return ShaderStage::Task;
+            case spv::ExecutionModel::ExecutionModelMeshEXT:
+            case spv::ExecutionModel::ExecutionModelMeshNV:                 return ShaderStage::Mesh;
+            case spv::ExecutionModel::ExecutionModelRayGenerationKHR:       return ShaderStage::RayGen;
+            case spv::ExecutionModel::ExecutionModelMissKHR:                return ShaderStage::Miss;
+            case spv::ExecutionModel::ExecutionModelClosestHitKHR:          return ShaderStage::ClosestHit;
+
+        default: return ShaderStage::Unknown;
+        }
+    }
+
 ShaderCompiler::CompilationResult ShaderCompiler::compile_glsl_to_spirv(const std::filesystem::path& shader_path) {
     CompilationResult result;
 

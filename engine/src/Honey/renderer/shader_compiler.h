@@ -5,6 +5,9 @@
 #include <vector>
 #include <string>
 
+#include "vendor/spirv-headers/include/spirv/unified1/spirv.hpp"
+
+
 // SPIRV-Cross includes
 extern "C" {
 #include <spirv_cross_c.h>
@@ -15,6 +18,8 @@ namespace Honey {
     class ShaderCompiler {
     public:
         enum class ShaderStage {
+            Unknown = 0,
+
             Vertex,
             Fragment,
             Compute,
@@ -27,6 +32,8 @@ namespace Honey {
             Miss,
             ClosestHit,
         };
+
+        static ShaderStage get_stage_from_spirv_execution_model(spv::ExecutionModel execution_model);
 
         struct CompilationResult {
             std::vector<uint32_t> vertex_spirv;

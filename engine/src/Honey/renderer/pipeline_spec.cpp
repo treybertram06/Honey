@@ -8,8 +8,12 @@
 #include <string_view>
 #include <algorithm>
 #include <unordered_set>
+#include <map>
+#include <utility>
 
 #include <spirv_reflect.hpp>
+
+#include "shader_compiler.h"
 
 namespace Honey {
 
@@ -202,7 +206,121 @@ namespace Honey {
         return out;
     }
 
-     PipelineSpec PipelineSpec::from_shader(const std::filesystem::path& path) {
+    namespace {
+        static uint32_t stage_enum_to_bit(ShaderCompiler::ShaderStage s) {
+            switch (s) {
+            case ShaderCompiler::ShaderStage::Vertex:                 return Stage_Vertex;
+            case ShaderCompiler::ShaderStage::Fragment:               return Stage_Fragment;
+            case ShaderCompiler::ShaderStage::Compute:                return Stage_Compute;
+            case ShaderCompiler::ShaderStage::Geometry:               return Stage_Geometry;
+            case ShaderCompiler::ShaderStage::TessellationControl:    return Stage_TessControl;
+            case ShaderCompiler::ShaderStage::TessellationEvaluation: return Stage_TessEval;
+            case ShaderCompiler::ShaderStage::Task:                   return Stage_Task;
+            case ShaderCompiler::ShaderStage::Mesh:                   return Stage_Mesh;
+            case ShaderCompiler::ShaderStage::RayGen:                 return Stage_RayGen;
+            case ShaderCompiler::ShaderStage::Miss:                   return Stage_Miss;
+            case ShaderCompiler::ShaderStage::ClosestHit:             return Stage_ClosestHit;
+            case ShaderCompiler::ShaderStage::Unknown:                return 0;
+            }
+            return 0;
+        }
+    } // namespace
+
+    ReflectedShader PipelineSpec::reflect_descriptor_bindings_from_spirv(const std::filesystem::path& spv_path) {
+        auto spirv = read_spirv_u32_file_local(spv_path);
+
+        spirv_cross::Compiler compiler(spirv);
+        spirv_cross::ShaderResources resources = compiler.get_shader_resources();
+        const uint32_t stage_bit =
+            stage_enum_to_bit(ShaderCompiler::get_stage_from_spirv_execution_model(compiler.get_execution_model()));
+
+        std::vector<ReflectedBinding> bindings;
+
+        auto construct_reflected_binding =
+            [&](const auto& resource_list, VkDescriptorType type, uint32_t stage) {
+                for (const auto& resource : resource_list) {
+                    const spirv_cross::SPIRType& spir_type = compiler.get_type(resource.type_id);
+                    uint32_t set = compiler.get_decoration(resource.id, spv::DecorationDescriptorSet);
+                    if (set == 0) continue; // global per-frame set stays on legacy path (for now?)
+
+                    ReflectedBinding binding{};
+                    binding.type = type;
+                    binding.name = resource.name;
+                    binding.stages = stage;
+                    binding.binding = compiler.get_decoration(resource.id, spv::DecorationBinding);
+                    binding.count = spir_type.array.empty() ? 1 : spir_type.array[0];
+                    binding.set = set;
+                    binding.is_comparison_sampler = spir_type.image.depth == 1;
+                    bindings.push_back(std::move(binding));
+                }
+        };
+
+        construct_reflected_binding(resources.sampled_images,
+            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, stage_bit);
+        construct_reflected_binding(resources.separate_images,
+            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, stage_bit);
+        construct_reflected_binding(resources.separate_samplers,
+            VK_DESCRIPTOR_TYPE_SAMPLER, stage_bit);
+        construct_reflected_binding(resources.storage_images,
+            VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, stage_bit);
+        construct_reflected_binding(resources.uniform_buffers,
+            VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, stage_bit);
+        construct_reflected_binding(resources.storage_buffers,
+            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, stage_bit);
+        construct_reflected_binding(resources.acceleration_structures,
+            VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, stage_bit);
+
+        ReflectedShader out;
+        out.bindings = std::move(bindings);
+
+        std::sort(out.bindings.begin(), out.bindings.end(), [](const auto& a, const auto& b){
+            return std::tie(a.set, a.binding) < std::tie(b.set, b.binding);
+        });
+
+        return out;
+    }
+
+    ReflectedShader PipelineSpec::reflect_descriptor_bindings_from_spirv(
+            const std::vector<std::filesystem::path>& module_spv_paths) {
+        // Merge bindings across the program's stages. Key on (set, binding): a slot that
+        // appears in more than one stage is the same resource, so we validate that the
+        // type/count agree and OR the stage bits together rather than duplicating it.
+        // std::map keeps entries ordered by (set, binding), so the result is already sorted.
+        std::map<std::pair<uint32_t, uint32_t>, ReflectedBinding> merged;
+
+        for (const auto& path : module_spv_paths) {
+            if (path.empty())
+                continue;
+
+            ReflectedShader module = reflect_descriptor_bindings_from_spirv(path);
+            for (auto& b : module.bindings) {
+                const std::pair<uint32_t, uint32_t> key{ b.set, b.binding };
+                auto it = merged.find(key);
+                if (it == merged.end()) {
+                    merged.emplace(key, std::move(b));
+                    continue;
+                }
+
+                ReflectedBinding& existing = it->second;
+                HN_CORE_ASSERT(existing.type == b.type,
+                    "Descriptor (set={}, binding={}) has conflicting types across stages ('{}' vs '{}')",
+                    b.set, b.binding, existing.name, b.name);
+                HN_CORE_ASSERT(existing.count == b.count,
+                    "Descriptor (set={}, binding={}) has conflicting array counts across stages",
+                    b.set, b.binding);
+                existing.stages |= b.stages;
+            }
+        }
+
+        ReflectedShader out;
+        out.bindings.reserve(merged.size());
+        for (auto& [key, binding] : merged)
+            out.bindings.push_back(std::move(binding));
+
+        return out;
+    }
+
+    PipelineSpec PipelineSpec::from_shader(const std::filesystem::path& path) {
         auto& rs = Settings::get().renderer;
 
         PipelineSpec spec{};
@@ -226,12 +344,14 @@ namespace Honey {
             spec.pipelineKind = PipelineKind::Compute;
             spec.vertexBindings.clear();
             spec.perColorAttachmentBlend.clear();
+            spec.reflection = reflect_descriptor_bindings_from_spirv({ spirv.compute });
             return spec;
         }
 
         if (spirv.has_mesh()) {
             spec.pipelineKind = PipelineKind::MeshShading;
             spec.vertexBindings.clear(); // mesh shaders have no vertex input
+            spec.reflection = reflect_descriptor_bindings_from_spirv({ spirv.task, spirv.mesh, spirv.fragment });
             AttachmentBlendState b0{};
             b0.enabled = rs.blending;
             spec.perColorAttachmentBlend.push_back(b0);
@@ -248,6 +368,14 @@ namespace Honey {
                        path.string());
 
         auto bindings = reflect_vertex_input_bindings_from_spirv(spirv.vertex);
+
+        spec.reflection = reflect_descriptor_bindings_from_spirv({ spirv.vertex, spirv.fragment });
+
+        // TEMP validation dump — remove once a consumer (heap-mode pipeline) reads spec.reflection.
+        HN_CORE_TRACE("Reflected {} set>=1 bindings for {}", spec.reflection.bindings.size(), path.filename().string());
+        for (const auto& b : spec.reflection.bindings)
+            HN_CORE_TRACE("  set={} binding={} type={} stages=0b{:b} count={} cmp={} name={}",
+                          b.set, b.binding, (int)b.type, b.stages, b.count, b.is_comparison_sampler, b.name);
 
         spec.vertexBindings.clear();
         spec.vertexBindings = std::move(bindings);

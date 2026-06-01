@@ -242,6 +242,7 @@ add_library(engine STATIC
         src/Honey/physics/jolt_debug_renderer.h
         src/Honey/renderer/renderer_3d/renderer_3d_ssao.h
         src/Honey/renderer/renderer_3d/renderer_3d_ssao.cpp
+        src/platform/vulkan/vk_types.h
 )
 
 # Apply MSVC runtime to engine itself
