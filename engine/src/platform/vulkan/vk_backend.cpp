@@ -1718,6 +1718,11 @@ namespace Honey {
             for (auto ext : rt_extensions)
                 device_extensions.push_back(ext);
 
+        const bool has_descriptor_heap_ext = device_supports_extensions(
+            m_physical_device, {VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME});
+        if (has_descriptor_heap_ext)
+            device_extensions.push_back(VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME);
+
 #ifdef HN_PLATFORM_MACOS
         device_extensions.push_back("VK_KHR_portability_subset");
 #endif
@@ -1744,26 +1749,24 @@ namespace Honey {
         VkPhysicalDeviceBufferDeviceAddressFeaturesKHR bda_features{};
         bda_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES_KHR;
 
-        indexing_features.pNext = &timeline_features;
-        if (has_mesh_shader_ext) {
-            timeline_features.pNext = &mesh_features;
-            mesh_features.pNext     = &vk11_features;
-        } else {
-            timeline_features.pNext = &vk11_features;
-        }
-        vk11_features.pNext    = &bda_features;
+        VkPhysicalDeviceDescriptorHeapFeaturesEXT descriptor_heap_features{};
+        descriptor_heap_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_FEATURES_EXT;
 
+        FeatureChain chain;
+        chain.add(indexing_features);
+        chain.add(timeline_features);
+        chain.add(vk11_features);
+        chain.add(bda_features);
+        if (has_mesh_shader_ext) chain.add(mesh_features);
+        if (has_descriptor_heap_ext) chain.add(descriptor_heap_features);
         if (has_ray_tracing_ext) {
-            bda_features.pNext     = &accel_features;
-            accel_features.pNext   = &rt_features;
-            rt_features.pNext      = nullptr;
-        } else {
-            bda_features.pNext     = nullptr;
+            chain.add(rt_features);
+            chain.add(accel_features);
         }
 
         VkPhysicalDeviceFeatures2 features2{};
         features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-        features2.pNext = &indexing_features;
+        features2.pNext = chain.head;
 
         vkGetPhysicalDeviceFeatures2(m_physical_device, &features2);
 
@@ -1772,12 +1775,16 @@ namespace Honey {
         m_ray_tracing_supported = (accel_features.accelerationStructure == VK_TRUE &&
                                     rt_features.rayTracingPipeline == VK_TRUE &&
                                     bda_features.bufferDeviceAddress == VK_TRUE);
+        m_descriptor_heap_supported = (descriptor_heap_features.descriptorHeap == VK_TRUE);
 
         if (!m_mesh_shader_supported)
             HN_CORE_WARN("VK_EXT_mesh_shader not available — mesh/shadow passes will be disabled.");
 
         if (!m_ray_tracing_supported)
             HN_CORE_WARN("At least one required hardware ray tracing feature is not available - hardware ray tracing passes will be disabled.");
+
+        if (!m_descriptor_heap_supported)
+            HN_CORE_ASSERT(false, "Descriptor heap features are not supported by this device");
 
         // Enable the descriptor indexing features we want (assert support first)
         HN_CORE_ASSERT(indexing_features.runtimeDescriptorArray == VK_TRUE,
@@ -1788,15 +1795,7 @@ namespace Honey {
                        "Bindless requires shaderSampledImageArrayNonUniformIndexing (VK_EXT_descriptor_indexing)");
         HN_CORE_ASSERT(m_timeline_semaphore_supported,
                        "Async upload sync requires timelineSemaphore feature support");
-        //HN_CORE_ASSERT(accel_features.accelerationStructure == VK_TRUE,
-        //                "VK_KHR_acceleration_structure: feature not supported on this device");
-        //HN_CORE_ASSERT(rt_features.rayTracingPipeline == VK_TRUE,
-        //                "VK_KHR_ray_tracing_pipeline: feature not supported on this device");
-        //HN_CORE_ASSERT(bda_features.bufferDeviceAddress == VK_TRUE,
-        //                "VK_KHR_buffer_device_address: feature not supported on this device");
 
-        // Optional but commonly used for "true bindless" (variable-sized arrays / update-after-bind)
-        // If you don't need them yet, you can leave them disabled and also omit related layout/pool flags.
         if (indexing_features.descriptorBindingVariableDescriptorCount) {
             indexing_features.descriptorBindingVariableDescriptorCount = VK_TRUE;
         }
@@ -1819,6 +1818,12 @@ namespace Honey {
             accel_features.accelerationStructure = VK_TRUE;
             rt_features.rayTracingPipeline       = VK_TRUE;
             bda_features.bufferDeviceAddress     = VK_TRUE;
+        }
+
+        if (m_descriptor_heap_supported) {
+            descriptor_heap_features.descriptorHeap = VK_TRUE;
+            bda_features.bufferDeviceAddress        = VK_TRUE;
+
         }
 
         // Keep your core features:

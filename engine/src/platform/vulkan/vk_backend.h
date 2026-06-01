@@ -253,6 +253,7 @@ namespace Honey {
         bool m_timeline_semaphore_supported = false;
         bool m_mesh_shader_supported = false;
         bool m_ray_tracing_supported = false;
+        bool m_descriptor_heap_supported = false;
         bool m_has_dedicated_compute_queue = false;
 
         // Streaming upload context (ring buffer, primarily used by the dedicated upload thread)
@@ -327,6 +328,17 @@ namespace Honey {
         static constexpr uint64_t k_deferred_destroy_frame_lag = 4;
 
         std::thread::id m_render_thread_id{};
+
+        struct FeatureChain {
+            void* head = nullptr;
+
+            template <typename T>
+            T& add(T& feature) {
+                feature.pNext = head;
+                head = &feature;
+                return feature;
+            }
+        };
 
     };
 
