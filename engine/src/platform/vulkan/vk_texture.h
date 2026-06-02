@@ -64,8 +64,6 @@ namespace Honey {
         void create_staging_buffer(uint32_t size_bytes, void*& out_buffer, void*& out_memory);
         void destroy_buffer(void*& buffer, void*& memory);
 
-        uint32_t find_memory_type(uint32_t type_filter, uint32_t props);
-
         void ensure_imgui_texture_registered();
 
     private:

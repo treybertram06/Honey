@@ -5,6 +5,7 @@
 #include "Honey/renderer/renderer.h"
 #include "Honey/renderer/shader_cache.h"
 #include "platform/vulkan/vk_framebuffer.h"
+#include "platform/vulkan/vk_utils.h"
 
 #include <array>
 #include <vector>
@@ -542,25 +543,6 @@ namespace Honey {
                 vkCmdBindIndexBuffer(cmd, idx_buf, 0, VK_INDEX_TYPE_UINT32);
                 vkCmdDrawIndexed(cmd, idx_count, 1, 0, 0, 0);
             });
-    }
-
-    // -------------------------------------------------------------------------
-    // Utility
-    // -------------------------------------------------------------------------
-
-    uint32_t VulkanClothRenderer::find_memory_type(VkPhysicalDevice phys,
-                                                    uint32_t type_filter,
-                                                    VkMemoryPropertyFlags properties)
-    {
-        VkPhysicalDeviceMemoryProperties mem_props{};
-        vkGetPhysicalDeviceMemoryProperties(phys, &mem_props);
-        for (uint32_t i = 0; i < mem_props.memoryTypeCount; ++i) {
-            if ((type_filter & (1u << i)) &&
-                (mem_props.memoryTypes[i].propertyFlags & properties) == properties)
-                return i;
-        }
-        HN_CORE_ASSERT(false, "VulkanClothRenderer::find_memory_type: no suitable memory type");
-        return 0;
     }
 
 } // namespace Honey

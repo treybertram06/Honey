@@ -245,6 +245,7 @@ add_library(engine STATIC
         src/platform/vulkan/vk_types.h
         src/platform/vulkan/vk_descriptor_heap.h
         src/platform/vulkan/vk_descriptor_heap.cpp
+        src/platform/vulkan/vk_utils.h
 )
 
 # Apply MSVC runtime to engine itself

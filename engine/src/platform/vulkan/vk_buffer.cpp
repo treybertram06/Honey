@@ -1,5 +1,6 @@
 #include "hnpch.h"
 #include "vk_buffer.h"
+#include "vk_utils.h"
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -9,19 +10,7 @@
 #include "platform/vulkan/vk_backend.h"
 
 namespace Honey {
-    static uint32_t find_memory_type(VkPhysicalDevice phys, uint32_t type_filter, VkMemoryPropertyFlags props) {
-        HN_PROFILE_FUNCTION();
-        VkPhysicalDeviceMemoryProperties mem_props{};
-        vkGetPhysicalDeviceMemoryProperties(phys, &mem_props);
 
-        for (uint32_t i = 0; i < mem_props.memoryTypeCount; i++) {
-            if ((type_filter & (1u << i)) && ((mem_props.memoryTypes[i].propertyFlags & props) == props))
-                return i;
-        }
-
-        HN_CORE_ASSERT(false, "Failed to find suitable Vulkan memory type");
-        return 0;
-    }
 
     static void create_buffer(VkDevice dev,
                               VkPhysicalDevice phys,

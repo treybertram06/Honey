@@ -64,10 +64,6 @@ namespace Honey {
 
         uint32_t active_set_index() const;
 
-        static uint32_t find_memory_type(VkPhysicalDevice phys,
-                                         uint32_t type_filter,
-                                         VkMemoryPropertyFlags properties);
-
     private:
         VulkanContext* m_context = nullptr;
         VkDevice m_device = VK_NULL_HANDLE;

@@ -40,9 +40,6 @@ namespace Honey {
         void destroy_descriptor_resources();
         void destroy_index_buffer();
 
-        static uint32_t find_memory_type(VkPhysicalDevice phys,
-                                         uint32_t type_filter,
-                                         VkMemoryPropertyFlags properties);
 
         VulkanContext*   m_context         = nullptr;
         VkDevice         m_device          = VK_NULL_HANDLE;

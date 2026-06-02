@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "imgui_impl_vulkan.h"
+#include "vk_utils.h"
 #include "Honey/core/settings.h"
 #include "Honey/core/task_system.h"
 #include "Honey/renderer/texture_cache.h"
@@ -296,19 +297,6 @@ namespace Honey {
         m_physical_device = reinterpret_cast<void*>(phys);
     }
 
-    uint32_t VulkanTexture2D::find_memory_type(uint32_t type_filter, uint32_t props) {
-        VkPhysicalDeviceMemoryProperties mem_props{};
-        vkGetPhysicalDeviceMemoryProperties(reinterpret_cast<VkPhysicalDevice>(m_physical_device), &mem_props);
-
-        for (uint32_t i = 0; i < mem_props.memoryTypeCount; i++) {
-            if ((type_filter & (1u << i)) && ((mem_props.memoryTypes[i].propertyFlags & props) == props))
-                return i;
-        }
-
-        HN_CORE_ASSERT(false, "VulkanTexture2D: failed to find suitable memory type");
-        return 0;
-    }
-
     void VulkanTexture2D::create_staging_buffer(uint32_t size_bytes, void*& out_buffer, void*& out_memory) {
         VkBufferCreateInfo bi{};
         bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -326,7 +314,7 @@ namespace Honey {
         VkMemoryAllocateInfo ai{};
         ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
         ai.allocationSize = req.size;
-        ai.memoryTypeIndex = find_memory_type(req.memoryTypeBits,
+        ai.memoryTypeIndex = find_memory_type(reinterpret_cast<VkPhysicalDevice>(m_physical_device), req.memoryTypeBits,
                                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
         VkDeviceMemory mem = VK_NULL_HANDLE;
@@ -377,7 +365,8 @@ namespace Honey {
         VkMemoryAllocateInfo ai{};
         ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
         ai.allocationSize = req.size;
-        ai.memoryTypeIndex = find_memory_type(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        ai.memoryTypeIndex = find_memory_type(reinterpret_cast<VkPhysicalDevice>(m_physical_device),
+            req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
         VkDeviceMemory mem = VK_NULL_HANDLE;
         r = vkAllocateMemory(reinterpret_cast<VkDevice>(m_device), &ai, nullptr, &mem);

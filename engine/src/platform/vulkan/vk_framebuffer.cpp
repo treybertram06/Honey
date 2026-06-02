@@ -3,6 +3,7 @@
 
 #include "Honey/renderer/framebuffer.h"
 #include "platform/vulkan/vk_backend.h"
+#include "platform/vulkan/vk_utils.h"
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -89,24 +90,6 @@ namespace Honey {
                 HN_CORE_ASSERT(false, "VulkanFramebuffer: unsupported FramebufferTextureFormat");
                 return VK_FORMAT_UNDEFINED;
             }
-        }
-
-        static uint32_t find_memory_type(VkPhysicalDevice phys,
-                                         uint32_t type_bits,
-                                         VkMemoryPropertyFlags props)
-        {
-            VkPhysicalDeviceMemoryProperties mem_props{};
-            vkGetPhysicalDeviceMemoryProperties(phys, &mem_props);
-
-            for (uint32_t i = 0; i < mem_props.memoryTypeCount; i++) {
-                if ((type_bits & (1u << i)) &&
-                    ((mem_props.memoryTypes[i].propertyFlags & props) == props))
-                {
-                    return i;
-                }
-            }
-            HN_CORE_ASSERT(false, "VulkanFramebuffer: failed to find suitable memory type");
-            return 0;
         }
 
         static VkImageAspectFlags aspect_from_format(FramebufferTextureFormat fmt) {

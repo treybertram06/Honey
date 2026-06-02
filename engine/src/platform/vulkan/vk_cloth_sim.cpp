@@ -3,6 +3,7 @@
 
 #include "Honey/core/engine.h"
 #include "Honey/renderer/renderer.h"
+#include "platform/vulkan/vk_utils.h"
 
 #include <array>
 #include <vector>
@@ -561,20 +562,4 @@ namespace Honey {
         return 0;
     }
 
-    uint32_t VulkanClothSim::find_memory_type(VkPhysicalDevice phys,
-                                              const uint32_t type_filter,
-                                              const VkMemoryPropertyFlags properties) {
-        VkPhysicalDeviceMemoryProperties mem_props{};
-        vkGetPhysicalDeviceMemoryProperties(phys, &mem_props);
-
-        for (uint32_t i = 0; i < mem_props.memoryTypeCount; ++i) {
-            if ((type_filter & (1u << i)) &&
-                ((mem_props.memoryTypes[i].propertyFlags & properties) == properties)) {
-                return i;
-            }
-        }
-
-        HN_CORE_ASSERT(false, "VulkanClothSim failed to find suitable memory type");
-        return 0;
-    }
 }
