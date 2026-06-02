@@ -15,6 +15,7 @@
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.h>
 
+#include "vk_descriptor_heap.h"
 #include "vk_pipeline_cache_blob.h"
 #include "vk_queue_lease.h"
 
@@ -58,6 +59,7 @@ namespace Honey {
         VkPhysicalDevice physical_device() const { return m_physical_device; }
         VkDevice device() const { return m_device; }
 
+        VulkanDescriptorHeap* get_descriptor_heap() { return m_descriptor_heap.get(); }
         const VulkanPipelineCacheBlob& get_pipeline_cache() const { return m_pipeline_cache; }
         VkInstance get_instance() const { return m_instance; }
         VkPhysicalDevice get_physical_device() const { return m_physical_device; }
@@ -229,6 +231,8 @@ namespace Honey {
 
         VkPhysicalDevice m_physical_device = VK_NULL_HANDLE;
         VkDevice m_device = VK_NULL_HANDLE;
+
+        Scope<VulkanDescriptorHeap> m_descriptor_heap;
 
         VulkanPipelineCacheBlob m_pipeline_cache{};
 

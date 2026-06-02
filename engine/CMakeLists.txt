@@ -243,6 +243,8 @@ add_library(engine STATIC
         src/Honey/renderer/renderer_3d/renderer_3d_ssao.h
         src/Honey/renderer/renderer_3d/renderer_3d_ssao.cpp
         src/platform/vulkan/vk_types.h
+        src/platform/vulkan/vk_descriptor_heap.h
+        src/platform/vulkan/vk_descriptor_heap.cpp
 )
 
 # Apply MSVC runtime to engine itself

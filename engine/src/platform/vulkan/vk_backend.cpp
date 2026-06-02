@@ -237,6 +237,9 @@ namespace Honey {
             shutdown_upload_context();
             shutdown_immediate_context();
 
+            if (m_descriptor_heap_supported)
+                m_descriptor_heap.reset();
+
             // Save > destroy pipeline cache while device is valid
             m_pipeline_cache.shutdown();
 
@@ -299,6 +302,9 @@ namespace Honey {
             m_families.presentFamily = surfaceFamilies.presentFamily;
 
             create_logical_device(m_families, k_desired_queues_per_family);
+
+            if (m_descriptor_heap_supported)
+                m_descriptor_heap = CreateScope<VulkanDescriptorHeap>(m_instance, m_physical_device, m_device);
 
             // Device now exists; create upload context once.
             init_upload_context();
