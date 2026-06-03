@@ -256,7 +256,7 @@ namespace Honey {
         ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
         ai.pNext = &flags_info;
         ai.allocationSize = req.size;
-        ai.memoryTypeIndex = find_memory_type(phys, req.memoryTypeBits,
+        ai.memoryTypeIndex = VulkanUtils::find_memory_type(phys, req.memoryTypeBits,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
         r = vkAllocateMemory(dev, &ai, nullptr, &out_memory);

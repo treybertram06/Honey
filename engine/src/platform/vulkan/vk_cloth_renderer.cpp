@@ -198,7 +198,7 @@ namespace Honey {
             VkMemoryAllocateInfo alloc{};
             alloc.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
             alloc.allocationSize  = req.size;
-            alloc.memoryTypeIndex = find_memory_type(
+            alloc.memoryTypeIndex = VulkanUtils::find_memory_type(
                 m_physical_device, req.memoryTypeBits,
                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
