@@ -24,8 +24,12 @@ namespace Honey {
         void begin_frame(uint32_t frame_in_flight); // reset that slot's bump cursor
         void bind(VkCommandBuffer cmd);             // bind both heaps
 
+        enum class StaticSampler : uint32_t { Linear = 0, Nearest, Anisotropic, ShadowCmp, Count, };
+
+        // resource accessors
         VkDeviceAddress resource_device_address() const { return m_resource_heap_addr; }
         VkDeviceAddress sampler_device_address()  const { return m_sampler_heap_addr; }
+        uint32_t        static_sampler_index(StaticSampler s) const { return m_static_sampler_index[(uint32_t)s]; }
 
 
     private:
@@ -86,6 +90,8 @@ namespace Honey {
         VkDeviceSize m_sampler_persistent_offset = 0;
         VkDeviceSize m_sampler_persistent_size = 0;
         VkDeviceSize m_sampler_persistent_cursor = 0;
+        Allocation m_static_sampler_alloc{};
+        uint32_t m_static_sampler_index[(uint32_t)StaticSampler::Count] = {};
 
         // Capacities and tracking
         VkDeviceSize m_resource_capacity = 4 * 1024 * 1024; // 4 MiB

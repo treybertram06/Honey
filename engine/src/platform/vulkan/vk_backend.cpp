@@ -1,5 +1,6 @@
 #include "hnpch.h"
 #include "vk_backend.h"
+#include "vk_utils.h"
 
 #include <algorithm>
 #include <cstring>
@@ -1928,45 +1929,16 @@ namespace Honey {
 
         {
             VkSamplerCreateInfo si{};
-            si.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-            si.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-            si.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-            si.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-            si.borderColor  = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-            si.unnormalizedCoordinates = VK_FALSE;
-            si.compareEnable = VK_FALSE;
-            si.compareOp     = VK_COMPARE_OP_ALWAYS;
-            si.mipLodBias    = 0.0f;
-            si.minLod        = 0.0f;
-            si.maxLod        = 0.0f;
 
-            // Nearest
-            si.magFilter  = VK_FILTER_NEAREST;
-            si.minFilter  = VK_FILTER_NEAREST;
-            si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-            si.anisotropyEnable = VK_FALSE;
-            si.maxAnisotropy    = 1.0f;
-
+            si = VulkanUtils::make_nearest_sampler_ci();
             res = vkCreateSampler(m_device, &si, nullptr, &m_sampler_nearest);
             HN_CORE_ASSERT(res == VK_SUCCESS, "vkCreateSampler failed for m_sampler_nearest: {0}", vk_result_to_string(res));
 
-            // Linear
-            si.magFilter  = VK_FILTER_LINEAR;
-            si.minFilter  = VK_FILTER_LINEAR;
-            si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-            si.anisotropyEnable = VK_FALSE;
-            si.maxAnisotropy    = 1.0f;
-
+            si = VulkanUtils::make_linear_sampler_ci();
             res = vkCreateSampler(m_device, &si, nullptr, &m_sampler_linear);
             HN_CORE_ASSERT(res == VK_SUCCESS, "vkCreateSampler failed for m_sampler_linear: {0}", vk_result_to_string(res));
 
-            // Anisotropic (linear filtering + anisotropy)
-            si.magFilter  = VK_FILTER_LINEAR;
-            si.minFilter  = VK_FILTER_LINEAR;
-            si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-            si.anisotropyEnable = VK_TRUE;
-            si.maxAnisotropy    = std::max(1.0f, m_max_anisotropy);
-
+            si = VulkanUtils::make_anisotropic_sampler_ci(m_max_anisotropy);
             res = vkCreateSampler(m_device, &si, nullptr, &m_sampler_aniso);
             HN_CORE_ASSERT(res == VK_SUCCESS, "vkCreateSampler failed for m_sampler_aniso: {0}", vk_result_to_string(res));
         }

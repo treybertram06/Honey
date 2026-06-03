@@ -517,17 +517,7 @@ namespace Honey {
         }
 
         if (m_spec.depth_compare) {
-            VkSamplerCreateInfo si{};
-            si.sType         = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-            si.magFilter     = VK_FILTER_LINEAR;
-            si.minFilter     = VK_FILTER_LINEAR;
-            si.mipmapMode    = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-            si.addressModeU  = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-            si.addressModeV  = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-            si.addressModeW  = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-            si.borderColor   = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
-            si.compareEnable = VK_TRUE;
-            si.compareOp     = VK_COMPARE_OP_LESS_OR_EQUAL;
+            VkSamplerCreateInfo si = VulkanUtils::make_shadow_cmp_sampler_ci();
             VkResult rv = vkCreateSampler(m_device, &si, nullptr, &m_depth_comparison_sampler);
             HN_CORE_ASSERT(rv == VK_SUCCESS, "VulkanFramebuffer: vkCreateSampler (depth compare) failed");
         }
