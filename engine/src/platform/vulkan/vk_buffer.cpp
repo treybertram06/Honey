@@ -41,7 +41,7 @@ namespace Honey {
         ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
         ai.pNext = rt_geo ? &flags_info : nullptr;
         ai.allocationSize = req.size;
-        ai.memoryTypeIndex = find_memory_type(phys, req.memoryTypeBits, props);
+        ai.memoryTypeIndex = VulkanUtils::find_memory_type(phys, req.memoryTypeBits, props);
 
         r = vkAllocateMemory(dev, &ai, nullptr, &out_memory);
         HN_CORE_ASSERT(r == VK_SUCCESS, "vkAllocateMemory failed");

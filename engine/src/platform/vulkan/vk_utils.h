@@ -3,7 +3,7 @@
 #include "Honey/debug/instrumentor.h"
 #include <vulkan/vulkan.h>
 
-namespace Honey {
+namespace Honey::VulkanUtils {
 
     static uint32_t find_memory_type(VkPhysicalDevice phys, uint32_t type_filter, VkMemoryPropertyFlags props) {
         HN_PROFILE_FUNCTION();

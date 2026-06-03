@@ -304,7 +304,7 @@ namespace Honey {
             VkMemoryAllocateInfo ai{};
             ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
             ai.allocationSize = req.size;
-            ai.memoryTypeIndex = find_memory_type(
+            ai.memoryTypeIndex = VulkanUtils::find_memory_type(
                 m_physical_device,
                 req.memoryTypeBits,
                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
@@ -409,7 +409,7 @@ namespace Honey {
             VkMemoryAllocateInfo ai{};
             ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
             ai.allocationSize = req.size;
-            ai.memoryTypeIndex = find_memory_type(
+            ai.memoryTypeIndex = VulkanUtils::find_memory_type(
                 m_physical_device,
                 req.memoryTypeBits,
                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
