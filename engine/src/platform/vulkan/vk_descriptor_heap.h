@@ -8,8 +8,36 @@ namespace Honey {
         VulkanDescriptorHeap(VkInstance instance, VkPhysicalDevice phys, VkDevice device);
         ~VulkanDescriptorHeap();
 
+        struct Allocation { uint32_t offset; uint32_t size; uint32_t stride; };
+        // offset/size are BYTE offsets into the resource (or sampler) heap buffer.
+
+        Allocation allocate_transient_resource(VkDescriptorType type, uint32_t count);
+        Allocation allocate_persistent_sampler(uint32_t count);   // sampler heap
+
+        void write_image (const Allocation& alloc, uint32_t index,
+                          const VkImageViewCreateInfo& view, VkImageLayout layout,
+                          VkDescriptorType type);
+        void write_buffer(const Allocation& alloc, uint32_t index,
+                          VkDeviceAddress addr, VkDeviceSize range, VkDescriptorType type);
+        void write_sampler(const Allocation& alloc, uint32_t index, const VkSamplerCreateInfo& sampler_ci);
+
+        void begin_frame(uint32_t frame_in_flight); // reset that slot's bump cursor
+        void bind(VkCommandBuffer cmd);             // bind both heaps
+
+        VkDeviceAddress resource_device_address() const { return m_resource_heap_addr; }
+        VkDeviceAddress sampler_device_address()  const { return m_sampler_heap_addr; }
 
 
+    private:
+        static void create_heap_buffer(VkDevice dev,
+                                        VkPhysicalDevice phys,
+                                        VkDeviceSize size,
+                                        VkBuffer& out_buffer,
+                                        VkDeviceMemory& out_memory,
+                                        void*& out_mapped,
+                                        VkDeviceAddress& out_addr);
+
+        uint32_t stride_for(VkDescriptorType type) const;
     private:
         VkInstance m_instance = nullptr;
         VkPhysicalDevice m_phys = nullptr;
@@ -22,6 +50,60 @@ namespace Honey {
         PFN_vkCmdBindSamplerHeapEXT         m_fnBindSamplerHeap = nullptr;
         PFN_vkCmdPushDataEXT                m_fnPushData = nullptr;
         PFN_vkGetPhysicalDeviceDescriptorSizeEXT m_fnGetDescriptorSize = nullptr;
+
+        // Cached descriptor sizes
+        struct DescriptorSizes {
+            uint32_t sampled_image = 0;
+            uint32_t storage_image = 0;
+            uint32_t uniform_buffer = 0;
+            uint32_t storage_buffer = 0;
+            uint32_t sampler = 0;
+        };
+        DescriptorSizes m_descriptor_sizes;
+
+        VkPhysicalDeviceDescriptorHeapPropertiesEXT m_props;
+
+        struct FrameSlot {
+            VkDeviceSize begin;
+            VkDeviceSize end;
+            VkDeviceSize cursor;
+        };
+
+        // Layout state
+        // Resource heap layout
+        VkDeviceSize m_resource_reserved_size = 0;
+        VkDeviceSize m_resource_persistent_offset = 0;
+        VkDeviceSize m_resource_persistent_size = 0;
+
+        // Per frame transient regions
+        VkDeviceSize m_transient_reserved_size = 0;
+        VkDeviceSize m_transient_persistent_size = 0;
+        std::vector<FrameSlot> m_frame_slots;
+        uint32_t m_current_frame = 0;
+
+        // Sampler heap layout
+        VkDeviceSize m_sampler_reserved_size = 0;
+        VkDeviceSize m_sampler_persistent_offset = 0;
+        VkDeviceSize m_sampler_persistent_size = 0;
+        VkDeviceSize m_sampler_persistent_cursor = 0;
+
+        // Capacities and tracking
+        VkDeviceSize m_resource_capacity = 4 * 1024 * 1024; // 4 MiB
+        VkDeviceSize m_sampler_capacity = 64 * 1024; // 64 KiB
+        VkDeviceSize m_resource_max_size_reached = 0;
+
+        // Resource heap handles
+        VkBuffer m_resource_heap_buffer;
+        VkDeviceMemory m_resource_heap_memory;
+        void* m_resource_heap_mapped;
+        VkDeviceAddress m_resource_heap_addr;
+
+        // Sampler heap handles
+        VkBuffer m_sampler_heap_buffer;
+        VkDeviceMemory m_sampler_heap_memory;
+        void* m_sampler_heap_mapped;
+        VkDeviceAddress m_sampler_heap_addr;
+
     };
 
 }

@@ -60,6 +60,8 @@ namespace Honey {
         VkDevice device() const { return m_device; }
 
         VulkanDescriptorHeap* get_descriptor_heap() { return m_descriptor_heap.get(); }
+        void bind_descriptor_heaps(VkCommandBuffer cmd) { m_descriptor_heap->bind(cmd); }
+
         const VulkanPipelineCacheBlob& get_pipeline_cache() const { return m_pipeline_cache; }
         VkInstance get_instance() const { return m_instance; }
         VkPhysicalDevice get_physical_device() const { return m_physical_device; }

@@ -1725,9 +1725,11 @@ namespace Honey {
                 device_extensions.push_back(ext);
 
         const bool has_descriptor_heap_ext = device_supports_extensions(
-            m_physical_device, {VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME});
-        if (has_descriptor_heap_ext)
+            m_physical_device, {VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME, VK_KHR_MAINTENANCE_5_EXTENSION_NAME});
+        if (has_descriptor_heap_ext) {
             device_extensions.push_back(VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME);
+            device_extensions.push_back(VK_KHR_MAINTENANCE_5_EXTENSION_NAME); // required dependency of VK_EXT_descriptor_heap
+        }
 
 #ifdef HN_PLATFORM_MACOS
         device_extensions.push_back("VK_KHR_portability_subset");
@@ -1758,13 +1760,19 @@ namespace Honey {
         VkPhysicalDeviceDescriptorHeapFeaturesEXT descriptor_heap_features{};
         descriptor_heap_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_FEATURES_EXT;
 
+        VkPhysicalDeviceMaintenance5FeaturesKHR maintenance5_features{};
+        maintenance5_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR;
+
         FeatureChain chain;
         chain.add(indexing_features);
         chain.add(timeline_features);
         chain.add(vk11_features);
         chain.add(bda_features);
         if (has_mesh_shader_ext) chain.add(mesh_features);
-        if (has_descriptor_heap_ext) chain.add(descriptor_heap_features);
+        if (has_descriptor_heap_ext) {
+            chain.add(descriptor_heap_features);
+            chain.add(maintenance5_features);
+        }
         if (has_ray_tracing_ext) {
             chain.add(rt_features);
             chain.add(accel_features);
@@ -1829,7 +1837,7 @@ namespace Honey {
         if (m_descriptor_heap_supported) {
             descriptor_heap_features.descriptorHeap = VK_TRUE;
             bda_features.bufferDeviceAddress        = VK_TRUE;
-
+            maintenance5_features.maintenance5      = VK_TRUE; // required dependency of VK_EXT_descriptor_heap
         }
 
         // Keep your core features:
