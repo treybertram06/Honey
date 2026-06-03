@@ -101,6 +101,10 @@ namespace Honey {
 
         create_heap_buffer(device, phys, m_sampler_capacity, m_sampler_heap_buffer, m_sampler_heap_memory,
             m_sampler_heap_mapped, m_sampler_heap_addr);
+
+        VkPhysicalDeviceProperties device_props{};
+        vkGetPhysicalDeviceProperties(phys, &device_props);
+        bake_static_samplers(device_props.limits.maxSamplerAnisotropy);
     }
 
     VulkanDescriptorHeap::~VulkanDescriptorHeap() {
@@ -207,6 +211,20 @@ namespace Honey {
         range.size        = m_descriptor_sizes.sampler;
 
         m_fnWriteSamplerDescriptors(m_device, 1, &sampler_ci, &range);
+    }
+
+    void VulkanDescriptorHeap::bake_static_samplers(float max_anisotropy) {
+        m_static_sampler_alloc = allocate_persistent_sampler((uint32_t)StaticSampler::Count);
+
+        write_sampler(m_static_sampler_alloc, (uint32_t)StaticSampler::Nearest, VulkanUtils::make_nearest_sampler_ci());
+        write_sampler(m_static_sampler_alloc, (uint32_t)StaticSampler::Linear, VulkanUtils::make_linear_sampler_ci());
+        write_sampler(m_static_sampler_alloc, (uint32_t)StaticSampler::Anisotropic, VulkanUtils::make_anisotropic_sampler_ci(max_anisotropy));
+        write_sampler(m_static_sampler_alloc, (uint32_t)StaticSampler::ShadowCmp, VulkanUtils::make_shadow_cmp_sampler_ci());
+
+        for (uint32_t i = 0; i < (uint32_t)StaticSampler::Count; ++i) {
+            m_static_sampler_index[i] = (m_static_sampler_alloc.offset + i * m_static_sampler_alloc.stride)
+            / m_static_sampler_alloc.stride; // The index is equal to the data's offset / stride
+        }
     }
 
     void VulkanDescriptorHeap::begin_frame(uint32_t frame_in_flight) {

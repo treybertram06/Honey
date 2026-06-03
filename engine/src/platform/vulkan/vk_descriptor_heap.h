@@ -21,6 +21,8 @@ namespace Honey {
                           VkDeviceAddress addr, VkDeviceSize range, VkDescriptorType type);
         void write_sampler(const Allocation& alloc, uint32_t index, const VkSamplerCreateInfo& sampler_ci);
 
+        void bake_static_samplers(float max_anisotropy);
+
         void begin_frame(uint32_t frame_in_flight); // reset that slot's bump cursor
         void bind(VkCommandBuffer cmd);             // bind both heaps
 
