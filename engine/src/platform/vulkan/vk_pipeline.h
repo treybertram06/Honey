@@ -3,15 +3,11 @@
 #include <string>
 #include "Honey/renderer/pipeline_spec.h"
 
-typedef struct VkDevice_T* VkDevice;
-typedef struct VkRenderPass_T* VkRenderPass;
-typedef struct VkDescriptorSetLayout_T* VkDescriptorSetLayout;
-typedef struct VkShaderModule_T* VkShaderModule;
-typedef struct VkPipelineLayout_T* VkPipelineLayout;
-typedef struct VkPipeline_T* VkPipeline;
-typedef struct VkPipelineCache_T* VkPipelineCache;
+#include "vk_types.h"
 
 namespace Honey {
+
+    class VulkanDescriptorHeap; // heap-mode (VK_EXT_descriptor_heap) pipelines, used only in the .cpp
 
     class VulkanPipeline {
     public:
@@ -26,7 +22,9 @@ namespace Honey {
             const std::string& fragment_spirv_path,
             const PipelineSpec& spec,
             VkPipelineCache pipeline_cache  = nullptr,
-            VkDescriptorSetLayout extra_set_layout = nullptr  // optional set 1 layout (e.g. font SSBOs)
+            VkDescriptorSetLayout extra_set_layout = nullptr, // optional set 1 layout (e.g. font SSBOs)
+            const VulkanDescriptorHeap* heap = nullptr,       // required iff heap_mode
+            bool heap_mode = false                            // true → null layout + descriptor-heap mapping
         );
 
         void create_mesh(
@@ -38,12 +36,15 @@ namespace Honey {
             const std::string& fragment_spirv_path,
             const PipelineSpec& spec,
             VkPipelineCache pipeline_cache = nullptr,
-            VkDescriptorSetLayout extra_set_layout = nullptr  // optional set 1 layout (e.g. font SSBOs)
+            VkDescriptorSetLayout extra_set_layout = nullptr, // optional set 1 layout (e.g. font SSBOs)
+            const VulkanDescriptorHeap* heap = nullptr,       // required iff heap_mode
+            bool heap_mode = false                            // true → null layout + descriptor-heap mapping
             );
 
         void destroy(VkDevice device);
 
-        bool valid() const { return m_pipeline != nullptr && m_layout != nullptr; }
+        // Heap-mode pipelines carry no layout, so a null m_layout is valid when m_heap_mode.
+        bool valid() const { return m_pipeline != nullptr && (m_heap_mode || m_layout != nullptr); }
         void* pipeline() const { return m_pipeline; }
         void* layout() const { return m_layout; }
 
@@ -55,7 +56,8 @@ namespace Honey {
         static VkShaderModule create_shader_module_from_file(VkDevice device, const std::string& path);
 
         void* m_pipeline = nullptr;     // VkPipeline
-        void* m_layout   = nullptr;     // VkPipelineLayout
+        void* m_layout   = nullptr;     // VkPipelineLayout (null in heap mode)
+        bool  m_heap_mode = false;      // built with VK_EXT_descriptor_heap mapping, no layout
         void* m_vert_module = nullptr;  // VkShaderModule
         void* m_frag_module = nullptr;  // VkShaderModule
         void* m_task_module = nullptr;  // VkShaderModule

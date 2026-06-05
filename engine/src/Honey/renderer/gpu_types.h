@@ -147,6 +147,14 @@ namespace Honey {
         uint32_t _pad;
     };
 
+    // Shared per-pass push block for heap-mode (VK_EXT_descriptor_heap) pipelines.
+    struct PassPushData {
+        uint32_t resource_heap_base; // byte offset of this pass's transient block in the resource heap
+        uint32_t sampler_heap_base;  // byte base of the sampler region (usually engine-constant)
+        uint32_t flags;
+        uint32_t pad;
+    };
+
     struct SSAOKernelUBOData {
         glm::vec4 samples[32];   // 512 bytes
         glm::vec2 noise_scale;   //   8 bytes

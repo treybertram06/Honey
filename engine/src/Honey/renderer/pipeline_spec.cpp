@@ -241,7 +241,6 @@ namespace Honey {
                 for (const auto& resource : resource_list) {
                     const spirv_cross::SPIRType& spir_type = compiler.get_type(resource.type_id);
                     uint32_t set = compiler.get_decoration(resource.id, spv::DecorationDescriptorSet);
-                    if (set == 0) continue; // global per-frame set stays on legacy path (for now?)
 
                     ReflectedBinding binding{};
                     binding.type = type;

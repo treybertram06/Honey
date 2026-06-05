@@ -61,7 +61,11 @@ namespace Honey {
 
         m_resource_reserved_size = align_up(m_props.minResourceHeapReservedRange, m_props.resourceHeapAlignment);
         m_resource_persistent_offset = m_resource_reserved_size;
-        m_resource_persistent_size = 0;
+        m_resource_persistent_size = align_up(m_resource_persistent_capacity, m_props.resourceHeapAlignment);
+        m_resource_persistent_cursor = m_resource_persistent_offset;
+
+        // Persistent residents, mapped via CONSTANT_OFFSET in heap-mode pipelines.
+        m_global_ubo_alloc = allocate_persistent_resource(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1);
 
         // Transient
         VkDeviceSize transient_persistent_offset =
@@ -128,6 +132,22 @@ namespace Honey {
         VkDeviceSize used = slot.cursor - slot.begin;
         if (used > m_resource_max_size_reached) m_resource_max_size_reached = used;
 
+        return Allocation{ (uint32_t)aligned, (uint32_t)bytes, stride };
+    }
+
+    VulkanDescriptorHeap::Allocation VulkanDescriptorHeap::allocate_persistent_resource(VkDescriptorType type,
+        uint32_t count) {
+
+        const uint32_t stride = stride_for(type);
+        HN_CORE_ASSERT(stride > 0, "[VulkanDescriptorHeap] Stride cannot be 0");
+
+        VkDeviceSize aligned = align_up(m_resource_persistent_cursor, descriptor_alignment(type));
+        VkDeviceSize bytes = (VkDeviceSize)stride * count;
+        VkDeviceSize region_end = m_resource_persistent_offset + m_resource_persistent_size;
+        HN_CORE_ASSERT(aligned + bytes <= region_end,
+            "[VulkanDescriptorHeap] Resource persistent region overflow");
+
+        m_resource_persistent_cursor = aligned + bytes;
         return Allocation{ (uint32_t)aligned, (uint32_t)bytes, stride };
     }
 
@@ -301,6 +321,17 @@ namespace Honey {
             case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER: return m_descriptor_sizes.storage_buffer;
             case VK_DESCRIPTOR_TYPE_SAMPLER:        return m_descriptor_sizes.sampler;
             default: HN_CORE_ASSERT(false, "stride_for: unsupported descriptor type"); return 0;
+        }
+    }
+
+    uint32_t VulkanDescriptorHeap::descriptor_alignment(VkDescriptorType type) const {
+        switch (type) {
+            case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
+            case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:  return (uint32_t)m_props.imageDescriptorAlignment;
+            case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
+            case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER: return (uint32_t)m_props.bufferDescriptorAlignment;
+            case VK_DESCRIPTOR_TYPE_SAMPLER:        return (uint32_t)m_props.samplerDescriptorAlignment;
+            default: HN_CORE_ASSERT(false, "descriptor_alignment: unsupported descriptor type"); return 1;
         }
     }
 }

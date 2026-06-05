@@ -12,6 +12,7 @@ namespace Honey {
         // offset/size are BYTE offsets into the resource (or sampler) heap buffer.
 
         Allocation allocate_transient_resource(VkDescriptorType type, uint32_t count);
+        Allocation allocate_persistent_resource(VkDescriptorType type, uint32_t count); // resource heap, persistent region
         Allocation allocate_persistent_sampler(uint32_t count);   // sampler heap
 
         void write_image (const Allocation& alloc, uint32_t index,
@@ -32,6 +33,16 @@ namespace Honey {
         VkDeviceAddress resource_device_address() const { return m_resource_heap_addr; }
         VkDeviceAddress sampler_device_address()  const { return m_sampler_heap_addr; }
         uint32_t        static_sampler_index(StaticSampler s) const { return m_static_sampler_index[(uint32_t)s]; }
+
+
+        uint32_t static_sampler_byte_offset(StaticSampler s) const {
+            return m_static_sampler_alloc.offset + (uint32_t)s * m_static_sampler_alloc.stride;
+        }
+        uint32_t sampler_descriptor_stride() const { return m_descriptor_sizes.sampler; }
+        uint32_t descriptor_stride(VkDescriptorType type) const { return stride_for(type); }
+        uint32_t descriptor_alignment(VkDescriptorType type) const;
+        uint32_t global_ubo_offset() const { return m_global_ubo_alloc.offset; }
+        VkDeviceSize max_push_data_size() const { return m_props.maxPushDataSize; }
 
 
     private:
@@ -80,6 +91,9 @@ namespace Honey {
         VkDeviceSize m_resource_reserved_size = 0;
         VkDeviceSize m_resource_persistent_offset = 0;
         VkDeviceSize m_resource_persistent_size = 0;
+        VkDeviceSize m_resource_persistent_cursor = 0;
+        VkDeviceSize m_resource_persistent_capacity = 64 * 1024; // 64 KiB carved for persistent residents (set-0 globals)
+        Allocation   m_global_ubo_alloc{}; // set-0 engine-global UBO slot (CONSTANT_OFFSET target)
 
         // Per frame transient regions
         VkDeviceSize m_transient_reserved_size = 0;
