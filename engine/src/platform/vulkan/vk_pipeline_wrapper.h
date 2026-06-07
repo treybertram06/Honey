@@ -12,7 +12,8 @@ namespace Honey {
         VulkanPipelineWrapper(const PipelineSpec& spec,
                               VulkanContext* ctx,
                               VkRenderPass rp,
-                              VkDescriptorSetLayout extra_set_layout = nullptr)
+                              VkDescriptorSetLayout extra_set_layout = nullptr,
+                              bool heap_mode = false)
             : m_ctx(ctx)
         {
             HN_CORE_ASSERT(m_ctx, "VulkanPipelineWrapper: ctx is null");
@@ -24,6 +25,11 @@ namespace Honey {
             VkDescriptorSetLayout global_set_layout = m_ctx->get_global_set_layout();
             VkPipelineCache pipeline_cache = m_ctx->get_pipeline_cache().get();
 
+            // Heap-mode pipelines (VK_EXT_descriptor_heap) carry no layout; descriptors come from
+            // the bound heaps via reflection-driven mapping. extra_set_layout is ignored.
+            const VulkanDescriptorHeap* heap = heap_mode
+                ? m_ctx->get_backend()->get_descriptor_heap() : nullptr;
+
             if (spirv.has_mesh()) {
                 m_vk.create_mesh(
                     device,
@@ -34,7 +40,9 @@ namespace Honey {
                     spirv.fragment.string(),
                     spec,
                     pipeline_cache,
-                    extra_set_layout
+                    extra_set_layout,
+                    heap,
+                    heap_mode
                 );
             } else {
                 m_vk.create(
@@ -45,7 +53,9 @@ namespace Honey {
                     spirv.fragment.string(),
                     spec,
                     pipeline_cache,
-                    extra_set_layout
+                    extra_set_layout,
+                    heap,
+                    heap_mode
                 );
             }
         }
@@ -60,6 +70,7 @@ namespace Honey {
 
         void* get_native_pipeline() const override { return m_vk.pipeline(); }
         void* get_native_pipeline_layout() const override { return m_vk.layout(); }
+        bool  is_heap_mode() const override { return m_vk.heap_mode(); }
 
     private:
         VulkanContext* m_ctx = nullptr;

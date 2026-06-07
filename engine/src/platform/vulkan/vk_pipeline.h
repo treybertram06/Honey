@@ -45,6 +45,7 @@ namespace Honey {
 
         // Heap-mode pipelines carry no layout, so a null m_layout is valid when m_heap_mode.
         bool valid() const { return m_pipeline != nullptr && (m_heap_mode || m_layout != nullptr); }
+        bool heap_mode() const { return m_heap_mode; }
         void* pipeline() const { return m_pipeline; }
         void* layout() const { return m_layout; }
 

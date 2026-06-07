@@ -48,6 +48,11 @@ namespace Honey {
         VkImageView    get_cube_array_view() const;
         VkSampler      get_depth_comparison_sampler() const;
         VkImage        get_depth_image() const;
+        
+        VkImageViewCreateInfo get_color_view_create_info(uint32_t index = 0) const;
+        VkImageViewCreateInfo get_depth_sampler_view_create_info() const;
+        VkImageViewCreateInfo get_cube_array_view_create_info() const;
+        VkImageViewCreateInfo get_depth_view_create_info() const;
 
         uint32_t get_color_attachment_count() const { return (uint32_t)m_color_attachments.size(); }
         bool has_depth_attachment() const { return m_depth_spec.texture_format != FramebufferTextureFormat::None; }
@@ -64,6 +69,7 @@ namespace Honey {
             VkDeviceMemory memory = VK_NULL_HANDLE;
             VkImageView    view   = VK_NULL_HANDLE;
             VkImageLayout  layout = VK_IMAGE_LAYOUT_UNDEFINED;
+            VkImageViewCreateInfo view_ci{};
         };
 
         void invalidate();  // (re)create images, views, render pass, framebuffer
@@ -87,6 +93,8 @@ namespace Honey {
         // Render pass + framebuffer that target these attachments
         // Depth-only image view for shader sampling (separate from the combined depth+stencil attachment view)
         VkImageView    m_depth_sampler_view = VK_NULL_HANDLE;
+        VkImageViewCreateInfo m_depth_sampler_view_ci{}; 
+        VkImageViewCreateInfo m_cube_array_view_ci{};
 
         VkRenderPass   m_render_pass  = VK_NULL_HANDLE;
         VkFramebuffer  m_framebuffer  = VK_NULL_HANDLE;

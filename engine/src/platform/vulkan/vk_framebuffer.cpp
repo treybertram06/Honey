@@ -329,6 +329,7 @@ namespace Honey {
 
             r = vkCreateImageView(m_device, &view, nullptr, &out.view);
             HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanFramebuffer: vkCreateImageView (color) failed: {0}", vk_result_to_string(r));
+            out.view_ci = view;
 
             out.layout = VK_IMAGE_LAYOUT_UNDEFINED;
 
@@ -435,6 +436,7 @@ namespace Honey {
 
             r = vkCreateImageView(m_device, &view, nullptr, &m_depth_attachment.view);
             HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanFramebuffer: vkCreateImageView (depth) failed: {0}", vk_result_to_string(r));
+            m_depth_attachment.view_ci = view;
 
             // Depth-only sampler view — covers all layers (viewType is already 2D_ARRAY when layers > 1)
             if (m_spec.depth_samplable) {
@@ -442,6 +444,7 @@ namespace Honey {
                 depth_sampler_view_ci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
                 r = vkCreateImageView(m_device, &depth_sampler_view_ci, nullptr, &m_depth_sampler_view);
                 HN_CORE_ASSERT(r == VK_SUCCESS, "VulkanFramebuffer: vkCreateImageView (depth sampler) failed: {0}", vk_result_to_string(r));
+                m_depth_sampler_view_ci = depth_sampler_view_ci;
             }
 
             // For single-layer FBs, transition to ATTACHMENT_OPTIMAL immediately.
@@ -512,6 +515,7 @@ namespace Honey {
                     cv.subresourceRange.layerCount     = m_spec.layers;
                     VkResult rv = vkCreateImageView(m_device, &cv, nullptr, &m_cube_array_view);
                     HN_CORE_ASSERT(rv == VK_SUCCESS, "VulkanFramebuffer: vkCreateImageView (cube array) failed");
+                    m_cube_array_view_ci = cv;
                 }
             }
         }
@@ -1040,5 +1044,28 @@ namespace Honey {
     VkImage VulkanFramebuffer::get_depth_image() const {
         HN_CORE_ASSERT(has_depth_attachment(), "VulkanFramebuffer::get_depth_image: no depth attachment");
         return m_depth_attachment.image;
+    }
+
+    VkImageViewCreateInfo VulkanFramebuffer::get_color_view_create_info(uint32_t index) const {
+        HN_CORE_ASSERT(index < m_color_attachments.size(),
+                       "VulkanFramebuffer::get_color_view_create_info: index out of range");
+        return m_color_attachments[index].view_ci;
+    }
+
+    VkImageViewCreateInfo VulkanFramebuffer::get_depth_sampler_view_create_info() const {
+        HN_CORE_ASSERT(m_depth_sampler_view != VK_NULL_HANDLE,
+                       "VulkanFramebuffer::get_depth_sampler_view_create_info: not created (depth_samplable must be true)");
+        return m_depth_sampler_view_ci;
+    }
+
+    VkImageViewCreateInfo VulkanFramebuffer::get_cube_array_view_create_info() const {
+        HN_CORE_ASSERT(m_cube_array_view != VK_NULL_HANDLE,
+                       "VulkanFramebuffer::get_cube_array_view_create_info: not created (cube_compatible must be true)");
+        return m_cube_array_view_ci;
+    }
+
+    VkImageViewCreateInfo VulkanFramebuffer::get_depth_view_create_info() const {
+        HN_CORE_ASSERT(has_depth_attachment(), "VulkanFramebuffer::get_depth_view_create_info: no depth attachment");
+        return m_depth_attachment.view_ci;
     }
 } // namespace Honey

@@ -111,6 +111,27 @@ namespace Honey {
             return false;
         }
 
+        static bool parse_view_kind(const YAML::Node& n,
+                                    FGViewKind& out,
+                                    FGCompileDiagnostics& diags,
+                                    std::string_view scope)
+        {
+            if (!n || !n.IsScalar()) {
+                diags.add_error("ViewKind must be a scalar string", scope);
+                return false;
+            }
+
+            const std::string v = n.as<std::string>();
+            if (iequals(v, "color2d") || iequals(v, "color")) { out = FGViewKind::Color2D; return true; }
+            if (iequals(v, "depthsampler") || iequals(v, "depth_sampler")) { out = FGViewKind::DepthSampler; return true; }
+            if (iequals(v, "cubearray") || iequals(v, "cube_array")) { out = FGViewKind::CubeArray; return true; }
+            if (iequals(v, "depth")) { out = FGViewKind::Depth; return true; }
+
+            diags.add_warning("Unknown ViewKind '" + v + "', defaulting to Color2D", scope);
+            out = FGViewKind::Color2D;
+            return false;
+        }
+
         static bool parse_binding_sequence(const YAML::Node& node,
                                            std::vector<FGResourceBindingDesc>& out,
                                            std::string_view field_name,
@@ -140,6 +161,17 @@ namespace Honey {
 
                     if (const auto usage_node = entry["Usage"]) {
                         parse_resource_usage(usage_node, binding.usage, diags, scope);
+                    }
+
+                    // Optional heap-mode descriptor-automation fields.
+                    if (const auto shader_node = entry["Shader"]; shader_node && shader_node.IsScalar()) {
+                        binding.shader_name = shader_node.as<std::string>();
+                    }
+                    if (const auto attachment_node = entry["Attachment"]; attachment_node && attachment_node.IsScalar()) {
+                        binding.attachment = attachment_node.as<uint32_t>();
+                    }
+                    if (const auto view_kind_node = entry["ViewKind"]) {
+                        parse_view_kind(view_kind_node, binding.view_kind, diags, scope);
                     }
                 } else {
                     diags.add_error(std::string(field_name) + " contains unsupported entry type", scope);

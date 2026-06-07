@@ -67,6 +67,16 @@ namespace Honey {
         ExternalFramebuffer
     };
 
+    // Which image view of a resource a shader binding samples. Reflection cannot infer this
+    // (2D color vs depth-sampler vs cube-array share the same underlying image), so it is
+    // declared per read binding in the frame-graph YAML (default Color2D).
+    enum class FGViewKind : uint8_t {
+        Color2D,        // a color attachment (uses Attachment index)
+        DepthSampler,   // depth-only aspect sampler view
+        CubeArray,      // cube-array view (e.g. point-light shadow cubemap)
+        Depth           // combined depth attachment view
+    };
+
     enum class FGSizeMode : uint8_t {
         Fixed,
         SwapchainRelative
@@ -111,6 +121,11 @@ namespace Honey {
     struct FGResourceBindingDesc {
         std::string resource_name;
         FGResourceUsage usage = FGResourceUsage::Unknown;
+
+        // Heap-mode descriptor automation (optional, defaults give 1:1 name bridging).
+        std::string shader_name;                    // explicit shader identifier; empty => "u_" + resource_name
+        uint32_t    attachment = 0;                 // color attachment index (FGViewKind::Color2D only)
+        FGViewKind  view_kind  = FGViewKind::Color2D;
     };
 
     struct FGResourceDesc {
@@ -206,6 +221,10 @@ namespace Honey {
     class FrameGraphPassContext;
     using FGPassExecutor = std::function<void(FrameGraphPassContext&)>;
 
+    // Heap-mode descriptor plan, built lazily on first bind_heap_pipeline and cached per pass.
+    // Defined in the internal frame_graph_descriptor_plan.h (Vulkan-typed; kept out of this header).
+    struct PassDescriptorPlan;
+
     struct FGCompiledResource {
         std::string name;
         FGResourceType type = FGResourceType::Texture;
@@ -234,6 +253,11 @@ namespace Honey {
     struct FGCompiledResourceBinding {
         FGResourceHandle handle = k_invalid_resource;
         FGResourceUsage usage = FGResourceUsage::Unknown;
+
+        // Carried through from FGResourceBindingDesc for heap-mode descriptor automation.
+        std::string shader_name;
+        uint32_t    attachment = 0;
+        FGViewKind  view_kind  = FGViewKind::Color2D;
     };
 
     struct FGCompiledPass {
@@ -257,6 +281,9 @@ namespace Honey {
 
         // Physical framebuffer allocation used by this pass when writing transient textures.
         uint32_t physical_allocation = k_invalid_physical;
+
+        // Cached heap-mode descriptor plan (null until the first heap-mode bind_heap_pipeline call).
+        std::shared_ptr<PassDescriptorPlan> descriptor_plan;
     };
 
     class FrameGraphCompiled {
@@ -284,8 +311,13 @@ namespace Honey {
         uint32_t m_physical_framebuffer_allocations = 0;
     };
 
+    class Pipeline;
+
     class FrameGraphPassContext {
     public:
+        // Byte sub-range into the resource heap (mirrors VulkanDescriptorHeap::Allocation, Vulkan-free).
+        struct DescriptorAllocation { uint32_t offset = 0; uint32_t size = 0; uint32_t stride = 0; };
+
         FrameGraphPassContext(FrameGraphCompiled& graph, FGCompiledPass& pass, const FGExecutionContext& execution_context);
 
         const std::string& pass_name() const;
@@ -312,6 +344,16 @@ namespace Honey {
         // Returns the live VkCommandBuffer for this frame.
         // Valid during execute(). Use this for all direct Vulkan recording.
         VkCommandBuffer cmd() const { return m_cmd; }
+
+        // Heap-mode descriptor automation (VK_EXT_descriptor_heap). Call once, right after binding a
+        // heap-mode pipeline: resolves this pass's declared reads against the pipeline's reflection,
+        // writes every transient descriptor into the heap, and pushes the block base via
+        // vkCmdPushDataEXT. The executor then only needs to draw. No-op for non-heap-mode pipelines.
+        void bind_heap_pipeline(const Pipeline& pipeline);
+
+        // Escape hatch: the transient block allocated by the last bind_heap_pipeline this frame,
+        // for passes that must hand-write an extra descriptor. Default: no executor needs it.
+        DescriptorAllocation get_pass_descriptor_allocation() const { return m_last_pass_alloc; }
 
         // Vulkan-only helpers for compute/transfer/graphics frame-graph passes.
         bool submit_vulkan_compute(const FGVulkanRecordCommands& record) const;
@@ -341,6 +383,7 @@ namespace Honey {
         uint32_t m_frame_index = 0;
         const FGExecutionContext* m_exec_context = nullptr;
         VkCommandBuffer m_cmd = VK_NULL_HANDLE;
+        DescriptorAllocation m_last_pass_alloc{};
     };
 
     class FrameGraphCompiler {

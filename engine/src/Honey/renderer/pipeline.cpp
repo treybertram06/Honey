@@ -63,6 +63,25 @@ namespace Honey {
         }
     }
 
+    Ref<Pipeline> Pipeline::create_heap_mode(const PipelineSpec& spec, void* native_render_pass) {
+        switch (RendererAPI::get_api()) {
+        case RendererAPI::API::vulkan: {
+            auto* base = Application::get().get_window().get_context();
+            auto* vk = dynamic_cast<VulkanContext*>(base);
+            HN_CORE_ASSERT(vk, "Pipeline::create_heap_mode expected VulkanContext when Vulkan is active");
+
+            VkRenderPass rp = reinterpret_cast<VkRenderPass>(native_render_pass);
+            HN_CORE_ASSERT(rp, "Pipeline::create_heap_mode: render pass is null");
+
+            return CreateRef<VulkanPipelineWrapper>(spec, vk, rp, nullptr, /*heap_mode*/true);
+        }
+        case RendererAPI::API::opengl:
+        case RendererAPI::API::none:
+        default:
+            return CreateRef<NullPipeline>(spec);
+        }
+    }
+
     Ref<Pipeline> Pipeline::create(const std::filesystem::path& path, void* native_render_pass) {
         switch (RendererAPI::get_api()) {
         case RendererAPI::API::vulkan: {

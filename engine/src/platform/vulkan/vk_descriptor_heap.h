@@ -12,6 +12,9 @@ namespace Honey {
         // offset/size are BYTE offsets into the resource (or sampler) heap buffer.
 
         Allocation allocate_transient_resource(VkDescriptorType type, uint32_t count);
+        // Transient block of `size` bytes (align `align`) for a pass that packs mixed descriptor
+        // types. Returns a byte sub-range; callers build per-descriptor sub-allocations into it.
+        Allocation allocate_transient_bytes(uint32_t size, uint32_t align);
         Allocation allocate_persistent_resource(VkDescriptorType type, uint32_t count); // resource heap, persistent region
         Allocation allocate_persistent_sampler(uint32_t count);   // sampler heap
 
@@ -23,6 +26,8 @@ namespace Honey {
         void write_sampler(const Allocation& alloc, uint32_t index, const VkSamplerCreateInfo& sampler_ci);
 
         void bake_static_samplers(float max_anisotropy);
+
+        void push_pass_data(VkCommandBuffer cmd, const void* data, uint32_t size);
 
         void begin_frame(uint32_t frame_in_flight); // reset that slot's bump cursor
         void bind(VkCommandBuffer cmd);             // bind both heaps

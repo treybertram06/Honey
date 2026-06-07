@@ -135,6 +135,24 @@ namespace Honey {
         return Allocation{ (uint32_t)aligned, (uint32_t)bytes, stride };
     }
 
+    VulkanDescriptorHeap::Allocation VulkanDescriptorHeap::allocate_transient_bytes(uint32_t size, uint32_t align) {
+        HN_CORE_ASSERT(size > 0, "[VulkanDescriptorHeap] allocate_transient_bytes: size cannot be 0");
+        HN_CORE_ASSERT(align > 0, "[VulkanDescriptorHeap] allocate_transient_bytes: align cannot be 0");
+
+        auto& slot = m_frame_slots[m_current_frame];
+
+        VkDeviceSize aligned = align_up(slot.cursor, align);
+        HN_CORE_ASSERT(aligned + size <= slot.end, "[VulkanDescriptorHeap] Transient heap slot overflow");
+
+        slot.cursor = aligned + size;
+
+        VkDeviceSize used = slot.cursor - slot.begin;
+        if (used > m_resource_max_size_reached) m_resource_max_size_reached = used;
+
+        // stride = 1: callers index the block by raw byte offset via per-descriptor sub-allocations.
+        return Allocation{ (uint32_t)aligned, size, 1u };
+    }
+
     VulkanDescriptorHeap::Allocation VulkanDescriptorHeap::allocate_persistent_resource(VkDescriptorType type,
         uint32_t count) {
 
@@ -245,6 +263,20 @@ namespace Honey {
             m_static_sampler_index[i] = (m_static_sampler_alloc.offset + i * m_static_sampler_alloc.stride)
             / m_static_sampler_alloc.stride; // The index is equal to the data's offset / stride
         }
+    }
+
+    void VulkanDescriptorHeap::push_pass_data(VkCommandBuffer cmd, const void* data, uint32_t size) {
+        HN_CORE_ASSERT(m_fnPushData, "[VulkanDescriptorHeap] vkCmdPushDataEXT not loaded");
+        HN_CORE_ASSERT(data && size > 0, "[VulkanDescriptorHeap] push_pass_data: empty data");
+        HN_CORE_ASSERT(size <= m_props.maxPushDataSize,
+                       "[VulkanDescriptorHeap] push_pass_data: size exceeds maxPushDataSize");
+
+        VkPushDataInfoEXT info{};
+        info.sType        = VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT;
+        info.offset       = 0;
+        info.data.address = data;
+        info.data.size    = size;
+        m_fnPushData(cmd, &info);
     }
 
     void VulkanDescriptorHeap::begin_frame(uint32_t frame_in_flight) {

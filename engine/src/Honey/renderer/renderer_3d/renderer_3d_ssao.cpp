@@ -55,8 +55,14 @@ namespace Honey {
 
             // Blur pipeline cache keyed by render-pass handle
             std::unordered_map<void*, Ref<Pipeline>> blur_pipelines;
+            // Heap-mode (VK_EXT_descriptor_heap) blur pipeline cache, used when g_fg_heap_mode_ssao_blur.
+            std::unordered_map<void*, Ref<Pipeline>> blur_pipelines_heap;
         };
         static SSAOResources* s_res = nullptr;
+
+        // Checkpoint flag: route the SSAO blur pass through the frame-graph descriptor-heap
+        // automation (heap-mode pipeline + ctx.bind_heap_pipeline) instead of the layout path.
+        static bool g_fg_heap_mode_ssao_blur = true;
 
         Ref<Pipeline> get_or_create_ssao_pipeline(void* rp_native) {
             HN_CORE_ASSERT(s_res->ssao_set_layout != VK_NULL_HANDLE, "ssao_set_layout is null");
@@ -96,6 +102,22 @@ namespace Honey {
 
             auto pipeline = Pipeline::create(spec, rp_native, s_res->ssao_blur_set_layout);
             s_res->blur_pipelines.emplace(rp_native, pipeline);
+            return pipeline;
+        }
+
+        Ref<Pipeline> get_or_create_blur_pipeline_heap(void* rp_native) {
+            auto it = s_res->blur_pipelines_heap.find(rp_native);
+            if (it != s_res->blur_pipelines_heap.end())
+                return it->second;
+
+            auto spec = PipelineSpec::from_shader(asset_root / "shaders" / "Renderer3D_SSAOBlur.glsl");
+            spec.depthStencil.depthTest  = false;
+            spec.depthStencil.depthWrite = false;
+            spec.perColorAttachmentBlend.clear();
+            spec.perColorAttachmentBlend.resize(1, AttachmentBlendState{});
+
+            auto pipeline = Pipeline::create_heap_mode(spec, rp_native);
+            s_res->blur_pipelines_heap.emplace(rp_native, pipeline);
             return pipeline;
         }
 
@@ -293,40 +315,48 @@ namespace Honey {
             }
 
             // Write blur descriptors
+            // Separate SAMPLED_IMAGE (binding 0) + SAMPLER (binding 1) to match the blur shader,
+            // which uses separate texture/sampler so it can also run in heap mode.
             {
-                VkDescriptorSetLayoutBinding blur_binding{};
-                blur_binding.binding        = 0;
-                blur_binding.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-                blur_binding.descriptorCount = 1;
-                blur_binding.stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+                VkDescriptorSetLayoutBinding blur_bindings[2]{};
+                blur_bindings[0].binding         = 0;
+                blur_bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+                blur_bindings[0].descriptorCount = 1;
+                blur_bindings[0].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+                blur_bindings[1].binding         = 1;
+                blur_bindings[1].descriptorType  = VK_DESCRIPTOR_TYPE_SAMPLER;
+                blur_bindings[1].descriptorCount = 1;
+                blur_bindings[1].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-                VkDescriptorBindingFlags blur_flag{};
+                VkDescriptorBindingFlags blur_flags[2]{};
 
                 VkDescriptorSetLayoutBindingFlagsCreateInfo blur_bf_ci{};
                 blur_bf_ci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
-                blur_bf_ci.bindingCount  = 1;
-                blur_bf_ci.pBindingFlags = &blur_flag;
+                blur_bf_ci.bindingCount  = 2;
+                blur_bf_ci.pBindingFlags = blur_flags;
 
                 VkDescriptorSetLayoutCreateInfo blur_layout_ci{};
                 blur_layout_ci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
                 blur_layout_ci.pNext        = &blur_bf_ci;
-                blur_layout_ci.bindingCount = 1;
-                blur_layout_ci.pBindings    = &blur_binding;
+                blur_layout_ci.bindingCount = 2;
+                blur_layout_ci.pBindings    = blur_bindings;
 
                 VkDescriptorSetLayout blur_sl = VK_NULL_HANDLE;
                 VkResult r = vkCreateDescriptorSetLayout(device, &blur_layout_ci, nullptr, &blur_sl);
                 HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateDescriptorSetLayout (ssao blur) failed");
                 s_res->ssao_blur_set_layout = blur_sl;
 
-                VkDescriptorPoolSize blur_pool_size{};
-                blur_pool_size.type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-                blur_pool_size.descriptorCount = VulkanContext::k_max_frames_in_flight;
+                VkDescriptorPoolSize blur_pool_sizes[2]{};
+                blur_pool_sizes[0].type            = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+                blur_pool_sizes[0].descriptorCount = VulkanContext::k_max_frames_in_flight;
+                blur_pool_sizes[1].type            = VK_DESCRIPTOR_TYPE_SAMPLER;
+                blur_pool_sizes[1].descriptorCount = VulkanContext::k_max_frames_in_flight;
 
                 VkDescriptorPoolCreateInfo blur_pool_ci{};
                 blur_pool_ci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
                 blur_pool_ci.maxSets       = VulkanContext::k_max_frames_in_flight;
-                blur_pool_ci.poolSizeCount = 1;
-                blur_pool_ci.pPoolSizes    = &blur_pool_size;
+                blur_pool_ci.poolSizeCount = 2;
+                blur_pool_ci.pPoolSizes    = blur_pool_sizes;
 
                 VkDescriptorPool blur_pool = VK_NULL_HANDLE;
                 r = vkCreateDescriptorPool(device, &blur_pool_ci, nullptr, &blur_pool);
@@ -440,20 +470,30 @@ namespace Honey {
             const VkDevice device = s_res->vk_ctx->get_device();
 
             VkDescriptorImageInfo img_info{};
-            img_info.sampler     = sampler;
             img_info.imageView   = ssao_raw_view;
             img_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-            VkWriteDescriptorSet write{};
-            write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            write.dstSet          = s_res->ssao_blur_sets[frame];
-            write.dstBinding      = 0;
-            write.dstArrayElement = 0;
-            write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            write.descriptorCount = 1;
-            write.pImageInfo      = &img_info;
+            VkDescriptorImageInfo sampler_info{};
+            sampler_info.sampler = sampler;
 
-            vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+            VkWriteDescriptorSet writes[2]{};
+            writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[0].dstSet          = s_res->ssao_blur_sets[frame];
+            writes[0].dstBinding      = 0;
+            writes[0].dstArrayElement = 0;
+            writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            writes[0].descriptorCount = 1;
+            writes[0].pImageInfo      = &img_info;
+
+            writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[1].dstSet          = s_res->ssao_blur_sets[frame];
+            writes[1].dstBinding      = 1;
+            writes[1].dstArrayElement = 0;
+            writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_SAMPLER;
+            writes[1].descriptorCount = 1;
+            writes[1].pImageInfo      = &sampler_info;
+
+            vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
         }
     }
 
@@ -531,6 +571,29 @@ namespace Honey {
         HN_CORE_ASSERT(vk_fb, "Renderer3DSSAO::execute_blur: target is not a VulkanFramebuffer");
         void* rp_native = vk_fb->get_render_pass();
         HN_CORE_ASSERT(rp_native, "Renderer3DSSAO::execute_blur: rp_native is null");
+
+        // Heap-mode checkpoint: the frame graph writes the blur's descriptors automatically.
+        // Bind the heap-mode pipeline directly (null layout, so RenderCommand::bind_pipeline's
+        // layout assert can't be used) and let ctx.bind_heap_pipeline do the writes + push.
+        if (g_fg_heap_mode_ssao_blur) {
+            Ref<Pipeline> pipe = get_or_create_blur_pipeline_heap(rp_native);
+            VkCommandBuffer cmd = ctx.cmd();
+            VkPipeline vk_pipe = reinterpret_cast<VkPipeline>(pipe->get_native_pipeline());
+            HN_CORE_ASSERT(vk_pipe, "execute_blur: heap-mode pipeline is null");
+
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vk_pipe);
+
+            const VkExtent2D ext = s_res->vk_ctx->get_current_pass_extent();
+            VkViewport vp{ 0.0f, 0.0f, (float)ext.width, (float)ext.height, 0.0f, 1.0f };
+            vkCmdSetViewport(cmd, 0, 1, &vp);
+            VkRect2D sc{ { 0, 0 }, { ext.width, ext.height } };
+            vkCmdSetScissor(cmd, 0, 1, &sc);
+
+            HN_GPU_SCOPE(cmd, "SSAO Blur (heap)");
+            ctx.bind_heap_pipeline(*pipe);
+            vkCmdDraw(cmd, 3, 1, 0, 0);
+            return;
+        }
 
         Ref<Pipeline> pipe = get_or_create_blur_pipeline(rp_native);
         RenderCommand::bind_pipeline(pipe);

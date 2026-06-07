@@ -178,6 +178,8 @@ add_library(engine STATIC
         src/Honey/renderer/pipeline_spec.h
         src/platform/vulkan/vk_pipeline.h
         src/platform/vulkan/vk_pipeline.cpp
+        src/platform/vulkan/vk_descriptor_mapping.h
+        src/platform/vulkan/vk_descriptor_mapping.cpp
         src/platform/vulkan/vk_framebuffer.h
         src/platform/vulkan/vk_framebuffer.cpp
         src/Honey/ui/imgui_utils.h
@@ -200,6 +202,7 @@ add_library(engine STATIC
         src/Honey/core/task_system.h
         src/Honey/core/task_system.cpp
         src/Honey/renderer/frame_graph.h
+        src/Honey/renderer/frame_graph_descriptor_plan.h
         src/Honey/renderer/frame_graph_loader.h
         src/Honey/renderer/frame_graph_loader.cpp
         src/Honey/renderer/frame_graph.cpp

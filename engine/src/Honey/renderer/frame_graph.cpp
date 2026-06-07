@@ -2,10 +2,15 @@
 #include "frame_graph.h"
 
 #include "frame_graph_registry.h"
+#include "frame_graph_descriptor_plan.h"
 #include "renderer.h"
+#include "pipeline.h"
+#include "gpu_types.h"
 #include "Honey/core/engine.h"
 #include "platform/vulkan/vk_context.h"
 #include "platform/vulkan/vk_framebuffer.h"
+#include "platform/vulkan/vk_descriptor_heap.h"
+#include "platform/vulkan/vk_descriptor_mapping.h"
 
 #include <algorithm>
 #include <chrono>
@@ -757,6 +762,179 @@ namespace Honey {
         return vkfb->get_depth_image();
     }
 
+    namespace {
+        VkImageLayout layout_for_view_kind(FGViewKind kind) {
+            switch (kind) {
+                case FGViewKind::Color2D:      return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                case FGViewKind::DepthSampler:
+                case FGViewKind::CubeArray:
+                case FGViewKind::Depth:        return VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+            }
+            return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        }
+
+        VkImageViewCreateInfo view_ci_for(const VulkanFramebuffer& fb, FGViewKind kind, uint32_t attachment) {
+            switch (kind) {
+                case FGViewKind::Color2D:      return fb.get_color_view_create_info(attachment);
+                case FGViewKind::DepthSampler: return fb.get_depth_sampler_view_create_info();
+                case FGViewKind::CubeArray:    return fb.get_cube_array_view_create_info();
+                case FGViewKind::Depth:        return fb.get_depth_view_create_info();
+            }
+            return fb.get_color_view_create_info(attachment);
+        }
+    } // namespace
+
+    void FrameGraphPassContext::bind_heap_pipeline(const Pipeline& pipeline) {
+        HN_PROFILE_FUNCTION();
+        HN_CORE_ASSERT(m_graph && m_pass, "bind_heap_pipeline: null graph/pass");
+
+        if (!pipeline.is_heap_mode()) {
+            HN_CORE_ERROR("bind_heap_pipeline: pipeline for pass '{0}' is not heap-mode; skipping descriptor automation",
+                          m_pass->name);
+            return;
+        }
+
+        auto* base = Application::get().get_window().get_context();
+        auto* vk = dynamic_cast<VulkanContext*>(base);
+        HN_CORE_ASSERT(vk, "bind_heap_pipeline: requires VulkanContext");
+        VulkanDescriptorHeap* heap = vk->get_backend()->get_descriptor_heap();
+        HN_CORE_ASSERT(heap, "bind_heap_pipeline: descriptor heap is null");
+
+        const ReflectedShader& refl = pipeline.get_spec().reflection;
+
+        // --- Build the plan once and cache it on the pass. ---
+        if (!m_pass->descriptor_plan)
+            m_pass->descriptor_plan = std::make_shared<PassDescriptorPlan>();
+        PassDescriptorPlan& plan = *m_pass->descriptor_plan;
+
+        if (!plan.built) {
+            const std::vector<uint32_t> offsets = compute_block_offsets(refl, *heap);
+            uint32_t block_total = 0;
+
+            for (size_t i = 0; i < refl.bindings.size(); ++i) {
+                const ReflectedBinding& b = refl.bindings[i];
+                if (b.set == 0) continue;                           // CONSTANT_OFFSET persistent region
+                if (b.type == VK_DESCRIPTOR_TYPE_SAMPLER) continue; // baked static sampler, sampler heap
+
+                // Match the shader identifier to a declared read binding by FG resource name.
+                const std::string wanted_shader = b.name;
+                FGResourceHandle resolved = k_invalid_resource;
+                FGViewKind  view_kind = FGViewKind::Color2D;
+                uint32_t    attachment = 0;
+
+                for (const auto& rb : m_pass->read_bindings) {
+                    if (rb.handle >= m_graph->m_resources.size())
+                        continue;
+                    const std::string& res_name = m_graph->m_resources[rb.handle].name;
+                    const std::string rb_shader = rb.shader_name.empty()
+                        ? ("u_" + res_name) : rb.shader_name;
+                    if (rb_shader == wanted_shader) {
+                        resolved   = rb.handle;
+                        view_kind  = rb.view_kind;
+                        attachment = rb.attachment;
+                        break;
+                    }
+                }
+
+                if (resolved == k_invalid_resource && !plan.diagnostics_emitted) {
+                    HN_CORE_ERROR("bind_heap_pipeline: pass '{0}' shader samples '{1}' (set {2}, binding {3}) "
+                                  "but no declared read binding matches; descriptor will be undefined",
+                                  m_pass->name, b.name, b.set, b.binding);
+                }
+
+                PassDescriptorPlanEntry e{};
+                e.set          = b.set;
+                e.binding      = b.binding;
+                e.type         = b.type;
+                e.count        = (b.count == 0 ? 1u : b.count);
+                e.block_offset = offsets[i];
+                e.resource     = resolved;
+                e.view_kind    = view_kind;
+                e.attachment   = attachment;
+                e.is_buffer    = (b.type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ||
+                                  b.type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+                plan.entries.push_back(e);
+
+                const uint32_t stride = heap->descriptor_stride(b.type);
+                block_total = std::max(block_total, e.block_offset + e.count * stride);
+            }
+
+            // Warn for declared reads the shader never samples (first execute only).
+            if (!plan.diagnostics_emitted) {
+                for (const auto& rb : m_pass->read_bindings) {
+                    if (rb.handle >= m_graph->m_resources.size())
+                        continue;
+                    const std::string& res_name = m_graph->m_resources[rb.handle].name;
+                    const std::string rb_shader = rb.shader_name.empty() ? ("u_" + res_name) : rb.shader_name;
+                    bool sampled = false;
+                    for (const auto& b : refl.bindings) {
+                        if (b.set == 0 || b.type == VK_DESCRIPTOR_TYPE_SAMPLER) continue;
+                        if (b.name == rb_shader) { sampled = true; break; }
+                    }
+                    if (!sampled) {
+                        HN_CORE_WARN("bind_heap_pipeline: pass '{0}' declares read '{1}' ({2}) the shader never samples",
+                                     m_pass->name, res_name, rb_shader);
+                    }
+                }
+            }
+
+            plan.resource_block_total_bytes = block_total;
+            plan.diagnostics_emitted = true;
+            plan.built = true;
+        }
+
+        // --- Per-frame: allocate the transient block, write descriptors, push the base. ---
+        if (plan.entries.empty()) {
+            PassPushData pd{};
+            heap->push_pass_data(m_cmd, &pd, sizeof(pd));
+            m_last_pass_alloc = {};
+            return;
+        }
+
+        // The block start must satisfy the strictest per-binding alignment so each entry's
+        // absolute offset (block.offset + block_offset) stays aligned.
+        uint32_t block_align = 1;
+        for (const auto& e : plan.entries)
+            block_align = std::max(block_align, heap->descriptor_alignment(e.type));
+
+        const VulkanDescriptorHeap::Allocation block =
+            heap->allocate_transient_bytes(plan.resource_block_total_bytes, block_align);
+        m_last_pass_alloc = { block.offset, block.size, block.stride };
+
+        for (const auto& e : plan.entries) {
+            if (e.resource == k_invalid_resource)
+                continue; // unmatched — diagnostic already emitted; leave slot undefined
+            if (e.is_buffer) {
+                HN_CORE_WARN("bind_heap_pipeline: pass '{0}' buffer binding automation not implemented (binding {1})",
+                             m_pass->name, e.binding);
+                continue;
+            }
+            HN_CORE_ASSERT(e.count == 1,
+                           "bind_heap_pipeline: array image bindings not supported yet (pass '{0}', binding {1})",
+                           m_pass->name, e.binding);
+
+            const auto& res = m_graph->m_resources[e.resource];
+            auto* fb = dynamic_cast<VulkanFramebuffer*>(res.framebuffer.get());
+            if (!fb) {
+                HN_CORE_WARN("bind_heap_pipeline: pass '{0}' resource '{1}' is not a VulkanFramebuffer; skipping",
+                             m_pass->name, res.name);
+                continue;
+            }
+
+            const VkImageViewCreateInfo ci = view_ci_for(*fb, e.view_kind, e.attachment);
+            const VkImageLayout layout = layout_for_view_kind(e.view_kind);
+            const uint32_t stride = heap->descriptor_stride(e.type);
+
+            // Write a single descriptor at the exact byte the pipeline mapping expects.
+            VulkanDescriptorHeap::Allocation sub{ block.offset + e.block_offset, stride, stride };
+            heap->write_image(sub, 0, ci, layout, e.type);
+        }
+
+        PassPushData pd{};
+        pd.resource_heap_base = block.offset;
+        heap->push_pass_data(m_cmd, &pd, sizeof(pd));
+    }
+
     void* FrameGraphPassContext::user_context() const {
         return m_exec_context ? m_exec_context->user_context : nullptr;
     }
@@ -886,7 +1064,11 @@ namespace Honey {
                         continue;
                     }
 
-                    pass.read_bindings.push_back({ h, b.usage });
+                    FGCompiledResourceBinding cb{ h, b.usage };
+                    cb.shader_name = b.shader_name;
+                    cb.attachment  = b.attachment;
+                    cb.view_kind   = b.view_kind;
+                    pass.read_bindings.push_back(std::move(cb));
                 }
             } else {
                 for (const auto h : pass.reads) {
