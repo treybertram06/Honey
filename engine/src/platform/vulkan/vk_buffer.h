@@ -107,6 +107,8 @@ namespace Honey {
 
         void* get_native_buffer() const override { return reinterpret_cast<void*>(m_buffer); }
         Ref<VertexBuffer> as_vertex_buffer(const BufferLayout& layout);
+        
+        VkDeviceAddress device_address() const { return m_address; }
 
 
     private:
@@ -121,6 +123,7 @@ namespace Honey {
 
         VkBuffer m_buffer = VK_NULL_HANDLE;
         VkDeviceMemory m_memory = VK_NULL_HANDLE;
+        VkDeviceAddress m_address = 0;
     };
 
 

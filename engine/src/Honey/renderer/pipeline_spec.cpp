@@ -370,12 +370,6 @@ namespace Honey {
 
         spec.reflection = reflect_descriptor_bindings_from_spirv({ spirv.vertex, spirv.fragment });
 
-        // TEMP validation dump — remove once a consumer (heap-mode pipeline) reads spec.reflection.
-        HN_CORE_TRACE("Reflected {} set>=1 bindings for {}", spec.reflection.bindings.size(), path.filename().string());
-        for (const auto& b : spec.reflection.bindings)
-            HN_CORE_TRACE("  set={} binding={} type={} stages=0b{:b} count={} cmp={} name={}",
-                          b.set, b.binding, (int)b.type, b.stages, b.count, b.is_comparison_sampler, b.name);
-
         spec.vertexBindings.clear();
         spec.vertexBindings = std::move(bindings);
 

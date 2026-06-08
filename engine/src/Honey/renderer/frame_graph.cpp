@@ -9,6 +9,7 @@
 #include "Honey/core/engine.h"
 #include "platform/vulkan/vk_context.h"
 #include "platform/vulkan/vk_framebuffer.h"
+#include "platform/vulkan/vk_buffer.h"
 #include "platform/vulkan/vk_descriptor_heap.h"
 #include "platform/vulkan/vk_descriptor_mapping.h"
 
@@ -904,30 +905,33 @@ namespace Honey {
         for (const auto& e : plan.entries) {
             if (e.resource == k_invalid_resource)
                 continue; // unmatched — diagnostic already emitted; leave slot undefined
-            if (e.is_buffer) {
-                HN_CORE_WARN("bind_heap_pipeline: pass '{0}' buffer binding automation not implemented (binding {1})",
-                             m_pass->name, e.binding);
-                continue;
-            }
+
             HN_CORE_ASSERT(e.count == 1,
-                           "bind_heap_pipeline: array image bindings not supported yet (pass '{0}', binding {1})",
+                           "bind_heap_pipeline: array descriptor bindings not supported yet (pass '{0}', binding {1})",
                            m_pass->name, e.binding);
 
             const auto& res = m_graph->m_resources[e.resource];
-            auto* fb = dynamic_cast<VulkanFramebuffer*>(res.framebuffer.get());
-            if (!fb) {
-                HN_CORE_WARN("bind_heap_pipeline: pass '{0}' resource '{1}' is not a VulkanFramebuffer; skipping",
-                             m_pass->name, res.name);
-                continue;
-            }
-
-            const VkImageViewCreateInfo ci = view_ci_for(*fb, e.view_kind, e.attachment);
-            const VkImageLayout layout = layout_for_view_kind(e.view_kind);
             const uint32_t stride = heap->descriptor_stride(e.type);
 
             // Write a single descriptor at the exact byte the pipeline mapping expects.
             VulkanDescriptorHeap::Allocation sub{ block.offset + e.block_offset, stride, stride };
-            heap->write_image(sub, 0, ci, layout, e.type);
+
+            if (e.is_buffer) {
+                auto* sb = dynamic_cast<VulkanStorageBuffer*>(res.storage_buffer.get());
+                HN_CORE_ASSERT(sb,
+                               "bind_heap_pipeline: pass '{0}' buffer resource '{1}' is not a VulkanStorageBuffer",
+                               m_pass->name, res.name);
+                heap->write_buffer(sub, 0, sb->device_address(), sb->get_size(), e.type);
+            } else {
+                auto* fb = dynamic_cast<VulkanFramebuffer*>(res.framebuffer.get());
+                HN_CORE_ASSERT(fb,
+                               "bind_heap_pipeline: pass '{0}' image resource '{1}' is not a VulkanFramebuffer",
+                               m_pass->name, res.name);
+
+                const VkImageViewCreateInfo ci = view_ci_for(*fb, e.view_kind, e.attachment);
+                const VkImageLayout layout = layout_for_view_kind(e.view_kind);
+                heap->write_image(sub, 0, ci, layout, e.type);
+            }
         }
 
         PassPushData pd{};

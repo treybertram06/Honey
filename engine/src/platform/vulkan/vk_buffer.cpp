@@ -19,7 +19,7 @@ namespace Honey {
                               VkMemoryPropertyFlags props,
                               VkBuffer& out_buffer,
                               VkDeviceMemory& out_memory,
-                              bool rt_geo = false) {
+                              bool device_address = false) {
         HN_PROFILE_FUNCTION();
         VkBufferCreateInfo bi{};
         bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -33,13 +33,13 @@ namespace Honey {
         VkMemoryRequirements req{};
         vkGetBufferMemoryRequirements(dev, out_buffer, &req);
 
-        VkMemoryAllocateFlagsInfo flags_info{}; // For RTGeometry
+        VkMemoryAllocateFlagsInfo flags_info{}; // For device-addressable buffers (RT geometry, heap descriptors)
         flags_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
         flags_info.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT_KHR;
 
         VkMemoryAllocateInfo ai{};
         ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        ai.pNext = rt_geo ? &flags_info : nullptr;
+        ai.pNext = device_address ? &flags_info : nullptr;
         ai.allocationSize = req.size;
         ai.memoryTypeIndex = VulkanUtils::find_memory_type(phys, req.memoryTypeBits, props);
 
@@ -397,10 +397,11 @@ namespace Honey {
         // Additive flags — independent of memory type
         if (as_vb)    buffer_usage |= VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
         if (indirect) buffer_usage |= VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
-        if (rt_geo) {
-            buffer_usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-            buffer_usage |= VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
-        }
+        if (rt_geo)   buffer_usage |= VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
+
+        // All storage buffers are device-addressable so they can back heap (VK_EXT_descriptor_heap)
+        // buffer descriptors. The bufferDeviceAddress feature is enabled unconditionally.
+        buffer_usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
 
         create_buffer(
             m_device,
@@ -410,8 +411,13 @@ namespace Honey {
             memory_props,
             m_buffer,
             m_memory,
-            rt_geo
+            true
         );
+
+        VkBufferDeviceAddressInfo addr_info{};
+        addr_info.sType  = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+        addr_info.buffer = m_buffer;
+        m_address = vkGetBufferDeviceAddress(m_device, &addr_info);
     }
 
     void VulkanStorageBuffer::set_data(const void* data, uint32_t size, uint32_t offset) {
