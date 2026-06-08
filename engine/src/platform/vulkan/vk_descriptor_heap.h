@@ -24,6 +24,7 @@ namespace Honey {
         void write_buffer(const Allocation& alloc, uint32_t index,
                           VkDeviceAddress addr, VkDeviceSize range, VkDescriptorType type);
         void write_sampler(const Allocation& alloc, uint32_t index, const VkSamplerCreateInfo& sampler_ci);
+        void write_global_ubo(VkDeviceAddress addr, VkDeviceSize range);
 
         void bake_static_samplers(float max_anisotropy);
 

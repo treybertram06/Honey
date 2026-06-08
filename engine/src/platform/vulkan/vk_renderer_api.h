@@ -88,6 +88,7 @@ namespace Honey {
         static bool consume_bound_textures(std::array<void*, k_max_texture_slots>& out_textures, uint32_t& out_texture_count);
 
         static void flush_globals();
+        static void flush_globals_to_heap();
 
         struct GlobalsState {
             CameraUBO cameraUBO{};

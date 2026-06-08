@@ -251,6 +251,10 @@ namespace Honey {
         m_fnWriteSamplerDescriptors(m_device, 1, &sampler_ci, &range);
     }
 
+    void VulkanDescriptorHeap::write_global_ubo(VkDeviceAddress addr, VkDeviceSize range) {
+        write_buffer(m_global_ubo_alloc, 0, addr, range, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+    }
+
     void VulkanDescriptorHeap::bake_static_samplers(float max_anisotropy) {
         m_static_sampler_alloc = allocate_persistent_sampler((uint32_t)StaticSampler::Count);
 

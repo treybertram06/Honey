@@ -309,6 +309,15 @@ namespace Honey {
         p.textures     = {};
     }
 
+    void VulkanRendererAPI::flush_globals_to_heap() {
+        require_frame_begun();
+        auto* ctx = s_recording_context;
+        auto& p   = ctx->pending_globals();
+        HN_CORE_ASSERT(p.hasCamera, "flush_globals_heap: no camera submitted");
+        ctx->upate_heap_global_camera(p.cameraUBO);
+        p.hasCamera = false;
+    }
+
     void VulkanRendererAPI::submit_bound_textures(const std::array<void*, k_max_texture_slots>& textures, uint32_t texture_count) {
         require_frame_begun();
         auto& p = s_recording_context->pending_globals();

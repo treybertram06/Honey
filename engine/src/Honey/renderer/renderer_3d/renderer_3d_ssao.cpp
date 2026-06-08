@@ -10,6 +10,7 @@
 #include "Honey/core/engine.h"
 #include "Honey/renderer/frame_graph_registry.h"
 #include "Honey/renderer/texture.h"
+#include "Honey/renderer/buffer.h"
 #include "platform/vulkan/vk_context.h"
 #include "platform/vulkan/vk_framebuffer.h"
 #include "platform/vulkan/vk_texture.h"
@@ -20,17 +21,6 @@ namespace Honey {
     static const std::filesystem::path asset_root = ASSET_ROOT;
 
     namespace {
-
-        static uint32_t find_memory_type_ssao(VkPhysicalDevice phys, uint32_t type_filter, VkMemoryPropertyFlags props) {
-            VkPhysicalDeviceMemoryProperties mp{};
-            vkGetPhysicalDeviceMemoryProperties(phys, &mp);
-            for (uint32_t i = 0; i < mp.memoryTypeCount; i++) {
-                if ((type_filter & (1u << i)) && ((mp.memoryTypes[i].propertyFlags & props) == props))
-                    return i;
-            }
-            HN_CORE_ASSERT(false, "find_memory_type_ssao: no suitable memory type");
-            return 0;
-        }
 
         struct SSAOResources {
             VulkanContext* vk_ctx = nullptr;
@@ -43,10 +33,12 @@ namespace Honey {
             VkDescriptorPool      ssao_descriptor_pool = VK_NULL_HANDLE;
             VkDescriptorSet       ssao_sets[VulkanContext::k_max_frames_in_flight]{};
 
-            // Per-frame kernel UBO (persistently mapped)
-            VkBuffer       ssao_kernel_ubos    [VulkanContext::k_max_frames_in_flight]{};
-            VkDeviceMemory ssao_kernel_memories[VulkanContext::k_max_frames_in_flight]{};
-            void*          ssao_kernel_mapped  [VulkanContext::k_max_frames_in_flight]{};
+            // Kernel data now lives in the frame-graph buffer resource "ssaoKernel"; we only
+            // fill its bytes (see execute_draw). The full kernel is uploaded once; noise_scale
+            // is re-uploaded only when the render-target size changes (which goes through
+            // device-idle), so the single, non-double-buffered buffer is hazard-free.
+            bool      ssao_kernel_initialized = false;
+            glm::vec2 last_noise_scale{-1.0f, -1.0f};
 
             // Blur descriptor (set=1: ssaoRaw)
             VkDescriptorSetLayout ssao_blur_set_layout      = VK_NULL_HANDLE;
@@ -139,7 +131,6 @@ namespace Honey {
         static void create_ssao_resources() {
             HN_PROFILE_FUNCTION();
             const VkDevice         device  = s_res->vk_ctx->get_device();
-            const VkPhysicalDevice phys    = s_res->vk_ctx->get_physical_device();
             const VulkanBackend*   backend = s_res->vk_ctx->get_backend();
 
             // SSAO draw descriptor set layout
@@ -230,47 +221,8 @@ namespace Honey {
                 s_res->noise_texture->set_data(noise_pixels.data(), static_cast<uint32_t>(sizeof(noise_pixels)));
             }
 
-            // Per-frame SSAOKernelUBO (HOST_VISIBLE | HOST_COHERENT, persistently mapped)
-            {
-                // Generate hemisphere samples once
-                SSAOKernelUBOData template_ubo{};
-                generate_ssao_kernel(template_ubo.samples, 32);
-                template_ubo.radius     = 0.5f;
-                template_ubo.bias       = 0.075f;
-                template_ubo.noise_scale = {1.0f, 1.0f}; // updated per-frame in execute_draw
-
-                for (uint32_t f = 0; f < VulkanContext::k_max_frames_in_flight; ++f) {
-                    VkBufferCreateInfo buf_ci{};
-                    buf_ci.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-                    buf_ci.size        = sizeof(SSAOKernelUBOData);
-                    buf_ci.usage       = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
-                    buf_ci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-                    VkResult r = vkCreateBuffer(device, &buf_ci, nullptr, &s_res->ssao_kernel_ubos[f]);
-                    HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateBuffer (ssao kernel ubo) failed");
-
-                    VkMemoryRequirements req{};
-                    vkGetBufferMemoryRequirements(device, s_res->ssao_kernel_ubos[f], &req);
-
-                    VkMemoryAllocateInfo ai{};
-                    ai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-                    ai.allocationSize  = req.size;
-                    ai.memoryTypeIndex = find_memory_type_ssao(phys, req.memoryTypeBits,
-                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-                    r = vkAllocateMemory(device, &ai, nullptr, &s_res->ssao_kernel_memories[f]);
-                    HN_CORE_ASSERT(r == VK_SUCCESS, "vkAllocateMemory (ssao kernel ubo) failed");
-
-                    r = vkBindBufferMemory(device, s_res->ssao_kernel_ubos[f], s_res->ssao_kernel_memories[f], 0);
-                    HN_CORE_ASSERT(r == VK_SUCCESS, "vkBindBufferMemory (ssao kernel ubo) failed");
-
-                    r = vkMapMemory(device, s_res->ssao_kernel_memories[f], 0, sizeof(SSAOKernelUBOData), 0,
-                        &s_res->ssao_kernel_mapped[f]);
-                    HN_CORE_ASSERT(r == VK_SUCCESS, "vkMapMemory (ssao kernel ubo) failed");
-
-                    memcpy(s_res->ssao_kernel_mapped[f], &template_ubo, sizeof(SSAOKernelUBOData));
-                }
-            }
+            // The SSAO kernel data now lives in the frame-graph buffer resource "ssaoKernel"
+            // and is filled in execute_draw; nothing to create here.
 
             // Write SSAO draw descriptors
             {
@@ -278,21 +230,6 @@ namespace Honey {
                 HN_CORE_ASSERT(sampler, "create_ssao_resources: sampler is null");
 
                 for (uint32_t f = 0; f < VulkanContext::k_max_frames_in_flight; ++f) {
-                    // Binding 3: SSAOKernelUBO
-                    VkDescriptorBufferInfo buf_info{};
-                    buf_info.buffer = s_res->ssao_kernel_ubos[f];
-                    buf_info.offset = 0;
-                    buf_info.range  = sizeof(SSAOKernelUBOData);
-
-                    VkWriteDescriptorSet ubo_write{};
-                    ubo_write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                    ubo_write.dstSet          = s_res->ssao_sets[f];
-                    ubo_write.dstBinding      = 3;
-                    ubo_write.dstArrayElement = 0;
-                    ubo_write.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-                    ubo_write.descriptorCount = 1;
-                    ubo_write.pBufferInfo     = &buf_info;
-
                     // Binding 2: noise texture (layout is known at init; bindings 0+1 are updated per-frame)
                     auto* vk_noise = static_cast<VulkanTexture2D*>(s_res->noise_texture.get());
                     VkDescriptorImageInfo noise_info{};
@@ -309,8 +246,8 @@ namespace Honey {
                     noise_write.descriptorCount = 1;
                     noise_write.pImageInfo      = &noise_info;
 
-                    VkWriteDescriptorSet writes[2] = {noise_write, ubo_write};
-                    vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
+                    VkWriteDescriptorSet writes[1] = {noise_write};
+                    vkUpdateDescriptorSets(device, 1, writes, 0, nullptr);
                 }
             }
 
@@ -400,21 +337,7 @@ namespace Honey {
                 s_res->ssao_blur_set_layout = VK_NULL_HANDLE;
             }
 
-            // Kernel UBOs
-            for (uint32_t f = 0; f < VulkanContext::k_max_frames_in_flight; ++f) {
-                if (s_res->ssao_kernel_mapped[f]) {
-                    vkUnmapMemory(device, s_res->ssao_kernel_memories[f]);
-                    s_res->ssao_kernel_mapped[f] = nullptr;
-                }
-                if (s_res->ssao_kernel_ubos[f]) {
-                    vkDestroyBuffer(device, s_res->ssao_kernel_ubos[f], nullptr);
-                    s_res->ssao_kernel_ubos[f] = VK_NULL_HANDLE;
-                }
-                if (s_res->ssao_kernel_memories[f]) {
-                    vkFreeMemory(device, s_res->ssao_kernel_memories[f], nullptr);
-                    s_res->ssao_kernel_memories[f] = VK_NULL_HANDLE;
-                }
-            }
+            // Kernel buffer is owned by the frame graph ("ssaoKernel" resource); nothing to free.
 
             // Noise texture (managed by Texture2D)
             s_res->noise_texture.reset();
@@ -539,10 +462,28 @@ namespace Honey {
         VulkanRendererAPI::submit_camera(cam_ubo);
         VulkanRendererAPI::flush_globals();
 
-        // Update noise_scale based on current render target size
-        const auto& spec = target->get_specification();
-        auto* mapped = reinterpret_cast<SSAOKernelUBOData*>(s_res->ssao_kernel_mapped[frame]);
-        mapped->noise_scale = glm::vec2(float(spec.width) / 4.0f, float(spec.height) / 4.0f);
+        // Fill the frame-graph-owned kernel buffer. Contents are static except noise_scale,
+        // which only changes on resize (→ device idle), so writing the single, non-double-
+        // buffered buffer in place is hazard-free as long as we only write when the size changes.
+        if (auto kernel_buf = ctx.get_buffer("ssaoKernel")) {
+            const auto& spec = target->get_specification();
+            const glm::vec2 noise_scale(float(spec.width) / 4.0f, float(spec.height) / 4.0f);
+
+            if (!s_res->ssao_kernel_initialized) {
+                SSAOKernelUBOData ubo{};
+                generate_ssao_kernel(ubo.samples, 32);
+                ubo.radius      = 0.5f;
+                ubo.bias        = 0.075f;
+                ubo.noise_scale = noise_scale;
+                kernel_buf->set_data(&ubo, sizeof(ubo), 0);
+                s_res->ssao_kernel_initialized = true;
+                s_res->last_noise_scale = noise_scale;
+            } else if (noise_scale != s_res->last_noise_scale) {
+                kernel_buf->set_data(&noise_scale, sizeof(noise_scale),
+                                     offsetof(SSAOKernelUBOData, noise_scale));
+                s_res->last_noise_scale = noise_scale;
+            }
+        }
 
         // Update SSAO draw descriptor set (bindings 0+1 change per-frame due to potential resize)
         VulkanFramebuffer* gbuffer_vk = dynamic_cast<VulkanFramebuffer*>(

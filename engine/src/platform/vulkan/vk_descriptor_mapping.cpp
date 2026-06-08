@@ -2,6 +2,8 @@
 #include "vk_descriptor_mapping.h"
 #include "Honey/renderer/gpu_types.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cstddef>
 
 namespace Honey {
@@ -27,8 +29,11 @@ namespace Honey {
     VulkanDescriptorHeap::StaticSampler pick_static_sampler(const ReflectedBinding& b) {
         using SS = VulkanDescriptorHeap::StaticSampler;
         if (b.is_comparison_sampler) return SS::ShadowCmp;
-        if (b.name.find("nearest") != std::string::npos) return SS::Nearest;
-        if (b.name.find("aniso")   != std::string::npos) return SS::Anisotropic;
+        std::string n = b.name;
+        std::transform(n.begin(), n.end(), n.begin(),
+                       [](unsigned char c) { return std::tolower(c); });
+        if (n.find("nearest") != std::string::npos) return SS::Nearest;
+        if (n.find("aniso")   != std::string::npos) return SS::Anisotropic;
         return SS::Linear;
     }
 
