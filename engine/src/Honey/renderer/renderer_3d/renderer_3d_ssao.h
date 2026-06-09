@@ -13,6 +13,8 @@ namespace Honey {
         static void execute_draw(FrameGraphPassContext& ctx);
         static void execute_blur(FrameGraphPassContext& ctx);
 
+        static Ref<Texture2D> get_noise_texture();
+
         static void register_frame_graph_executors();
         static bool is_initialized();
 

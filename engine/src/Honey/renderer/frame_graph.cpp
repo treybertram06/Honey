@@ -21,6 +21,8 @@
 #include <queue>
 #include <sstream>
 
+#include "platform/vulkan/vk_texture.h"
+
 namespace Honey {
     namespace {
         static std::string_view queue_domain_label(const FGQueueDomain q) {
@@ -918,19 +920,25 @@ namespace Honey {
 
             if (e.is_buffer) {
                 auto* sb = dynamic_cast<VulkanStorageBuffer*>(res.storage_buffer.get());
-                HN_CORE_ASSERT(sb,
-                               "bind_heap_pipeline: pass '{0}' buffer resource '{1}' is not a VulkanStorageBuffer",
+                HN_CORE_ASSERT(sb, "bind_heap_pipeline: pass '{0}' buffer resource '{1}' is not a VulkanStorageBuffer",
                                m_pass->name, res.name);
                 heap->write_buffer(sub, 0, sb->device_address(), sb->get_size(), e.type);
             } else {
-                auto* fb = dynamic_cast<VulkanFramebuffer*>(res.framebuffer.get());
-                HN_CORE_ASSERT(fb,
-                               "bind_heap_pipeline: pass '{0}' image resource '{1}' is not a VulkanFramebuffer",
-                               m_pass->name, res.name);
-
-                const VkImageViewCreateInfo ci = view_ci_for(*fb, e.view_kind, e.attachment);
-                const VkImageLayout layout = layout_for_view_kind(e.view_kind);
+                VkImageViewCreateInfo ci{};
+                VkImageLayout layout;
+                if (res.imported_texture) {
+                    auto* tex = static_cast<VulkanTexture2D*>(res.imported_texture.get());
+                    ci = tex->get_vk_image_view_ci();
+                    layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                } else {
+                    auto* fb = dynamic_cast<VulkanFramebuffer*>(res.framebuffer.get());
+                    HN_CORE_ASSERT(fb, "bind_heap_pipeline: pass '{0}' image resource '{1}' is not a VulkanFramebuffer",
+                                   m_pass->name, res.name);
+                    ci = view_ci_for(*fb, e.view_kind, e.attachment);
+                    layout = layout_for_view_kind(e.view_kind);
+                }
                 heap->write_image(sub, 0, ci, layout, e.type);
+
             }
         }
 
@@ -1005,6 +1013,19 @@ namespace Honey {
                             res.resolved_width = spec.width;
                             res.resolved_height = spec.height;
                         }
+                    }
+                }
+            } else if (res.type == FGResourceType::ImportedTexture) {
+                if (!options) {
+                    out_diagnostics.add_error("Imported texture resource requires compile options binding map", res.name);
+                } else {
+                    const auto it = options->imported_textures.find(res.name);
+                    if (it == options->imported_textures.end() || !it->second) {
+                        out_diagnostics.add_error("No imported texture binding provided for imported target", res.name);
+                    } else {
+                        res.imported_texture = it->second;
+                        res.resolved_width = res.imported_texture->get_width();
+                        res.resolved_height = res.imported_texture->get_height();
                     }
                 }
             }

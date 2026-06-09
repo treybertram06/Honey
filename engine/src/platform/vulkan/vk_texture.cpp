@@ -394,6 +394,7 @@ namespace Honey {
         view.subresourceRange.levelCount = 1;
         view.subresourceRange.baseArrayLayer = 0;
         view.subresourceRange.layerCount = 1;
+        m_image_view_ci = view;
 
         VkImageView iv = VK_NULL_HANDLE;
         VkResult r = vkCreateImageView(reinterpret_cast<VkDevice>(m_device), &view, nullptr, &iv);

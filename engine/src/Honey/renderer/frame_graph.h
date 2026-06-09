@@ -11,6 +11,7 @@
 
 #include "buffer.h"
 #include "framebuffer.h"
+#include "texture.h"
 #include "Honey/core/base.h"
 
 namespace Honey {
@@ -31,7 +32,8 @@ namespace Honey {
     enum class FGResourceType : uint8_t {
         Texture,
         Buffer,
-        ImportedTarget
+        ImportedTarget,
+        ImportedTexture,
     };
 
     enum class FGQueueDomain : uint8_t {
@@ -188,6 +190,7 @@ namespace Honey {
         // Resource-name -> externally owned framebuffer binding.
         // Used by ImportedTarget resources with kind ExternalFramebuffer.
         std::unordered_map<std::string, Ref<Framebuffer>> external_framebuffers;
+        std::unordered_map<std::string, Ref<Texture2D>> imported_textures;
 
         // Optional explicit list of output resources to keep alive.
         // If empty, compiler treats all ImportedTarget resources as outputs.
@@ -248,6 +251,8 @@ namespace Honey {
 
         // API-agnostic runtime backing for Buffer resources.
         Ref<StorageBuffer> storage_buffer;
+
+        Ref<Texture2D> imported_texture;
     };
 
     struct FGCompiledResourceBinding {

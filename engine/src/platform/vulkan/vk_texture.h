@@ -38,6 +38,7 @@ namespace Honey {
         bool operator==(const Texture& other) const override;
 
         void* get_vk_image_view() const { return m_image_view; }
+        VkImageViewCreateInfo get_vk_image_view_ci() const { return m_image_view_ci; }
         void* get_vk_sampler() const { return m_sampler; }
         uint32_t get_vk_image_layout() const { return m_current_layout.load(std::memory_order_acquire); }
         bool is_ready_for_sampling() const { return !m_stream_upload_pending.load(std::memory_order_acquire); }
@@ -79,6 +80,7 @@ namespace Honey {
         void* m_image = nullptr;
         void* m_image_memory = nullptr;
         void* m_image_view = nullptr;
+        VkImageViewCreateInfo m_image_view_ci{};
         void* m_sampler = nullptr;
 
         std::atomic<uint32_t> m_current_layout{VK_IMAGE_LAYOUT_UNDEFINED};

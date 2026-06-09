@@ -44,6 +44,10 @@ namespace Honey {
                 out = FGResourceType::ImportedTarget;
                 return true;
             }
+            if (iequals(v, "importedtexture") || iequals(v, "imported_texture")) {
+                out = FGResourceType::ImportedTexture;
+                return true;
+            }
 
             diags.add_error("Unknown resource Type: " + v, scope);
             return false;
@@ -503,6 +507,8 @@ namespace Honey {
                     }
                 } else if (resource.type == FGResourceType::ImportedTarget) {
                     parse_imported_kind(body["Kind"], resource.imported_kind, out_diagnostics, scope);
+                } else if (resource.type == FGResourceType::ImportedTexture) {
+                    // No-op here
                 }
 
                 out_desc.resources.emplace_back(std::move(resource));

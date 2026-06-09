@@ -257,6 +257,8 @@ namespace Honey {
         FGCompileOptions options{};
         options.external_framebuffers.emplace("editorViewport", m_output_framebuffer);
         options.external_framebuffers.emplace("gBuffer", m_gbuffer_framebuffer);
+        if (auto noise = Renderer3DSSAO::get_noise_texture())
+            options.imported_textures.emplace("ssaoNoise", noise);
         options.requested_output_resources.emplace_back("editorViewport");
 
 #ifdef HN_PLATFORM_MACOS
