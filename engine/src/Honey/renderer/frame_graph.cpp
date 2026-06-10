@@ -16,9 +16,11 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <glm/glm.hpp>
 #include <limits>
 #include <queue>
+#include <set>
 #include <sstream>
 
 #include "platform/vulkan/vk_texture.h"
@@ -89,6 +91,7 @@ namespace Honey {
             switch (type) {
                 case FGResourceType::Texture:
                 case FGResourceType::ImportedTarget:
+                case FGResourceType::ImportedTexture:
                     return usage == FGResourceUsage::Sampled ||
                            usage == FGResourceUsage::ColorAttachment ||
                            usage == FGResourceUsage::DepthAttachment ||
@@ -117,6 +120,7 @@ namespace Honey {
             switch (res.type) {
                 case FGResourceType::Texture:
                 case FGResourceType::ImportedTarget:
+                case FGResourceType::ImportedTexture:
                     b.usage = FGResourceUsage::Sampled;
                     break;
                 case FGResourceType::Buffer:
@@ -886,6 +890,14 @@ namespace Honey {
             plan.built = true;
         }
 
+        // Re-bind the descriptor heaps for this pass. Per VK_EXT_descriptor_heap, "setting
+        // descriptor set or descriptor buffer state will immediately invalidate all descriptor
+        // heaps" — and every legacy (layout-mode) pass between frame start and here calls
+        // vkCmdBindDescriptorSets, which leaves the once-per-frame heap binding undefined. Without
+        // this rebind, heap descriptor reads in this pass resolve against an unbound heap and
+        // return zeros.
+        heap->bind(m_cmd); // TODO: Properly fix this (eliminate non-heap pipelines)
+
         // --- Per-frame: allocate the transient block, write descriptors, push the base. ---
         if (plan.entries.empty()) {
             PassPushData pd{};
@@ -1285,11 +1297,25 @@ namespace Honey {
                     const FGPassHandle producer = producers[h];
 
                     if (producer == k_invalid_pass) {
+                        // A buffer read with Uniform usage is a host-populated UBO, filled
+                        // CPU-side by the pass executor (e.g. the SSAO kernel), so it
+                        // legitimately has no in-graph producer. Storage reads, by contrast,
+                        // are expected to be produced by an earlier (compute) pass.
+                        bool host_filled_uniform = false;
+                        if (res.type == FGResourceType::Buffer) {
+                            for (const auto& b : pass.read_bindings) {
+                                if (b.handle == h && b.usage == FGResourceUsage::Uniform) {
+                                    host_filled_uniform = true;
+                                    break;
+                                }
+                            }
+                        }
+
                         if (res.type == FGResourceType::Texture) {
                             out_diagnostics.add_error(
                                 "Texture resource is read before any pass writes it: '" + res.name + "'",
                                 pass_label);
-                        } else if (res.type == FGResourceType::Buffer) {
+                        } else if (res.type == FGResourceType::Buffer && !host_filled_uniform) {
                             out_diagnostics.add_error(
                                 "Buffer resource is read before any pass writes it: '" + res.name + "'",
                                 pass_label);

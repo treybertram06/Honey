@@ -341,7 +341,7 @@ namespace Honey {
         gpu_camera.exposure = src.exposure;
         gpu_camera.inv_view_proj = glm::inverse(gpu_camera.view_proj);
         gpu_camera.view = src.view;
-        gpu_camera.projection = src.projection;
+        gpu_camera.projection = correction * src.projection;
         gpu_camera.inv_projection = glm::inverse(gpu_camera.projection);
         return gpu_camera;
     }

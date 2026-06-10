@@ -403,6 +403,11 @@ namespace Honey {
         // buffer descriptors. The bufferDeviceAddress feature is enabled unconditionally.
         buffer_usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
 
+        // Also flag as a uniform buffer: the heap descriptor type is reflection-driven, so a
+        // frame-graph Buffer resource may be sampled as a UNIFORM_BUFFER when a shader declares
+        // it as a uniform block (e.g. the SSAO kernel UBO). Harmless unless bound as a UBO.
+        buffer_usage |= VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+
         create_buffer(
             m_device,
             m_phys,
