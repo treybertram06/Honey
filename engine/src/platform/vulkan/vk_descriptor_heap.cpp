@@ -6,16 +6,6 @@
 
 namespace Honey {
 
-    namespace {
-        static VkDeviceSize align_up(VkDeviceSize value, VkDeviceSize alignment) {
-            return (value + alignment - 1) & ~(alignment - 1);
-        }
-
-        static VkDeviceSize align_down(VkDeviceSize value, VkDeviceSize alignment) {
-            return value & ~(alignment - 1);
-        }
-    }
-
     VulkanDescriptorHeap::VulkanDescriptorHeap(VkInstance instance, VkPhysicalDevice phys, VkDevice device)
         : m_device(device), m_phys(phys), m_instance(instance) {
 
@@ -59,23 +49,20 @@ namespace Honey {
         HN_CORE_ASSERT(m_resource_capacity <= m_props.maxResourceHeapSize,
             "[VulkanDescriptorHeap] Resource heap capacity exceeds device limits!");
 
-        m_resource_reserved_size = align_up(m_props.minResourceHeapReservedRange, m_props.resourceHeapAlignment);
+        m_resource_reserved_size = VulkanUtils::align_up(m_props.minResourceHeapReservedRange, m_props.resourceHeapAlignment);
         m_resource_persistent_offset = m_resource_reserved_size;
-        m_resource_persistent_size = align_up(m_resource_persistent_capacity, m_props.resourceHeapAlignment);
+        m_resource_persistent_size = VulkanUtils::align_up(m_resource_persistent_capacity, m_props.resourceHeapAlignment);
         m_resource_persistent_cursor = m_resource_persistent_offset;
-
-        // Persistent residents, mapped via CONSTANT_OFFSET in heap-mode pipelines.
-        m_global_ubo_alloc = allocate_persistent_resource(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1);
 
         // Transient
         VkDeviceSize transient_persistent_offset =
-            align_up(m_resource_persistent_offset + m_resource_persistent_size, m_props.resourceHeapAlignment);
+            VulkanUtils::align_up(m_resource_persistent_offset + m_resource_persistent_size, m_props.resourceHeapAlignment);
         HN_CORE_ASSERT(transient_persistent_offset <= m_resource_capacity,
             "[VulkanDescriptorHeap] Transient persistent offset exceeded resource heap capacity!");
 
         m_transient_reserved_size = m_resource_capacity - transient_persistent_offset;
         VkDeviceSize per_frame_stride =
-            align_down(m_transient_reserved_size / VulkanContext::k_max_frames_in_flight,
+            VulkanUtils::align_down(m_transient_reserved_size / VulkanContext::k_max_frames_in_flight,
                 m_props.resourceHeapAlignment);
         HN_CORE_ASSERT(per_frame_stride > 0, "[VulkanDescriptorHeap] Per-frame stride is zero!");
 
@@ -87,7 +74,7 @@ namespace Honey {
         }
 
         // Sampler heap
-        m_sampler_reserved_size = align_up(m_props.minSamplerHeapReservedRange, m_props.samplerHeapAlignment);
+        m_sampler_reserved_size = VulkanUtils::align_up(m_props.minSamplerHeapReservedRange, m_props.samplerHeapAlignment);
         m_sampler_persistent_offset = m_sampler_reserved_size;
         m_sampler_persistent_size = m_sampler_capacity - m_sampler_reserved_size;
 
@@ -122,7 +109,7 @@ namespace Honey {
 
         auto& slot = m_frame_slots[m_current_frame];
 
-        VkDeviceSize aligned = align_up(slot.cursor, stride);
+        VkDeviceSize aligned = VulkanUtils::align_up(slot.cursor, stride);
         VkDeviceSize bytes = (VkDeviceSize)stride * count;
         HN_CORE_ASSERT(aligned + bytes <= slot.end, "[VulkanDescriptorHeap] Transient heap slot overflow");
 
@@ -141,7 +128,7 @@ namespace Honey {
 
         auto& slot = m_frame_slots[m_current_frame];
 
-        VkDeviceSize aligned = align_up(slot.cursor, align);
+        VkDeviceSize aligned = VulkanUtils::align_up(slot.cursor, align);
         HN_CORE_ASSERT(aligned + size <= slot.end, "[VulkanDescriptorHeap] Transient heap slot overflow");
 
         slot.cursor = aligned + size;
@@ -159,7 +146,7 @@ namespace Honey {
         const uint32_t stride = stride_for(type);
         HN_CORE_ASSERT(stride > 0, "[VulkanDescriptorHeap] Stride cannot be 0");
 
-        VkDeviceSize aligned = align_up(m_resource_persistent_cursor, descriptor_alignment(type));
+        VkDeviceSize aligned = VulkanUtils::align_up(m_resource_persistent_cursor, descriptor_alignment(type));
         VkDeviceSize bytes = (VkDeviceSize)stride * count;
         VkDeviceSize region_end = m_resource_persistent_offset + m_resource_persistent_size;
         HN_CORE_ASSERT(aligned + bytes <= region_end,
@@ -171,7 +158,7 @@ namespace Honey {
 
     VulkanDescriptorHeap::Allocation VulkanDescriptorHeap::allocate_persistent_sampler(uint32_t count) {
         const uint32_t stride = m_descriptor_sizes.sampler;
-        VkDeviceSize aligned = align_up(m_sampler_persistent_cursor, stride);
+        VkDeviceSize aligned = VulkanUtils::align_up(m_sampler_persistent_cursor, stride);
         VkDeviceSize bytes = (VkDeviceSize)stride * count;
         VkDeviceSize region_end = m_sampler_persistent_offset + m_sampler_persistent_size;
         HN_CORE_ASSERT(aligned + bytes <= region_end, "[VulkanDescriptorHeap] Sampler persistent region overflow");
@@ -249,10 +236,6 @@ namespace Honey {
         range.size        = m_descriptor_sizes.sampler;
 
         m_fnWriteSamplerDescriptors(m_device, 1, &sampler_ci, &range);
-    }
-
-    void VulkanDescriptorHeap::write_global_ubo(VkDeviceAddress addr, VkDeviceSize range) {
-        write_buffer(m_global_ubo_alloc, 0, addr, range, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
     }
 
     void VulkanDescriptorHeap::bake_static_samplers(float max_anisotropy) {
@@ -369,5 +352,21 @@ namespace Honey {
             case VK_DESCRIPTOR_TYPE_SAMPLER:        return (uint32_t)m_props.samplerDescriptorAlignment;
             default: HN_CORE_ASSERT(false, "descriptor_alignment: unsupported descriptor type"); return 1;
         }
+    }
+
+    void VulkanDescriptorHeap::register_global_binding(uint32_t binding, const Allocation& slot) {
+        HN_CORE_ASSERT(binding < m_global_slots.size(), "[VulkanDescriptorHeap] Global binding index out of range");
+        HN_CORE_ASSERT(!m_global_slots_valid[binding], "[VulkanDescriptorHeap] Global binding already registered");
+        m_global_slots[binding] = slot;
+        m_global_slots_valid[binding] = true;
+    }
+
+    uint32_t VulkanDescriptorHeap::global_binding_offset(uint32_t binding) const {
+        HN_CORE_ASSERT(has_global_binding(binding), "[VulkanDescriptorHeap] No global slot registered for binding {0}", binding);
+        return m_global_slots[binding].offset;
+    }
+
+    bool VulkanDescriptorHeap::has_global_binding(uint32_t binding) const {
+        return binding < m_global_slots.size() && m_global_slots_valid[binding];
     }
 }

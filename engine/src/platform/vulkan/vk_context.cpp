@@ -1039,15 +1039,16 @@ namespace Honey {
 
         VkBufferCreateInfo bi{};
         bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        bi.size = sizeof(CameraUBO);
+        bi.size = sizeof(m_globals_layout.total_size);
         bi.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT
+        | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
         | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
         bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        VkResult res = vkCreateBuffer(dev, &bi, nullptr, &m_heap_global_ubo);
-        HN_CORE_ASSERT(res == VK_SUCCESS, "vkCreateBuffer (camera) failed");
+        VkResult res = vkCreateBuffer(dev, &bi, nullptr, &m_globals_buffer);
+        HN_CORE_ASSERT(res == VK_SUCCESS, "[VulkanContext] Failed to create globals buffer");
 
         VkMemoryRequirements req{};
-        vkGetBufferMemoryRequirements(dev, m_heap_global_ubo, &req);
+        vkGetBufferMemoryRequirements(dev, m_globals_buffer, &req);
 
         VkMemoryAllocateFlagsInfo flags{};
         flags.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
@@ -1060,32 +1061,44 @@ namespace Honey {
         ai.memoryTypeIndex = find_memory_type_local(m_physical_device, req.memoryTypeBits,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
-        res = vkAllocateMemory(dev, &ai, nullptr, &m_heap_global_ubo_memory);
-        HN_CORE_ASSERT(res == VK_SUCCESS, "vkAllocateMemory (camera) failed");
-        vkBindBufferMemory(dev, m_heap_global_ubo, m_heap_global_ubo_memory, 0);
-        vkMapMemory(dev, m_heap_global_ubo_memory, 0, sizeof(CameraUBO), 0, &m_heap_global_ubo_mapped);
+        res = vkAllocateMemory(dev, &ai, nullptr, &m_globals_alloc);
+        HN_CORE_ASSERT(res == VK_SUCCESS, "[VulkanContext] Failed to allocate memory for globals heap");
+        vkBindBufferMemory(dev, m_globals_buffer, m_globals_alloc, 0);
+
+        void* mapped = nullptr;
+        vkMapMemory(dev, m_globals_alloc, 0, sizeof(m_globals_layout.total_size), 0, &mapped);
+        m_globals_mapped = static_cast<uint8_t*>(mapped);
 
         VkBufferDeviceAddressInfo addr{};
         addr.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
-        addr.buffer = m_heap_global_ubo;
-        m_heap_global_ubo_address = vkGetBufferDeviceAddress(dev, &addr);
+        addr.buffer = m_globals_buffer;
+        VkDeviceAddress base = vkGetBufferDeviceAddress(dev, &addr);
 
-        m_backend->get_descriptor_heap()->write_global_ubo(m_heap_global_ubo_address, sizeof(CameraUBO));
+        auto* heap = m_backend->get_descriptor_heap();
+        for (const auto& g : k_global_bindings) {
+            const VkDescriptorType dt = (g.kind == GlobalBufferKind::Uniform)
+                ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
+                : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+
+            auto slot = heap->allocate_persistent_resource(dt, 1);
+            heap->write_buffer(slot, 0, base + m_globals_layout.offset[(size_t)g.id], g.size, dt);
+            heap->register_global_binding(g.shader_binding, slot);
+        }
 
     }
 
     void VulkanContext::cleanup_global_descriptor_heap_resources() {
-        if (m_heap_global_ubo) {
-            vkUnmapMemory(reinterpret_cast<VkDevice>(m_device), m_heap_global_ubo_memory);
-            vkDestroyBuffer(reinterpret_cast<VkDevice>(m_device), m_heap_global_ubo, nullptr);
-            m_heap_global_ubo = nullptr;
+        if (!m_device) return;
+
+        if (m_globals_buffer) {
+            vkUnmapMemory(m_device, m_globals_alloc);
+            vkDestroyBuffer(m_device, m_globals_buffer, nullptr);
+            vkFreeMemory(m_device, m_globals_alloc, nullptr);
+            m_globals_buffer = nullptr;
+            m_globals_alloc  = nullptr;
+            m_globals_mapped = nullptr;
         }
-        if (m_heap_global_ubo_memory) {
-            vkFreeMemory(reinterpret_cast<VkDevice>(m_device), m_heap_global_ubo_memory, nullptr);
-            m_heap_global_ubo_memory = nullptr;
-        }
-        m_heap_global_ubo_mapped = nullptr;
-        m_heap_global_ubo_address = 0;
+
     }
 
     void VulkanContext::cleanup_font_descriptor_resources() {
@@ -1264,6 +1277,11 @@ namespace Honey {
                      m_present_queue_family,
                      m_has_dedicated_compute_queue,
                      m_supports_timeline_semaphore);
+
+
+        VkPhysicalDeviceProperties physical_device_properties;
+        vkGetPhysicalDeviceProperties(m_physical_device, &physical_device_properties);
+        m_globals_layout = GlobalsLayout::build(physical_device_properties.limits);
 
         create_global_descriptor_resources();
         create_global_descriptor_heap_resources();
@@ -1860,6 +1878,20 @@ namespace Honey {
         return true;
     }
 
+    void VulkanContext::flush_globals_to_heap() {
+        auto& p = pending_globals();
+
+        auto write = [&](GlobalBinding id, const void* src) {
+            const auto& g = k_global_bindings[(size_t)id];
+            std::memcpy(m_globals_mapped + m_globals_layout.offset[(size_t)id], src, g.size);
+        };
+
+        write(GlobalBinding::Camera, &p.cameraUBO);
+        write(GlobalBinding::Lights, &p.lightUBO);
+        write(GlobalBinding::TiledLighting, &p.tiledLighting);
+        // ShadowMatrices and DirShadow are NOT written here
+    }
+
     void VulkanContext::queue_custom_vulkan_cmd(
         std::function<void(VkCommandBuffer, uint32_t, uint32_t)> fn)
     {
@@ -2014,12 +2046,6 @@ namespace Honey {
 
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, activeLayout,
                                 0, 1, &ds, 0, nullptr);
-    }
-
-    void VulkanContext::upate_heap_global_camera(const CameraUBO& cam) {
-        HN_CORE_ASSERT(m_heap_global_ubo_mapped, "[VulkanContext] Heap global UBO not created.");
-        const CameraUBO gpu = make_gpu_camera(cam);
-        std::memcpy(m_heap_global_ubo_mapped, &gpu, sizeof(CameraUBO));
     }
 
     bool VulkanContext::submit_one_time_graphics(const std::function<void(VkCommandBuffer)>& record) {

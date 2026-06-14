@@ -101,4 +101,12 @@ namespace Honey::VulkanUtils {
         return si;
     }
 
+    static VkDeviceSize align_up(VkDeviceSize value, VkDeviceSize alignment) {
+        return (value + alignment - 1) & ~(alignment - 1);
+    }
+
+    static VkDeviceSize align_down(VkDeviceSize value, VkDeviceSize alignment) {
+        return value & ~(alignment - 1);
+    }
+
 }

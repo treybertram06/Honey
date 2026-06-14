@@ -7,6 +7,7 @@
 #include <glm/glm.hpp>
 #include <functional>
 
+#include "vk_globals.h"
 #include "vk_gpu_profiler.h"
 #include "vk_pipeline.h"
 #include "../../Honey/renderer/gpu_types.h"
@@ -129,6 +130,8 @@ namespace Honey {
         PendingGlobals& pending_globals() { return m_pending_globals; }
         const PendingGlobals& pending_globals() const { return m_pending_globals; }
 
+        void flush_globals_to_heap();
+
         glm::vec4 get_clear_color() const { return m_pending_clear_color; }
         void      set_clear_color(const glm::vec4& c) { m_pending_clear_color = c; }
 
@@ -164,7 +167,6 @@ namespace Honey {
         // Called directly by VulkanRendererAPI::flush_globals() in the direct-recording path.
         void apply_pending_globals(VkCommandBuffer cmd, VkPipelineLayout layout, uint32_t frame,
                                    const PendingGlobals& g);
-        void upate_heap_global_camera(const CameraUBO& cam);
 
         uint32_t get_swapchain_image_format() const { return m_swapchain_image_format; }
         uint32_t get_swapchain_extent_width()  const { return m_swapchain_extent_width; }
@@ -329,10 +331,10 @@ private:
         VkDescriptorSet m_global_descriptor_sets[k_max_frames_in_flight][k_max_chunks_per_frame]{};
         uint32_t m_chunk_ds_index[k_max_frames_in_flight]{};
 
-        VkBuffer m_heap_global_ubo = VK_NULL_HANDLE;
-        VkDeviceMemory m_heap_global_ubo_memory = VK_NULL_HANDLE;
-        void* m_heap_global_ubo_mapped = nullptr;
-        VkDeviceAddress m_heap_global_ubo_address = 0;
+        VkBuffer m_globals_buffer{};
+        VkDeviceMemory m_globals_alloc{};
+        uint8_t* m_globals_mapped{};
+        GlobalsLayout m_globals_layout{};
 
         void* m_camera_ubos[k_max_frames_in_flight]{};        // VkBuffer
         void* m_camera_ubo_memories[k_max_frames_in_flight]{}; // VkDeviceMemory

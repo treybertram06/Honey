@@ -8,6 +8,7 @@
 #include <shaderc/shaderc.hpp>
 #include <glad/glad.h>
 
+#include "global_bindings.h"
 #include "renderer.h"
 
 namespace Honey {
@@ -240,21 +241,26 @@ std::vector<uint32_t> ShaderCompiler::compile_single_stage(const std::string& so
                                            shaderc_include_type /*type*/,
                                            const char* /*requesting_source*/,
                                            size_t) override {
-            namespace fs = std::filesystem;
-            fs::path base = fs::path(ASSET_ROOT) / "shaders";
-            fs::path candidate = base / requested_source;
-
             auto* data = new IncludeData();
-            std::error_code ec;
-            if (fs::exists(candidate, ec)) {
-                std::ifstream ifs(candidate, std::ios::binary);
-                std::ostringstream ss; ss << ifs.rdbuf();
-                data->content = ss.str();
-                data->source_name = candidate.string();
+
+            if (std::string_view(requested_source) == "global_bindings.glsli") {
+                data->source_name = "global_bindings.glsli"; // Virtual - not a real file
+                data->content = synth_global_bindings();
             } else {
-                // Not found: return empty include but still provide a name for diagnostics
-                data->content.clear();
-                data->source_name = candidate.string();
+                namespace fs = std::filesystem;
+                fs::path base = fs::path(ASSET_ROOT) / "shaders";
+                fs::path candidate = base / requested_source;
+                std::error_code ec;
+                if (fs::exists(candidate, ec)) {
+                    std::ifstream ifs(candidate, std::ios::binary);
+                    std::ostringstream ss; ss << ifs.rdbuf();
+                    data->content = ss.str();
+                    data->source_name = candidate.string();
+                } else {
+                    // Not found: return empty include but still provide a name for diagnostics
+                    data->content.clear();
+                    data->source_name = candidate.string();
+                }
             }
 
             auto* result = new shaderc_include_result();
@@ -265,6 +271,20 @@ std::vector<uint32_t> ShaderCompiler::compile_single_stage(const std::string& so
             result->user_data = data;
             return result;
         }
+
+        std::string synth_global_bindings() {
+            std::string result;
+
+            result +=  "#ifndef HONEY_GLOBAL_BINDINGS_GLSLI \n#define HONEY_GLOBAL_BINDINGS_GLSLI";
+            result += "\n#define HN_GLOBAL_SET 0";
+            for (const auto& binding : k_global_bindings) {
+                result += std::format("\n#define {} {}", binding.glsl_macro, binding.shader_binding);
+            }
+
+            result += "\n#endif // HONEY_GLOBAL_BINDINGS_GLSLI";
+            return result;
+        }
+
         void ReleaseInclude(shaderc_include_result* include_result) override {
             auto* data = static_cast<IncludeData*>(include_result->user_data);
             delete data;

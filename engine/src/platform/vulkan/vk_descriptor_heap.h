@@ -47,9 +47,11 @@ namespace Honey {
         uint32_t sampler_descriptor_stride() const { return m_descriptor_sizes.sampler; }
         uint32_t descriptor_stride(VkDescriptorType type) const { return stride_for(type); }
         uint32_t descriptor_alignment(VkDescriptorType type) const;
-        uint32_t global_ubo_offset() const { return m_global_ubo_alloc.offset; }
         VkDeviceSize max_push_data_size() const { return m_props.maxPushDataSize; }
 
+        void register_global_binding(uint32_t binding, const Allocation& slot);
+        uint32_t global_binding_offset(uint32_t binding) const;
+        bool has_global_binding(uint32_t binding) const;
 
     private:
         static void create_heap_buffer(VkDevice dev,
@@ -99,7 +101,9 @@ namespace Honey {
         VkDeviceSize m_resource_persistent_size = 0;
         VkDeviceSize m_resource_persistent_cursor = 0;
         VkDeviceSize m_resource_persistent_capacity = 64 * 1024; // 64 KiB carved for persistent residents (set-0 globals)
-        Allocation   m_global_ubo_alloc{}; // set-0 engine-global UBO slot (CONSTANT_OFFSET target)
+
+        std::array<Allocation, 8> m_global_slots{}; // Probably shouldn't hardcode the size here
+        std::array<bool, 8> m_global_slots_valid{};
 
         // Per frame transient regions
         VkDeviceSize m_transient_reserved_size = 0;

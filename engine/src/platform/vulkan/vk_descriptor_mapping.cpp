@@ -32,6 +32,7 @@ namespace Honey {
         std::string n = b.name;
         std::transform(n.begin(), n.end(), n.begin(),
                        [](unsigned char c) { return std::tolower(c); });
+        if (n.find("shadow") != std::string::npos || n.find("cmp") != std::string::npos) return SS::ShadowCmp;
         if (n.find("nearest") != std::string::npos) return SS::Nearest;
         if (n.find("aniso")   != std::string::npos) return SS::Anisotropic;
         return SS::Linear;
@@ -60,10 +61,14 @@ namespace Honey {
                 m.source = VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_CONSTANT_OFFSET_EXT;
                 m.sourceData.constantOffset.samplerHeapOffset      = heap.static_sampler_byte_offset(s);
                 m.sourceData.constantOffset.samplerHeapArrayStride = heap.sampler_descriptor_stride();
-            } else if (b.set == 0 && b.type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
+            } else if (b.set == 0 && (b.type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ||
+                b.type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)) {
+                HN_CORE_ASSERT(heap.has_global_binding(b.binding),
+                    "Shader declares set-0 binding {0} but no global slot was registered for it. "
+                    "Add a row to k_global_bindings.", b.binding);
                 // set-0 engine globals live at a fixed persistent slot: CONSTANT_OFFSET, resource half.
                 m.source = VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_CONSTANT_OFFSET_EXT;
-                m.sourceData.constantOffset.heapOffset      = heap.global_ubo_offset();
+                m.sourceData.constantOffset.heapOffset      = heap.global_binding_offset(b.binding);
                 m.sourceData.constantOffset.heapArrayStride = 0;
             } else {
                 // Transient per-pass descriptor: PUSH_INDEX. The pushed resource_heap_base is the block
