@@ -1069,6 +1069,12 @@ namespace Honey {
         vkMapMemory(dev, m_globals_alloc, 0, m_globals_layout.total_size, 0, &mapped);
         m_globals_mapped = static_cast<uint8_t*>(mapped);
 
+        // vkAllocateMemory does not guarantee zeroed memory. Globals whose producer doesn't run
+        // every frame (ShadowMatrices/DirShadow when a scene has no shadow casters) would otherwise
+        // read garbage — a non-zero shadow_light_count/enabled drives the lighting shader's shadow
+        // loops into garbage iteration counts. Start clean so an un-written region means "no shadows".
+        std::memset(m_globals_mapped, 0, m_globals_layout.total_size);
+
         VkBufferDeviceAddressInfo addr{};
         addr.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
         addr.buffer = m_globals_buffer;
@@ -1151,6 +1157,14 @@ namespace Honey {
         std::memcpy(mapped, &data, sizeof(ShadowMatricesSSBO));
         vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
                       reinterpret_cast<VkDeviceMemory>(m_shadow_matrices_ssbo_memories[frame]));
+
+        // Heap-mode deferred lighting reads ShadowMatrices via the set-0 globals buffer
+        // (k_global_bindings[ShadowMatrices]). flush_globals_to_heap() intentionally skips
+        // this region, so the producer writes it here at the same layout offset.
+        if (m_globals_mapped) {
+            std::memcpy(m_globals_mapped + m_globals_layout.offset[(size_t)GlobalBinding::ShadowMatrices],
+                        &data, sizeof(ShadowMatricesSSBO));
+        }
     }
 
     void VulkanContext::set_shadow_cubemap_resources(VkImageView cube_array_view, VkSampler comparison_sampler) {
@@ -1184,6 +1198,13 @@ namespace Honey {
         std::memcpy(mapped, &data, sizeof(DirectionalShadowSSBO));
         vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
                       reinterpret_cast<VkDeviceMemory>(m_dir_shadow_ssbo_memories[frame]));
+
+        // Heap-mode deferred lighting reads DirShadow via the set-0 globals buffer
+        // (k_global_bindings[DirShadow]); mirror the ShadowMatrices write above.
+        if (m_globals_mapped) {
+            std::memcpy(m_globals_mapped + m_globals_layout.offset[(size_t)GlobalBinding::DirShadow],
+                        &data, sizeof(DirectionalShadowSSBO));
+        }
     }
 
     void VulkanContext::set_dir_shadow_resources(VkImageView cube_array_view, VkSampler comparison_sampler) {
@@ -1886,7 +1907,9 @@ namespace Honey {
             std::memcpy(m_globals_mapped + m_globals_layout.offset[(size_t)id], src, g.size);
         };
 
-        write(GlobalBinding::Camera, &p.cameraUBO);
+        // The camera needs the Vulkan clip-space correction
+        const CameraUBO gpu_camera = make_gpu_camera(p.cameraUBO);
+        write(GlobalBinding::Camera, &gpu_camera);
         write(GlobalBinding::Lights, &p.lightUBO);
         write(GlobalBinding::TiledLighting, &p.tiledLighting);
         // ShadowMatrices and DirShadow are NOT written here
