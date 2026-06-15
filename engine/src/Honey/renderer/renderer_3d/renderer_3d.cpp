@@ -39,16 +39,11 @@ namespace Honey {
         data.default_material->set_base_color_factor(glm::vec4(1.0f));
     }
 
-    void Renderer3D::invalidate_gbuffer_descriptors() {
-        Renderer3DInternal::invalidate_gbuffer_descriptors();
-    }
-
     void Renderer3D::shutdown() {
         HN_PROFILE_FUNCTION();
 
         if (Renderer::get_api() == RendererAPI::API::vulkan) {
             VulkanRendererAPI::destroy_meshlet_resources();
-            Renderer3DInternal::shutdown_gbuffer_descriptors();
         }
 
         delete Renderer3DInternal::g_renderer3d_data;

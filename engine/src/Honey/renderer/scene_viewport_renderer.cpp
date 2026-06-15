@@ -67,7 +67,7 @@ namespace Honey {
 
                 Renderer3D::write_ssao_fb_to_renderer_state(ssao_fb);
                 Renderer3D::write_gbuffer_to_renderer_state(gbuffer_fb);
-                Renderer3D::flush_deferred_lighting(shadow_cube_fb, shadow_dir_fb);
+                Renderer3D::flush_deferred_lighting(ctx);
             });
 
             s_scene_viewport_executors_registered = true;
@@ -251,7 +251,6 @@ namespace Honey {
         Renderer3DShadow::invalidate_cubemap_resources();
         Renderer3DShadow::invalidate_dir_shadow_resources();
         Renderer3DPathTracer::invalidate_resources();
-        Renderer3D::invalidate_gbuffer_descriptors();
 
         FGCompileDiagnostics diags;
         FGCompileOptions options{};

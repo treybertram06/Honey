@@ -1039,7 +1039,7 @@ namespace Honey {
 
         VkBufferCreateInfo bi{};
         bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        bi.size = sizeof(m_globals_layout.total_size);
+        bi.size = m_globals_layout.total_size;
         bi.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT
         | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
         | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
@@ -1066,7 +1066,7 @@ namespace Honey {
         vkBindBufferMemory(dev, m_globals_buffer, m_globals_alloc, 0);
 
         void* mapped = nullptr;
-        vkMapMemory(dev, m_globals_alloc, 0, sizeof(m_globals_layout.total_size), 0, &mapped);
+        vkMapMemory(dev, m_globals_alloc, 0, m_globals_layout.total_size, 0, &mapped);
         m_globals_mapped = static_cast<uint8_t*>(mapped);
 
         VkBufferDeviceAddressInfo addr{};
