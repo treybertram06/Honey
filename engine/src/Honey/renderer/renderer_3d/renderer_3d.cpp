@@ -42,10 +42,6 @@ namespace Honey {
     void Renderer3D::shutdown() {
         HN_PROFILE_FUNCTION();
 
-        if (Renderer::get_api() == RendererAPI::API::vulkan) {
-            VulkanRendererAPI::destroy_meshlet_resources();
-        }
-
         delete Renderer3DInternal::g_renderer3d_data;
         Renderer3DInternal::g_renderer3d_data = nullptr;
     }

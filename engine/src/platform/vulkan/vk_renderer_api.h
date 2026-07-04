@@ -36,15 +36,14 @@ namespace Honey {
             VkBuffer count_buffer, VkDeviceSize count_offset,
             uint32_t max_draws, uint32_t stride);
 
-        // Meshlet descriptor management
-        static void* get_or_create_meshlet_set_layout();
-        static void  ensure_mesh_descriptor_set(GlobalMeshletBuffers& bufs);
+        // Meshlet heap-block management (set=1, persistent region)
+        static void  allocate_meshlet_heap_blocks(GlobalMeshletBuffers& bufs);
+        static void  free_meshlet_heap_blocks(GlobalMeshletBuffers& bufs);
         static void  update_mesh_draw_data_binding(GlobalMeshletBuffers& bufs, uint32_t draw_count);
         static uint32_t get_meshlet_frame_slot();
         static Ref<StorageBuffer> get_mesh_draw_data_buffer(const GlobalMeshletBuffers& bufs);
-        static void* get_mesh_descriptor_set(const GlobalMeshletBuffers& bufs);
-        static void  submit_set1_descriptor_set(void* descriptor_set, void* pipeline_layout);
-        static void  destroy_meshlet_resources();
+        static uint32_t get_mesh_block_offset(const GlobalMeshletBuffers& bufs);
+        static void  push_meshlet_pass_data(uint32_t resource_heap_base, uint32_t draw_data_base);
 
         static void submit_instanced_draw(
             const Ref<VertexArray>& vertex_array,

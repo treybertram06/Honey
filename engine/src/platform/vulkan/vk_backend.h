@@ -66,8 +66,8 @@ namespace Honey {
         VkInstance get_instance() const { return m_instance; }
         VkPhysicalDevice get_physical_device() const { return m_physical_device; }
         VkDevice get_device() const { return m_device; }
-        uint32_t get_graphics_queue_family_index() const { return m_families.graphicsFamily; }
-        uint32_t get_compute_queue_family_index() const { return m_families.computeFamily; }
+        uint32_t get_graphics_queue_family_index() const { return m_families.graphics_family; }
+        uint32_t get_compute_queue_family_index() const { return m_families.compute_family; }
         VkQueue get_graphics_queue() const { return !m_graphics_queues.empty() ? m_graphics_queues[0] : VK_NULL_HANDLE; }
         VkQueue get_compute_queue() const {
             if (!m_compute_queues.empty())
@@ -117,24 +117,24 @@ namespace Honey {
 
         // Streaming upload
         struct BufferUploadDesc {
-            VkBuffer      dstBuffer  = VK_NULL_HANDLE;
-            VkDeviceSize  dstOffset  = 0;
-            const void*   srcData    = nullptr;
+            VkBuffer      dst_buffer  = VK_NULL_HANDLE;
+            VkDeviceSize  dst_offset  = 0;
+            const void*   src_data    = nullptr;
             VkDeviceSize  size       = 0;
         };
 
         struct ImageUploadDesc {
-            VkImage       dstImage   = VK_NULL_HANDLE;
+            VkImage       dst_image   = VK_NULL_HANDLE;
             uint32_t      width      = 0;
             uint32_t      height     = 0;
-            uint32_t      mipLevel   = 0;
-            uint32_t      arrayLayer = 0;
-            VkImageLayout initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            VkImageLayout finalLayout   = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            const void*   srcData       = nullptr;
+            uint32_t      mip_level   = 0;
+            uint32_t      array_layer = 0;
+            VkImageLayout initial_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+            VkImageLayout final_layout   = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            const void*   src_data       = nullptr;
             VkDeviceSize  size          = 0;
-            std::function<void()> onComplete;
-            std::shared_ptr<void> keepAlive;
+            std::function<void()> on_complete;
+            std::shared_ptr<void> keep_alive;
         };
 
         void queue_buffer_upload(const BufferUploadDesc& desc);
@@ -149,17 +149,19 @@ namespace Honey {
 
         struct RetiredTextureResources {
             VkSampler      sampler = VK_NULL_HANDLE;
-            VkImageView    imageView = VK_NULL_HANDLE;
+            VkImageView    image_view = VK_NULL_HANDLE;
             VkImage        image = VK_NULL_HANDLE;
             VkDeviceMemory memory = VK_NULL_HANDLE;
-            VkDescriptorSet imguiDescriptorSet = VK_NULL_HANDLE;
+            VkDescriptorSet imgui_descriptor_set = VK_NULL_HANDLE;
+            uint32_t       bindless_index = UINT32_MAX;
 
             bool empty() const {
                 return sampler == VK_NULL_HANDLE &&
-                       imageView == VK_NULL_HANDLE &&
+                       image_view == VK_NULL_HANDLE &&
                        image == VK_NULL_HANDLE &&
                        memory == VK_NULL_HANDLE &&
-                       imguiDescriptorSet == VK_NULL_HANDLE;
+                       imgui_descriptor_set == VK_NULL_HANDLE &&
+                       bindless_index == UINT32_MAX;
             }
         };
 
@@ -176,12 +178,12 @@ namespace Honey {
 
     private:
         struct QueueFamilyInfo {
-            uint32_t graphicsFamily = UINT32_MAX;
-            uint32_t computeFamily = UINT32_MAX;
-            uint32_t presentFamily = UINT32_MAX;
-            bool sameFamily() const { return graphicsFamily == presentFamily; }
+            uint32_t graphics_family = UINT32_MAX;
+            uint32_t compute_family = UINT32_MAX;
+            uint32_t present_family = UINT32_MAX;
+            bool sameFamily() const { return graphics_family == present_family; }
             bool hasDedicatedCompute() const {
-                return computeFamily != UINT32_MAX && computeFamily != graphicsFamily;
+                return compute_family != UINT32_MAX && compute_family != graphics_family;
             }
         };
 
@@ -308,7 +310,7 @@ namespace Honey {
             enum class Type : uint8_t { Buffer, Image } type = Type::Buffer;
 
             // Common staging suballocation
-            VkDeviceSize stagingOffset = 0;
+            VkDeviceSize staging_offset = 0;
             VkDeviceSize size         = 0;
 
             BufferUploadDesc buf{};
@@ -324,7 +326,7 @@ namespace Honey {
         VkCommandBuffer              m_stream_inflight_cmd = VK_NULL_HANDLE;
 
         struct DeferredDestroyItem {
-            uint64_t retireFrame = 0;
+            uint64_t retire_frame = 0;
             RetiredTextureResources resources{};
         };
 

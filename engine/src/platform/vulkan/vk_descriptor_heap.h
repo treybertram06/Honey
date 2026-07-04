@@ -18,13 +18,21 @@ namespace Honey {
         Allocation allocate_persistent_resource(VkDescriptorType type, uint32_t count); // resource heap, persistent region
         Allocation allocate_persistent_sampler(uint32_t count);   // sampler heap
 
+        Allocation allocate_persistent_block(VkDescriptorType type, uint32_t count);
+        void free_persistent_block(const Allocation& alloc);
+
+        void init_bindless_table(uint32_t capacity);
+        uint32_t bindless_table_byte_offset() const { return m_bindless_table_alloc.offset; }
+        uint32_t alloc_bindless_index();
+        void free_bindless_index(uint32_t index);
+        void write_bindless(uint32_t index, const VkImageViewCreateInfo& view, VkImageLayout layout);
+
         void write_image (const Allocation& alloc, uint32_t index,
                           const VkImageViewCreateInfo& view, VkImageLayout layout,
                           VkDescriptorType type);
         void write_buffer(const Allocation& alloc, uint32_t index,
                           VkDeviceAddress addr, VkDeviceSize range, VkDescriptorType type);
         void write_sampler(const Allocation& alloc, uint32_t index, const VkSamplerCreateInfo& sampler_ci);
-        void write_global_ubo(VkDeviceAddress addr, VkDeviceSize range);
 
         void bake_static_samplers(float max_anisotropy);
 
@@ -50,6 +58,7 @@ namespace Honey {
         VkDeviceSize max_push_data_size() const { return m_props.maxPushDataSize; }
 
         void register_global_binding(uint32_t binding, const Allocation& slot);
+        void write_global_buffer(uint32_t binding, VkDeviceAddress addr, VkDeviceSize range, VkDescriptorType type);
         uint32_t global_binding_offset(uint32_t binding) const;
         bool has_global_binding(uint32_t binding) const;
 
@@ -63,6 +72,11 @@ namespace Honey {
                                         VkDeviceAddress& out_addr);
 
         uint32_t stride_for(VkDescriptorType type) const;
+
+        static uint64_t persistent_block_key(uint32_t stride, uint32_t count) {
+            return ((uint64_t)stride << 32) | count;
+        }
+
     private:
         VkInstance m_instance = nullptr;
         VkPhysicalDevice m_phys = nullptr;
@@ -100,7 +114,7 @@ namespace Honey {
         VkDeviceSize m_resource_persistent_offset = 0;
         VkDeviceSize m_resource_persistent_size = 0;
         VkDeviceSize m_resource_persistent_cursor = 0;
-        VkDeviceSize m_resource_persistent_capacity = 64 * 1024; // 64 KiB carved for persistent residents (set-0 globals)
+        VkDeviceSize m_resource_persistent_capacity = 0;
 
         std::array<Allocation, 8> m_global_slots{}; // Probably shouldn't hardcode the size here
         std::array<bool, 8> m_global_slots_valid{};
@@ -110,6 +124,11 @@ namespace Honey {
         VkDeviceSize m_transient_persistent_size = 0;
         std::vector<FrameSlot> m_frame_slots;
         uint32_t m_current_frame = 0;
+
+        std::unordered_map<uint64_t, std::vector<Allocation>> m_persistent_freelist;
+        Allocation m_bindless_table_alloc{};
+        std::vector<uint32_t> m_bindless_free_indices;
+        uint32_t m_bindless_capacity = 0;
 
         // Sampler heap layout
         VkDeviceSize m_sampler_reserved_size = 0;

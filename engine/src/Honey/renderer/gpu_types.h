@@ -139,6 +139,16 @@ namespace Honey {
         uint32_t _pad;
     };
 
+    // Heap-mode equivalent of ShadowDrawPC for the meshlet shadow shaders (Renderer3D_ShadowCubemap.glsl /
+    // Renderer3D_ShadowDirectional.glsl). resource_heap_base must be the first word — the set=1 PUSH_INDEX
+    // mapping reads it via offsetof(PassPushData, resource_heap_base) == 0, and this struct matches that offset.
+    struct ShadowMeshletPushData {
+        uint32_t resource_heap_base; // per-mesh persistent heap block byte offset (set=1)
+        int32_t  draw_data_base;
+        int32_t  light_index;        // which shadow light slot (cubemap) or unused (directional)
+        uint32_t face_index;         // cubemap face (0..5) or cascade index (directional)
+    };
+
     // Push constants for the shadow cull compute shader.
     struct ShadowCullPC {
         uint32_t total_draws;

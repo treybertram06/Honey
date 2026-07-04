@@ -295,12 +295,12 @@ namespace Honey {
             pick_physical_device();
 
             QueueFamilyInfo surfaceFamilies = find_queue_families(m_physical_device, surface);
-            HN_CORE_ASSERT(surfaceFamilies.graphicsFamily != UINT32_MAX, "No graphics family found for surface");
-            HN_CORE_ASSERT(surfaceFamilies.presentFamily != UINT32_MAX, "No present family found for surface");
+            HN_CORE_ASSERT(surfaceFamilies.graphics_family != UINT32_MAX, "No graphics family found for surface");
+            HN_CORE_ASSERT(surfaceFamilies.present_family != UINT32_MAX, "No present family found for surface");
 
-            m_families.graphicsFamily = surfaceFamilies.graphicsFamily;
-            m_families.computeFamily = surfaceFamilies.computeFamily;
-            m_families.presentFamily = surfaceFamilies.presentFamily;
+            m_families.graphics_family = surfaceFamilies.graphics_family;
+            m_families.compute_family = surfaceFamilies.compute_family;
+            m_families.present_family = surfaceFamilies.present_family;
 
             create_logical_device(m_families, k_desired_queues_per_family);
 
@@ -316,24 +316,24 @@ namespace Honey {
         // For every surface (including first), compute the best present family:
         // prefer graphics family if it can present to this surface; otherwise use any present-capable family.
         QueueFamilyInfo surfaceFamilies = find_queue_families(m_physical_device, surface);
-        HN_CORE_ASSERT(surfaceFamilies.graphicsFamily != UINT32_MAX, "Surface has no graphics family");
-        HN_CORE_ASSERT(surfaceFamilies.presentFamily != UINT32_MAX, "Surface has no present family");
+        HN_CORE_ASSERT(surfaceFamilies.graphics_family != UINT32_MAX, "Surface has no graphics family");
+        HN_CORE_ASSERT(surfaceFamilies.present_family != UINT32_MAX, "Surface has no present family");
 
-        HN_CORE_ASSERT(surfaceFamilies.graphicsFamily == m_families.graphicsFamily,
+        HN_CORE_ASSERT(surfaceFamilies.graphics_family == m_families.graphics_family,
                        "Surface requires different graphics queue family than device was created with");
 
         VulkanQueueLease lease{};
-        lease.graphicsFamily = m_families.graphicsFamily;
-        lease.computeFamily = m_families.computeFamily;
+        lease.graphicsFamily = m_families.graphics_family;
+        lease.computeFamily = m_families.compute_family;
 
         // Present family for this surface may differ from the device's initial present family.
         // For now: we only support present from the family we created queues for.
         // If you need true per-surface present family flexibility, expand backend to keep pools per family.
-        HN_CORE_ASSERT(surfaceFamilies.presentFamily == m_families.presentFamily,
+        HN_CORE_ASSERT(surfaceFamilies.present_family == m_families.present_family,
                        "Surface requires a different present family than backend was initialized with. "
                        "Next step: support per-family present queue pools.");
 
-        lease.presentFamily = m_families.presentFamily;
+        lease.presentFamily = m_families.present_family;
 
         // Safety mode: keep all graphics submissions on queue[0].
         // This avoids cross-queue image hazards for resources (e.g. offscreen FB attachments)
@@ -347,7 +347,7 @@ namespace Honey {
         lease.hasDedicatedCompute = m_has_dedicated_compute_queue;
 
         if (m_has_dedicated_compute_queue) {
-            lease.computeFamily = m_families.computeFamily;
+            lease.computeFamily = m_families.compute_family;
 
             if (!m_free_compute_indices.empty()) {
                 lease.computeQueueIndex = m_free_compute_indices.back();
@@ -426,7 +426,7 @@ namespace Honey {
         VkCommandPoolCreateInfo pool_ci{};
         pool_ci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
         pool_ci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-        pool_ci.queueFamilyIndex = m_families.graphicsFamily;
+        pool_ci.queueFamilyIndex = m_families.graphics_family;
 
         VkResult r = vkCreateCommandPool(m_device, &pool_ci, nullptr, &m_upload_command_pool);
         HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateCommandPool failed for upload context");
@@ -587,7 +587,7 @@ namespace Honey {
         VkCommandPoolCreateInfo pool_ci{};
         pool_ci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
         pool_ci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-        pool_ci.queueFamilyIndex = m_families.graphicsFamily;
+        pool_ci.queueFamilyIndex = m_families.graphics_family;
 
         VkResult r = vkCreateCommandPool(m_device, &pool_ci, nullptr, &m_immediate_command_pool);
         HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateCommandPool failed for immediate context");
@@ -864,7 +864,7 @@ namespace Honey {
         HN_CORE_ASSERT(is_upload_thread() || !m_upload_thread.joinable(),
                        "queue_buffer_upload must be called from the upload thread");
 
-        if (!desc.dstBuffer || !desc.srcData || desc.size == 0)
+        if (!desc.dst_buffer || !desc.src_data || desc.size == 0)
             return;
 
         // Align to 16 bytes, good for most GPUs
@@ -925,16 +925,16 @@ namespace Honey {
             void* mapped = nullptr;
             r = vkMapMemory(m_device, tmpMem, 0, desc.size, 0, &mapped);
             HN_CORE_ASSERT(r == VK_SUCCESS, "queue_buffer_upload fallback vkMapMemory failed");
-            std::memcpy(mapped, desc.srcData, static_cast<size_t>(desc.size));
+            std::memcpy(mapped, desc.src_data, static_cast<size_t>(desc.size));
             vkUnmapMemory(m_device, tmpMem);
 
             immediate_submit([&](VkCommandBuffer cmd) {
 
                 VkBufferCopy region{};
                 region.srcOffset = 0;
-                region.dstOffset = desc.dstOffset;
+                region.dstOffset = desc.dst_offset;
                 region.size      = desc.size;
-                vkCmdCopyBuffer(cmd, tmpBuf, desc.dstBuffer, 1, &region);
+                vkCmdCopyBuffer(cmd, tmpBuf, desc.dst_buffer, 1, &region);
             });
 
             vkDestroyBuffer(m_device, tmpBuf, nullptr);
@@ -945,12 +945,12 @@ namespace Honey {
 
         // Copy src data into mapped staging
         std::memcpy(static_cast<uint8_t*>(m_stream_staging_mapped) + offset,
-                    desc.srcData,
+                    desc.src_data,
                     static_cast<size_t>(desc.size));
 
         StreamUploadJob job{};
         job.type         = StreamUploadJob::Type::Buffer;
-        job.stagingOffset = offset;
+        job.staging_offset = offset;
         job.size          = desc.size;
         job.buf           = desc;
 
@@ -962,11 +962,11 @@ namespace Honey {
         HN_CORE_ASSERT(is_upload_thread() || !m_upload_thread.joinable(),
                        "queue_image_upload must be called from the upload thread");
 
-        HN_CORE_ASSERT(desc.dstImage != VK_NULL_HANDLE,
+        HN_CORE_ASSERT(desc.dst_image != VK_NULL_HANDLE,
                        "queue_image_upload: dstImage is null (w={}, h={})",
                        desc.width, desc.height);
 
-        if (!desc.dstImage || !desc.srcData || desc.size == 0 || desc.width == 0 || desc.height == 0)
+        if (!desc.dst_image || !desc.src_data || desc.size == 0 || desc.width == 0 || desc.height == 0)
             return;
 
         // 4-byte alignment is enough for tightly packed RGBA8; use 16 for safety.
@@ -1026,22 +1026,22 @@ namespace Honey {
             void* mapped = nullptr;
             r = vkMapMemory(m_device, tmpMem, 0, desc.size, 0, &mapped);
             HN_CORE_ASSERT(r == VK_SUCCESS, "queue_image_upload fallback vkMapMemory failed");
-            std::memcpy(mapped, desc.srcData, static_cast<size_t>(desc.size));
+            std::memcpy(mapped, desc.src_data, static_cast<size_t>(desc.size));
             vkUnmapMemory(m_device, tmpMem);
 
             immediate_submit([&](VkCommandBuffer cmd) {
-                if (desc.initialLayout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+                if (desc.initial_layout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
                     VkImageMemoryBarrier barrier{};
                     barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                    barrier.oldLayout = desc.initialLayout;
+                    barrier.oldLayout = desc.initial_layout;
                     barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
                     barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
                     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                    barrier.image = desc.dstImage;
+                    barrier.image = desc.dst_image;
                     barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-                    barrier.subresourceRange.baseMipLevel = desc.mipLevel;
+                    barrier.subresourceRange.baseMipLevel = desc.mip_level;
                     barrier.subresourceRange.levelCount   = 1;
-                    barrier.subresourceRange.baseArrayLayer = desc.arrayLayer;
+                    barrier.subresourceRange.baseArrayLayer = desc.array_layer;
                     barrier.subresourceRange.layerCount     = 1;
 
                     barrier.srcAccessMask = 0;
@@ -1061,31 +1061,31 @@ namespace Honey {
                 region.bufferRowLength                 = 0;
                 region.bufferImageHeight               = 0;
                 region.imageSubresource.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
-                region.imageSubresource.mipLevel       = desc.mipLevel;
-                region.imageSubresource.baseArrayLayer = desc.arrayLayer;
+                region.imageSubresource.mipLevel       = desc.mip_level;
+                region.imageSubresource.baseArrayLayer = desc.array_layer;
                 region.imageSubresource.layerCount     = 1;
                 region.imageOffset                     = { 0, 0, 0 };
                 region.imageExtent                     = { desc.width, desc.height, 1 };
 
                 vkCmdCopyBufferToImage(cmd,
                                        tmpBuf,
-                                       desc.dstImage,
+                                       desc.dst_image,
                                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                                        1,
                                        &region);
 
-                if (desc.finalLayout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+                if (desc.final_layout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
                     VkImageMemoryBarrier barrier{};
                     barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
                     barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-                    barrier.newLayout = desc.finalLayout;
+                    barrier.newLayout = desc.final_layout;
                     barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
                     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                    barrier.image = desc.dstImage;
+                    barrier.image = desc.dst_image;
                     barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-                    barrier.subresourceRange.baseMipLevel = desc.mipLevel;
+                    barrier.subresourceRange.baseMipLevel = desc.mip_level;
                     barrier.subresourceRange.levelCount   = 1;
-                    barrier.subresourceRange.baseArrayLayer = desc.arrayLayer;
+                    barrier.subresourceRange.baseArrayLayer = desc.array_layer;
                     barrier.subresourceRange.layerCount     = 1;
 
                     barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -1101,8 +1101,8 @@ namespace Honey {
                 }
             });
 
-            if (desc.onComplete) {
-                desc.onComplete();
+            if (desc.on_complete) {
+                desc.on_complete();
             }
 
             vkDestroyBuffer(m_device, tmpBuf, nullptr);
@@ -1112,12 +1112,12 @@ namespace Honey {
         }
 
         std::memcpy(static_cast<uint8_t*>(m_stream_staging_mapped) + offset,
-                    desc.srcData,
+                    desc.src_data,
                     static_cast<size_t>(desc.size));
 
         StreamUploadJob job{};
         job.type          = StreamUploadJob::Type::Image;
-        job.stagingOffset = offset;
+        job.staging_offset = offset;
         job.size          = desc.size;
         job.img           = desc;
 
@@ -1143,8 +1143,8 @@ namespace Honey {
 
             // Completion callbacks run only after GPU transfer work is complete.
             for (const StreamUploadJob& job : m_stream_inflight_jobs) {
-                if (job.type == StreamUploadJob::Type::Image && job.img.onComplete) {
-                    job.img.onComplete();
+                if (job.type == StreamUploadJob::Type::Image && job.img.on_complete) {
+                    job.img.on_complete();
                 }
             }
             m_stream_inflight_jobs.clear();
@@ -1190,30 +1190,30 @@ namespace Honey {
             if (job.type == StreamUploadJob::Type::Buffer) {
                 const auto& d = job.buf;
                 VkBufferCopy region{};
-                region.srcOffset = job.stagingOffset;
-                region.dstOffset = d.dstOffset;
+                region.srcOffset = job.staging_offset;
+                region.dstOffset = d.dst_offset;
                 region.size      = d.size;
 
                 vkCmdCopyBuffer(cmd,
                                 m_stream_staging_buffer,
-                                d.dstBuffer,
+                                d.dst_buffer,
                                 1,
                                 &region);
             } else {
                 const auto& d = job.img;
 
-                if (d.initialLayout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+                if (d.initial_layout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
                     VkImageMemoryBarrier barrier{};
                     barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                    barrier.oldLayout = d.initialLayout;
+                    barrier.oldLayout = d.initial_layout;
                     barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
                     barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
                     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                    barrier.image = d.dstImage;
+                    barrier.image = d.dst_image;
                     barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-                    barrier.subresourceRange.baseMipLevel = d.mipLevel;
+                    barrier.subresourceRange.baseMipLevel = d.mip_level;
                     barrier.subresourceRange.levelCount   = 1;
-                    barrier.subresourceRange.baseArrayLayer = d.arrayLayer;
+                    barrier.subresourceRange.baseArrayLayer = d.array_layer;
                     barrier.subresourceRange.layerCount     = 1;
 
                     barrier.srcAccessMask = 0;
@@ -1229,35 +1229,35 @@ namespace Honey {
                 }
 
                 VkBufferImageCopy region{};
-                region.bufferOffset                    = job.stagingOffset;
+                region.bufferOffset                    = job.staging_offset;
                 region.bufferRowLength                 = 0;
                 region.bufferImageHeight               = 0;
                 region.imageSubresource.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
-                region.imageSubresource.mipLevel       = d.mipLevel;
-                region.imageSubresource.baseArrayLayer = d.arrayLayer;
+                region.imageSubresource.mipLevel       = d.mip_level;
+                region.imageSubresource.baseArrayLayer = d.array_layer;
                 region.imageSubresource.layerCount     = 1;
                 region.imageOffset                     = { 0, 0, 0 };
                 region.imageExtent                     = { d.width, d.height, 1 };
 
                 vkCmdCopyBufferToImage(cmd,
                                        m_stream_staging_buffer,
-                                       d.dstImage,
+                                       d.dst_image,
                                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                                        1,
                                        &region);
 
-                if (d.finalLayout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+                if (d.final_layout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
                     VkImageMemoryBarrier barrier{};
                     barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
                     barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-                    barrier.newLayout = d.finalLayout;
+                    barrier.newLayout = d.final_layout;
                     barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
                     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                    barrier.image = d.dstImage;
+                    barrier.image = d.dst_image;
                     barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-                    barrier.subresourceRange.baseMipLevel = d.mipLevel;
+                    barrier.subresourceRange.baseMipLevel = d.mip_level;
                     barrier.subresourceRange.levelCount   = 1;
-                    barrier.subresourceRange.baseArrayLayer = d.arrayLayer;
+                    barrier.subresourceRange.baseArrayLayer = d.array_layer;
                     barrier.subresourceRange.layerCount     = 1;
 
                     barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -1330,7 +1330,7 @@ namespace Honey {
         std::scoped_lock lock(m_deferred_destroy_mutex);
 
         DeferredDestroyItem item{};
-        item.retireFrame = m_completed_frame_counter + k_deferred_destroy_frame_lag;
+        item.retire_frame = m_completed_frame_counter + k_deferred_destroy_frame_lag;
         item.resources = resources;
 
         m_deferred_destroy_items.push_back(item);
@@ -1345,20 +1345,23 @@ namespace Honey {
         auto it = std::remove_if(m_deferred_destroy_items.begin(),
                                  m_deferred_destroy_items.end(),
                                  [&](const DeferredDestroyItem& item) {
-                                     if (item.retireFrame > completedFrame)
+                                     if (item.retire_frame > completedFrame)
                                          return false;
 
                                      const auto& r = item.resources;
 
-                                     if (r.imguiDescriptorSet != VK_NULL_HANDLE && m_imgui_initialized) {
-                                         ImGui_ImplVulkan_RemoveTexture(r.imguiDescriptorSet);
+                                     if (r.imgui_descriptor_set != VK_NULL_HANDLE && m_imgui_initialized) {
+                                         ImGui_ImplVulkan_RemoveTexture(r.imgui_descriptor_set);
+                                     }
+                                     if (r.bindless_index != UINT32_MAX) {
+                                         m_descriptor_heap->free_bindless_index(r.bindless_index);
                                      }
 
                                      if (r.sampler) {
                                          vkDestroySampler(m_device, r.sampler, nullptr);
                                      }
-                                     if (r.imageView) {
-                                         vkDestroyImageView(m_device, r.imageView, nullptr);
+                                     if (r.image_view) {
+                                         vkDestroyImageView(m_device, r.image_view, nullptr);
                                      }
                                      if (r.image) {
                                          vkDestroyImage(m_device, r.image, nullptr);
@@ -1393,13 +1396,13 @@ namespace Honey {
 #if defined(BUILD_DEBUG)
         for (const auto& job : m_stream_jobs) {
             if (job.type == StreamUploadJob::Type::Buffer &&
-                job.buf.dstBuffer == buffer) {
+                job.buf.dst_buffer == buffer) {
                 return true;
                 }
         }
         for (const auto& job : m_stream_inflight_jobs) {
             if (job.type == StreamUploadJob::Type::Buffer &&
-                job.buf.dstBuffer == buffer) {
+                job.buf.dst_buffer == buffer) {
                 return true;
                 }
         }
@@ -1562,9 +1565,9 @@ namespace Honey {
     VulkanBackend::QueueFamilyInfo VulkanBackend::find_queue_families(VkPhysicalDevice device, VkSurfaceKHR surface) {
         HN_PROFILE_FUNCTION();
         QueueFamilyInfo info{};
-        info.graphicsFamily = UINT32_MAX;
-        info.computeFamily = UINT32_MAX;
-        info.presentFamily  = UINT32_MAX;
+        info.graphics_family = UINT32_MAX;
+        info.compute_family = UINT32_MAX;
+        info.present_family  = UINT32_MAX;
 
         uint32_t queue_family_count = 0;
         vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_family_count, nullptr);
@@ -1575,8 +1578,8 @@ namespace Honey {
         uint32_t fallback_compute_candidate = UINT32_MAX;
 
         for (uint32_t i = 0; i < queue_family_count; i++) {
-            if ((families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) && info.graphicsFamily == UINT32_MAX) {
-                info.graphicsFamily = i;
+            if ((families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) && info.graphics_family == UINT32_MAX) {
+                info.graphics_family = i;
             }
 
             if (families[i].queueFlags & VK_QUEUE_COMPUTE_BIT) {
@@ -1592,19 +1595,19 @@ namespace Honey {
 
             VkBool32 present_support = VK_FALSE;
             vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &present_support);
-            if (present_support && info.presentFamily == UINT32_MAX) {
-                info.presentFamily = i;
+            if (present_support && info.present_family == UINT32_MAX) {
+                info.present_family = i;
             }
         }
 
         if (dedicated_compute_candidate != UINT32_MAX) {
-            info.computeFamily = dedicated_compute_candidate;
+            info.compute_family = dedicated_compute_candidate;
         } else if (fallback_compute_candidate != UINT32_MAX) {
-            info.computeFamily = fallback_compute_candidate;
+            info.compute_family = fallback_compute_candidate;
         } else {
             // Last-resort fallback. Validation for true compute capability happens
             // when compute passes are actually compiled/executed.
-            info.computeFamily = info.graphicsFamily;
+            info.compute_family = info.graphics_family;
         }
 
         return info;
@@ -1626,10 +1629,10 @@ namespace Honey {
             return std::max(1u, std::min(desiredQueuesPerFamily, available));
         };
 
-        const uint32_t graphics_family = families.graphicsFamily;
-        const uint32_t present_family = families.presentFamily;
-        const uint32_t compute_family = (families.computeFamily != UINT32_MAX)
-            ? families.computeFamily
+        const uint32_t graphics_family = families.graphics_family;
+        const uint32_t present_family = families.present_family;
+        const uint32_t compute_family = (families.compute_family != UINT32_MAX)
+            ? families.compute_family
             : graphics_family;
 
         const uint32_t graphics_count = clamp_count(graphics_family);

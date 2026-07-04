@@ -45,6 +45,12 @@ namespace Honey {
         m_descriptor_sizes.storage_buffer   = (uint32_t)m_fnGetDescriptorSize(phys, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
         m_descriptor_sizes.sampler          = (uint32_t)m_fnGetDescriptorSize(phys, VK_DESCRIPTOR_TYPE_SAMPLER);
 
+        constexpr uint32_t k_bindless_capacity = 4096;
+        constexpr uint32_t k_max_meshes = 2048;
+        m_resource_persistent_capacity = (VkDeviceSize)k_bindless_capacity * m_descriptor_sizes.sampled_image +
+            (VkDeviceSize)k_max_meshes * 2 * 6 * m_descriptor_sizes.storage_buffer +
+                32 * m_descriptor_sizes.storage_buffer; // Slack for global slots
+
         // Compute resource-heap regions
         HN_CORE_ASSERT(m_resource_capacity <= m_props.maxResourceHeapSize,
             "[VulkanDescriptorHeap] Resource heap capacity exceeds device limits!");
@@ -96,6 +102,7 @@ namespace Honey {
         VkPhysicalDeviceProperties device_props{};
         vkGetPhysicalDeviceProperties(phys, &device_props);
         bake_static_samplers(device_props.limits.maxSamplerAnisotropy);
+        init_bindless_table(k_bindless_capacity);
     }
 
     VulkanDescriptorHeap::~VulkanDescriptorHeap() {
@@ -167,8 +174,56 @@ namespace Honey {
         return Allocation{ (uint32_t)aligned, (uint32_t)bytes, stride };
     }
 
+    VulkanDescriptorHeap::Allocation VulkanDescriptorHeap::allocate_persistent_block(
+        VkDescriptorType type, uint32_t count) {
+
+        uint32_t stride = stride_for(type);
+        uint64_t key = persistent_block_key(stride, count);
+
+        auto it = m_persistent_freelist.find(key);
+        if (it != m_persistent_freelist.end()) {
+            Allocation alloc = it->second.back();
+            it->second.pop_back();
+            return alloc;
+        }
+
+        // Miss - bump a fresh block from the persistent cursor
+        return allocate_persistent_resource(type, count);
+    }
+
+    void VulkanDescriptorHeap::free_persistent_block(const Allocation& alloc) {
+        HN_CORE_ASSERT(alloc.stride > 0 && alloc.size > 0, "[VulkanDescriptorHeap] free_persistent_block: invalid allocation");
+        uint32_t count = alloc.size / alloc.stride;
+        uint64_t key = persistent_block_key(alloc.stride, count);
+        m_persistent_freelist[key].push_back(alloc);
+    }
+
+    void VulkanDescriptorHeap::init_bindless_table(uint32_t capacity) {
+        m_bindless_capacity = capacity;
+        m_bindless_table_alloc = allocate_persistent_block(VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, capacity);
+        // freelist holds [1, capacity), with 0 reserved for fallback / white
+        m_bindless_free_indices.reserve(capacity - 1);
+        for (uint32_t i = 1; i < capacity; ++i)
+            m_bindless_free_indices.push_back(i);
+    }
+
+    uint32_t VulkanDescriptorHeap::alloc_bindless_index() {
+        HN_CORE_ASSERT(!m_bindless_free_indices.empty(), "[VulkanDescriptorHeap] Bindless table exhausted, raise capacity");
+        uint32_t idx = m_bindless_free_indices.back();
+        m_bindless_free_indices.pop_back();
+        return idx;
+    }
+
+    void VulkanDescriptorHeap::free_bindless_index(uint32_t index) {
+        m_bindless_free_indices.push_back(index);
+    }
+
+    void VulkanDescriptorHeap::write_bindless(uint32_t index, const VkImageViewCreateInfo& view, VkImageLayout layout) {
+        write_image(m_bindless_table_alloc, index, view, layout, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE);
+    }
+
     void VulkanDescriptorHeap::write_image(const Allocation& alloc, uint32_t index, const VkImageViewCreateInfo& view,
-        VkImageLayout layout, VkDescriptorType type) {
+                                           VkImageLayout layout, VkDescriptorType type) {
 
         HN_CORE_ASSERT(alloc.stride == stride_for(type),
             "[VulkanDescriptorHeap] write_image: descriptor type does not match allocation");
@@ -359,6 +414,12 @@ namespace Honey {
         HN_CORE_ASSERT(!m_global_slots_valid[binding], "[VulkanDescriptorHeap] Global binding already registered");
         m_global_slots[binding] = slot;
         m_global_slots_valid[binding] = true;
+    }
+
+    void VulkanDescriptorHeap::write_global_buffer(uint32_t binding, VkDeviceAddress addr, VkDeviceSize range,
+        VkDescriptorType type) {
+        HN_CORE_ASSERT(has_global_binding(binding), "[VulkanDescriptorHeap] No global slot registered for binding {0}", binding);
+        write_buffer(m_global_slots[binding], 0, addr, range, type);
     }
 
     uint32_t VulkanDescriptorHeap::global_binding_offset(uint32_t binding) const {

@@ -177,8 +177,18 @@ namespace Honey {
         auto& draw_data_buffer = bufs.draw_data_buffers[slot];
         if (!draw_data_buffer || draw_data_buffer->get_size() < needed) {
             draw_data_buffer = StorageBuffer::create(needed, StorageBufferUsage::Dynamic);
-            // Force descriptor recreation so binding 5 points to the new buffer
-            bufs.descriptor_sets[slot] = nullptr;
+
+            HN_CORE_ASSERT(bufs.meshlet_blocks[slot].valid,
+                "update_mesh_draw_data_binding: meshlet heap block not allocated — "
+                "call allocate_meshlet_heap_blocks on mesh load first");
+
+            auto* ctx = get_vulkan_context();
+            auto* heap = ctx->get_backend()->get_descriptor_heap();
+            const auto& block = bufs.meshlet_blocks[slot];
+            VulkanDescriptorHeap::Allocation alloc{block.offset, block.size, block.stride};
+
+            auto* vk_buf = static_cast<VulkanStorageBuffer*>(draw_data_buffer.get());
+            heap->write_buffer(alloc, 5, vk_buf->device_address(), vk_buf->get_size(), VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
         }
     }
 
@@ -193,9 +203,11 @@ namespace Honey {
         return bufs.draw_data_buffers[slot];
     }
 
-    void* VulkanRendererAPI::get_mesh_descriptor_set(const GlobalMeshletBuffers& bufs) {
+    uint32_t VulkanRendererAPI::get_mesh_block_offset(const GlobalMeshletBuffers& bufs) {
         const uint32_t slot = get_meshlet_frame_slot();
-        return bufs.descriptor_sets[slot];
+        HN_CORE_ASSERT(bufs.meshlet_blocks[slot].valid,
+            "get_mesh_block_offset: meshlet heap block not allocated for this mesh");
+        return bufs.meshlet_blocks[slot].offset;
     }
 
     void VulkanRendererAPI::submit_instanced_draw(
@@ -422,119 +434,68 @@ namespace Honey {
     }
 
     // ---------------------------------------------------------------------------
-    // Meshlet descriptor set management
+    // Meshlet heap-block management (set=1, persistent region of the resource heap)
     // ---------------------------------------------------------------------------
 
-    static VkDescriptorSetLayout         s_meshlet_set_layout = VK_NULL_HANDLE;
-    static std::vector<VkDescriptorPool> s_meshlet_desc_pools;
+    void VulkanRendererAPI::allocate_meshlet_heap_blocks(GlobalMeshletBuffers& bufs) {
+        auto* ctx = get_vulkan_context();
+        HN_CORE_ASSERT(ctx, "allocate_meshlet_heap_blocks: no active VulkanContext");
+        auto* heap = ctx->get_backend()->get_descriptor_heap();
 
-    static constexpr uint32_t k_meshlet_pool_chunk = 512; // sets per pool slab
-
-    static VkDescriptorPool create_meshlet_pool(VkDevice device) {
-        VkDescriptorPoolSize pool_size{};
-        pool_size.type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        pool_size.descriptorCount = k_meshlet_pool_chunk * 6; // 6 bindings per set
-        VkDescriptorPoolCreateInfo pool_ci{};
-        pool_ci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        pool_ci.maxSets       = k_meshlet_pool_chunk;
-        pool_ci.poolSizeCount = 1;
-        pool_ci.pPoolSizes    = &pool_size;
-        VkDescriptorPool pool = VK_NULL_HANDLE;
-        VkResult r = vkCreateDescriptorPool(device, &pool_ci, nullptr, &pool);
-        HN_CORE_ASSERT(r == VK_SUCCESS, "create_meshlet_pool: vkCreateDescriptorPool failed");
-        return pool;
-    }
-
-    void* VulkanRendererAPI::get_or_create_meshlet_set_layout() {
-        if (s_meshlet_set_layout)
-            return s_meshlet_set_layout;
-
-        VkDevice device = get_vulkan_context()->get_device();
-
-        // 6 SSBO bindings at set=1:
-        //   0 = vertex_buffer            (float[] / VertexPNUV)
-        //   1 = meshlets_buffer          (meshopt_Meshlet[])
-        //   2 = meshlet_vertices_buffer  (uint32_t[])
-        //   3 = meshlet_triangles_buffer (uint8_t[] packed)
-        //   4 = meshlet_bounds_buffer    (MeshletBounds[])
-        //   5 = draw_data_buffer         (GPUDrawData[], per-mesh, written once on descriptor creation)
-        VkDescriptorSetLayoutBinding bindings[6]{};
-        for (uint32_t i = 0; i < 6; ++i) {
-            bindings[i].binding         = i;
-            bindings[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            bindings[i].descriptorCount = 1;
-            bindings[i].stageFlags      = VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT;
-        }
-        VkDescriptorSetLayoutCreateInfo layout_ci{};
-        layout_ci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        layout_ci.bindingCount = 6;
-        layout_ci.pBindings    = bindings;
-        VkResult r = vkCreateDescriptorSetLayout(device, &layout_ci, nullptr, &s_meshlet_set_layout);
-        HN_CORE_ASSERT(r == VK_SUCCESS, "get_or_create_meshlet_set_layout: vkCreateDescriptorSetLayout failed");
-
-        // Allocate first pool slab
-        s_meshlet_desc_pools.push_back(create_meshlet_pool(device));
-
-        return s_meshlet_set_layout;
-    }
-
-    void VulkanRendererAPI::ensure_mesh_descriptor_set(GlobalMeshletBuffers& bufs) {
-        const uint32_t slot = get_meshlet_frame_slot();
-        if (bufs.descriptor_sets[slot]) return;
-
-        HN_CORE_ASSERT(s_meshlet_set_layout && !s_meshlet_desc_pools.empty(),
-            "ensure_mesh_descriptor_set: call get_or_create_meshlet_set_layout first");
-
-        VkDevice device = get_vulkan_context()->get_device();
-
-        VkDescriptorSetAllocateInfo alloc{};
-        alloc.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-        alloc.descriptorSetCount = 1;
-        alloc.pSetLayouts        = &s_meshlet_set_layout;
-
-        VkDescriptorSet ds = VK_NULL_HANDLE;
-        VkResult r = VK_ERROR_OUT_OF_POOL_MEMORY;
-
-        for (int pi = (int)s_meshlet_desc_pools.size() - 1; pi >= 0 && r != VK_SUCCESS; --pi) {
-            alloc.descriptorPool = s_meshlet_desc_pools[pi];
-            r = vkAllocateDescriptorSets(device, &alloc, &ds);
-        }
-        if (r != VK_SUCCESS) {
-            s_meshlet_desc_pools.push_back(create_meshlet_pool(device));
-            alloc.descriptorPool = s_meshlet_desc_pools.back();
-            r = vkAllocateDescriptorSets(device, &alloc, &ds);
-            HN_CORE_ASSERT(r == VK_SUCCESS, "ensure_mesh_descriptor_set: vkAllocateDescriptorSets failed on fresh pool");
-        }
-
-        HN_CORE_ASSERT(bufs.draw_data_buffers[slot],
-            "ensure_mesh_descriptor_set: call update_mesh_draw_data_binding before ensure_mesh_descriptor_set");
-
-        Ref<StorageBuffer> ssbo_bufs[6] = {
-            bufs.vertex_buffer,
-            bufs.meshlets_buffer,
-            bufs.meshlet_vertices_buffer,
-            bufs.meshlet_triangles_buffer,
-            bufs.meshlet_bounds_buffer,
-            bufs.draw_data_buffers[slot]
+        // Bindings 0-4 are stable for the mesh's lifetime; binding 5 (draw data) is written
+        // separately per frame slot by update_mesh_draw_data_binding as it grows.
+        VulkanStorageBuffer* stable_bufs[5] = {
+            static_cast<VulkanStorageBuffer*>(bufs.vertex_buffer.get()),
+            static_cast<VulkanStorageBuffer*>(bufs.meshlets_buffer.get()),
+            static_cast<VulkanStorageBuffer*>(bufs.meshlet_vertices_buffer.get()),
+            static_cast<VulkanStorageBuffer*>(bufs.meshlet_triangles_buffer.get()),
+            static_cast<VulkanStorageBuffer*>(bufs.meshlet_bounds_buffer.get()),
         };
-        VkDescriptorBufferInfo buf_infos[6]{};
-        VkWriteDescriptorSet   writes[6]{};
-        for (uint32_t i = 0; i < 6; ++i) {
-            HN_CORE_ASSERT(ssbo_bufs[i], "ensure_mesh_descriptor_set: SSBO buffer {} is null", i);
-            buf_infos[i].buffer = reinterpret_cast<VkBuffer>(ssbo_bufs[i]->get_native_buffer());
-            buf_infos[i].offset = 0;
-            buf_infos[i].range  = VK_WHOLE_SIZE;
 
-            writes[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[i].dstSet          = ds;
-            writes[i].dstBinding      = i;
-            writes[i].descriptorCount = 1;
-            writes[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            writes[i].pBufferInfo     = &buf_infos[i];
+        for (uint32_t slot = 0; slot < GlobalMeshletBuffers::k_frame_ring_size; ++slot) {
+            auto alloc = heap->allocate_persistent_block(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6);
+            for (uint32_t i = 0; i < 5; ++i) {
+                HN_CORE_ASSERT(stable_bufs[i], "allocate_meshlet_heap_blocks: SSBO buffer {0} is null", i);
+                heap->write_buffer(alloc, i, stable_bufs[i]->device_address(), stable_bufs[i]->get_size(), VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+            }
+            bufs.meshlet_blocks[slot] = { alloc.offset, alloc.size, alloc.stride, true };
         }
-        vkUpdateDescriptorSets(device, 6, writes, 0, nullptr);
+    }
 
-        bufs.descriptor_sets[slot] = ds;
+    void VulkanRendererAPI::free_meshlet_heap_blocks(GlobalMeshletBuffers& bufs) {
+        auto* ctx = get_vulkan_context();
+        if (!ctx) return;
+        auto* heap = ctx->get_backend()->get_descriptor_heap();
+
+        // TODO (Step 9/10, same hazard as bindless texture indices): this frees inline rather than
+        // through a frame-fenced deferred-delete queue. If a mesh is unloaded while a previous
+        // frame's command buffer is still in flight and reading this block, freeing it here aliases
+        // a live descriptor with no validation to catch it.
+        for (auto& block : bufs.meshlet_blocks) {
+            if (!block.valid) continue;
+            heap->free_persistent_block(VulkanDescriptorHeap::Allocation{block.offset, block.size, block.stride});
+            block = {};
+        }
+    }
+
+    void VulkanRendererAPI::push_meshlet_pass_data(uint32_t resource_heap_base, uint32_t draw_data_base) {
+        require_frame_begun();
+        auto* ctx = get_vulkan_context();
+        HN_CORE_ASSERT(ctx, "push_meshlet_pass_data: no active VulkanContext");
+        auto* heap = ctx->get_backend()->get_descriptor_heap();
+
+        // Reuses PassPushData's reserved `pad` word to carry draw_data_base — the meshlet shaders'
+        // push_constant block reads it under that name (same 16-byte layout, offsetof(resource_heap_base) == 0
+        // still matches the set=1 PUSH_INDEX mapping).
+        PassPushData pd{};
+        pd.resource_heap_base = resource_heap_base;
+        pd.sampler_heap_base  = 0;
+        pd.flags              = 0;
+        pd.pad                = draw_data_base;
+
+        ctx->queue_custom_vulkan_cmd([heap, pd](VkCommandBuffer cmd, uint32_t, uint32_t) {
+            heap->push_pass_data(cmd, &pd, sizeof(pd));
+        });
     }
 
     void VulkanRendererAPI::submit_mesh_tasks_indirect_count(
@@ -557,35 +518,6 @@ namespace Honey {
         {
             fn(cmd, draw_buffer, draw_offset, count_buffer, count_offset, max_draws, stride);
         });
-    }
-
-    void VulkanRendererAPI::submit_set1_descriptor_set(void* descriptor_set, void* pipeline_layout) {
-        require_frame_begun();
-        auto* ctx = get_vulkan_context();
-        HN_CORE_ASSERT(ctx, "submit_set1_descriptor_set: no active VulkanContext");
-
-        auto ds  = reinterpret_cast<VkDescriptorSet>(descriptor_set);
-        auto lay = reinterpret_cast<VkPipelineLayout>(pipeline_layout);
-
-        ctx->queue_custom_vulkan_cmd([ds, lay](VkCommandBuffer cmd, uint32_t, uint32_t) {
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    lay, 1, 1, &ds, 0, nullptr);
-        });
-    }
-
-    void VulkanRendererAPI::destroy_meshlet_resources() {
-        auto* ctx = get_vulkan_context();
-        if (!ctx) return;
-        VkDevice device = ctx->get_device();
-
-        for (VkDescriptorPool pool : s_meshlet_desc_pools)
-            vkDestroyDescriptorPool(device, pool, nullptr);
-        s_meshlet_desc_pools.clear();
-
-        if (s_meshlet_set_layout) {
-            vkDestroyDescriptorSetLayout(device, s_meshlet_set_layout, nullptr);
-            s_meshlet_set_layout = VK_NULL_HANDLE;
-        }
     }
 
 } // namespace Honey

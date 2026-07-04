@@ -11,7 +11,27 @@ static const std::filesystem::path asset_root = ASSET_ROOT;
 
 namespace Honey::Renderer3DInternal {
 
-    Ref<Pipeline> get_or_create_meshlet_pipeline(void* rp_native, void* extra_layout, bool blend, bool cull_none) {
+    namespace {
+        // Heap-mode pipelines have a null VkPipelineLayout, so RenderCommand::bind_pipeline (which
+        // asserts a non-null layout) can't be used
+        void bind_meshlet_pipeline(VulkanContext* vk_ctx, const Ref<Pipeline>& pipe) {
+            VkPipeline vk_pipe = reinterpret_cast<VkPipeline>(pipe->get_native_pipeline());
+            HN_CORE_ASSERT(vk_pipe, "flush_meshlet_draws: heap-mode pipeline is null");
+            const VkExtent2D ext = vk_ctx->get_current_pass_extent();
+            auto* heap = vk_ctx->get_backend()->get_descriptor_heap();
+
+            vk_ctx->queue_custom_vulkan_cmd([vk_pipe, ext, heap](VkCommandBuffer cmd, uint32_t, uint32_t) {
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vk_pipe);
+                VkViewport vp{ 0, 0, (float)ext.width, (float)ext.height, 0.0f, 1.0f };
+                VkRect2D sc{ { 0, 0 }, { ext.width, ext.height } };
+                vkCmdSetViewport(cmd, 0, 1, &vp);
+                vkCmdSetScissor(cmd, 0, 1, &sc);
+                heap->bind(cmd);
+            });
+        }
+    }
+
+    Ref<Pipeline> get_or_create_meshlet_pipeline(void* rp_native, bool blend, bool cull_none) {
         HN_CORE_ASSERT(rp_native, "get_or_create_meshlet_pipeline: rp_native is null");
         PipelineVariantKey key{rp_native, (uint8_t)(blend ? 1 : 0), (uint8_t)(cull_none ? 1 : 0)};
 
@@ -25,12 +45,12 @@ namespace Honey::Renderer3DInternal {
         if (cull_none)
             spec.cullMode = CullMode::None;
 
-        auto pipeline = Pipeline::create(spec, rp_native, extra_layout);
+        auto pipeline = Pipeline::create_heap_mode(spec, rp_native);
         g_renderer3d_data->vk_meshlet_pipelines.emplace(key, pipeline);
         return pipeline;
     }
 
-    Ref<Pipeline> get_or_create_meshlet_gbuffer_pipeline(void* rp_native, void* extra_layout, bool cull_none) {
+    Ref<Pipeline> get_or_create_meshlet_gbuffer_pipeline(void* rp_native, bool cull_none) {
         HN_CORE_ASSERT(rp_native, "get_or_create_meshlet_gbuffer_pipeline: rp_native is null");
         PipelineVariantKey key{rp_native, 0, (uint8_t)(cull_none ? 1 : 0)};
 
@@ -44,7 +64,7 @@ namespace Honey::Renderer3DInternal {
         if (cull_none)
             spec.cullMode = CullMode::None;
 
-        auto pipeline = Pipeline::create(spec, rp_native, extra_layout);
+        auto pipeline = Pipeline::create_heap_mode(spec, rp_native);
         g_renderer3d_data->vk_meshlet_gbuffer_pipelines.emplace(key, pipeline);
         return pipeline;
     }
@@ -77,24 +97,13 @@ namespace Honey::Renderer3DInternal {
         }
         HN_CORE_ASSERT(rp_native, "flush_meshlet_draws: rpNative is null");
 
-        void* extra_layout = VulkanRendererAPI::get_or_create_meshlet_set_layout();
         CameraUBO saved_camera = VulkanRendererAPI::get_globals_state().cameraUBO;
 
-        auto& tex_slot_map = g_renderer3d_data->frame_tex_slot_map;
         auto& gpu_materials = g_renderer3d_data->frame_gpu_materials;
-        tex_slot_map.clear();
         gpu_materials.clear();
-        tex_slot_map[g_renderer3d_data->white_texture.get()] = 0;
-        uint32_t tex_slot_count = 1;
-
         gpu_materials.reserve(g_renderer3d_data->meshlet_draws.size());
         for (const auto& cmd : g_renderer3d_data->meshlet_draws)
-            gpu_materials.push_back(build_gpu_material(cmd.material, tex_slot_map, tex_slot_count));
-
-        std::array<void*, VulkanRendererAPI::k_max_texture_slots> tex_array{};
-        tex_array[0] = g_renderer3d_data->white_texture.get();
-        for (auto& [tex_ptr, slot] : tex_slot_map)
-            tex_array[slot] = tex_ptr;
+            gpu_materials.push_back(build_gpu_material(cmd.material));
 
         const bool deferred = Settings::get().renderer.renderer_type == RendererSettings::RendererType::deferred;
 
@@ -103,16 +112,15 @@ namespace Honey::Renderer3DInternal {
             const bool blend = first_mat && first_mat->get_alpha_mode() == Material::AlphaMode::Blend;
             const bool cull_none = first_mat && first_mat->get_double_sided();
             Ref<Pipeline> first_pipe = deferred
-                ? get_or_create_meshlet_gbuffer_pipeline(rp_native, extra_layout, cull_none)
-                : get_or_create_meshlet_pipeline(rp_native, extra_layout, blend, cull_none);
-            RenderCommand::bind_pipeline(first_pipe);
+                ? get_or_create_meshlet_gbuffer_pipeline(rp_native, cull_none)
+                : get_or_create_meshlet_pipeline(rp_native, blend, cull_none);
+            bind_meshlet_pipeline(vk_ctx, first_pipe);
             g_renderer3d_data->stats.pipeline_binds++;
         }
 
         VulkanRendererAPI::submit_camera(saved_camera);
-        VulkanRendererAPI::submit_bound_textures(tex_array, tex_slot_count);
         VulkanRendererAPI::submit_materials(gpu_materials, 0);
-        VulkanRendererAPI::flush_globals();
+        VulkanRendererAPI::flush_globals_to_heap();
 
         auto& mesh_order = g_renderer3d_data->frame_mesh_order;
         auto& draws_by_mesh = g_renderer3d_data->frame_draws_by_mesh;
@@ -162,7 +170,6 @@ namespace Honey::Renderer3DInternal {
             auto& bufs = const_cast<GlobalMeshletBuffers&>(*mesh->meshlet_buffers);
 
             VulkanRendererAPI::update_mesh_draw_data_binding(bufs, mesh_total_draws);
-            VulkanRendererAPI::ensure_mesh_descriptor_set(bufs);
 
             std::unordered_map<uint8_t, std::vector<uint32_t>> draws_by_variant;
             std::vector<uint8_t> variant_order;
@@ -188,10 +195,10 @@ namespace Honey::Renderer3DInternal {
                 const bool cull_none = (variant & 2u) != 0u;
 
                 Ref<Pipeline> pipe = deferred
-                    ? get_or_create_meshlet_gbuffer_pipeline(rp_native, extra_layout, cull_none)
-                    : get_or_create_meshlet_pipeline(rp_native, extra_layout, blend, cull_none);
+                    ? get_or_create_meshlet_gbuffer_pipeline(rp_native, cull_none)
+                    : get_or_create_meshlet_pipeline(rp_native, blend, cull_none);
                 if (pipe != current_pipe) {
-                    RenderCommand::bind_pipeline(pipe);
+                    bind_meshlet_pipeline(vk_ctx, pipe);
                     g_renderer3d_data->stats.pipeline_binds++;
                     current_pipe = pipe;
                 }
@@ -230,31 +237,19 @@ namespace Honey::Renderer3DInternal {
                     mesh_draw_count * (uint32_t)sizeof(GPUDrawData),
                     mesh_draw_base * (uint32_t)sizeof(GPUDrawData));
 
+                const uint32_t mesh_block_offset = VulkanRendererAPI::get_mesh_block_offset(bufs);
+
                 // Populate shadow draw list for the shadow.draw executor (runs after GBuffer).
                 // One entry per mesh-variant group so the executor can use indirect draws,
                 // matching the same pattern as the GBuffer indirect path above.
                 g_renderer3d_data->shadow_draw_list.push_back({
-                    VulkanRendererAPI::get_mesh_descriptor_set(bufs),
+                    mesh_block_offset,
                     mesh_draw_base,
                     mesh_draw_count,
                     indirect_byte_off,
                 });
 
-                struct MeshletPC {
-                    int32_t draw_data_base;
-                    int32_t _pad[3];
-                };
-
-                const MeshletPC pc{(int32_t)mesh_draw_base, {0, 0, 0}};
-                VulkanRendererAPI::submit_push_constants(
-                    &pc,
-                    sizeof(MeshletPC),
-                    0,
-                    VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_FRAGMENT_BIT);
-
-                VulkanRendererAPI::submit_set1_descriptor_set(
-                    VulkanRendererAPI::get_mesh_descriptor_set(bufs),
-                    pipe->get_native_pipeline_layout());
+                VulkanRendererAPI::push_meshlet_pass_data(mesh_block_offset, mesh_draw_base);
 
                 VulkanRendererAPI::submit_mesh_tasks_indirect_count(
                     indirect_vk,

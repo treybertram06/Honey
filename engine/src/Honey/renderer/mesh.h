@@ -16,6 +16,16 @@ namespace Honey {
         Meshlet
     };
 
+    // Byte-offset view of a persistent descriptor-heap block (6 STORAGE_BUFFER descriptors:
+    // vertex/meshlets/meshlet_vertices/meshlet_triangles/meshlet_bounds/draw_data). Kept as a
+    // plain POD here (rather than VulkanDescriptorHeap::Allocation) so mesh.h stays backend-agnostic.
+    struct MeshletHeapBlock {
+        uint32_t offset = 0;
+        uint32_t size   = 0;
+        uint32_t stride = 0;
+        bool     valid  = false;
+    };
+
     struct GlobalMeshletBuffers {
         // Keep this in sync with active Vulkan frames-in-flight.
         static constexpr uint32_t k_frame_ring_size = 2;
@@ -28,7 +38,7 @@ namespace Honey {
         Ref<StorageBuffer> flat_index_buffer;
         uint32_t flat_index_count = 0;
         std::array<Ref<StorageBuffer>, k_frame_ring_size> draw_data_buffers{}; // per-frame per-mesh GPUDrawData[]
-        std::array<void*, k_frame_ring_size> descriptor_sets{}; // VkDescriptorSet per frame slot
+        std::array<MeshletHeapBlock, k_frame_ring_size> meshlet_blocks{}; // persistent heap block per frame slot
     };
 
     struct MeshletBounds {

@@ -8,6 +8,8 @@
 #include "Honey/renderer/renderer.h"
 #include "Honey/renderer/texture.h"
 #include "Honey/renderer/vertex_array.h"
+#include "Honey/renderer/renderer_api.h"
+#include "platform/vulkan/vk_renderer_api.h"
 
 #include <glm/glm.hpp>
 
@@ -1609,6 +1611,8 @@ namespace Honey {
                 global_bufs.flat_index_count = (uint32_t)global_flat_indices.size();
 
                 out->meshlet_buffers = std::move(global_bufs);
+                if (Renderer::get_api() == RendererAPI::API::vulkan)
+                    VulkanRendererAPI::allocate_meshlet_heap_blocks(*out->meshlet_buffers);
             }
 
             for (auto& pr : all_prims)
@@ -1873,6 +1877,8 @@ namespace Honey {
                     flat_indices, StorageBufferUsage::Immutable | StorageBufferUsage::RTGeometry);
                 global_bufs.flat_index_count = (uint32_t)flat_indices.size();
                 out->meshlet_buffers = std::move(global_bufs);
+                if (Renderer::get_api() == RendererAPI::API::vulkan)
+                    VulkanRendererAPI::allocate_meshlet_heap_blocks(*out->meshlet_buffers);
             } else if (payload.meshlet_buffers) {
                 HN_CORE_WARN("Skipping empty meshlet buffer payload for mesh '{}'", payload.name);
             }

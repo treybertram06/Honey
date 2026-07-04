@@ -42,6 +42,7 @@ namespace Honey {
         void* get_vk_sampler() const { return m_sampler; }
         uint32_t get_vk_image_layout() const { return m_current_layout.load(std::memory_order_acquire); }
         bool is_ready_for_sampling() const { return !m_stream_upload_pending.load(std::memory_order_acquire); }
+        uint32_t get_bindless_index() const { return m_bindless_index; }
 
         // Returns an ImGui texture id, registering with ImGui on first use.
         ImTextureID get_imgui_texture_id() override;
@@ -58,6 +59,7 @@ namespace Honey {
         void create_image(uint32_t width, uint32_t height);
         void create_image_view();
         void create_sampler();
+        void update_bindless_descriptor();
 
         void transition_image_layout(uint32_t old_layout, uint32_t new_layout);
         void copy_buffer_to_image(void* staging_buffer);
@@ -82,6 +84,7 @@ namespace Honey {
         void* m_image_view = nullptr;
         VkImageViewCreateInfo m_image_view_ci{};
         void* m_sampler = nullptr;
+        uint32_t m_bindless_index = UINT32_MAX;
 
         std::atomic<uint32_t> m_current_layout{VK_IMAGE_LAYOUT_UNDEFINED};
         std::atomic<bool> m_stream_upload_pending{false};

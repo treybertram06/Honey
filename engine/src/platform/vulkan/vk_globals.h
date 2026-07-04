@@ -14,6 +14,10 @@ namespace Honey {
             GlobalsLayout l{};
             VkDeviceSize cursor = 0;
             for (const auto& b : k_global_bindings) {
+                if (b.kind == GlobalBufferKind::ExternalStorage) {
+                    l.offset[(size_t)b.id] = 0;
+                    continue;
+                }
                 const VkDeviceSize a = (b.kind == GlobalBufferKind::Uniform)
                     ? limits.minUniformBufferOffsetAlignment
                     : limits.minStorageBufferOffsetAlignment;

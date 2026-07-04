@@ -191,8 +191,6 @@ namespace Honey {
                     return;
                 }
 
-                void* meshlet_extra_layout = VulkanRendererAPI::get_or_create_meshlet_set_layout();
-
                 auto spec = PipelineSpec::from_shader(asset_root / "shaders" / "Renderer3D_ShadowCubemap.glsl");
                 spec.pipelineKind = PipelineKind::MeshShading;
                 spec.perColorAttachmentBlend.clear(); // depth-only — no color attachments
@@ -207,7 +205,7 @@ namespace Honey {
                 spec.depthBiasConstantFactor = 2.0f;
                 spec.depthBiasSlopeFactor    = 1.5f;
 
-                Ref<Pipeline> pipe = Pipeline::create(spec, shadow_rp, meshlet_extra_layout);
+                Ref<Pipeline> pipe = Pipeline::create_heap_mode(spec, shadow_rp);
                 HN_CORE_ASSERT(pipe, "Renderer3DShadow: failed to create shadow pipeline");
 
                 res->shadow_pipeline_ref = pipe;  // keeps VkPipeline alive past this scope
@@ -223,8 +221,6 @@ namespace Honey {
                     HN_CORE_WARN("Renderer3DShadow: shadow render pass not available, skipping");
                     return;
                 }
-
-                //void* meshlet_extra_layout = VulkanRendererAPI::get_or_create_meshlet_set_layout();
 
                 auto spec = PipelineSpec::from_shader(asset_root / "shaders" / "Renderer3D_ShadowCubemap_Classic.glsl");
                 spec.pipelineKind = PipelineKind::Graphics;
@@ -288,10 +284,18 @@ namespace Honey {
 
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, active_pipeline);
 
-            // Bind the global descriptor set at set=0 — the shadow matrices SSBO is at binding 6.
-            VkDescriptorSet global_ds = res->vk_ctx->get_global_descriptor_set(frame);
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                active_layout, 0, 1, &global_ds, 0, nullptr);
+            auto* heap = res->vk_ctx->get_backend()->get_descriptor_heap();
+            if (using_meshlet_path) {
+                // Heap-mode pipeline: set=0 (shadow matrices, binding 6) resolves through the heap
+                // globals registry, no bound descriptor set. Re-bind the heap since the GBuffer
+                // pass earlier this frame used classic vkCmdBindDescriptorSets, which invalidates it.
+                heap->bind(cmd);
+            } else {
+                // Bind the global descriptor set at set=0 — the shadow matrices SSBO is at binding 6.
+                VkDescriptorSet global_ds = res->vk_ctx->get_global_descriptor_set(frame);
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    active_layout, 0, 1, &global_ds, 0, nullptr);
+            }
 
             const VkViewport vp{0.0f, 0.0f, (float)res_size, (float)res_size, 0.0f, 1.0f};
             const VkRect2D   sc{{0, 0}, {res_size, res_size}};
@@ -301,9 +305,6 @@ namespace Honey {
 
             {
                 HN_PROFILE_SCOPE("ShadowDraw::face_draw_loop");
-                // last_ds persists across faces — descriptor set bindings survive render pass
-                // boundaries, so consecutive faces rendering the same last mesh skip re-binding.
-                void* last_ds = nullptr;
                 for (uint32_t li = 0; li < res->shadow_light_count; ++li) {
                     for (uint32_t fi = 0; fi < 6; ++fi) {
                         const uint32_t layer = li * 6 + fi;
@@ -326,17 +327,9 @@ namespace Honey {
                         if (using_meshlet_path) {
                             HN_PROFILE_SCOPE("ShadowDraw::mesh_draw_calls");
                             for (const auto& group : Renderer3DInternal::g_renderer3d_data->shadow_draw_list) {
-                                if (group.mesh_descriptor_set != last_ds) {
-                                    VkDescriptorSet mesh_ds = reinterpret_cast<VkDescriptorSet>(group.mesh_descriptor_set);
-                                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                        active_layout, 1, 1, &mesh_ds, 0, nullptr);
-                                    last_ds = group.mesh_descriptor_set;
-                                }
-
-                                ShadowDrawPC pc{group.draw_data_base, (int32_t)li, fi, 0};
-                                vkCmdPushConstants(cmd, active_layout,
-                                    VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                                    0, sizeof(ShadowDrawPC), &pc);
+                                ShadowMeshletPushData pc{
+                                    group.mesh_block_offset, (int32_t)group.draw_data_base, (int32_t)li, fi };
+                                heap->push_pass_data(cmd, &pc, sizeof(pc));
 
                                 s_fn_draw_mesh_tasks_indirect(cmd, indirect_vk,
                                     group.indirect_byte_offset, group.draw_count, 12u);
@@ -623,8 +616,6 @@ namespace Honey {
                     return;
                 }
 
-                void* meshlet_extra_layout = VulkanRendererAPI::get_or_create_meshlet_set_layout();
-
                 auto spec = PipelineSpec::from_shader(asset_root / "shaders" / "Renderer3D_ShadowDirectional.glsl");
                 spec.pipelineKind = PipelineKind::MeshShading;
                 spec.perColorAttachmentBlend.clear();
@@ -634,7 +625,7 @@ namespace Honey {
                 spec.depthBiasConstantFactor = 2.0f;
                 spec.depthBiasSlopeFactor    = 1.5f;
 
-                Ref<Pipeline> pipe = Pipeline::create(spec, rp, meshlet_extra_layout);
+                Ref<Pipeline> pipe = Pipeline::create_heap_mode(spec, rp);
                 HN_CORE_ASSERT(pipe, "Renderer3DShadow: failed to create directional shadow pipeline");
 
                 s_dir->pipeline_ref = pipe;
@@ -703,9 +694,17 @@ namespace Honey {
 
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, active_pipeline);
 
-            VkDescriptorSet global_ds = vk_ctx->get_global_descriptor_set(frame);
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                active_layout, 0, 1, &global_ds, 0, nullptr);
+            auto* heap = vk_ctx->get_backend()->get_descriptor_heap();
+            if (meshlet_path) {
+                // Heap-mode pipeline: set=0 (shadow matrices) resolves through the heap globals
+                // registry. Re-bind since the GBuffer pass's classic descriptor-set binds earlier
+                // this frame invalidate heap binding state.
+                heap->bind(cmd);
+            } else {
+                VkDescriptorSet global_ds = vk_ctx->get_global_descriptor_set(frame);
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    active_layout, 0, 1, &global_ds, 0, nullptr);
+            }
 
             const VkViewport viewport{0.f, 0.f, (float)res_size, (float)res_size, 0.f, 1.f};
             const VkRect2D   scissor{{0, 0}, {res_size, res_size}};
@@ -716,10 +715,8 @@ namespace Honey {
 
             {
                 HN_PROFILE_SCOPE("DirShadow::cascade_draw_loop");
-                // Render one pass per cascade layer. face_index in the push constant carries
+                // Render one pass per cascade layer. face_index in the push data carries
                 // the cascade index so the shader looks up cascade_vp[face_index].
-                // last_ds persists across cascades — descriptor set bindings survive render pass boundaries.
-                void* last_ds = nullptr;
                 for (uint32_t c = 0; c < k_csm_cascade_count; ++c) {
                     VkFramebuffer fb = ctx.get_resource_layer_framebuffer("shadowDirMap", c);
                     if (!fb) continue;
@@ -740,19 +737,9 @@ namespace Honey {
                     if (meshlet_path) {
                         HN_PROFILE_SCOPE("DirShadow::mesh_draw_calls");
                         for (const auto& group : data->shadow_draw_list) {
-                            if (group.mesh_descriptor_set != last_ds) {
-                                VkDescriptorSet mesh_ds =
-                                    reinterpret_cast<VkDescriptorSet>(group.mesh_descriptor_set);
-                                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    active_layout, 1, 1, &mesh_ds, 0, nullptr);
-                                last_ds = group.mesh_descriptor_set;
-                            }
-
-                            ShadowDrawPC pc{group.draw_data_base, 0, c, 0};
-                            vkCmdPushConstants(cmd, active_layout,
-                                VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT |
-                                VK_SHADER_STAGE_FRAGMENT_BIT,
-                                0, sizeof(ShadowDrawPC), &pc);
+                            ShadowMeshletPushData pc{
+                                group.mesh_block_offset, (int32_t)group.draw_data_base, 0, c };
+                            heap->push_pass_data(cmd, &pc, sizeof(pc));
 
                             s_fn_draw_mesh_tasks_indirect(cmd, indirect_vk,
                                 group.indirect_byte_offset, group.draw_count, 12u);

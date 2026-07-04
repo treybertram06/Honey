@@ -66,7 +66,7 @@ namespace Honey::Renderer3DInternal {
     };
 
     struct ShadowDrawEntry {
-        void*    mesh_descriptor_set  = nullptr; // VkDescriptorSet (per-mesh meshlet set, set=1)
+        uint32_t mesh_block_offset    = 0;       // per-mesh persistent heap block byte offset (set=1)
         uint32_t draw_data_base       = 0;       // base index; shader uses draw_data_base + gl_DrawID
         uint32_t draw_count           = 0;       // indirect draw count for this group
         uint32_t indirect_byte_offset = 0;       // byte offset into the frame's indirect buffer
@@ -85,14 +85,11 @@ namespace Honey::Renderer3DInternal {
 
         GeometryPath geometry_path = GeometryPath::Meshlet;
         std::vector<MeshletDrawCommand> meshlet_draws;
-        void* meshlet_set_layout = nullptr;
-        void* meshlet_desc_pool = nullptr;
 
         std::array<Ref<StorageBuffer>, VulkanContext::k_max_frames_in_flight> indirect_buffers{};
         std::array<Ref<StorageBuffer>, VulkanContext::k_max_frames_in_flight> count_buffers{};
 
         std::vector<GPUMaterial> frame_gpu_materials;
-        std::unordered_map<Texture2D*, uint32_t> frame_tex_slot_map;
         std::vector<const Mesh*> frame_mesh_order;
         std::unordered_map<const Mesh*, std::vector<uint32_t>> frame_draws_by_mesh;
         std::vector<VkDrawMeshTasksIndirectCommandEXT> frame_indirect_cmds;
@@ -166,15 +163,13 @@ namespace Honey::Renderer3DInternal {
 
     using PipelineFactory = std::function<Ref<Pipeline>(void* rp, bool blend, bool cull_none)>;
 
-    GPUMaterial build_gpu_material(const Material* mat,
-                                   std::unordered_map<Texture2D*, uint32_t>& tex_slot_map,
-                                   uint32_t& tex_slot_count);
+    GPUMaterial build_gpu_material(const Material* mat);
     void ensure_instance_buffer_capacity(uint32_t required_instances);
     void flush_batches_vulkan(const PipelineFactory& get_pipeline);
 
     Ref<Pipeline> get_or_create_forward_pipeline(void* rp_native, bool blend, bool cull_none);
     Ref<Pipeline> get_or_create_gbuffer_pipeline(void* rp_native, bool blend, bool cull_none);
-    Ref<Pipeline> get_or_create_meshlet_pipeline(void* rp_native, void* extra_layout, bool blend, bool cull_none);
-    Ref<Pipeline> get_or_create_meshlet_gbuffer_pipeline(void* rp_native, void* extra_layout, bool cull_none);
+    Ref<Pipeline> get_or_create_meshlet_pipeline(void* rp_native, bool blend, bool cull_none);
+    Ref<Pipeline> get_or_create_meshlet_gbuffer_pipeline(void* rp_native, bool cull_none);
     void flush_meshlet_draws();
 }

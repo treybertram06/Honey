@@ -226,6 +226,8 @@ namespace Honey {
         void create_font_descriptor_resources();
         void cleanup_font_descriptor_resources();
 
+        void write_materials_heap_binding(uint32_t frame);
+
         bool submit_one_time_on_queue(
             VkQueue queue,
             uint32_t queue_family,

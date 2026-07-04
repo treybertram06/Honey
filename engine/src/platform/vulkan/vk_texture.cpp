@@ -58,20 +58,20 @@ namespace Honey {
         m_stream_upload_pending.store(true, std::memory_order_release);
 
         VulkanBackend::ImageUploadDesc desc{};
-        desc.dstImage      = reinterpret_cast<VkImage>(m_image);
+        desc.dst_image      = reinterpret_cast<VkImage>(m_image);
         desc.width         = m_width;
         desc.height        = m_height;
-        desc.mipLevel      = 0;
-        desc.arrayLayer    = 0;
-        desc.initialLayout = static_cast<VkImageLayout>(initial_layout);
-        desc.finalLayout   = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        desc.srcData       = data;
+        desc.mip_level      = 0;
+        desc.array_layer    = 0;
+        desc.initial_layout = static_cast<VkImageLayout>(initial_layout);
+        desc.final_layout   = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        desc.src_data       = data;
         desc.size          = size;
         Ref<VulkanTexture2D> self_ref;
         try {
             self_ref = std::static_pointer_cast<VulkanTexture2D>(shared_from_this());
-            desc.keepAlive = std::static_pointer_cast<void>(self_ref);
-            desc.onComplete = [self_ref, on_complete = std::move(on_complete)]() mutable {
+            desc.keep_alive = std::static_pointer_cast<void>(self_ref);
+            desc.on_complete = [self_ref, on_complete = std::move(on_complete)]() mutable {
                 self_ref->m_current_layout.store(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                                                  std::memory_order_release);
                 self_ref->m_stream_upload_pending.store(false, std::memory_order_release);
@@ -108,6 +108,7 @@ namespace Honey {
             // Explicitly create resources and do an immediate upload.
             create_image(m_width, m_height);
             create_image_view();
+            update_bindless_descriptor();
             create_sampler();
 
             // Use the old immediate path: transition -> copy -> transition.
@@ -171,10 +172,11 @@ namespace Honey {
 
         VulkanBackend::RetiredTextureResources retired{};
         retired.sampler = reinterpret_cast<VkSampler>(m_sampler);
-        retired.imageView = reinterpret_cast<VkImageView>(m_image_view);
+        retired.image_view = reinterpret_cast<VkImageView>(m_image_view);
         retired.image = reinterpret_cast<VkImage>(m_image);
         retired.memory = reinterpret_cast<VkDeviceMemory>(m_image_memory);
-        retired.imguiDescriptorSet = reinterpret_cast<VkDescriptorSet>(m_imgui_texture_id);
+        retired.imgui_descriptor_set = reinterpret_cast<VkDescriptorSet>(m_imgui_texture_id);
+        retired.bindless_index = m_bindless_index;
 
         m_backend->defer_destroy_texture_resources(retired);
 
@@ -183,6 +185,7 @@ namespace Honey {
         m_image_view = nullptr;
         m_image = nullptr;
         m_image_memory = nullptr;
+        m_bindless_index = UINT32_MAX;
 
         m_backend = nullptr;
         m_device = nullptr;
@@ -456,6 +459,14 @@ namespace Honey {
         m_sampler = reinterpret_cast<void*>(sampler);
     }
 
+    void VulkanTexture2D::update_bindless_descriptor() {
+        auto* heap = m_backend->get_descriptor_heap();
+        if (m_bindless_index == UINT32_MAX)
+            m_bindless_index = heap->alloc_bindless_index();
+
+        heap->write_bindless(m_bindless_index, m_image_view_ci, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
+
     void VulkanTexture2D::transition_image_layout(uint32_t old_layout, uint32_t new_layout) {
         HN_CORE_ASSERT(m_backend, "VulkanTexture2D::transition_image_layout: backend is null");
 
@@ -539,6 +550,7 @@ namespace Honey {
 
         create_image(width, height);
         create_image_view();
+        update_bindless_descriptor();
         create_sampler();
 
         HN_CORE_ASSERT(m_image != nullptr, "init_from_pixels: m_image is null");
@@ -629,22 +641,23 @@ namespace Honey {
 
         VulkanBackend::RetiredTextureResources retired{};
         retired.sampler = reinterpret_cast<VkSampler>(m_sampler);
-        retired.imageView = reinterpret_cast<VkImageView>(m_image_view);
+        retired.image_view = reinterpret_cast<VkImageView>(m_image_view);
         retired.image = reinterpret_cast<VkImage>(m_image);
         retired.memory = reinterpret_cast<VkDeviceMemory>(m_image_memory);
-        retired.imguiDescriptorSet = reinterpret_cast<VkDescriptorSet>(m_imgui_texture_id);
+        retired.imgui_descriptor_set = reinterpret_cast<VkDescriptorSet>(m_imgui_texture_id);
+        // bindless_index is intentionally left as UINT32_MAX as it will be reused
 
         if (m_backend) {
             m_backend->defer_destroy_texture_resources(retired);
         } else {
-            if (retired.imguiDescriptorSet != VK_NULL_HANDLE) {
-                ImGui_ImplVulkan_RemoveTexture(retired.imguiDescriptorSet);
+            if (retired.imgui_descriptor_set != VK_NULL_HANDLE) {
+                ImGui_ImplVulkan_RemoveTexture(retired.imgui_descriptor_set);
             }
             if (retired.sampler) {
                 vkDestroySampler(dev, retired.sampler, nullptr);
             }
-            if (retired.imageView) {
-                vkDestroyImageView(dev, retired.imageView, nullptr);
+            if (retired.image_view) {
+                vkDestroyImageView(dev, retired.image_view, nullptr);
             }
             if (retired.image) {
                 vkDestroyImage(dev, retired.image, nullptr);
@@ -659,6 +672,7 @@ namespace Honey {
         m_image_view = nullptr;
         m_image = nullptr;
         m_image_memory = nullptr;
+        // m_bindless_index is not reset as the the index is reused
 
         m_width  = width;
         m_height = height;
@@ -666,6 +680,7 @@ namespace Honey {
         // Recreate image + view + sampler only. Data is uploaded by caller.
         create_image(m_width, m_height);
         create_image_view();
+        update_bindless_descriptor();
         create_sampler();
     }
 }

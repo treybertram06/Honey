@@ -8,12 +8,13 @@ namespace Honey {
     enum class GlobalBinding {
         Camera,
         Lights,
+        Materials,
         TiledLighting,
         ShadowMatrices,
         DirShadow,
         Count
     };
-    enum class GlobalBufferKind { Uniform, Storage };
+    enum class GlobalBufferKind { Uniform, Storage, ExternalStorage, };
 
     struct GlobalBindingDesc {
         GlobalBinding       id;
@@ -27,6 +28,7 @@ namespace Honey {
     inline constexpr std::array<GlobalBindingDesc, (size_t)GlobalBinding::Count> k_global_bindings = {{
         { GlobalBinding::Camera,         0, "HN_GBIND_CAMERA",          GlobalBufferKind::Uniform, sizeof(CameraUBO),             "Camera"        },
         { GlobalBinding::Lights,         1, "HN_GBIND_LIGHTS",          GlobalBufferKind::Uniform, sizeof(LightsUBO),             "Lights"        },
+        { GlobalBinding::Materials,      2, "HN_GBIND_MATERIALS",       GlobalBufferKind::ExternalStorage, 0,                     "Materials"        },
         { GlobalBinding::TiledLighting,  5, "HN_GBIND_TILED_LIGHTING",  GlobalBufferKind::Storage, sizeof(TiledLightingData),     "TiledLighting" },
         { GlobalBinding::ShadowMatrices, 6, "HN_GBIND_SHADOW_MATRICES", GlobalBufferKind::Storage, sizeof(ShadowMatricesSSBO),    "ShadowMatrices"},
         { GlobalBinding::DirShadow,      7, "HN_GBIND_DIR_SHADOW",      GlobalBufferKind::Storage, sizeof(DirectionalShadowSSBO), "DirShadow"     },

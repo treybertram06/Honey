@@ -636,12 +636,13 @@ namespace Honey {
                 uint32_t ubo_size,
                 uint32_t dst_binding,
                 VkBufferUsageFlags usage,
-                VkDescriptorType descriptor_type) {
+                VkDescriptorType descriptor_type,
+                bool needs_device_address = false) {
                 // Create buffer for this frame
                 VkBufferCreateInfo bi{};
                 bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
                 bi.size = ubo_size;
-                bi.usage = usage;
+                bi.usage = usage | (needs_device_address ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0);
                 bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
                 VkBuffer ubo = VK_NULL_HANDLE;
@@ -651,6 +652,10 @@ namespace Honey {
                 VkMemoryRequirements req{};
                 vkGetBufferMemoryRequirements(reinterpret_cast<VkDevice>(m_device), ubo, &req);
 
+                VkMemoryAllocateFlagsInfo flags{};
+                flags.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+                flags.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+
                 VkMemoryAllocateInfo ai{};
                 ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
                 ai.allocationSize = req.size;
@@ -659,6 +664,7 @@ namespace Honey {
                     req.memoryTypeBits,
                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
                 );
+                ai.pNext = needs_device_address ? &flags : nullptr;
 
                 VkDeviceMemory mem = VK_NULL_HANDLE;
                 r = vkAllocateMemory(reinterpret_cast<VkDevice>(m_device), &ai, nullptr, &mem);
@@ -698,7 +704,7 @@ namespace Honey {
                 create_buffer_for_frame("lights", frame, m_lights_ubos, m_lights_ubo_memories,
                     m_lights_ubo_size, 1, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
                 create_buffer_for_frame("materials", frame, m_materials_ssbo, m_materials_ssbo_memories,
-                    m_materials_ssbo_size, 2, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+                    m_materials_ssbo_size, 2, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, true);
                 create_buffer_for_frame("tiled_lighting", frame, m_tiled_lighting_ssbos, m_tiled_lighting_ssbo_memories,
                     m_tiled_lighting_ssbo_size, 5, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
                 create_buffer_for_frame("shadow_matrices", frame, m_shadow_matrices_ssbos, m_shadow_matrices_ssbo_memories,
@@ -1082,6 +1088,11 @@ namespace Honey {
 
         auto* heap = m_backend->get_descriptor_heap();
         for (const auto& g : k_global_bindings) {
+            if (g.kind == GlobalBufferKind::ExternalStorage) {
+                auto slot = heap->allocate_persistent_resource(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1);
+                heap->register_global_binding(g.shader_binding, slot);
+                continue;
+            }
             const VkDescriptorType dt = (g.kind == GlobalBufferKind::Uniform)
                 ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
                 : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -1144,6 +1155,18 @@ namespace Honey {
             vkDestroyDescriptorSetLayout(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkDescriptorSetLayout>(m_font_set_layout), nullptr);
             m_font_set_layout = nullptr;
         }
+    }
+
+    void VulkanContext::write_materials_heap_binding(uint32_t frame) {
+        auto* heap = m_backend->get_descriptor_heap();
+        VkBuffer buf = reinterpret_cast<VkBuffer>(m_materials_ssbo[frame]);
+        if (!buf) return;
+
+        VkBufferDeviceAddressInfo ai{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
+        ai.buffer = buf;
+        VkDeviceAddress addr = vkGetBufferDeviceAddress(m_device, &ai);
+
+        heap->write_global_buffer(2, addr, m_materials_ssbo_size, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
     }
 
     void VulkanContext::upload_shadow_matrices(uint32_t frame, const ShadowMatricesSSBO& data) {
@@ -1913,6 +1936,19 @@ namespace Honey {
         write(GlobalBinding::Lights, &p.lightUBO);
         write(GlobalBinding::TiledLighting, &p.tiledLighting);
         // ShadowMatrices and DirShadow are NOT written here
+
+        const uint32_t frame = m_current_frame % k_max_frames_in_flight;
+        if (!p.materials.empty() && m_materials_ssbo_memories[frame]) {
+            void* mapped = nullptr;
+            vkMapMemory(m_device, reinterpret_cast<VkDeviceMemory>(m_materials_ssbo_memories[frame]),
+                        0, m_materials_ssbo_size, 0, &mapped);
+            const uint32_t copy_size = (uint32_t)(p.materials.size() * sizeof(GPUMaterial));
+            std::memcpy(static_cast<uint8_t*>(mapped) + p.materials_ssbo_offset * sizeof(GPUMaterial),
+                        p.materials.data(), copy_size);
+            vkUnmapMemory(m_device, reinterpret_cast<VkDeviceMemory>(m_materials_ssbo_memories[frame]));
+
+            write_materials_heap_binding(frame);
+        }
     }
 
     void VulkanContext::queue_custom_vulkan_cmd(
