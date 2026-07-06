@@ -94,11 +94,23 @@ namespace Honey {
             m.resourceMask  = VK_SPIRV_RESOURCE_TYPE_ALL_EXT;
 
             if (b.type == VK_DESCRIPTOR_TYPE_SAMPLER) {
-                // Static sampler baked into the sampler heap (Step 3): CONSTANT_OFFSET, sampler half only.
                 const VulkanDescriptorHeap::StaticSampler s = pick_static_sampler(b);
+                // Static samplers use an EMBEDDED (immutable) sampler baked into the pipeline rather
+                // than the samplerHeapOffset path: on this driver a separate sampler's heap offset
+                // does not take effect (every sampler resolved to the driver-reserved range, so
+                // REPEAT addressing was silently lost and tiling textures squished into a band --
+                // the same failure that forced the manual-PCF shadow workaround in commit 3b58d67).
+                // pEmbeddedSampler is the extension's purpose-built path for static samplers and
+                // sidesteps the heap entirely. It is only legal when the mapped resource is NOT an
+                // array (Vulkan VUID), so scalar samplers (count <= 1) take the embedded path while
+                // the rare array sampler falls back to the samplerHeapOffset path.
                 m.source = VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_CONSTANT_OFFSET_EXT;
-                m.sourceData.constantOffset.samplerHeapOffset      = heap.static_sampler_byte_offset(s);
-                m.sourceData.constantOffset.samplerHeapArrayStride = heap.sampler_descriptor_stride();
+                if (b.count <= 1) {
+                    m.sourceData.constantOffset.pEmbeddedSampler = heap.static_sampler_ci(s);
+                } else {
+                    m.sourceData.constantOffset.samplerHeapOffset      = heap.static_sampler_byte_offset(s);
+                    m.sourceData.constantOffset.samplerHeapArrayStride = heap.sampler_descriptor_stride();
+                }
             } else if (b.set == 0 && (b.type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ||
                 b.type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)) {
                 HN_CORE_ASSERT(heap.has_global_binding(b.binding),

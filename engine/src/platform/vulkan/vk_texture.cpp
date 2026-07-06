@@ -20,6 +20,7 @@
 #include "Honey/renderer/texture_cache.h"
 
 namespace Honey {
+
     void VulkanTexture2D::queue_stream_upload(const void* data, uint32_t size, std::function<void()> on_complete) {
         HN_CORE_ASSERT(data, "VulkanTexture2D::queue_stream_upload - data is null");
         HN_CORE_ASSERT(m_backend && m_backend->initialized(),
@@ -465,6 +466,12 @@ namespace Honey {
             m_bindless_index = heap->alloc_bindless_index();
 
         heap->write_bindless(m_bindless_index, m_image_view_ci, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
+
+    void VulkanTexture2D::write_bindless_fallback_slot() {
+        HN_CORE_ASSERT(m_image_view, "write_bindless_fallback_slot: image view not created yet");
+        auto* heap = m_backend->get_descriptor_heap();
+        heap->write_bindless(0, m_image_view_ci, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
 
     void VulkanTexture2D::transition_image_layout(uint32_t old_layout, uint32_t new_layout) {

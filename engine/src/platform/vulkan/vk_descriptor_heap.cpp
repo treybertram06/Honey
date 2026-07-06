@@ -83,6 +83,7 @@ namespace Honey {
         m_sampler_reserved_size = VulkanUtils::align_up(m_props.minSamplerHeapReservedRange, m_props.samplerHeapAlignment);
         m_sampler_persistent_offset = m_sampler_reserved_size;
         m_sampler_persistent_size = m_sampler_capacity - m_sampler_reserved_size;
+        m_sampler_persistent_cursor = m_sampler_persistent_offset;
 
         auto to_KiB = [](size_t bytes) { return bytes / 1024.0f; };
         HN_CORE_INFO("[VulkanDescriptorHeap] Resource heap:\n   Cap: {0} KiB, Reserved: {1} KiB, Persistent: {2} KiB, Transient: {3} KiB ({4} frames x {5} KiB)",
@@ -149,6 +150,12 @@ namespace Honey {
 
     VulkanDescriptorHeap::Allocation VulkanDescriptorHeap::allocate_persistent_resource(VkDescriptorType type,
         uint32_t count) {
+        std::scoped_lock lock(m_alloc_mutex);
+        return allocate_persistent_resource_unlocked(type, count);
+    }
+
+    VulkanDescriptorHeap::Allocation VulkanDescriptorHeap::allocate_persistent_resource_unlocked(VkDescriptorType type,
+        uint32_t count) {
 
         const uint32_t stride = stride_for(type);
         HN_CORE_ASSERT(stride > 0, "[VulkanDescriptorHeap] Stride cannot be 0");
@@ -164,6 +171,7 @@ namespace Honey {
     }
 
     VulkanDescriptorHeap::Allocation VulkanDescriptorHeap::allocate_persistent_sampler(uint32_t count) {
+        std::scoped_lock lock(m_alloc_mutex);
         const uint32_t stride = m_descriptor_sizes.sampler;
         VkDeviceSize aligned = VulkanUtils::align_up(m_sampler_persistent_cursor, stride);
         VkDeviceSize bytes = (VkDeviceSize)stride * count;
@@ -180,21 +188,24 @@ namespace Honey {
         uint32_t stride = stride_for(type);
         uint64_t key = persistent_block_key(stride, count);
 
+        std::scoped_lock lock(m_alloc_mutex);
+
         auto it = m_persistent_freelist.find(key);
-        if (it != m_persistent_freelist.end()) {
+        if (it != m_persistent_freelist.end() && !it->second.empty()) {
             Allocation alloc = it->second.back();
             it->second.pop_back();
             return alloc;
         }
 
         // Miss - bump a fresh block from the persistent cursor
-        return allocate_persistent_resource(type, count);
+        return allocate_persistent_resource_unlocked(type, count);
     }
 
     void VulkanDescriptorHeap::free_persistent_block(const Allocation& alloc) {
         HN_CORE_ASSERT(alloc.stride > 0 && alloc.size > 0, "[VulkanDescriptorHeap] free_persistent_block: invalid allocation");
         uint32_t count = alloc.size / alloc.stride;
         uint64_t key = persistent_block_key(alloc.stride, count);
+        std::scoped_lock lock(m_alloc_mutex);
         m_persistent_freelist[key].push_back(alloc);
     }
 
@@ -208,6 +219,11 @@ namespace Honey {
     }
 
     uint32_t VulkanDescriptorHeap::alloc_bindless_index() {
+        // Textures are created (and thus indices allocated) from the main thread, the asset
+        // upload thread, and loader tasks concurrently; frees arrive from the render thread's
+        // deferred-destroy sweep. Unsynchronized pop_back/push_back here hands the same slot to
+        // two textures, which renders as one texture silently replacing another.
+        std::scoped_lock lock(m_alloc_mutex);
         HN_CORE_ASSERT(!m_bindless_free_indices.empty(), "[VulkanDescriptorHeap] Bindless table exhausted, raise capacity");
         uint32_t idx = m_bindless_free_indices.back();
         m_bindless_free_indices.pop_back();
@@ -215,6 +231,9 @@ namespace Honey {
     }
 
     void VulkanDescriptorHeap::free_bindless_index(uint32_t index) {
+        HN_CORE_ASSERT(index != 0 && index < m_bindless_capacity,
+            "[VulkanDescriptorHeap] free_bindless_index: index {0} out of range", index);
+        std::scoped_lock lock(m_alloc_mutex);
         m_bindless_free_indices.push_back(index);
     }
 
@@ -296,10 +315,20 @@ namespace Honey {
     void VulkanDescriptorHeap::bake_static_samplers(float max_anisotropy) {
         m_static_sampler_alloc = allocate_persistent_sampler((uint32_t)StaticSampler::Count);
 
-        write_sampler(m_static_sampler_alloc, (uint32_t)StaticSampler::Nearest, VulkanUtils::make_nearest_sampler_ci());
-        write_sampler(m_static_sampler_alloc, (uint32_t)StaticSampler::Linear, VulkanUtils::make_linear_sampler_ci());
-        write_sampler(m_static_sampler_alloc, (uint32_t)StaticSampler::Anisotropic, VulkanUtils::make_anisotropic_sampler_ci(max_anisotropy));
-        write_sampler(m_static_sampler_alloc, (uint32_t)StaticSampler::ShadowCmp, VulkanUtils::make_shadow_cmp_sampler_ci());
+        // Keep stable copies of each CI so mappings can point pEmbeddedSampler at them (they must
+        // outlive pipeline creation). The heap-baked descriptors below are retained as a fallback,
+        // but the active sampler-mapping path uses pEmbeddedSampler because the separate-sampler
+        // samplerHeapOffset path does not take effect on this driver (every static sampler resolved
+        // identically to the driver-reserved range, so REPEAT addressing was silently lost).
+        m_static_sampler_ci[(uint32_t)StaticSampler::Linear]      = VulkanUtils::make_linear_sampler_ci();
+        m_static_sampler_ci[(uint32_t)StaticSampler::Nearest]     = VulkanUtils::make_nearest_sampler_ci();
+        m_static_sampler_ci[(uint32_t)StaticSampler::Anisotropic] = VulkanUtils::make_anisotropic_sampler_ci(max_anisotropy);
+        m_static_sampler_ci[(uint32_t)StaticSampler::ShadowCmp]   = VulkanUtils::make_shadow_cmp_sampler_ci();
+
+        write_sampler(m_static_sampler_alloc, (uint32_t)StaticSampler::Nearest,     m_static_sampler_ci[(uint32_t)StaticSampler::Nearest]);
+        write_sampler(m_static_sampler_alloc, (uint32_t)StaticSampler::Linear,      m_static_sampler_ci[(uint32_t)StaticSampler::Linear]);
+        write_sampler(m_static_sampler_alloc, (uint32_t)StaticSampler::Anisotropic, m_static_sampler_ci[(uint32_t)StaticSampler::Anisotropic]);
+        write_sampler(m_static_sampler_alloc, (uint32_t)StaticSampler::ShadowCmp,   m_static_sampler_ci[(uint32_t)StaticSampler::ShadowCmp]);
 
         for (uint32_t i = 0; i < (uint32_t)StaticSampler::Count; ++i) {
             m_static_sampler_index[i] = (m_static_sampler_alloc.offset + i * m_static_sampler_alloc.stride)

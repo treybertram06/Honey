@@ -31,7 +31,7 @@ namespace Honey::VulkanUtils {
         si.compareOp     = VK_COMPARE_OP_ALWAYS;
         si.mipLodBias    = 0.0f;
         si.minLod        = 0.0f;
-        si.maxLod        = 0.0f;
+        si.maxLod        = VK_LOD_CLAMP_NONE;
 
         si.magFilter  = VK_FILTER_NEAREST;
         si.minFilter  = VK_FILTER_NEAREST;
@@ -53,7 +53,7 @@ namespace Honey::VulkanUtils {
         si.compareOp     = VK_COMPARE_OP_ALWAYS;
         si.mipLodBias    = 0.0f;
         si.minLod        = 0.0f;
-        si.maxLod        = 0.0f;
+        si.maxLod        = VK_LOD_CLAMP_NONE;
 
         si.magFilter  = VK_FILTER_LINEAR;
         si.minFilter  = VK_FILTER_LINEAR;
@@ -75,7 +75,7 @@ namespace Honey::VulkanUtils {
         si.compareOp     = VK_COMPARE_OP_ALWAYS;
         si.mipLodBias    = 0.0f;
         si.minLod        = 0.0f;
-        si.maxLod        = 0.0f;
+        si.maxLod        = VK_LOD_CLAMP_NONE;
 
         si.magFilter  = VK_FILTER_LINEAR;
         si.minFilter  = VK_FILTER_LINEAR;

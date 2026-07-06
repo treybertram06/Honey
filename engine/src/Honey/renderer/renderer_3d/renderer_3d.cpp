@@ -4,6 +4,7 @@
 
 #include "Honey/core/settings.h"
 #include "Honey/renderer/renderer.h"
+#include "platform/vulkan/vk_texture.h"
 
 namespace Honey {
 
@@ -34,6 +35,11 @@ namespace Honey {
         const uint32_t white = 0xFFFFFFFFu;
         data.white_texture->set_data((void*)&white, sizeof(uint32_t));
         data.texture_slots[0] = data.white_texture;
+
+        // Bindless slot 0 is the shader-side fallback (max(tex_idx, 0)); back it with white.
+        if (Renderer::get_api() == RendererAPI::API::vulkan)
+            static_cast<VulkanTexture2D*>(data.white_texture.get())->write_bindless_fallback_slot();
+        // TODO: Make this API agnostic
 
         data.default_material->set_base_color_texture(nullptr);
         data.default_material->set_base_color_factor(glm::vec4(1.0f));

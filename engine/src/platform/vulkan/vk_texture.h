@@ -44,6 +44,11 @@ namespace Honey {
         bool is_ready_for_sampling() const { return !m_stream_upload_pending.load(std::memory_order_acquire); }
         uint32_t get_bindless_index() const { return m_bindless_index; }
 
+        // Writes this texture's descriptor into reserved bindless slot 0, the fallback the
+        // shaders reach via max(tex_idx, 0). Call once on the engine white texture; without it
+        // slot 0 is an uninitialized descriptor and sampling it is undefined.
+        void write_bindless_fallback_slot();
+
         // Returns an ImGui texture id, registering with ImGui on first use.
         ImTextureID get_imgui_texture_id() override;
 

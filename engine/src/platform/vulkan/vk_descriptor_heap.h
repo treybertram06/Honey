@@ -1,6 +1,8 @@
 #pragma once
 #include <vulkan/vulkan_core.h>
 
+#include <mutex>
+
 namespace Honey {
 
     class VulkanDescriptorHeap {
@@ -53,6 +55,9 @@ namespace Honey {
             return m_static_sampler_alloc.offset + (uint32_t)s * m_static_sampler_alloc.stride;
         }
         uint32_t sampler_descriptor_stride() const { return m_descriptor_sizes.sampler; }
+        // Stable VkSamplerCreateInfo for a static sampler, usable as a mapping's pEmbeddedSampler.
+        // Lives for the heap's lifetime, so the pointer stays valid through pipeline creation.
+        const VkSamplerCreateInfo* static_sampler_ci(StaticSampler s) const { return &m_static_sampler_ci[(uint32_t)s]; }
         uint32_t descriptor_stride(VkDescriptorType type) const { return stride_for(type); }
         uint32_t descriptor_alignment(VkDescriptorType type) const;
         VkDeviceSize max_push_data_size() const { return m_props.maxPushDataSize; }
@@ -72,6 +77,9 @@ namespace Honey {
                                         VkDeviceAddress& out_addr);
 
         uint32_t stride_for(VkDescriptorType type) const;
+
+        // Bump-allocates from the persistent cursor. Caller must hold m_alloc_mutex.
+        Allocation allocate_persistent_resource_unlocked(VkDescriptorType type, uint32_t count);
 
         static uint64_t persistent_block_key(uint32_t stride, uint32_t count) {
             return ((uint64_t)stride << 32) | count;
@@ -125,6 +133,10 @@ namespace Honey {
         std::vector<FrameSlot> m_frame_slots;
         uint32_t m_current_frame = 0;
 
+        // Guards the persistent cursor, persistent freelist, bindless freelist, and sampler
+        // cursor: allocations arrive from the main, upload, and loader threads while frees come
+        // from the render thread's deferred-destroy sweep.
+        std::mutex m_alloc_mutex;
         std::unordered_map<uint64_t, std::vector<Allocation>> m_persistent_freelist;
         Allocation m_bindless_table_alloc{};
         std::vector<uint32_t> m_bindless_free_indices;
@@ -137,6 +149,7 @@ namespace Honey {
         VkDeviceSize m_sampler_persistent_cursor = 0;
         Allocation m_static_sampler_alloc{};
         uint32_t m_static_sampler_index[(uint32_t)StaticSampler::Count] = {};
+        VkSamplerCreateInfo m_static_sampler_ci[(uint32_t)StaticSampler::Count] = {}; // embedded-sampler source, kept stable
 
         // Capacities and tracking
         VkDeviceSize m_resource_capacity = 4 * 1024 * 1024; // 4 MiB

@@ -17,7 +17,48 @@ namespace Honey::Renderer3DInternal {
         int32_t register_material_texture(Texture2D* tex) {
             if (!tex) return -1;
             auto* vk = dynamic_cast<VulkanTexture2D*>(tex);
+            if (!vk) return -1;
             return (int32_t)vk->get_bindless_index();
+        }
+
+        // Classic-pipeline variant: the still-classic instanced pass binds a per-frame compacted
+        // u_Textures[] array (submit_bound_textures), so its material tex ids must be slots into
+        // that array — not the global bindless indices the heap-mode meshlet path uses.
+        int32_t register_material_texture_slot(Texture2D* tex,
+                                               std::unordered_map<Texture2D*, uint32_t>& tex_slot_map,
+                                               uint32_t& tex_slot_count) {
+            if (!tex)
+                return -1;
+
+            auto [tex_it, inserted] = tex_slot_map.try_emplace(tex, 0u);
+            if (inserted) {
+                if (tex_slot_count >= g_renderer3d_data->max_texture_slots) {
+                    tex_it->second = 0u;
+                    return 0;
+                }
+                tex_it->second = tex_slot_count++;
+            }
+            return (int32_t)tex_it->second;
+        }
+
+        GPUMaterial build_gpu_material_classic(const Material* mat,
+                                               std::unordered_map<Texture2D*, uint32_t>& tex_slot_map,
+                                               uint32_t& tex_slot_count) {
+            GPUMaterial gpu = build_gpu_material(mat);
+            if (!mat) {
+                gpu.base_color_tex_id = register_material_texture_slot(
+                    g_renderer3d_data->white_texture.get(), tex_slot_map, tex_slot_count);
+                return gpu;
+            }
+
+            const auto& pbr = mat->pbr();
+            Texture2D* base_tex = pbr.base_color_texture.texture ? pbr.base_color_texture.texture.get() : g_renderer3d_data->white_texture.get();
+            gpu.base_color_tex_id = register_material_texture_slot(base_tex, tex_slot_map, tex_slot_count);
+            gpu.metallic_roughness_tex_id = register_material_texture_slot(pbr.metallic_roughness_texture.texture.get(), tex_slot_map, tex_slot_count);
+            gpu.normal_tex_id = register_material_texture_slot(pbr.normal_texture.texture.get(), tex_slot_map, tex_slot_count);
+            gpu.occlusion_tex_id = register_material_texture_slot(pbr.occlusion_texture.texture.get(), tex_slot_map, tex_slot_count);
+            gpu.emissive_tex_id = register_material_texture_slot(pbr.emissive_texture.texture.get(), tex_slot_map, tex_slot_count);
+            return gpu;
         }
     }
 
@@ -161,13 +202,22 @@ namespace Honey::Renderer3DInternal {
         };
         static_assert(sizeof(MaterialPC) <= 128, "MaterialPC too large");
 
+        std::unordered_map<Texture2D*, uint32_t> tex_slot_map;
+        tex_slot_map[g_renderer3d_data->white_texture.get()] = 0;
+        uint32_t tex_slot_count = 1;
+
         std::vector<GPUMaterial> all_materials;
         all_materials.reserve(ordered_batches.size());
 
         for (uint32_t i = 0; i < (uint32_t)ordered_batches.size(); ++i) {
             auto* mat = ordered_batches[i].batch->material.get();
-            all_materials.push_back(build_gpu_material(mat));
+            all_materials.push_back(build_gpu_material_classic(mat, tex_slot_map, tex_slot_count));
         }
+
+        std::array<void*, VulkanRendererAPI::k_max_texture_slots> tex_array{};
+        tex_array[0] = g_renderer3d_data->white_texture.get();
+        for (auto& [tex_ptr, slot] : tex_slot_map)
+            tex_array[slot] = tex_ptr;
 
         if (!ordered_batches.empty()) {
             const auto* first_mat = ordered_batches[0].batch->material.get();
@@ -179,7 +229,7 @@ namespace Honey::Renderer3DInternal {
         }
 
         VulkanRendererAPI::submit_camera(saved_camera);
-        //VulkanRendererAPI::submit_bound_textures(tex_array, tex_slot_count); // TEMP: This will break forward pipeline
+        VulkanRendererAPI::submit_bound_textures(tex_array, tex_slot_count);
         VulkanRendererAPI::submit_materials(all_materials, 0);
         VulkanRendererAPI::flush_globals();
 
