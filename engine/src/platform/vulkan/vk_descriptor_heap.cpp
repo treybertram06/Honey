@@ -369,7 +369,9 @@ namespace Honey {
         sampler_bind_info.sType = VK_STRUCTURE_TYPE_BIND_HEAP_INFO_EXT;
         sampler_bind_info.heapRange = { m_sampler_heap_addr, m_sampler_capacity };
         sampler_bind_info.reservedRangeOffset = 0;
-        sampler_bind_info.reservedRangeSize = m_sampler_reserved_size;
+        // Embedded samplers require reserved range to be at least equal to minSamplerHeapReservedRangeWithEmbedded - can be found in device limits.
+        sampler_bind_info.reservedRangeSize = std::max(m_sampler_reserved_size,
+            m_props.minSamplerHeapReservedRangeWithEmbedded);
         m_fnBindSamplerHeap(cmd, &sampler_bind_info);
     }
 
