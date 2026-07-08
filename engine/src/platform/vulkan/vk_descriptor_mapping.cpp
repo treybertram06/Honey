@@ -108,6 +108,7 @@ namespace Honey {
                 if (b.count <= 1) {
                     m.sourceData.constantOffset.pEmbeddedSampler = heap.static_sampler_ci(s);
                 } else {
+                    HN_CORE_ASSERT(false, "VulkanDescriptorMapping: heap static samplers seem to just not work, so you'll need to create an embedded sampler");
                     m.sourceData.constantOffset.samplerHeapOffset      = heap.static_sampler_byte_offset(s);
                     m.sourceData.constantOffset.samplerHeapArrayStride = heap.sampler_descriptor_stride();
                 }

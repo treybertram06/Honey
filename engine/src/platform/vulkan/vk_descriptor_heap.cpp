@@ -325,15 +325,11 @@ namespace Honey {
         m_static_sampler_ci[(uint32_t)StaticSampler::Anisotropic] = VulkanUtils::make_anisotropic_sampler_ci(max_anisotropy);
         m_static_sampler_ci[(uint32_t)StaticSampler::ShadowCmp]   = VulkanUtils::make_shadow_cmp_sampler_ci();
 
-        write_sampler(m_static_sampler_alloc, (uint32_t)StaticSampler::Nearest,     m_static_sampler_ci[(uint32_t)StaticSampler::Nearest]);
-        write_sampler(m_static_sampler_alloc, (uint32_t)StaticSampler::Linear,      m_static_sampler_ci[(uint32_t)StaticSampler::Linear]);
-        write_sampler(m_static_sampler_alloc, (uint32_t)StaticSampler::Anisotropic, m_static_sampler_ci[(uint32_t)StaticSampler::Anisotropic]);
-        write_sampler(m_static_sampler_alloc, (uint32_t)StaticSampler::ShadowCmp,   m_static_sampler_ci[(uint32_t)StaticSampler::ShadowCmp]);
-
-        for (uint32_t i = 0; i < (uint32_t)StaticSampler::Count; ++i) {
-            m_static_sampler_index[i] = (m_static_sampler_alloc.offset + i * m_static_sampler_alloc.stride)
-            / m_static_sampler_alloc.stride; // The index is equal to the data's offset / stride
-        }
+        // Proper heap static samplers seem to not be supported on my driver
+        //write_sampler(m_static_sampler_alloc, (uint32_t)StaticSampler::Nearest,     m_static_sampler_ci[(uint32_t)StaticSampler::Nearest]);
+        //write_sampler(m_static_sampler_alloc, (uint32_t)StaticSampler::Linear,      m_static_sampler_ci[(uint32_t)StaticSampler::Linear]);
+        //write_sampler(m_static_sampler_alloc, (uint32_t)StaticSampler::Anisotropic, m_static_sampler_ci[(uint32_t)StaticSampler::Anisotropic]);
+        //write_sampler(m_static_sampler_alloc, (uint32_t)StaticSampler::ShadowCmp,   m_static_sampler_ci[(uint32_t)StaticSampler::ShadowCmp]);
     }
 
     void VulkanDescriptorHeap::push_pass_data(VkCommandBuffer cmd, const void* data, uint32_t size) {

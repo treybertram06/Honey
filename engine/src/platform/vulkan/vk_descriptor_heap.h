@@ -48,13 +48,15 @@ namespace Honey {
         // resource accessors
         VkDeviceAddress resource_device_address() const { return m_resource_heap_addr; }
         VkDeviceAddress sampler_device_address()  const { return m_sampler_heap_addr; }
-        uint32_t        static_sampler_index(StaticSampler s) const { return m_static_sampler_index[(uint32_t)s]; }
-
 
         uint32_t static_sampler_byte_offset(StaticSampler s) const {
+            HN_CORE_ASSERT(false, "Do not call this");
             return m_static_sampler_alloc.offset + (uint32_t)s * m_static_sampler_alloc.stride;
         }
-        uint32_t sampler_descriptor_stride() const { return m_descriptor_sizes.sampler; }
+        uint32_t sampler_descriptor_stride() const {
+            HN_CORE_ASSERT(false, "Do not call this");
+            return m_descriptor_sizes.sampler;
+        }
         // Stable VkSamplerCreateInfo for a static sampler, usable as a mapping's pEmbeddedSampler.
         // Lives for the heap's lifetime, so the pointer stays valid through pipeline creation.
         const VkSamplerCreateInfo* static_sampler_ci(StaticSampler s) const { return &m_static_sampler_ci[(uint32_t)s]; }
@@ -148,7 +150,6 @@ namespace Honey {
         VkDeviceSize m_sampler_persistent_size = 0;
         VkDeviceSize m_sampler_persistent_cursor = 0;
         Allocation m_static_sampler_alloc{};
-        uint32_t m_static_sampler_index[(uint32_t)StaticSampler::Count] = {};
         VkSamplerCreateInfo m_static_sampler_ci[(uint32_t)StaticSampler::Count] = {}; // embedded-sampler source, kept stable
 
         // Capacities and tracking
