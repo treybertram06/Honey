@@ -249,6 +249,8 @@ namespace Honey {
                     binding.binding = compiler.get_decoration(resource.id, spv::DecorationBinding);
                     binding.count = spir_type.array.empty() ? 1 : spir_type.array[0];
                     binding.set = set;
+                    // Only a hint: unreliable for GLSL sources, so pick_static_sampler treats the
+                    // "shadow"/"cmp" name convention as the real signal (see vk_descriptor_mapping.cpp).
                     binding.is_comparison_sampler = spir_type.image.depth == 1;
                     bindings.push_back(std::move(binding));
                 }

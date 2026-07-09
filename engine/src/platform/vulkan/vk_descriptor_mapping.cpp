@@ -55,6 +55,9 @@ namespace Honey {
 
     VulkanDescriptorHeap::StaticSampler pick_static_sampler(const ReflectedBinding& b) {
         using SS = VulkanDescriptorHeap::StaticSampler;
+        // is_comparison_sampler is only a cheap fast path (unreliable for GLSL sources); the name
+        // check below is the authoritative signal, so checking depth first is safe — it can only
+        // catch a shadow sampler earlier, never mask a real one that the name convention would find.
         if (b.is_comparison_sampler) return SS::ShadowCmp;
         std::string n = b.name;
         std::transform(n.begin(), n.end(), n.begin(),
@@ -85,6 +88,10 @@ namespace Honey {
 
         for (size_t i = 0; i < refl.bindings.size(); ++i) {
             const ReflectedBinding& b = refl.bindings[i];
+
+            HN_CORE_ASSERT(b.type != VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                "Heap-mode shader binding '{0}' is a combined image sampler; split it into "
+                "texture2D + sampler (see Renderer3D_SSAO.glsl).", b.name);
 
             VkDescriptorSetAndBindingMappingEXT m{};
             m.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT;
@@ -126,6 +133,9 @@ namespace Honey {
                 m.sourceData.constantOffset.heapOffset      = heap.bindless_table_byte_offset();
                 m.sourceData.constantOffset.heapArrayStride = heap.descriptor_stride(VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE);
             } else {
+                HN_CORE_ASSERT(b.set != 0,
+                    "build_descriptor_mappings: unhandled set-0 binding '{0}' (type {1}); "
+                    "add a CONSTANT_OFFSET case or a global slot.", b.name, (int)b.type);
                 // Transient per-pass descriptor: PUSH_INDEX. The pushed resource_heap_base is the block
                 // base; heapIndexStride = 1 makes the pushed value a raw byte offset, so the per-binding
                 // difference lives entirely in heapOffset.

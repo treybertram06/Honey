@@ -1356,6 +1356,9 @@ namespace Honey {
                                      if (r.bindless_index != UINT32_MAX) {
                                          m_descriptor_heap->free_bindless_index(r.bindless_index);
                                      }
+                                     if (r.persistent_block.size != 0) {
+                                         m_descriptor_heap->free_persistent_block(r.persistent_block);
+                                     }
 
                                      if (r.sampler) {
                                          vkDestroySampler(m_device, r.sampler, nullptr);

@@ -154,6 +154,9 @@ namespace Honey {
             VkDeviceMemory memory = VK_NULL_HANDLE;
             VkDescriptorSet imgui_descriptor_set = VK_NULL_HANDLE;
             uint32_t       bindless_index = UINT32_MAX;
+            // Non-texture persistent descriptor-heap blocks (e.g. meshlet SSBO blocks) piggyback on
+            // this same frame-fenced retirement queue; size == 0 means "none". See free_persistent_block.
+            VulkanDescriptorHeap::Allocation persistent_block{};
 
             bool empty() const {
                 return sampler == VK_NULL_HANDLE &&
@@ -161,7 +164,8 @@ namespace Honey {
                        image == VK_NULL_HANDLE &&
                        memory == VK_NULL_HANDLE &&
                        imgui_descriptor_set == VK_NULL_HANDLE &&
-                       bindless_index == UINT32_MAX;
+                       bindless_index == UINT32_MAX &&
+                       persistent_block.size == 0;
             }
         };
 

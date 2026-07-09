@@ -465,15 +465,16 @@ namespace Honey {
     void VulkanRendererAPI::free_meshlet_heap_blocks(GlobalMeshletBuffers& bufs) {
         auto* ctx = get_vulkan_context();
         if (!ctx) return;
-        auto* heap = ctx->get_backend()->get_descriptor_heap();
+        auto* backend = ctx->get_backend();
 
-        // TODO (Step 9/10, same hazard as bindless texture indices): this frees inline rather than
-        // through a frame-fenced deferred-delete queue. If a mesh is unloaded while a previous
-        // frame's command buffer is still in flight and reading this block, freeing it here aliases
-        // a live descriptor with no validation to catch it.
+        // Frame-fenced like bindless texture indices: a prior frame's command buffer may still be
+        // reading this block, so the actual free_persistent_block happens once k_deferred_destroy_frame_lag
+        // frames have retired (see VulkanBackend::collect_deferred_destroys_locked).
         for (auto& block : bufs.meshlet_blocks) {
             if (!block.valid) continue;
-            heap->free_persistent_block(VulkanDescriptorHeap::Allocation{block.offset, block.size, block.stride});
+            VulkanBackend::RetiredTextureResources retired{};
+            retired.persistent_block = VulkanDescriptorHeap::Allocation{block.offset, block.size, block.stride};
+            backend->defer_destroy_texture_resources(retired);
             block = {};
         }
     }

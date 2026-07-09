@@ -84,7 +84,10 @@ namespace Honey {
         VkDescriptorType type; // TODO: These pull vulkan headers into a renderer agnostic header, oopsie
         uint32_t stages; // bitmask of ShaderStageBits
         uint32_t count; // array size, 0 = unbounded
-        bool is_comparison_sampler; // spirv_cross SamplerComparison
+        // Best-effort hint from SPIR-V's image Depth operand, not a reliable "is shadow sampler"
+        // signal for GLSL sources (see pick_static_sampler in vk_descriptor_mapping.cpp, which
+        // treats the "shadow"/"cmp" name convention as the authoritative check).
+        bool is_comparison_sampler;
         std::string name; // exact shader identifier (ex: "u_gAlbedo")
     };
 

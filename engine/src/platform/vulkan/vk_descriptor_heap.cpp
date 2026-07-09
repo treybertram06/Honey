@@ -107,6 +107,32 @@ namespace Honey {
     }
 
     VulkanDescriptorHeap::~VulkanDescriptorHeap() {
+        if (m_resource_heap_mapped) {
+            vkUnmapMemory(m_device, m_resource_heap_memory);
+            m_resource_heap_mapped = nullptr;
+        }
+        if (m_sampler_heap_mapped) {
+            vkUnmapMemory(m_device, m_sampler_heap_memory);
+            m_sampler_heap_mapped = nullptr;
+        }
+
+        if (m_resource_heap_buffer) {
+            vkDestroyBuffer(m_device, m_resource_heap_buffer, nullptr);
+            m_resource_heap_buffer = VK_NULL_HANDLE;
+        }
+        if (m_sampler_heap_buffer) {
+            vkDestroyBuffer(m_device, m_sampler_heap_buffer, nullptr);
+            m_sampler_heap_buffer = VK_NULL_HANDLE;
+        }
+
+        if (m_resource_heap_memory) {
+            vkFreeMemory(m_device, m_resource_heap_memory, nullptr);
+            m_resource_heap_memory = VK_NULL_HANDLE;
+        }
+        if (m_sampler_heap_memory) {
+            vkFreeMemory(m_device, m_sampler_heap_memory, nullptr);
+            m_sampler_heap_memory = VK_NULL_HANDLE;
+        }
     }
 
     VulkanDescriptorHeap::Allocation VulkanDescriptorHeap::allocate_transient_resource(VkDescriptorType type,
