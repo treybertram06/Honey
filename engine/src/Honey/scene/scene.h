@@ -95,6 +95,8 @@ namespace Honey {
 
     private:
 
+        Entity duplicate_entity_recursive(Entity source, Entity new_parent, bool is_root);
+
         void on_update_scripts(Timestep ts);
         void on_update_audio(Timestep ts);
         void on_update_physics_2d(Timestep ts);

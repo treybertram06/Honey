@@ -438,40 +438,66 @@ namespace Honey {
         return copy;
     }
 
-    void Scene::duplicate_entity(Entity entity) {
-        std::string new_name = entity.get_tag() + " (copy)";
+    Entity Scene::duplicate_entity_recursive(Entity source, Entity new_parent, bool is_root) {
+        std::string new_name = is_root ? source.get_tag() + " (copy)" : source.get_tag();
         Entity new_entity = create_entity(new_name);
 
-        copy_component_if_exists<RelationshipComponent>         (new_entity, entity); // TODO: This is not a correct way to handle this
+        copy_component_if_exists<TransformComponent>            (new_entity, source);
 
-        copy_component_if_exists<TransformComponent>            (new_entity, entity);
+        copy_component_if_exists<CameraComponent>               (new_entity, source);
+        copy_component_if_exists<SpriteRendererComponent>       (new_entity, source);
+        copy_component_if_exists<CircleRendererComponent>       (new_entity, source);
+        copy_component_if_exists<LineRendererComponent>         (new_entity, source);
+        copy_component_if_exists<TextRendererComponent>         (new_entity, source);
+        copy_component_if_exists<MeshRendererComponent>         (new_entity, source);
 
-        copy_component_if_exists<CameraComponent>               (new_entity, entity);
-        copy_component_if_exists<SpriteRendererComponent>       (new_entity, entity);
-        copy_component_if_exists<CircleRendererComponent>       (new_entity, entity);
-        copy_component_if_exists<LineRendererComponent>         (new_entity, entity);
-        copy_component_if_exists<TextRendererComponent>         (new_entity, entity);
-        copy_component_if_exists<MeshRendererComponent>         (new_entity, entity);
+        copy_component_if_exists<NativeScriptComponent>         (new_entity, source);
+        copy_component_if_exists<ScriptComponent>               (new_entity, source);
 
-        copy_component_if_exists<NativeScriptComponent>         (new_entity, entity);
-        copy_component_if_exists<ScriptComponent>               (new_entity, entity);
+        copy_component_if_exists<Rigidbody2DComponent>          (new_entity, source);
+        copy_component_if_exists<BoxCollider2DComponent>        (new_entity, source);
+        copy_component_if_exists<CircleCollider2DComponent>     (new_entity, source);
+        copy_component_if_exists<RigidbodyComponent>            (new_entity, source);
+        copy_component_if_exists<BoxCollider3DComponent>        (new_entity, source);
+        copy_component_if_exists<SphereCollider3DComponent>     (new_entity, source);
+        copy_component_if_exists<CapsuleCollider3DComponent>    (new_entity, source);
 
-        copy_component_if_exists<Rigidbody2DComponent>          (new_entity, entity);
-        copy_component_if_exists<BoxCollider2DComponent>        (new_entity, entity);
-        copy_component_if_exists<CircleCollider2DComponent>     (new_entity, entity);
-        copy_component_if_exists<RigidbodyComponent>            (new_entity, entity);
-        copy_component_if_exists<BoxCollider3DComponent>        (new_entity, entity);
-        copy_component_if_exists<SphereCollider3DComponent>     (new_entity, entity);
-        copy_component_if_exists<CapsuleCollider3DComponent>    (new_entity, entity);
+        copy_component_if_exists<AudioSourceComponent>          (new_entity, source);
 
-        copy_component_if_exists<AudioSourceComponent>          (new_entity, entity);
+        copy_component_if_exists<ClothComponent>                (new_entity, source);
 
-        copy_component_if_exists<ClothComponent>                (new_entity, entity);
+        copy_component_if_exists<DirectionalLightComponent>     (new_entity, source);
+        copy_component_if_exists<PointLightComponent>           (new_entity, source);
+        copy_component_if_exists<SpotLightComponent>            (new_entity, source);
 
-        copy_component_if_exists<DirectionalLightComponent>     (new_entity, entity);
-        copy_component_if_exists<PointLightComponent>           (new_entity, entity);
-        copy_component_if_exists<SpotLightComponent>            (new_entity, entity);
+        // Link into the hierarchy before recursing so world transforms and
+        // parent/child bookkeeping are correct at every level.
+        if (new_parent)
+            new_entity.set_parent(new_parent, false);
 
+        if (source.has_component<RelationshipComponent>()) {
+            // Copy by value: duplicating a child mutates the registry (and
+            // may resize component storage), so we can't hold a live
+            // reference to source's RelationshipComponent across the loop.
+            std::vector<entt::entity> children = source.get_component<RelationshipComponent>().children;
+            for (entt::entity child_handle : children) {
+                Entity child{ child_handle, this };
+                duplicate_entity_recursive(child, new_entity, false);
+            }
+        }
+
+        return new_entity;
+    }
+
+    void Scene::duplicate_entity(Entity entity) {
+        Entity parent;
+        if (entity.has_component<RelationshipComponent>()) {
+            entt::entity parent_handle = entity.get_component<RelationshipComponent>().parent;
+            if (parent_handle != entt::null)
+                parent = Entity{ parent_handle, this };
+        }
+
+        duplicate_entity_recursive(entity, parent, true);
     }
     //void Scene::create_prefab(const Entity& entity, const std::string& path) {
     //
