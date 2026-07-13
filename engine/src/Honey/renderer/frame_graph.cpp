@@ -934,7 +934,7 @@ namespace Honey {
                 auto* sb = dynamic_cast<VulkanStorageBuffer*>(res.storage_buffer.get());
                 HN_CORE_ASSERT(sb, "bind_heap_pipeline: pass '{0}' buffer resource '{1}' is not a VulkanStorageBuffer",
                                m_pass->name, res.name);
-                heap->write_buffer(sub, 0, sb->device_address(), sb->get_size(), e.type);
+                heap->write_buffer(sub, 0, sb->device_address(), sb->get_size(), e.type, res.name.c_str());
             } else {
                 VkImageViewCreateInfo ci{};
                 VkImageLayout layout;
@@ -949,10 +949,22 @@ namespace Honey {
                     ci = view_ci_for(*fb, e.view_kind, e.attachment);
                     layout = layout_for_view_kind(e.view_kind);
                 }
-                heap->write_image(sub, 0, ci, layout, e.type);
+                heap->write_image(sub, 0, ci, layout, e.type, res.name.c_str());
 
             }
         }
+
+#if defined(HN_ENABLE_ASSERTS)
+        // Safety net for VK_EXT_descriptor_heap's lack of driver validation: confirm every entry
+        // this pass just wrote still holds the type its own reflected mapping expects. Catches two
+        // plan.entries computing the same block_offset (a compute_block_offsets bug) — the second
+        // write silently clobbers the first, in both GPU memory and this shadow table.
+        for (const auto& e : plan.entries) {
+            if (e.resource == k_invalid_resource)
+                continue; // unmatched — already diagnosed when the plan was built
+            heap->debug_verify(block.offset + e.block_offset, e.type, m_pass->name.c_str());
+        }
+#endif
 
         PassPushData pd{};
         pd.resource_heap_base = block.offset;

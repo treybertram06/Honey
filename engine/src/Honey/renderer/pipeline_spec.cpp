@@ -278,6 +278,14 @@ namespace Honey {
             return std::tie(a.set, a.binding) < std::tie(b.set, b.binding);
         });
 
+        // A shader has at most one push_constant block (GLSL/SPIR-V restriction).
+        HN_CORE_ASSERT(resources.push_constant_buffers.size() <= 1,
+            "'{0}': more than one push_constant block in a single module", spv_path.string());
+        if (!resources.push_constant_buffers.empty()) {
+            const auto& pc = resources.push_constant_buffers[0];
+            out.push_constant_size = (uint32_t)compiler.get_declared_struct_size(compiler.get_type(pc.base_type_id));
+        }
+
         return out;
     }
 
@@ -288,12 +296,23 @@ namespace Honey {
         // type/count agree and OR the stage bits together rather than duplicating it.
         // std::map keeps entries ordered by (set, binding), so the result is already sorted.
         std::map<std::pair<uint32_t, uint32_t>, ReflectedBinding> merged;
+        uint32_t push_constant_size = 0;
 
         for (const auto& path : module_spv_paths) {
             if (path.empty())
                 continue;
 
             ReflectedShader module = reflect_descriptor_bindings_from_spirv(path);
+
+            // All stages share one push_constant block; a stage that doesn't read it simply
+            // doesn't declare one (size 0), which isn't a conflict.
+            if (module.push_constant_size != 0) {
+                HN_CORE_ASSERT(push_constant_size == 0 || push_constant_size == module.push_constant_size,
+                    "'{0}': push_constant block size ({1}) disagrees with another stage's ({2})",
+                    path.string(), module.push_constant_size, push_constant_size);
+                push_constant_size = module.push_constant_size;
+            }
+
             for (auto& b : module.bindings) {
                 const std::pair<uint32_t, uint32_t> key{ b.set, b.binding };
                 auto it = merged.find(key);
@@ -317,6 +336,7 @@ namespace Honey {
         out.bindings.reserve(merged.size());
         for (auto& [key, binding] : merged)
             out.bindings.push_back(std::move(binding));
+        out.push_constant_size = push_constant_size;
 
         return out;
     }

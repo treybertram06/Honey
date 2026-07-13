@@ -204,6 +204,10 @@ namespace Honey {
                 spec.cullMode                = CullMode::Front;
                 spec.depthBiasConstantFactor = 2.0f;
                 spec.depthBiasSlopeFactor    = 1.5f;
+                // This pipeline pushes ShadowMeshletPushData, not the default PassPushData —
+                // anchor the push-block validation in VulkanPipeline::create_mesh to the struct
+                // it actually uses (see push_meshlet pushes at :330 below).
+                spec.expected_push_constant_size = sizeof(ShadowMeshletPushData);
 
                 Ref<Pipeline> pipe = Pipeline::create_heap_mode(spec, shadow_rp);
                 HN_CORE_ASSERT(pipe, "Renderer3DShadow: failed to create shadow pipeline");
@@ -624,6 +628,8 @@ namespace Honey {
                 spec.cullMode                = CullMode::Front;
                 spec.depthBiasConstantFactor = 2.0f;
                 spec.depthBiasSlopeFactor    = 1.5f;
+                // See the cubemap shadow pipeline above: this pass also pushes ShadowMeshletPushData.
+                spec.expected_push_constant_size = sizeof(ShadowMeshletPushData);
 
                 Ref<Pipeline> pipe = Pipeline::create_heap_mode(spec, rp);
                 HN_CORE_ASSERT(pipe, "Renderer3DShadow: failed to create directional shadow pipeline");

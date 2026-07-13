@@ -71,6 +71,7 @@ namespace Honey {
             VulkanUtils::align_down(m_transient_reserved_size / VulkanContext::k_max_frames_in_flight,
                 m_props.resourceHeapAlignment);
         HN_CORE_ASSERT(per_frame_stride > 0, "[VulkanDescriptorHeap] Per-frame stride is zero!");
+        m_transient_per_frame_stride = per_frame_stride;
 
         m_frame_slots.resize(VulkanContext::k_max_frames_in_flight);
         for (uint8_t i = 0; i < VulkanContext::k_max_frames_in_flight; ++i) {
@@ -229,6 +230,9 @@ namespace Honey {
 
     void VulkanDescriptorHeap::free_persistent_block(const Allocation& alloc) {
         HN_CORE_ASSERT(alloc.stride > 0 && alloc.size > 0, "[VulkanDescriptorHeap] free_persistent_block: invalid allocation");
+#if defined(HN_ENABLE_ASSERTS)
+        shadow_erase_range(alloc.offset, alloc.size, alloc.stride);
+#endif
         uint32_t count = alloc.size / alloc.stride;
         uint64_t key = persistent_block_key(alloc.stride, count);
         std::scoped_lock lock(m_alloc_mutex);
@@ -259,16 +263,20 @@ namespace Honey {
     void VulkanDescriptorHeap::free_bindless_index(uint32_t index) {
         HN_CORE_ASSERT(index != 0 && index < m_bindless_capacity,
             "[VulkanDescriptorHeap] free_bindless_index: index {0} out of range", index);
+#if defined(HN_ENABLE_ASSERTS)
+        shadow_erase_range(m_bindless_table_alloc.offset + index * m_bindless_table_alloc.stride,
+            m_bindless_table_alloc.stride, m_bindless_table_alloc.stride);
+#endif
         std::scoped_lock lock(m_alloc_mutex);
         m_bindless_free_indices.push_back(index);
     }
 
     void VulkanDescriptorHeap::write_bindless(uint32_t index, const VkImageViewCreateInfo& view, VkImageLayout layout) {
-        write_image(m_bindless_table_alloc, index, view, layout, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE);
+        write_image(m_bindless_table_alloc, index, view, layout, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, "bindless");
     }
 
     void VulkanDescriptorHeap::write_image(const Allocation& alloc, uint32_t index, const VkImageViewCreateInfo& view,
-                                           VkImageLayout layout, VkDescriptorType type) {
+                                           VkImageLayout layout, VkDescriptorType type, const char* debug_name) {
 
         HN_CORE_ASSERT(alloc.stride == stride_for(type),
             "[VulkanDescriptorHeap] write_image: descriptor type does not match allocation");
@@ -293,10 +301,13 @@ namespace Honey {
         range.size = alloc.stride;
 
         m_fnWriteResourceDescriptors(m_device, 1, &res_info, &range);
+#if defined(HN_ENABLE_ASSERTS)
+        shadow_record(alloc.offset + (uint32_t)index * alloc.stride, type, debug_name);
+#endif
     }
 
     void VulkanDescriptorHeap::write_buffer(const Allocation& alloc, uint32_t index, VkDeviceAddress addr, VkDeviceSize range,
-        VkDescriptorType type) {
+        VkDescriptorType type, const char* debug_name) {
 
         HN_CORE_ASSERT(alloc.stride == stride_for(type),
             "[VulkanDescriptorHeap] write_buffer: descriptor type does not match allocation");
@@ -320,9 +331,13 @@ namespace Honey {
         host_range.size = alloc.stride;
 
         m_fnWriteResourceDescriptors(m_device, 1, &res_info, &host_range);
+#if defined(HN_ENABLE_ASSERTS)
+        shadow_record(alloc.offset + (uint32_t)index * alloc.stride, type, debug_name);
+#endif
     }
 
-    void VulkanDescriptorHeap::write_sampler(const Allocation& alloc, uint32_t index, const VkSamplerCreateInfo& sampler_ci) {
+    void VulkanDescriptorHeap::write_sampler(const Allocation& alloc, uint32_t index, const VkSamplerCreateInfo& sampler_ci,
+        const char* debug_name) {
         HN_CORE_ASSERT(alloc.stride == m_descriptor_sizes.sampler,
             "[VulkanDescriptorHeap] write_sampler: allocation stride is not a sampler descriptor");
         HN_CORE_ASSERT((VkDeviceSize)(index + 1) * alloc.stride <= alloc.size,
@@ -336,6 +351,9 @@ namespace Honey {
         range.size        = m_descriptor_sizes.sampler;
 
         m_fnWriteSamplerDescriptors(m_device, 1, &sampler_ci, &range);
+#if defined(HN_ENABLE_ASSERTS)
+        shadow_record(alloc.offset + (uint32_t)index * alloc.stride, VK_DESCRIPTOR_TYPE_SAMPLER, debug_name);
+#endif
     }
 
     void VulkanDescriptorHeap::bake_static_samplers(float max_anisotropy) {
@@ -372,10 +390,64 @@ namespace Honey {
         m_fnPushData(cmd, &info);
     }
 
+#if defined(HN_ENABLE_ASSERTS)
+    void VulkanDescriptorHeap::shadow_record(uint32_t byte_offset, VkDescriptorType type, const char* debug_name) {
+        std::scoped_lock lock(m_shadow_mutex);
+        m_shadow_table[byte_offset] = ShadowEntry{ type, debug_name };
+    }
+
+    void VulkanDescriptorHeap::shadow_erase_range(uint32_t byte_offset_begin, uint32_t byte_size, uint32_t stride) {
+        std::scoped_lock lock(m_shadow_mutex);
+        for (uint32_t off = byte_offset_begin; off < byte_offset_begin + byte_size; off += stride)
+            m_shadow_table.erase(off);
+    }
+
+    void VulkanDescriptorHeap::debug_verify(uint32_t byte_offset, VkDescriptorType expected_type, const char* pass_name) {
+        std::scoped_lock lock(m_shadow_mutex);
+        auto it = m_shadow_table.find(byte_offset);
+        HN_CORE_ASSERT(it != m_shadow_table.end(),
+            "[VulkanDescriptorHeap] pass '{0}': nothing was ever written at heap byte offset {1} "
+            "(pipeline expects a {2}) — reading undefined/stale data", pass_name, byte_offset, (int)expected_type);
+        if (it == m_shadow_table.end()) return;
+        HN_CORE_ASSERT(it->second.type == expected_type,
+            "[VulkanDescriptorHeap] pass '{0}': heap byte offset {1} holds a {2} (last written by '{3}') "
+            "but the pipeline expects a {4} — offsets are aliasing", pass_name, byte_offset,
+            (int)it->second.type, it->second.debug_name ? it->second.debug_name : "?", (int)expected_type);
+    }
+#endif
+
     void VulkanDescriptorHeap::begin_frame(uint32_t frame_in_flight) {
         HN_CORE_ASSERT(frame_in_flight < m_frame_slots.size(), "[VulkanDescriptorHeap] frame_in_flight out of range");
         m_current_frame = frame_in_flight;
         auto& slot = m_frame_slots[frame_in_flight];
+
+#if defined(HN_ENABLE_ASSERTS)
+        // Drop shadow entries for the transient range this slot is about to recycle — the bump
+        // allocator considers them dead the instant the cursor resets below, so the shadow table
+        // must too, or a stale entry masks the exact "wrote nothing here this frame" bug it exists
+        // to catch.
+        {
+            std::scoped_lock lock(m_shadow_mutex);
+            std::erase_if(m_shadow_table, [&](const auto& kv) {
+                return kv.first >= slot.begin && kv.first < slot.end;
+            });
+        }
+
+        // High-water log (throttled to a wall-clock interval, not a frame count, so it fires at a
+        // predictable cadence regardless of framerate): tells you the real per-frame-slot transient
+        // footprint so m_resource_capacity / m_sampler_capacity can be right-sized instead of guessed.
+        constexpr float k_log_interval_seconds = 30.0f;
+        if (m_log_timer.elapsed() >= k_log_interval_seconds) {
+            auto to_KiB = [](VkDeviceSize bytes) { return bytes / 1024.0f; };
+            HN_CORE_INFO("[VulkanDescriptorHeap] High-water: transient {0}/{1} KiB per frame-slot, "
+                         "persistent {2}/{3} KiB",
+                to_KiB(m_resource_max_size_reached), to_KiB(m_transient_per_frame_stride),
+                to_KiB(m_resource_persistent_cursor - m_resource_persistent_offset),
+                to_KiB(m_resource_persistent_size));
+            m_log_timer.reset();
+        }
+#endif
+
         slot.cursor = slot.begin;
     }
 

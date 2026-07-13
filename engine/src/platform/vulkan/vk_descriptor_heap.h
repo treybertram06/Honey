@@ -3,6 +3,8 @@
 
 #include <mutex>
 
+#include "Honey/core/timer.h"
+
 namespace Honey {
 
     class VulkanDescriptorHeap {
@@ -31,10 +33,20 @@ namespace Honey {
 
         void write_image (const Allocation& alloc, uint32_t index,
                           const VkImageViewCreateInfo& view, VkImageLayout layout,
-                          VkDescriptorType type);
+                          VkDescriptorType type, const char* debug_name = nullptr);
         void write_buffer(const Allocation& alloc, uint32_t index,
-                          VkDeviceAddress addr, VkDeviceSize range, VkDescriptorType type);
-        void write_sampler(const Allocation& alloc, uint32_t index, const VkSamplerCreateInfo& sampler_ci);
+                          VkDeviceAddress addr, VkDeviceSize range, VkDescriptorType type,
+                          const char* debug_name = nullptr);
+        void write_sampler(const Allocation& alloc, uint32_t index, const VkSamplerCreateInfo& sampler_ci,
+                          const char* debug_name = nullptr);
+
+#if defined(HN_ENABLE_ASSERTS)
+        // CPU-side mirror of every descriptor write. VK_EXT_descriptor_heap gives up driver
+        // validation for descriptor correctness, so this replaces it: asserts that whatever a
+        // pipeline's reflected mapping expects at a byte offset is what was actually last written
+        // there. Call after writing a pass's descriptors, before the draw that reads them.
+        void debug_verify(uint32_t byte_offset, VkDescriptorType expected_type, const char* pass_name);
+#endif
 
         void bake_static_samplers(float max_anisotropy);
 
@@ -82,6 +94,14 @@ namespace Honey {
 
         // Bump-allocates from the persistent cursor. Caller must hold m_alloc_mutex.
         Allocation allocate_persistent_resource_unlocked(VkDescriptorType type, uint32_t count);
+
+#if defined(HN_ENABLE_ASSERTS)
+        void shadow_record(uint32_t byte_offset, VkDescriptorType type, const char* debug_name);
+        // Drops every recorded entry in [byte_offset_begin, byte_offset_begin + byte_size), stride
+        // apart. Used when a persistent block or bindless index is freed, and when a transient
+        // frame-slot is recycled, so the table never reports a stale write as still live.
+        void shadow_erase_range(uint32_t byte_offset_begin, uint32_t byte_size, uint32_t stride);
+#endif
 
         static uint64_t persistent_block_key(uint32_t stride, uint32_t count) {
             return ((uint64_t)stride << 32) | count;
@@ -132,8 +152,10 @@ namespace Honey {
         // Per frame transient regions
         VkDeviceSize m_transient_reserved_size = 0;
         VkDeviceSize m_transient_persistent_size = 0;
+        VkDeviceSize m_transient_per_frame_stride = 0; // one frame slot's byte budget; see m_resource_max_size_reached
         std::vector<FrameSlot> m_frame_slots;
         uint32_t m_current_frame = 0;
+        Timer m_log_timer; // throttles the begin_frame high-water log to a wall-clock interval
 
         // Guards the persistent cursor, persistent freelist, bindless freelist, and sampler
         // cursor: allocations arrive from the main, upload, and loader threads while frees come
@@ -143,6 +165,15 @@ namespace Honey {
         Allocation m_bindless_table_alloc{};
         std::vector<uint32_t> m_bindless_free_indices;
         uint32_t m_bindless_capacity = 0;
+
+#if defined(HN_ENABLE_ASSERTS)
+        // Debug-only mirror of live descriptor writes, keyed by absolute heap byte offset. Guards
+        // debug_verify() and is kept in sync with the allocator: transient entries are dropped when
+        // their frame slot recycles (begin_frame), persistent/bindless entries when freed.
+        struct ShadowEntry { VkDescriptorType type; const char* debug_name; };
+        std::mutex m_shadow_mutex;
+        std::unordered_map<uint32_t, ShadowEntry> m_shadow_table;
+#endif
 
         // Sampler heap layout
         VkDeviceSize m_sampler_reserved_size = 0;

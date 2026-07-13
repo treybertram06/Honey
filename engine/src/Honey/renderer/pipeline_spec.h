@@ -93,6 +93,9 @@ namespace Honey {
 
     struct ReflectedShader {
         std::vector<ReflectedBinding> bindings;
+        // Declared size (bytes) of the shader's layout(push_constant) block, or 0 if it declares
+        // none. Validated at heap-mode pipeline creation against PipelineSpec::expected_push_constant_size.
+        uint32_t push_constant_size = 0;
     };
 
     struct PipelineSpec {
@@ -105,6 +108,11 @@ namespace Honey {
 
         // set>=1 descriptor bindings reflected from SPIR-V (shader-derived, not part of operator==).
         ReflectedShader reflection;
+
+        // Heap-mode only: byte size of the C++ push-data struct this pass actually pushes at draw
+        // time (e.g. sizeof(ShadowMeshletPushData)). 0 means "use the default, sizeof(PassPushData)".
+        // Caller-set, not shader-derived — not part of operator==.
+        uint32_t expected_push_constant_size = 0;
 
         // Fixed-function state
         PrimitiveTopology topology = PrimitiveTopology::Triangles;

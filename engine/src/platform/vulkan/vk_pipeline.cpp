@@ -370,8 +370,18 @@ namespace Honey {
             HN_CORE_ASSERT(layout_res == VK_SUCCESS, "vkCreatePipelineLayout failed");
             m_layout = layout;
         } else {
-            HN_CORE_ASSERT(sizeof(PassPushData) <= heap->max_push_data_size(),
-                           "PassPushData exceeds device maxPushDataSize");
+            const uint32_t expected_push_size = spec.expected_push_constant_size != 0
+                ? spec.expected_push_constant_size : (uint32_t)sizeof(PassPushData);
+            HN_CORE_ASSERT(expected_push_size <= heap->max_push_data_size(),
+                           "'{0}': push data size {1} exceeds device maxPushDataSize",
+                           spec.shaderGLSLPath.string(), expected_push_size);
+            // A shader that never declares layout(push_constant) reflects size 0 — nothing reads
+            // the pushed bytes, so there's nothing to validate. A shader that does declare one must
+            // match exactly, or it's silently reading past/into the wrong struct at draw time.
+            HN_CORE_ASSERT(spec.reflection.push_constant_size == 0 ||
+                           spec.reflection.push_constant_size == expected_push_size,
+                           "'{0}': GLSL push_constant block is {1} bytes but the engine pushes {2} bytes",
+                           spec.shaderGLSLPath.string(), spec.reflection.push_constant_size, expected_push_size);
             m_layout = VK_NULL_HANDLE;
 
             mappings = build_descriptor_mappings(spec.reflection, *heap);
@@ -583,8 +593,18 @@ namespace Honey {
             HN_CORE_ASSERT(layout_res == VK_SUCCESS, "vkCreatePipelineLayout failed (mesh pipeline)");
             m_layout = layout;
         } else {
-            HN_CORE_ASSERT(sizeof(PassPushData) <= heap->max_push_data_size(),
-                           "PassPushData exceeds device maxPushDataSize");
+            const uint32_t expected_push_size = spec.expected_push_constant_size != 0
+                ? spec.expected_push_constant_size : (uint32_t)sizeof(PassPushData);
+            HN_CORE_ASSERT(expected_push_size <= heap->max_push_data_size(),
+                           "'{0}': push data size {1} exceeds device maxPushDataSize",
+                           spec.shaderGLSLPath.string(), expected_push_size);
+            // A shader that never declares layout(push_constant) reflects size 0 — nothing reads
+            // the pushed bytes, so there's nothing to validate. A shader that does declare one must
+            // match exactly, or it's silently reading past/into the wrong struct at draw time.
+            HN_CORE_ASSERT(spec.reflection.push_constant_size == 0 ||
+                           spec.reflection.push_constant_size == expected_push_size,
+                           "'{0}': GLSL push_constant block is {1} bytes but the engine pushes {2} bytes",
+                           spec.shaderGLSLPath.string(), spec.reflection.push_constant_size, expected_push_size);
             m_layout = VK_NULL_HANDLE;
 
             mappings = build_descriptor_mappings(spec.reflection, *heap);
