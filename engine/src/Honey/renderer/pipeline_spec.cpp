@@ -186,9 +186,9 @@ namespace Honey {
 
         std::vector<VertexInputBindingSpec> out;
 
-        if (perVertex.get_elements().empty() && perInstance.get_elements().empty()) {
-            HN_CORE_WARN("No vertex inputs reflected from {}", vertexSpvPath.string());
-        }
+        //if (perVertex.get_elements().empty() && perInstance.get_elements().empty()) {
+        //    HN_CORE_WARN("No vertex inputs reflected from {}", vertexSpvPath.string());
+        //}
 
         if (!perVertex.get_elements().empty()) {
             VertexInputBindingSpec vb{};

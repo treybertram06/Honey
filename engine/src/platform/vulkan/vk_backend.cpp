@@ -1743,26 +1743,20 @@ namespace Honey {
 #endif
 
         // ---- Bindless / descriptor indexing feature chain ----
-        VkPhysicalDeviceDescriptorIndexingFeatures indexing_features{};
-        indexing_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
-
-        VkPhysicalDeviceTimelineSemaphoreFeatures timeline_features{};
-        timeline_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES;
-
         VkPhysicalDeviceMeshShaderFeaturesEXT mesh_features{};
         mesh_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT;
 
         VkPhysicalDeviceVulkan11Features vk11_features{};
         vk11_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
 
+        VkPhysicalDeviceVulkan12Features vk12_features{};
+        vk12_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+
         VkPhysicalDeviceAccelerationStructureFeaturesKHR accel_features{};
         accel_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
 
         VkPhysicalDeviceRayTracingPipelineFeaturesKHR rt_features{};
         rt_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
-
-        VkPhysicalDeviceBufferDeviceAddressFeaturesKHR bda_features{};
-        bda_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES_KHR;
 
         VkPhysicalDeviceDescriptorHeapFeaturesEXT descriptor_heap_features{};
         descriptor_heap_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_FEATURES_EXT;
@@ -1771,10 +1765,8 @@ namespace Honey {
         maintenance5_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR;
 
         FeatureChain chain;
-        chain.add(indexing_features);
-        chain.add(timeline_features);
         chain.add(vk11_features);
-        chain.add(bda_features);
+        chain.add(vk12_features);
         if (has_mesh_shader_ext) chain.add(mesh_features);
         if (has_descriptor_heap_ext) {
             chain.add(descriptor_heap_features);
@@ -1791,11 +1783,11 @@ namespace Honey {
 
         vkGetPhysicalDeviceFeatures2(m_physical_device, &features2);
 
-        m_timeline_semaphore_supported = (timeline_features.timelineSemaphore == VK_TRUE);
+        m_timeline_semaphore_supported = (vk12_features.timelineSemaphore == VK_TRUE);
         m_mesh_shader_supported = has_mesh_shader_ext && (mesh_features.meshShader == VK_TRUE);
         m_ray_tracing_supported = (accel_features.accelerationStructure == VK_TRUE &&
                                     rt_features.rayTracingPipeline == VK_TRUE &&
-                                    bda_features.bufferDeviceAddress == VK_TRUE);
+                                    vk12_features.bufferDeviceAddress == VK_TRUE);
         m_descriptor_heap_supported = (descriptor_heap_features.descriptorHeap == VK_TRUE);
 
         if (!m_mesh_shader_supported)
@@ -1808,23 +1800,23 @@ namespace Honey {
             HN_CORE_ASSERT(false, "Descriptor heap features are not supported by this device");
 
         // Enable the descriptor indexing features we want (assert support first)
-        HN_CORE_ASSERT(indexing_features.runtimeDescriptorArray == VK_TRUE,
+        HN_CORE_ASSERT(vk12_features.runtimeDescriptorArray == VK_TRUE,
                        "Bindless requires runtimeDescriptorArray (VK_EXT_descriptor_indexing)");
-        HN_CORE_ASSERT(indexing_features.descriptorBindingPartiallyBound == VK_TRUE,
+        HN_CORE_ASSERT(vk12_features.descriptorBindingPartiallyBound == VK_TRUE,
                        "Bindless requires descriptorBindingPartiallyBound (VK_EXT_descriptor_indexing)");
-        HN_CORE_ASSERT(indexing_features.shaderSampledImageArrayNonUniformIndexing == VK_TRUE,
+        HN_CORE_ASSERT(vk12_features.shaderSampledImageArrayNonUniformIndexing == VK_TRUE,
                        "Bindless requires shaderSampledImageArrayNonUniformIndexing (VK_EXT_descriptor_indexing)");
         HN_CORE_ASSERT(m_timeline_semaphore_supported,
                        "Async upload sync requires timelineSemaphore feature support");
 
-        if (indexing_features.descriptorBindingVariableDescriptorCount) {
-            indexing_features.descriptorBindingVariableDescriptorCount = VK_TRUE;
+        if (vk12_features.descriptorBindingVariableDescriptorCount) {
+            vk12_features.descriptorBindingVariableDescriptorCount = VK_TRUE;
         }
-        if (indexing_features.descriptorBindingSampledImageUpdateAfterBind) {
-            indexing_features.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+        if (vk12_features.descriptorBindingSampledImageUpdateAfterBind) {
+            vk12_features.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
         }
 
-        timeline_features.timelineSemaphore = m_timeline_semaphore_supported ? VK_TRUE : VK_FALSE;
+        vk12_features.timelineSemaphore = m_timeline_semaphore_supported ? VK_TRUE : VK_FALSE;
 
         if (m_mesh_shader_supported) {
             mesh_features.meshShader = VK_TRUE;
@@ -1834,16 +1826,17 @@ namespace Honey {
         }
 
         vk11_features.shaderDrawParameters = VK_TRUE; // required for gl_DrawID in task/mesh shaders
+        vk12_features.drawIndirectCount = VK_TRUE; // required for vkCmdDrawMeshTasksIndirectCountEXT()
 
         if (m_ray_tracing_supported) {
             accel_features.accelerationStructure = VK_TRUE;
             rt_features.rayTracingPipeline       = VK_TRUE;
-            bda_features.bufferDeviceAddress     = VK_TRUE;
+            vk12_features.bufferDeviceAddress     = VK_TRUE;
         }
 
         if (m_descriptor_heap_supported) {
             descriptor_heap_features.descriptorHeap = VK_TRUE;
-            bda_features.bufferDeviceAddress        = VK_TRUE;
+            vk12_features.bufferDeviceAddress        = VK_TRUE;
             maintenance5_features.maintenance5      = VK_TRUE; // required dependency of VK_EXT_descriptor_heap
         }
 
