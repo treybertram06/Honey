@@ -41,6 +41,7 @@ namespace Honey {
         };
 
         SpirvPaths get_or_compile_spirv_paths(const std::filesystem::path& shader_path);
+        std::vector<uint32_t> get_or_compile_stage_spirv(const std::filesystem::path& shader_path);
 
         void invalidate_cache();
         void precompile_all_shaders();

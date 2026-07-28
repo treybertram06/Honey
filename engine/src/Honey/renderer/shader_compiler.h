@@ -74,6 +74,8 @@ namespace Honey {
 
         static std::string read_file(const std::filesystem::path& path);
 
+        static ShaderStage get_stage_from_extension(const std::filesystem::path& path);
+
     private:
         struct ShaderSource {
             std::string vertex_source;

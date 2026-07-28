@@ -7,6 +7,7 @@
 #include <sstream>
 
 #include "renderer.h"
+#include "../../../../vendor/yaml-cpp/src/contrib/dragonbox.h"
 
 namespace {
     constexpr uint32_t kShaderCacheVersion = 1;
@@ -31,6 +32,35 @@ namespace {
         auto sz = std::filesystem::file_size(p, ec);
         if (ec) return false;
         return sz > 0;
+    }
+
+    static bool write_spirv_file(const std::filesystem::path& path, const std::vector<uint32_t>& spirv) {
+        std::ofstream ofs(path, std::ios::binary);
+        if (!ofs) {
+            HN_CORE_ERROR("Failed to open SPIR-V cache file for writing: {0}", path.string());
+            return false;
+        }
+        ofs.write(reinterpret_cast<const char*>(spirv.data()), spirv.size() * sizeof(uint32_t));
+        if (!ofs) {
+            HN_CORE_ERROR("Failed to write SPIR-V cache file: {0}", path.string());
+            return false;
+        }
+        return true;
+    }
+
+    static std::vector<uint32_t> read_spirv_file(const std::filesystem::path& path) {
+        std::ifstream ifs(path, std::ios::binary);
+        if (!ifs) return {};
+
+        std::error_code ec;
+        const auto size = std::filesystem::file_size(path, ec);
+        if (ec || size == 0) return {};
+
+        std::vector<uint32_t> spirv(size / sizeof(uint32_t));
+        ifs.read(reinterpret_cast<char*>(spirv.data()), static_cast<std::streamsize>(size));
+        if (!ifs) return {};
+
+        return spirv;
     }
 }
 
@@ -220,6 +250,29 @@ namespace Honey {
         };
     }
 
+    std::vector<uint32_t> ShaderCache::get_or_compile_stage_spirv(const std::filesystem::path& shader_path) {
+        const auto stage = ShaderCompiler::get_stage_from_extension(shader_path);
+        if (stage == ShaderCompiler::ShaderStage::Unknown) {
+            HN_CORE_ERROR("[ShaderCache] Unknown shader stage for shader: {0}", shader_path.string());
+            return {};
+        }
+
+        const std::string stage_suffix = shader_path.extension().string().substr(1);
+        const std::filesystem::path cache_path = get_spirv_cache_path(shader_path, stage_suffix);
+        if (file_exists_nonempty(cache_path)) {
+            return read_spirv_file(cache_path);
+        }
+
+        const auto source = ShaderCompiler::read_file(shader_path);
+        const auto spirv = ShaderCompiler::compile_single_stage(source, stage);
+        if (spirv.empty()) {
+            return {};
+        }
+
+        write_spirv_file(cache_path, spirv);
+        return spirv;
+    }
+
     bool ShaderCache::needs_recompilation(const ShaderAsset& asset) {
         try {
             // Check if source file was modified
@@ -280,23 +333,12 @@ namespace Honey {
 
         try {
             if (result.has_graphics_stages()) {
-                // Write vertex SPIR-V
-                std::ofstream vert_file(vert_path, std::ios::binary);
-                if (!vert_file) {
-                    throw std::runtime_error("Failed to open vertex SPIR-V file for writing");
+                if (!write_spirv_file(vert_path, result.vertex_spirv)) {
+                    throw std::runtime_error("Failed to write vertex SPIR-V cache file");
                 }
-                vert_file.write(reinterpret_cast<const char*>(result.vertex_spirv.data()),
-                                result.vertex_spirv.size() * sizeof(uint32_t));
-                vert_file.close();
-
-                // Write fragment SPIR-V
-                std::ofstream frag_file(frag_path, std::ios::binary);
-                if (!frag_file) {
-                    throw std::runtime_error("Failed to open fragment SPIR-V file for writing");
+                if (!write_spirv_file(frag_path, result.fragment_spirv)) {
+                    throw std::runtime_error("Failed to write fragment SPIR-V cache file");
                 }
-                frag_file.write(reinterpret_cast<const char*>(result.fragment_spirv.data()),
-                                result.fragment_spirv.size() * sizeof(uint32_t));
-                frag_file.close();
             } else {
                 std::error_code ec;
                 std::filesystem::remove(vert_path, ec);
@@ -304,39 +346,27 @@ namespace Honey {
             }
 
             if (result.has_compute_stage()) {
-                std::ofstream comp_file(comp_path, std::ios::binary);
-                if (!comp_file) {
-                    throw std::runtime_error("Failed to open compute SPIR-V file for writing");
+                if (!write_spirv_file(comp_path, result.compute_spirv)) {
+                    throw std::runtime_error("Failed to write compute SPIR-V cache file");
                 }
-                comp_file.write(reinterpret_cast<const char*>(result.compute_spirv.data()),
-                                result.compute_spirv.size() * sizeof(uint32_t));
-                comp_file.close();
             } else {
                 std::error_code ec;
                 std::filesystem::remove(comp_path, ec);
             }
 
             if (result.has_mesh_stages()) {
-                std::ofstream mesh_file(mesh_path, std::ios::binary);
-                if (!mesh_file) {
-                    throw std::runtime_error("Failed to open mesh SPIR-V file for writing");
+                if (!write_spirv_file(mesh_path, result.mesh_spirv)) {
+                    throw std::runtime_error("Failed to write mesh SPIR-V cache file");
                 }
-                mesh_file.write(reinterpret_cast<const char*>(result.mesh_spirv.data()),
-                                result.mesh_spirv.size() * sizeof(uint32_t));
-                mesh_file.close();
             } else {
                 std::error_code ec;
                 std::filesystem::remove(mesh_path, ec);
             }
 
             if (result.has_task_stage()) {
-                std::ofstream task_file(task_path, std::ios::binary);
-                if (!task_file) {
-                    throw std::runtime_error("Failed to open task SPIR-V file for writing");
+                if (!write_spirv_file(task_path, result.task_spirv)) {
+                    throw std::runtime_error("Failed to write task SPIR-V cache file");
                 }
-                task_file.write(reinterpret_cast<const char*>(result.task_spirv.data()),
-                                result.task_spirv.size() * sizeof(uint32_t));
-                task_file.close();
             } else {
                 std::error_code ec;
                 std::filesystem::remove(task_path, ec);

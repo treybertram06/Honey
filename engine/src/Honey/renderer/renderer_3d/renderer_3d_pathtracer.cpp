@@ -5,6 +5,7 @@
 #include "Honey/renderer/frame_graph_registry.h"
 #include "Honey/renderer/gpu_types.h"
 #include "Honey/renderer/mesh.h"
+#include "Honey/renderer/renderer.h"
 #include "Honey/renderer/shader_compiler.h"
 #include "Honey/scene/components.h"
 #include "Honey/scene/scene.h"
@@ -1404,12 +1405,7 @@ namespace Honey {
 
             VkDevice device = s_res->vk_ctx->get_device();
 
-            std::string src = ShaderCompiler::read_file(shader_path);
-            if (src.empty()) {
-                HN_CORE_ERROR("[PathTracer] build_compute_pipeline: failed to read {}", shader_path.string());
-                return {};
-            }
-            auto spirv = ShaderCompiler::compile_single_stage(src, ShaderCompiler::ShaderStage::Compute);
+            auto spirv = Renderer::get_shader_cache()->get_or_compile_stage_spirv(shader_path);
             if (spirv.empty()) {
                 HN_CORE_ERROR("[PathTracer] build_compute_pipeline: SPIRV compilation failed for {}", shader_path.string());
                 return {};
@@ -1565,12 +1561,7 @@ namespace Honey {
             vkCreatePipelineLayout(device, &plci, nullptr, &s_res->svgf_pipeline_layout);
 
             std::filesystem::path assets_dir(ASSET_ROOT);
-            std::string src = ShaderCompiler::read_file(assets_dir / "shaders" / "PathTrace_SVGF.comp");
-            if (src.empty()) {
-                HN_CORE_ERROR("[PathTracer] Failed to read PathTrace_SVGF.comp");
-                return;
-            }
-            auto spirv = ShaderCompiler::compile_single_stage(src, ShaderCompiler::ShaderStage::Compute);
+            auto spirv = Renderer::get_shader_cache()->get_or_compile_stage_spirv(assets_dir / "shaders" / "PathTrace_SVGF.comp");
             if (spirv.empty()) {
                 HN_CORE_ERROR("[PathTracer] SPIRV compilation failed for PathTrace_SVGF.comp");
                 return;
@@ -1639,15 +1630,10 @@ namespace Honey {
             vkCreatePipelineLayout(device, &pl_ci, nullptr, &s_res->extend_rt_layout);
 
 
-            // Compile shaders and create shader modules TODO: use proper shader compilation flow here rather than handling it here
+            // Compile shaders and create shader modules
             bool compile_ok = true;
-            auto make_module = [&](const std::string& src, ShaderCompiler::ShaderStage stage, const char* name) -> VkShaderModule {
-                if (src.empty()) {
-                    HN_CORE_ERROR("[PathTracer] Failed to read shader source for '{}'", name);
-                    compile_ok = false;
-                    return VK_NULL_HANDLE;
-                }
-                auto spirv = ShaderCompiler::compile_single_stage(src, stage);
+            auto make_module = [&](const std::string& src, const char* name) -> VkShaderModule {
+                auto spirv = Renderer::get_shader_cache()->get_or_compile_stage_spirv(src);
                 if (spirv.empty()) {
                     HN_CORE_ERROR("[PathTracer] SPIRV compilation failed for '{}'", name);
                     compile_ok = false;
@@ -1667,12 +1653,12 @@ namespace Honey {
             };
 
             std::filesystem::path assets_dir(ASSET_ROOT);
-            VkShaderModule extend_module = make_module(ShaderCompiler::read_file(
-                (assets_dir / "shaders" / "PathTrace" / "PathTrace_Extend.rgen")), ShaderCompiler::ShaderStage::RayGen, "PathTrace_Extend");
-            VkShaderModule miss_module = make_module(ShaderCompiler::read_file(
-                (assets_dir / "shaders" / "PathTrace" / "PathTrace_Miss.rmiss")), ShaderCompiler::ShaderStage::Miss, "PathTrace_Miss");
-            VkShaderModule hit_module = make_module(ShaderCompiler::read_file(
-                (assets_dir / "shaders" / "PathTrace" / "PathTrace_ClosestHit.rchit")), ShaderCompiler::ShaderStage::ClosestHit, "PathTrace_ClosestHit");
+            VkShaderModule extend_module = make_module(
+                (assets_dir / "shaders" / "PathTrace" / "PathTrace_Extend.rgen"), "PathTrace_Extend");
+            VkShaderModule miss_module = make_module(
+                (assets_dir / "shaders" / "PathTrace" / "PathTrace_Miss.rmiss"), "PathTrace_Miss");
+            VkShaderModule hit_module = make_module(
+                (assets_dir / "shaders" / "PathTrace" / "PathTrace_ClosestHit.rchit"), "PathTrace_ClosestHit");
 
             if (!compile_ok) {
                 HN_CORE_ERROR("[PathTracer] Shader compilation failed — Extend pipeline will not be built");
@@ -1829,15 +1815,10 @@ namespace Honey {
             vkCreatePipelineLayout(device, &pl_ci, nullptr, &s_res->shadow_rt_layout);
 
 
-            // Compile shaders and create shader modules TODO: use proper shader compilation flow here rather than handling it here
+            // Compile shaders and create shader modules
             bool compile_ok = true;
-            auto make_module = [&](const std::string& src, ShaderCompiler::ShaderStage stage, const char* name) -> VkShaderModule {
-                if (src.empty()) {
-                    HN_CORE_ERROR("[PathTracer] Failed to read shader source for '{}'", name);
-                    compile_ok = false;
-                    return VK_NULL_HANDLE;
-                }
-                auto spirv = ShaderCompiler::compile_single_stage(src, stage);
+            auto make_module = [&](const std::string& src, const char* name) -> VkShaderModule {
+                auto spirv = Renderer::get_shader_cache()->get_or_compile_stage_spirv(src);
                 if (spirv.empty()) {
                     HN_CORE_ERROR("[PathTracer] SPIRV compilation failed for '{}'", name);
                     compile_ok = false;
@@ -1857,10 +1838,10 @@ namespace Honey {
             };
 
             std::filesystem::path assets_dir(ASSET_ROOT);
-            VkShaderModule shadow_module = make_module(ShaderCompiler::read_file(
-                (assets_dir / "shaders" / "PathTrace" / "PathTrace_Shadow.rgen")), ShaderCompiler::ShaderStage::RayGen, "PathTrace_Shadow");
-            VkShaderModule miss_module = make_module(ShaderCompiler::read_file(
-                (assets_dir / "shaders" / "PathTrace" / "PathTrace_ShadowMiss.rmiss")), ShaderCompiler::ShaderStage::Miss, "PathTrace_ShadowMiss");
+            VkShaderModule shadow_module = make_module(
+                (assets_dir / "shaders" / "PathTrace" / "PathTrace_Shadow.rgen"), "PathTrace_Shadow");
+            VkShaderModule miss_module = make_module(
+                (assets_dir / "shaders" / "PathTrace" / "PathTrace_ShadowMiss.rmiss"), "PathTrace_ShadowMiss");
             if (!compile_ok) {
                 HN_CORE_ERROR("[PathTracer] Shader compilation failed — Shadow pipeline will not be built");
                 if (shadow_module)      vkDestroyShaderModule(device, shadow_module,      nullptr);

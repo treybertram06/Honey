@@ -12,7 +12,6 @@
 #include "renderer.h"
 
 namespace Honey {
-
     inline int query_slots_clamped(int required = 16) {
         GLint max_units = 0;
         glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, &max_units);
@@ -23,157 +22,157 @@ namespace Honey {
         spv::ExecutionModel execution_model) {
 
         switch (execution_model) {
-            case spv::ExecutionModel::ExecutionModelVertex:                 return ShaderStage::Vertex;
-            case spv::ExecutionModel::ExecutionModelFragment:               return ShaderStage::Fragment;
-            case spv::ExecutionModel::ExecutionModelGLCompute:              return ShaderStage::Compute;
-            case spv::ExecutionModel::ExecutionModelGeometry:               return ShaderStage::Geometry;
-            case spv::ExecutionModel::ExecutionModelTessellationControl:    return ShaderStage::TessellationControl;
-            case spv::ExecutionModel::ExecutionModelTessellationEvaluation: return ShaderStage::TessellationEvaluation;
-            case spv::ExecutionModel::ExecutionModelTaskEXT:
-            case spv::ExecutionModel::ExecutionModelTaskNV:                 return ShaderStage::Task;
-            case spv::ExecutionModel::ExecutionModelMeshEXT:
-            case spv::ExecutionModel::ExecutionModelMeshNV:                 return ShaderStage::Mesh;
-            case spv::ExecutionModel::ExecutionModelRayGenerationKHR:       return ShaderStage::RayGen;
-            case spv::ExecutionModel::ExecutionModelMissKHR:                return ShaderStage::Miss;
-            case spv::ExecutionModel::ExecutionModelClosestHitKHR:          return ShaderStage::ClosestHit;
+        case spv::ExecutionModel::ExecutionModelVertex:                 return ShaderStage::Vertex;
+        case spv::ExecutionModel::ExecutionModelFragment:               return ShaderStage::Fragment;
+        case spv::ExecutionModel::ExecutionModelGLCompute:              return ShaderStage::Compute;
+        case spv::ExecutionModel::ExecutionModelGeometry:               return ShaderStage::Geometry;
+        case spv::ExecutionModel::ExecutionModelTessellationControl:    return ShaderStage::TessellationControl;
+        case spv::ExecutionModel::ExecutionModelTessellationEvaluation: return ShaderStage::TessellationEvaluation;
+        case spv::ExecutionModel::ExecutionModelTaskEXT:
+        case spv::ExecutionModel::ExecutionModelTaskNV:                 return ShaderStage::Task;
+        case spv::ExecutionModel::ExecutionModelMeshEXT:
+        case spv::ExecutionModel::ExecutionModelMeshNV:                 return ShaderStage::Mesh;
+        case spv::ExecutionModel::ExecutionModelRayGenerationKHR:       return ShaderStage::RayGen;
+        case spv::ExecutionModel::ExecutionModelMissKHR:                return ShaderStage::Miss;
+        case spv::ExecutionModel::ExecutionModelClosestHitKHR:          return ShaderStage::ClosestHit;
 
         default: return ShaderStage::Unknown;
         }
     }
 
-ShaderCompiler::CompilationResult ShaderCompiler::compile_glsl_to_spirv(const std::filesystem::path& shader_path) {
-    CompilationResult result;
+    ShaderCompiler::CompilationResult ShaderCompiler::compile_glsl_to_spirv(const std::filesystem::path& shader_path) {
+        CompilationResult result;
 
-    try {
-        // Read and parse the shader file
-        auto shader_sources = parse_shader_file(shader_path);
+        try {
+            // Read and parse the shader file
+            auto shader_sources = parse_shader_file(shader_path);
 
-        const bool has_vertex = !shader_sources.vertex_source.empty();
-        const bool has_fragment = !shader_sources.fragment_source.empty();
-        const bool has_compute = !shader_sources.compute_source.empty();
-        const bool has_task = !shader_sources.task_source.empty();
-        const bool has_mesh = !shader_sources.mesh_source.empty();
+            const bool has_vertex = !shader_sources.vertex_source.empty();
+            const bool has_fragment = !shader_sources.fragment_source.empty();
+            const bool has_compute = !shader_sources.compute_source.empty();
+            const bool has_task = !shader_sources.task_source.empty();
+            const bool has_mesh = !shader_sources.mesh_source.empty();
 
-        if (has_compute && (has_vertex || has_fragment)) {
-            result.error_message =
-                "Mixed graphics (#type vertex/#type fragment) and compute (#type compute) stages are not supported in a single shader file yet: " +
-                shader_path.string();
-            return result;
-        }
-
-        if (has_compute) {
-            result.compute_spirv = compile_single_stage(shader_sources.compute_source, ShaderStage::Compute);
-            if (result.compute_spirv.empty()) {
-                result.error_message = "Failed to compile compute shader stage";
-                return result;
-            }
-
-            if (!validate_spirv(result.compute_spirv)) {
-                result.error_message = "Generated compute SPIR-V failed validation";
-                return result;
-            }
-        } else if (has_mesh) {
-
-            if (!has_fragment) {
-                result.error_message = "Mesh shader pipeline requires a fragment shader stage: " + shader_path.string();
-                return result;
-            }
-
-            if (has_task) {
-                result.task_spirv = compile_single_stage(shader_sources.task_source, ShaderStage::Task);
-                if (result.task_spirv.empty()) {
-                    result.error_message = "Failed to compile task shader stage";
-                    return result;
-                }
-
-                if (!validate_spirv(result.task_spirv)) {
-                    result.error_message = "Generated task SPIR-V failed validation";
-                    return result;
-                }
-            } else {
-                HN_CORE_INFO("No task shader found — per-meshlet GPU culling will be skipped. Consider adding a task shader or handling culling on the CPU.");
-            }
-
-            result.mesh_spirv = compile_single_stage(shader_sources.mesh_source, ShaderStage::Mesh);
-            if (result.mesh_spirv.empty()) {
-                result.error_message = "Failed to compile mesh shader stage";
-                return result;
-            }
-
-            if (!validate_spirv(result.mesh_spirv)) {
-                result.error_message = "Generated mesh SPIR-V failed validation";
-                return result;
-            }
-
-            result.fragment_spirv = compile_single_stage(shader_sources.fragment_source, ShaderStage::Fragment);
-            if (result.fragment_spirv.empty()) {
-                result.error_message = "Failed to compile fragment shader stage for mesh shader";
-                return result;
-            }
-
-            if (!validate_spirv(result.fragment_spirv)) {
-                result.error_message = "Generated fragment SPIR-V failed validation";
-                return result;
-            }
-
-        } else {
-            if (!has_vertex || !has_fragment) {
-                std::string empty_sources;
-                if (!has_vertex) empty_sources += "vertex ";
-                if (!has_fragment) empty_sources += "fragment ";
+            if (has_compute && (has_vertex || has_fragment)) {
                 result.error_message =
-                    "Failed to parse required graphics shader stages from file: " + shader_path.string() +
-                    ", missing source(s): " + empty_sources;
+                    "Mixed graphics (#type vertex/#type fragment) and compute (#type compute) stages are not supported in a single shader file yet: " +
+                    shader_path.string();
                 return result;
             }
 
-            // Compile vertex shader
-            result.vertex_spirv = compile_single_stage(shader_sources.vertex_source, ShaderStage::Vertex);
-            if (result.vertex_spirv.empty()) {
-                result.error_message = "Failed to compile vertex shader stage";
-                return result;
+            if (has_compute) {
+                result.compute_spirv = compile_single_stage(shader_sources.compute_source, ShaderStage::Compute);
+                if (result.compute_spirv.empty()) {
+                    result.error_message = "Failed to compile compute shader stage";
+                    return result;
+                }
+
+                if (!validate_spirv(result.compute_spirv)) {
+                    result.error_message = "Generated compute SPIR-V failed validation";
+                    return result;
+                }
+            } else if (has_mesh) {
+
+                if (!has_fragment) {
+                    result.error_message = "Mesh shader pipeline requires a fragment shader stage: " + shader_path.string();
+                    return result;
+                }
+
+                if (has_task) {
+                    result.task_spirv = compile_single_stage(shader_sources.task_source, ShaderStage::Task);
+                    if (result.task_spirv.empty()) {
+                        result.error_message = "Failed to compile task shader stage";
+                        return result;
+                    }
+
+                    if (!validate_spirv(result.task_spirv)) {
+                        result.error_message = "Generated task SPIR-V failed validation";
+                        return result;
+                    }
+                } else {
+                    HN_CORE_INFO("No task shader found — per-meshlet GPU culling will be skipped. Consider adding a task shader or handling culling on the CPU.");
+                }
+
+                result.mesh_spirv = compile_single_stage(shader_sources.mesh_source, ShaderStage::Mesh);
+                if (result.mesh_spirv.empty()) {
+                    result.error_message = "Failed to compile mesh shader stage";
+                    return result;
+                }
+
+                if (!validate_spirv(result.mesh_spirv)) {
+                    result.error_message = "Generated mesh SPIR-V failed validation";
+                    return result;
+                }
+
+                result.fragment_spirv = compile_single_stage(shader_sources.fragment_source, ShaderStage::Fragment);
+                if (result.fragment_spirv.empty()) {
+                    result.error_message = "Failed to compile fragment shader stage for mesh shader";
+                    return result;
+                }
+
+                if (!validate_spirv(result.fragment_spirv)) {
+                    result.error_message = "Generated fragment SPIR-V failed validation";
+                    return result;
+                }
+
+            } else {
+                if (!has_vertex || !has_fragment) {
+                    std::string empty_sources;
+                    if (!has_vertex) empty_sources += "vertex ";
+                    if (!has_fragment) empty_sources += "fragment ";
+                    result.error_message =
+                        "Failed to parse required graphics shader stages from file: " + shader_path.string() +
+                        ", missing source(s): " + empty_sources;
+                    return result;
+                }
+
+                // Compile vertex shader
+                result.vertex_spirv = compile_single_stage(shader_sources.vertex_source, ShaderStage::Vertex);
+                if (result.vertex_spirv.empty()) {
+                    result.error_message = "Failed to compile vertex shader stage";
+                    return result;
+                }
+
+                // Compile fragment shader
+                result.fragment_spirv = compile_single_stage(shader_sources.fragment_source, ShaderStage::Fragment);
+                if (result.fragment_spirv.empty()) {
+                    result.error_message = "Failed to compile fragment shader stage";
+                    return result;
+                }
+
+                // Validate the compiled SPIR-V
+                if (!validate_spirv(result.vertex_spirv) || !validate_spirv(result.fragment_spirv)) {
+                    result.error_message = "Generated graphics SPIR-V failed validation";
+                    return result;
+                }
             }
 
-            // Compile fragment shader
-            result.fragment_spirv = compile_single_stage(shader_sources.fragment_source, ShaderStage::Fragment);
-            if (result.fragment_spirv.empty()) {
-                result.error_message = "Failed to compile fragment shader stage";
-                return result;
-            }
+            result.success = true;
+            HN_CORE_INFO("Successfully compiled shader: {0}", shader_path.string());
 
-            // Validate the compiled SPIR-V
-            if (!validate_spirv(result.vertex_spirv) || !validate_spirv(result.fragment_spirv)) {
-                result.error_message = "Generated graphics SPIR-V failed validation";
-                return result;
-            }
+        } catch (const std::exception& e) {
+            result.error_message = "Shader compilation failed: " + std::string(e.what());
+            HN_CORE_ERROR("Shader compilation error: {0}", e.what());
         }
 
-        result.success = true;
-        HN_CORE_INFO("Successfully compiled shader: {0}", shader_path.string());
-
-    } catch (const std::exception& e) {
-        result.error_message = "Shader compilation failed: " + std::string(e.what());
-        HN_CORE_ERROR("Shader compilation error: {0}", e.what());
+        return result;
     }
 
-    return result;
-}
+    ShaderCompiler::CompilationResult ShaderCompiler::compile_hlsl_to_spirv(const std::filesystem::path& shader_path) {
+        CompilationResult result;
+        result.success = false;
+        result.error_message = "HLSL to SPIR-V compilation not yet implemented";
 
-ShaderCompiler::CompilationResult ShaderCompiler::compile_hlsl_to_spirv(const std::filesystem::path& shader_path) {
-    CompilationResult result;
-    result.success = false;
-    result.error_message = "HLSL to SPIR-V compilation not yet implemented";
+        HN_CORE_WARN("HLSL compilation requested but not implemented: {0}", shader_path.string());
+        return result;
+    }
 
-    HN_CORE_WARN("HLSL compilation requested but not implemented: {0}", shader_path.string());
-    return result;
-}
-
-std::vector<uint32_t> ShaderCompiler::compile_single_stage(const std::string& source,
-                                                           ShaderStage stage,
-                                                           const std::string& entry_point) {
-    shaderc_shader_kind kind;
-    const char* stage_name = "unknown";
-    switch (stage) {
+    std::vector<uint32_t> ShaderCompiler::compile_single_stage(const std::string& source,
+                                                               ShaderStage stage,
+                                                               const std::string& entry_point) {
+        shaderc_shader_kind kind;
+        const char* stage_name = "unknown";
+        switch (stage) {
         case ShaderStage::Vertex:                 kind = shaderc_glsl_vertex_shader;        stage_name = "vertex"; break;
         case ShaderStage::Fragment:               kind = shaderc_glsl_fragment_shader;      stage_name = "fragment"; break;
         case ShaderStage::Compute:                kind = shaderc_glsl_compute_shader;       stage_name = "compute"; break;
@@ -186,10 +185,10 @@ std::vector<uint32_t> ShaderCompiler::compile_single_stage(const std::string& so
         case ShaderStage::Miss:                   kind = shaderc_glsl_miss_shader;          stage_name = "miss"; break;
         case ShaderStage::ClosestHit:             kind = shaderc_glsl_closesthit_shader;    stage_name = "closest_hit"; break;
         default:                                  kind = shaderc_glsl_infer_from_source;    break;
-    }
+        }
 
-    shaderc::Compiler compiler;
-    shaderc::CompileOptions options;
+        shaderc::Compiler compiler;
+        shaderc::CompileOptions options;
 
         switch (Renderer::get_api()) {
         case RendererAPI::API::opengl:
@@ -206,16 +205,16 @@ std::vector<uint32_t> ShaderCompiler::compile_single_stage(const std::string& so
             break;
         }
 
-    // Debug info in Debug builds, optimize in Release
-//#ifdef BUILD_DEBUG
-//    options.SetGenerateDebugInfo();
-//    options.SetOptimizationLevel(shaderc_optimization_level_zero);
-//    // Do not suppress warnings in Debug
-//#else
-//    options.SetOptimizationLevel(shaderc_optimization_level_performance);
-//    // Suppress warnings in Release
-//    options.SetSuppressWarnings();
-//#endif
+        // Debug info in Debug builds, optimize in Release
+        //#ifdef BUILD_DEBUG
+        //    options.SetGenerateDebugInfo();
+        //    options.SetOptimizationLevel(shaderc_optimization_level_zero);
+        //    // Do not suppress warnings in Debug
+        //#else
+        //    options.SetOptimizationLevel(shaderc_optimization_level_performance);
+        //    // Suppress warnings in Release
+        //    options.SetSuppressWarnings();
+        //#endif
 
         // TEMP: Always keep debug info and performant optimization level
         options.SetGenerateDebugInfo();
@@ -233,130 +232,130 @@ std::vector<uint32_t> ShaderCompiler::compile_single_stage(const std::string& so
         if (Renderer::get_api() == RendererAPI::API::vulkan)
             options.AddMacroDefinition("HN_VULKAN", "1");
 
-    // Provide a basic includer which resolves from assets/shaders for both <> and "" includes
-    class FSIncluder : public shaderc::CompileOptions::IncluderInterface {
-    public:
-        struct IncludeData { std::string content; std::string source_name; };
-        shaderc_include_result* GetInclude(const char* requested_source,
-                                           shaderc_include_type /*type*/,
-                                           const char* /*requesting_source*/,
-                                           size_t) override {
-            auto* data = new IncludeData();
+        // Provide a basic includer which resolves from assets/shaders for both <> and "" includes
+        class FSIncluder : public shaderc::CompileOptions::IncluderInterface {
+        public:
+            struct IncludeData { std::string content; std::string source_name; };
+            shaderc_include_result* GetInclude(const char* requested_source,
+                                               shaderc_include_type /*type*/,
+                                               const char* /*requesting_source*/,
+                                               size_t) override {
+                auto* data = new IncludeData();
 
-            if (std::string_view(requested_source) == "global_bindings.glsli") {
-                data->source_name = "global_bindings.glsli"; // Virtual - not a real file
-                data->content = synth_global_bindings();
-            } else {
-                namespace fs = std::filesystem;
-                fs::path base = fs::path(ASSET_ROOT) / "shaders";
-                fs::path candidate = base / requested_source;
-                std::error_code ec;
-                if (fs::exists(candidate, ec)) {
-                    std::ifstream ifs(candidate, std::ios::binary);
-                    std::ostringstream ss; ss << ifs.rdbuf();
-                    data->content = ss.str();
-                    data->source_name = candidate.string();
+                if (std::string_view(requested_source) == "global_bindings.glsli") {
+                    data->source_name = "global_bindings.glsli"; // Virtual - not a real file
+                    data->content = synth_global_bindings();
                 } else {
-                    // Not found: return empty include but still provide a name for diagnostics
-                    data->content.clear();
-                    data->source_name = candidate.string();
+                    namespace fs = std::filesystem;
+                    fs::path base = fs::path(ASSET_ROOT) / "shaders";
+                    fs::path candidate = base / requested_source;
+                    std::error_code ec;
+                    if (fs::exists(candidate, ec)) {
+                        std::ifstream ifs(candidate, std::ios::binary);
+                        std::ostringstream ss; ss << ifs.rdbuf();
+                        data->content = ss.str();
+                        data->source_name = candidate.string();
+                    } else {
+                        // Not found: return empty include but still provide a name for diagnostics
+                        data->content.clear();
+                        data->source_name = candidate.string();
+                    }
                 }
+
+                auto* result = new shaderc_include_result();
+                result->source_name = data->source_name.c_str();
+                result->source_name_length = data->source_name.size();
+                result->content = data->content.c_str();
+                result->content_length = data->content.size();
+                result->user_data = data;
+                return result;
             }
 
-            auto* result = new shaderc_include_result();
-            result->source_name = data->source_name.c_str();
-            result->source_name_length = data->source_name.size();
-            result->content = data->content.c_str();
-            result->content_length = data->content.size();
-            result->user_data = data;
-            return result;
-        }
+            std::string synth_global_bindings() {
+                std::string result;
 
-        std::string synth_global_bindings() {
-            std::string result;
+                result +=  "#ifndef HONEY_GLOBAL_BINDINGS_GLSLI \n#define HONEY_GLOBAL_BINDINGS_GLSLI";
+                result += "\n#define HN_GLOBAL_SET 0";
+                for (const auto& binding : k_global_bindings) {
+                    result += std::format("\n#define {} {}", binding.glsl_macro, binding.shader_binding);
+                }
 
-            result +=  "#ifndef HONEY_GLOBAL_BINDINGS_GLSLI \n#define HONEY_GLOBAL_BINDINGS_GLSLI";
-            result += "\n#define HN_GLOBAL_SET 0";
-            for (const auto& binding : k_global_bindings) {
-                result += std::format("\n#define {} {}", binding.glsl_macro, binding.shader_binding);
+                result += "\n#endif // HONEY_GLOBAL_BINDINGS_GLSLI";
+                return result;
             }
 
-            result += "\n#endif // HONEY_GLOBAL_BINDINGS_GLSLI";
-            return result;
+            void ReleaseInclude(shaderc_include_result* include_result) override {
+                auto* data = static_cast<IncludeData*>(include_result->user_data);
+                delete data;
+                delete include_result;
+            }
+        };
+
+        options.SetIncluder(std::make_unique<FSIncluder>());
+
+        // Compile
+        shaderc::SpvCompilationResult module = compiler.CompileGlslToSpv(source.c_str(), source.size(), kind, "shader", entry_point.c_str(), options);
+
+        if (module.GetCompilationStatus() != shaderc_compilation_status_success) {
+            HN_CORE_ERROR("[shaderc][{0}] {1}", stage_name, module.GetErrorMessage().c_str());
+            return {};
         }
 
-        void ReleaseInclude(shaderc_include_result* include_result) override {
-            auto* data = static_cast<IncludeData*>(include_result->user_data);
-            delete data;
-            delete include_result;
+        std::vector<uint32_t> spirv(module.cbegin(), module.cend());
+        return spirv;
+    }
+
+    std::string ShaderCompiler::spirv_to_glsl(const std::vector<uint32_t>& spirv_code) {
+        if (spirv_code.empty()) {
+            return "";
         }
-    };
 
-    options.SetIncluder(std::make_unique<FSIncluder>());
+        // Create SPIRV-Cross context
+        spvc_context context;
+        if (spvc_context_create(&context) != SPVC_SUCCESS) {
+            HN_CORE_ERROR("Failed to create SPIRV-Cross context");
+            return "";
+        }
 
-    // Compile
-    shaderc::SpvCompilationResult module = compiler.CompileGlslToSpv(source.c_str(), source.size(), kind, "shader", entry_point.c_str(), options);
+        // Parse SPIR-V
+        spvc_parsed_ir ir;
+        if (spvc_context_parse_spirv(context, spirv_code.data(), spirv_code.size(), &ir) != SPVC_SUCCESS) {
+            HN_CORE_ERROR("Failed to parse SPIR-V with SPIRV-Cross");
+            spvc_context_destroy(context);
+            return "";
+        }
 
-    if (module.GetCompilationStatus() != shaderc_compilation_status_success) {
-        HN_CORE_ERROR("[shaderc][{0}] {1}", stage_name, module.GetErrorMessage().c_str());
-        return {};
-    }
+        // Create GLSL compiler
+        spvc_compiler compiler;
+        if (spvc_context_create_compiler(context, SPVC_BACKEND_GLSL, ir,
+                                         SPVC_CAPTURE_MODE_TAKE_OWNERSHIP, &compiler) != SPVC_SUCCESS) {
+            HN_CORE_ERROR("Failed to create GLSL compiler");
+            spvc_context_destroy(context);
+            return "";
+                                         }
 
-    std::vector<uint32_t> spirv(module.cbegin(), module.cend());
-    return spirv;
-}
+        // Set options
+        spvc_compiler_options options;
+        spvc_compiler_create_compiler_options(compiler, &options);
+        spvc_compiler_options_set_uint(options, SPVC_COMPILER_OPTION_GLSL_VERSION, 330);
+        spvc_compiler_options_set_bool(options, SPVC_COMPILER_OPTION_GLSL_ES, SPVC_FALSE);
+        spvc_compiler_install_compiler_options(compiler, options);
 
-std::string ShaderCompiler::spirv_to_glsl(const std::vector<uint32_t>& spirv_code) {
-    if (spirv_code.empty()) {
-        return "";
-    }
+        // Compile to GLSL
+        const char* glsl_source;
+        if (spvc_compiler_compile(compiler, &glsl_source) != SPVC_SUCCESS) {
+            HN_CORE_ERROR("Failed to compile SPIR-V to GLSL");
+            spvc_context_destroy(context);
+            return "";
+        }
 
-    // Create SPIRV-Cross context
-    spvc_context context;
-    if (spvc_context_create(&context) != SPVC_SUCCESS) {
-        HN_CORE_ERROR("Failed to create SPIRV-Cross context");
-        return "";
-    }
-
-    // Parse SPIR-V
-    spvc_parsed_ir ir;
-    if (spvc_context_parse_spirv(context, spirv_code.data(), spirv_code.size(), &ir) != SPVC_SUCCESS) {
-        HN_CORE_ERROR("Failed to parse SPIR-V with SPIRV-Cross");
+        std::string result(glsl_source);
         spvc_context_destroy(context);
-        return "";
+
+        return result;
     }
 
-    // Create GLSL compiler
-    spvc_compiler compiler;
-    if (spvc_context_create_compiler(context, SPVC_BACKEND_GLSL, ir,
-                                     SPVC_CAPTURE_MODE_TAKE_OWNERSHIP, &compiler) != SPVC_SUCCESS) {
-        HN_CORE_ERROR("Failed to create GLSL compiler");
-        spvc_context_destroy(context);
-        return "";
-    }
-
-    // Set options
-    spvc_compiler_options options;
-    spvc_compiler_create_compiler_options(compiler, &options);
-    spvc_compiler_options_set_uint(options, SPVC_COMPILER_OPTION_GLSL_VERSION, 330);
-    spvc_compiler_options_set_bool(options, SPVC_COMPILER_OPTION_GLSL_ES, SPVC_FALSE);
-    spvc_compiler_install_compiler_options(compiler, options);
-
-    // Compile to GLSL
-    const char* glsl_source;
-    if (spvc_compiler_compile(compiler, &glsl_source) != SPVC_SUCCESS) {
-        HN_CORE_ERROR("Failed to compile SPIR-V to GLSL");
-        spvc_context_destroy(context);
-        return "";
-    }
-
-    std::string result(glsl_source);
-    spvc_context_destroy(context);
-
-    return result;
-}
-
-bool ShaderCompiler::validate_spirv(const std::vector<uint32_t>& spirv_code) {
+    bool ShaderCompiler::validate_spirv(const std::vector<uint32_t>& spirv_code) {
         if (spirv_code.empty()) {
             return false;
         }
@@ -371,79 +370,93 @@ bool ShaderCompiler::validate_spirv(const std::vector<uint32_t>& spirv_code) {
         return true;
     }
 
-ShaderCompiler::ShaderSource ShaderCompiler::parse_shader_file(const std::filesystem::path& path) {
-    ShaderSource result;
+    ShaderCompiler::ShaderSource ShaderCompiler::parse_shader_file(const std::filesystem::path& path) {
+        ShaderSource result;
 
-    std::string source = read_file(path);
-    if (source.empty()) {
-        HN_CORE_ERROR("Failed to read shader file: {0}", path.string());
+        std::string source = read_file(path);
+        if (source.empty()) {
+            HN_CORE_ERROR("Failed to read shader file: {0}", path.string());
+            return result;
+        }
+
+        // Simple parser for combined vertex/fragment shaders
+        // Looks for #type vertex and #type fragment directives
+        std::regex type_regex(R"(#type\s+(\w+))");
+        std::sregex_iterator it(source.begin(), source.end(), type_regex);
+        std::sregex_iterator end_it;
+
+        struct StageMarker { std::string type; size_t marker_pos; };
+        std::vector<StageMarker> markers;
+
+        for (; it != end_it; ++it) {
+            std::smatch m = *it;
+            markers.push_back({ m[1].str(), (size_t)m.position() });
+        }
+
+        for (size_t i = 0; i < markers.size(); ++i) {
+            size_t header_end = source.find_first_of("\r\n", markers[i].marker_pos);
+            if (header_end == std::string::npos)
+                header_end = source.size();
+            size_t start = source.find_first_not_of("\r\n", header_end);
+            if (start == std::string::npos)
+                start = source.size();
+
+            size_t end = (i + 1 < markers.size()) ? markers[i + 1].marker_pos : source.size();
+            std::string stage_source = source.substr(start, end - start);
+
+            if (markers[i].type == "vertex") {
+                result.vertex_source = stage_source;
+            } else if (markers[i].type == "fragment" || markers[i].type == "pixel") {
+                result.fragment_source = stage_source;
+            } else if (markers[i].type == "compute") {
+                result.compute_source = stage_source;
+            } else if (markers[i].type == "task") {
+                result.task_source = stage_source;
+            } else if (markers[i].type == "mesh") {
+                result.mesh_source = stage_source;
+            } else {
+                HN_CORE_WARN("Unknown shader stage type '{0}' in file {1}", markers[i].type, path.string());
+            }
+        }
+
         return result;
     }
 
-    // Simple parser for combined vertex/fragment shaders
-    // Looks for #type vertex and #type fragment directives
-    std::regex type_regex(R"(#type\s+(\w+))");
-    std::sregex_iterator it(source.begin(), source.end(), type_regex);
-    std::sregex_iterator end_it;
+    ShaderCompiler::ShaderStage ShaderCompiler::get_stage_from_string(const std::string& stage_str) {
+        if (stage_str == "vertex") return ShaderStage::Vertex;
+        if (stage_str == "fragment" || stage_str == "pixel") return ShaderStage::Fragment;
+        if (stage_str == "compute") return ShaderStage::Compute;
+        if (stage_str == "geometry") return ShaderStage::Geometry;
+        if (stage_str == "tess_control") return ShaderStage::TessellationControl;
+        if (stage_str == "tess_eval") return ShaderStage::TessellationEvaluation;
 
-    struct StageMarker { std::string type; size_t marker_pos; };
-    std::vector<StageMarker> markers;
-
-    for (; it != end_it; ++it) {
-        std::smatch m = *it;
-        markers.push_back({ m[1].str(), (size_t)m.position() });
+        HN_CORE_ERROR("[ShaderCompiler] Unknown shader stage for extension: {0}", stage_str);
+        return ShaderStage::Vertex; // Default
     }
 
-    for (size_t i = 0; i < markers.size(); ++i) {
-        size_t header_end = source.find_first_of("\r\n", markers[i].marker_pos);
-        if (header_end == std::string::npos)
-            header_end = source.size();
-        size_t start = source.find_first_not_of("\r\n", header_end);
-        if (start == std::string::npos)
-            start = source.size();
+    ShaderCompiler::ShaderStage ShaderCompiler::get_stage_from_extension(const std::filesystem::path& path) {
+        std::string extension = path.extension();
 
-        size_t end = (i + 1 < markers.size()) ? markers[i + 1].marker_pos : source.size();
-        std::string stage_source = source.substr(start, end - start);
+        // I cannot use a string in a switch statement for some reason...
+        // RT types
+        if (extension == ".rgen") return ShaderStage::RayGen;
+        if (extension == ".rmiss") return ShaderStage::Miss;
+        if (extension == ".rchit") return ShaderStage::ClosestHit;
+        // Compute types
+        if (extension == ".comp") return ShaderStage::Compute;
 
-        if (markers[i].type == "vertex") {
-            result.vertex_source = stage_source;
-        } else if (markers[i].type == "fragment" || markers[i].type == "pixel") {
-            result.fragment_source = stage_source;
-        } else if (markers[i].type == "compute") {
-            result.compute_source = stage_source;
-        } else if (markers[i].type == "task") {
-            result.task_source = stage_source;
-        } else if (markers[i].type == "mesh") {
-            result.mesh_source = stage_source;
-        } else {
-            HN_CORE_WARN("Unknown shader stage type '{0}' in file {1}", markers[i].type, path.string());
+        return ShaderStage::Unknown;
+    }
+
+    std::string ShaderCompiler::read_file(const std::filesystem::path& path) {
+        std::ifstream file(path);
+        if (!file.is_open()) {
+            HN_CORE_ERROR("Failed to open file: {0}", path.string());
+            return "";
         }
+
+        std::stringstream buffer;
+        buffer << file.rdbuf();
+        return buffer.str();
     }
-
-    return result;
-}
-
-ShaderCompiler::ShaderStage ShaderCompiler::get_stage_from_string(const std::string& stage_str) {
-    if (stage_str == "vertex") return ShaderStage::Vertex;
-    if (stage_str == "fragment" || stage_str == "pixel") return ShaderStage::Fragment;
-    if (stage_str == "compute") return ShaderStage::Compute;
-    if (stage_str == "geometry") return ShaderStage::Geometry;
-    if (stage_str == "tess_control") return ShaderStage::TessellationControl;
-    if (stage_str == "tess_eval") return ShaderStage::TessellationEvaluation;
-
-    return ShaderStage::Vertex; // Default
-}
-
-std::string ShaderCompiler::read_file(const std::filesystem::path& path) {
-    std::ifstream file(path);
-    if (!file.is_open()) {
-        HN_CORE_ERROR("Failed to open file: {0}", path.string());
-        return "";
-    }
-
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    return buffer.str();
-}
-
 }
