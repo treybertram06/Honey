@@ -1043,12 +1043,16 @@ namespace Honey {
     void VulkanContext::create_global_descriptor_heap_resources() {
         const VkDevice dev = reinterpret_cast<VkDevice>(m_device);
 
+        // Device-local: the GPU-visible copy is written only by the per-frame vkCmdCopyBuffer in
+        // record_globals_upload(). Making it host-visible is what caused the CSM shadow wiggle —
+        // producers memcpy'd frame N's data over bytes the GPU was still reading for frame N-1.
         VkBufferCreateInfo bi{};
         bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
         bi.size = m_globals_layout.total_size;
         bi.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT
         | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
-        | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+        | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+        | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
         bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         VkResult res = vkCreateBuffer(dev, &bi, nullptr, &m_globals_buffer);
         HN_CORE_ASSERT(res == VK_SUCCESS, "[VulkanContext] Failed to create globals buffer");
@@ -1065,21 +1069,50 @@ namespace Honey {
         ai.pNext = &flags;
         ai.allocationSize = req.size;
         ai.memoryTypeIndex = find_memory_type_local(m_physical_device, req.memoryTypeBits,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
         res = vkAllocateMemory(dev, &ai, nullptr, &m_globals_alloc);
         HN_CORE_ASSERT(res == VK_SUCCESS, "[VulkanContext] Failed to allocate memory for globals heap");
         vkBindBufferMemory(dev, m_globals_buffer, m_globals_alloc, 0);
 
-        void* mapped = nullptr;
-        vkMapMemory(dev, m_globals_alloc, 0, m_globals_layout.total_size, 0, &mapped);
-        m_globals_mapped = static_cast<uint8_t*>(mapped);
+        // Authoritative host-side state. Producers (flush_globals_to_heap, upload_shadow_matrices,
+        // upload_directional_shadows) write here; it is snapshotted into the current frame's
+        // staging buffer at end of recording.
+        //
+        // Zero-initialized because globals whose producer doesn't run every frame
+        // (ShadowMatrices/DirShadow when a scene has no shadow casters) would otherwise upload
+        // garbage — a non-zero shadow_light_count/enabled drives the lighting shader's shadow
+        // loops into garbage iteration counts. Start clean so an un-written region means
+        // "no shadows".
+        m_globals_cpu.assign(m_globals_layout.total_size, 0);
 
-        // vkAllocateMemory does not guarantee zeroed memory. Globals whose producer doesn't run
-        // every frame (ShadowMatrices/DirShadow when a scene has no shadow casters) would otherwise
-        // read garbage — a non-zero shadow_light_count/enabled drives the lighting shader's shadow
-        // loops into garbage iteration counts. Start clean so an un-written region means "no shadows".
-        std::memset(m_globals_mapped, 0, m_globals_layout.total_size);
+        for (uint32_t f = 0; f < k_max_frames_in_flight; ++f) {
+            VkBufferCreateInfo sbi{};
+            sbi.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+            sbi.size        = m_globals_layout.total_size;
+            sbi.usage       = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+            sbi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            res = vkCreateBuffer(dev, &sbi, nullptr, &m_globals_staging[f]);
+            HN_CORE_ASSERT(res == VK_SUCCESS, "[VulkanContext] Failed to create globals staging buffer");
+
+            VkMemoryRequirements sreq{};
+            vkGetBufferMemoryRequirements(dev, m_globals_staging[f], &sreq);
+
+            VkMemoryAllocateInfo sai{};
+            sai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+            sai.allocationSize  = sreq.size;
+            sai.memoryTypeIndex = find_memory_type_local(m_physical_device, sreq.memoryTypeBits,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+            res = vkAllocateMemory(dev, &sai, nullptr, &m_globals_staging_alloc[f]);
+            HN_CORE_ASSERT(res == VK_SUCCESS, "[VulkanContext] Failed to allocate globals staging memory");
+            vkBindBufferMemory(dev, m_globals_staging[f], m_globals_staging_alloc[f], 0);
+
+            void* smapped = nullptr;
+            vkMapMemory(dev, m_globals_staging_alloc[f], 0, m_globals_layout.total_size, 0, &smapped);
+            m_globals_staging_mapped[f] = static_cast<uint8_t*>(smapped);
+            std::memset(m_globals_staging_mapped[f], 0, m_globals_layout.total_size);
+        }
 
         VkBufferDeviceAddressInfo addr{};
         addr.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
@@ -1104,18 +1137,64 @@ namespace Honey {
 
     }
 
+    void VulkanContext::record_globals_upload(VkCommandBuffer cmd) {
+        if (!m_globals_buffer || m_globals_layout.total_size == 0) return;
+
+        const uint32_t frame = m_current_frame;
+        if (!m_globals_staging[frame]) return;
+
+        // The copy is recorded here, at the top of the frame, but executes after submit — by which
+        // point end_frame_recording() has snapshotted m_globals_cpu into this frame's staging
+        // buffer. Recording order is not host-write timing.
+
+        // Wait for the previous frame's shader reads of the globals before overwriting them. The
+        // first synchronization scope covers everything earlier in submission order on this queue,
+        // which is what orders this against frame N-1 (all graphics submits serialize under the
+        // backend's shared graphics mutex). ALL_COMMANDS is deliberate: globals are read from
+        // vertex, fragment, compute, task, mesh and ray-tracing stages, and this runs once a frame.
+        VkMemoryBarrier pre{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+        pre.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT;
+        pre.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd,
+            VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            0, 1, &pre, 0, nullptr, 0, nullptr);
+
+        VkBufferCopy region{};
+        region.srcOffset = 0;
+        region.dstOffset = 0;
+        region.size      = m_globals_layout.total_size;
+        vkCmdCopyBuffer(cmd, m_globals_staging[frame], m_globals_buffer, 1, &region);
+
+        VkMemoryBarrier post{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+        post.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        post.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT;
+        vkCmdPipelineBarrier(cmd,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+            0, 1, &post, 0, nullptr, 0, nullptr);
+    }
+
     void VulkanContext::cleanup_global_descriptor_heap_resources() {
         if (!m_device) return;
 
+        for (uint32_t f = 0; f < k_max_frames_in_flight; ++f) {
+            if (!m_globals_staging[f]) continue;
+            vkUnmapMemory(m_device, m_globals_staging_alloc[f]);
+            vkDestroyBuffer(m_device, m_globals_staging[f], nullptr);
+            vkFreeMemory(m_device, m_globals_staging_alloc[f], nullptr);
+            m_globals_staging[f]        = nullptr;
+            m_globals_staging_alloc[f]  = nullptr;
+            m_globals_staging_mapped[f] = nullptr;
+        }
+
         if (m_globals_buffer) {
-            vkUnmapMemory(m_device, m_globals_alloc);
             vkDestroyBuffer(m_device, m_globals_buffer, nullptr);
             vkFreeMemory(m_device, m_globals_alloc, nullptr);
             m_globals_buffer = nullptr;
             m_globals_alloc  = nullptr;
-            m_globals_mapped = nullptr;
         }
-
+        m_globals_cpu.clear();
     }
 
     void VulkanContext::cleanup_font_descriptor_resources() {
@@ -1184,8 +1263,8 @@ namespace Honey {
         // Heap-mode deferred lighting reads ShadowMatrices via the set-0 globals buffer
         // (k_global_bindings[ShadowMatrices]). flush_globals_to_heap() intentionally skips
         // this region, so the producer writes it here at the same layout offset.
-        if (m_globals_mapped) {
-            std::memcpy(m_globals_mapped + m_globals_layout.offset[(size_t)GlobalBinding::ShadowMatrices],
+        if (!m_globals_cpu.empty()) {
+            std::memcpy(m_globals_cpu.data() + m_globals_layout.offset[(size_t)GlobalBinding::ShadowMatrices],
                         &data, sizeof(ShadowMatricesSSBO));
         }
     }
@@ -1224,8 +1303,8 @@ namespace Honey {
 
         // Heap-mode deferred lighting reads DirShadow via the set-0 globals buffer
         // (k_global_bindings[DirShadow]); mirror the ShadowMatrices write above.
-        if (m_globals_mapped) {
-            std::memcpy(m_globals_mapped + m_globals_layout.offset[(size_t)GlobalBinding::DirShadow],
+        if (!m_globals_cpu.empty()) {
+            std::memcpy(m_globals_cpu.data() + m_globals_layout.offset[(size_t)GlobalBinding::DirShadow],
                         &data, sizeof(DirectionalShadowSSBO));
         }
     }
@@ -1490,6 +1569,11 @@ namespace Honey {
             m_backend->bind_descriptor_heaps(cmd);
         }
 
+        // Upload this frame's set-0 globals before anything can read them. Must be the first work
+        // in the frame; see record_globals_upload() for why recording it here is correct even
+        // though the host writes land later during recording.
+        record_globals_upload(cmd);
+
         m_gpu_profiler.reset_frame(cmd);
 
         if (m_timestamp_query_pool) {
@@ -1543,6 +1627,15 @@ namespace Honey {
                 m_timestamp_written_this_frame[image_index] = true;
             if (image_index < m_timestamp_written.size())
                 m_timestamp_written[image_index] = true;
+        }
+
+        // Snapshot the host-side globals into this frame's staging buffer. Safe to write
+        // unsynchronized: the fence wait in begin_frame_recording() guarantees the GPU finished
+        // with m_globals_staging[m_current_frame] before this frame started recording. The copy
+        // command recorded at the top of the frame reads it at execution time, i.e. after submit.
+        if (!m_globals_cpu.empty() && m_globals_staging_mapped[m_current_frame]) {
+            std::memcpy(m_globals_staging_mapped[m_current_frame],
+                        m_globals_cpu.data(), m_globals_layout.total_size);
         }
 
         VkResult res = vkEndCommandBuffer(cmd);
@@ -1925,9 +2018,11 @@ namespace Honey {
     void VulkanContext::flush_globals_to_heap() {
         auto& p = pending_globals();
 
+        if (m_globals_cpu.empty()) return;   // heap globals not created (classic-only path)
+
         auto write = [&](GlobalBinding id, const void* src) {
             const auto& g = k_global_bindings[(size_t)id];
-            std::memcpy(m_globals_mapped + m_globals_layout.offset[(size_t)id], src, g.size);
+            std::memcpy(m_globals_cpu.data() + m_globals_layout.offset[(size_t)id], src, g.size);
         };
 
         // The camera needs the Vulkan clip-space correction

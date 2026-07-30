@@ -420,63 +420,55 @@ namespace Honey {
         static DirShadowResources* s_dir = nullptr;
 
         static glm::mat4 compute_cascade_vp(
-            glm::vec3        light_dir,
-            glm::vec3        cam_pos,
-            float            cam_far,
-            const glm::mat4& inv_view_proj,
-            float            sub_near,
-            float            sub_far) {
-            const glm::vec4 far_ndc[4] = {
-                {-1.f, -1.f, 1.f, 1.f},
-                { 1.f, -1.f, 1.f, 1.f},
-                { 1.f,  1.f, 1.f, 1.f},
-                {-1.f,  1.f, 1.f, 1.f},
-            };
-            glm::vec3 far_world[4];
-            for (int i = 0; i < 4; ++i) {
-                glm::vec4 w = inv_view_proj * far_ndc[i];
-                far_world[i] = glm::vec3(w) / w.w;
-            }
+            glm::vec3 light_dir,
+            glm::vec3 cam_pos,
+            glm::vec3 cam_forward,   // normalized, world space
+            float     tan_half_x,    // tan(fov_x / 2)
+            float     tan_half_y,    // tan(fov_y / 2)
+            float     sub_near,
+            float     sub_far) {
+            // Analytic bounding sphere of the view-frustum slice [sub_near, sub_far].
+            //
+            // This MUST be derived from the frustum's shape parameters, not by reconstructing
+            // the corners through inverse(view_proj). The slice is a rigid body, so its
+            // bounding-sphere radius is mathematically invariant under camera rotation and
+            // translation — but reconstructing corners at ndc z=1 samples a badly-conditioned
+            // inverse (near/far of 0.1/1000) and injects a random ~0.1% *scale* error every
+            // frame. That error resized texel_world below, which re-scaled the snap grid by
+            // several texels per frame and defeated the whole point of snapping: shimmer on
+            // every cascade, but only while the camera was moving. Computed this way the
+            // radius is bit-identical every frame for a fixed viewport.
+            const float a2 = tan_half_x * tan_half_x + tan_half_y * tan_half_y;
 
-            glm::vec3 corners[8];
-            for (int i = 0; i < 4; ++i) {
-                glm::vec3 ray = far_world[i] - cam_pos;  // length ≈ cam_far
-                corners[i]     = cam_pos + ray * (sub_near / cam_far);  // near face
-                corners[i + 4] = cam_pos + ray * (sub_far  / cam_far);  // far face
-            }
+            // View-space depth of the point equidistant from the near and far corners.
+            // If it lies past the far plane, the far quad alone bounds the slice.
+            const float zc = glm::min(0.5f * (sub_near + sub_far) * (1.f + a2), sub_far);
+            const float dz = sub_far - zc;
+
+            float radius = glm::sqrt(sub_far * sub_far * a2 + dz * dz);
+
+            glm::vec3 centroid = cam_pos + cam_forward * zc;
 
             glm::vec3 L  = glm::normalize(-light_dir);
             glm::vec3 up = (glm::abs(L.y) < 0.99f) ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0);
-
-            glm::vec3 centroid{0};
-            for (auto& c : corners) centroid += c;
-            centroid /= 8.f;
 
             // Build light-space basis vectors
             glm::vec3 forward = -L;
             glm::vec3 right   = glm::normalize(glm::cross(up, forward));
             glm::vec3 up_     = glm::cross(forward, right);
 
-            // Bounding sphere radius = max distance from centroid to any corner.
-            // Computing from the actual corners (rather than analytically from fov/aspect)
-            // guarantees correctness for any viewport shape and avoids stale camera parameters.
-            // Euclidean distance is rotation-invariant, so this is shimmer-safe.
-            float radius = 0.0f;
-            for (auto& c : corners)
-                radius = glm::max(radius, glm::length(c - centroid));
+            // Pad the radius *before* deriving the texel size so the ortho extent and the
+            // snap grid describe the same grid. (Deriving texel_world from the unpadded
+            // radius and then inflating left the snap grid ~0.05% off the real texel size,
+            // i.e. up to a full texel of misalignment at the edges of the map.)
+            // The pad itself covers floor-snapping the centroid below, which can shift it by
+            // up to one texel toward -right/-up_ and push the opposite corners out of the box.
+            const float res = float(k_dir_shadow_map_resolution);
+            radius *= (res + 4.f) / res;   // ~2 texels of slack, costs 0.1% of resolution
 
-            // Stable texel size — same bits every frame
-            const float res         = float(k_dir_shadow_map_resolution);
             const float texel_world = (2.f * radius) / res;
 
-            // Round radius up to a texel boundary so the ortho extents are also stable.
-            // Add one extra texel of slack: floor-snapping the centroid (below) can shift
-            // it by up to one texel in the negative direction, which would push +right/+up_
-            // frustum corners (at exactly radius from the true centroid) just outside the
-            // ortho box. The extra texel absorbs that worst-case offset.
-            radius = glm::ceil(radius / texel_world) * texel_world + texel_world;
-
-            // Snap centroid to texel grid using the now-stable texel_world
+            // Snap centroid to the texel grid
             float cx = glm::dot(centroid, right);
             float cy = glm::dot(centroid, up_);
             cx = glm::floor(cx / texel_world) * texel_world;
@@ -505,15 +497,27 @@ namespace Honey {
         static void compute_csm_cascades(
             glm::vec3        light_dir,
             glm::vec3        cam_pos,
+            const glm::mat4& view,
+            const glm::mat4& projection,
             float            cam_near,
             float            cam_far,
             float            shadow_far,
             float            lambda,
-            const glm::mat4& inv_view_proj,
             uint32_t         count,
             glm::mat4*       out_vp,      // [count]
             float*           out_splits)  // [count] view-space far-plane per cascade
         {
+            // Camera world-space forward = -(third row of the view rotation).
+            const glm::vec3 cam_forward = -glm::normalize(glm::vec3(view[0][2], view[1][2], view[2][2]));
+
+            // Recover the frustum half-angles straight from the projection matrix
+            // (proj[0][0] = 1/tan(fov_x/2), proj[1][1] = ±1/tan(fov_y/2); the sign depends on
+            // whether the Vulkan Y-flip has been folded in yet, hence the abs). Reading them
+            // here rather than from cached fov/aspect fields keeps this correct for every
+            // begin_scene overload, and the values are exactly stable frame to frame.
+            const float tan_half_x = 1.f / glm::abs(projection[0][0]);
+            const float tan_half_y = 1.f / glm::abs(projection[1][1]);
+
             float eff_far = glm::min(cam_far, shadow_far);
 
             for (uint32_t i = 0; i < count; ++i) {
@@ -527,7 +531,7 @@ namespace Honey {
                 float sub_far  = split;
 
                 out_vp[i] = compute_cascade_vp(
-                    light_dir, cam_pos, cam_far, inv_view_proj, sub_near, sub_far);
+                    light_dir, cam_pos, cam_forward, tan_half_x, tan_half_y, sub_near, sub_far);
             }
         }
     }
@@ -570,11 +574,12 @@ namespace Honey {
                 compute_csm_cascades(
                     glm::vec3(dir_light.direction),
                     data->scene_camera_pos,
+                    data->scene_view,
+                    data->scene_projection,
                     data->scene_camera_near,
                     data->scene_camera_far,
                     data->directional_shadow_distance,
-                    0.75f,
-                    glm::inverse(data->scene_view_proj),
+                    0.92f,
                     k_csm_cascade_count,
                     ssbo.cascade_vp,
                     ssbo.cascade_splits);

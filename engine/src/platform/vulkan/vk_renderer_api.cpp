@@ -325,7 +325,7 @@ namespace Honey {
         require_frame_begun();
         auto* ctx = s_recording_context;
         HN_CORE_ASSERT(ctx->pending_globals().hasCamera, "flush_globals_heap: no camera submitted");
-        ctx->flush_globals_to_heap();   // writes all 5 globals into m_globals_mapped
+        ctx->flush_globals_to_heap();   // writes all 5 globals into the host-side globals state
         ctx->pending_globals().hasCamera = false;
     }
 

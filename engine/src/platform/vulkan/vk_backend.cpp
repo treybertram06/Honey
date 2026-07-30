@@ -384,6 +384,15 @@ namespace Honey {
             lease.presentSubmitMutex = &m_shared_present_mutex;
         }
 
+        // m_present_queues aliases m_graphics_queues, so the present queue can resolve to the very
+        // same VkQueue every vkQueueSubmit path uses. VkQueue is externally synchronized, and
+        // guarding one handle with two different mutexes provides no mutual exclusion at all —
+        // share the graphics mutex whenever the handles coincide.
+        if (lease.presentQueue && lease.presentQueue == lease.graphicsQueue) {
+            lease.sharedPresent      = lease.sharedGraphics;
+            lease.presentSubmitMutex = lease.graphicsSubmitMutex;
+        }
+
         HN_CORE_ASSERT(lease.graphicsQueue, "Failed to acquire graphics queue");
         HN_CORE_ASSERT(lease.computeQueue, "Failed to acquire compute queue");
         HN_CORE_ASSERT(lease.presentQueue, "Failed to acquire present queue");

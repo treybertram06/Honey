@@ -223,6 +223,9 @@ namespace Honey {
         void cleanup_global_descriptor_resources();
         void create_global_descriptor_heap_resources();
         void cleanup_global_descriptor_heap_resources();
+
+        // Records the staging -> m_globals_buffer upload at the top of the frame's command buffer.
+        void record_globals_upload(VkCommandBuffer cmd);
         void create_font_descriptor_resources();
         void cleanup_font_descriptor_resources();
 
@@ -333,9 +336,19 @@ private:
         VkDescriptorSet m_global_descriptor_sets[k_max_frames_in_flight][k_max_chunks_per_frame]{};
         uint32_t m_chunk_ds_index[k_max_frames_in_flight]{};
 
+        // Set-0 globals for heap-mode pipelines. m_globals_buffer is DEVICE_LOCAL and its device
+        // address is baked into the descriptor-heap slots once at init (and from there into every
+        // pipeline's descriptor mappings), so it must never move. Producers therefore write into
+        // m_globals_cpu — plain host memory, invisible to the GPU — which is copied into the
+        // current frame's staging buffer at end of recording and uploaded by a vkCmdCopyBuffer
+        // recorded at the top of the frame. That keeps the CPU from overwriting bytes the GPU is
+        // still reading for a previous in-flight frame.
         VkBuffer m_globals_buffer{};
         VkDeviceMemory m_globals_alloc{};
-        uint8_t* m_globals_mapped{};
+        std::vector<uint8_t> m_globals_cpu{};
+        VkBuffer m_globals_staging[k_max_frames_in_flight]{};
+        VkDeviceMemory m_globals_staging_alloc[k_max_frames_in_flight]{};
+        uint8_t* m_globals_staging_mapped[k_max_frames_in_flight]{};
         GlobalsLayout m_globals_layout{};
 
         void* m_camera_ubos[k_max_frames_in_flight]{};        // VkBuffer
