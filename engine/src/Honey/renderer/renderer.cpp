@@ -32,13 +32,13 @@ namespace Honey {
 
         switch (get_api()) {
         case RendererAPI::API::opengl:
-            Renderer2D::init();
+            //Renderer2D::init();
             Renderer3D::init();
             DebugRenderer3D::init();
             break;
 
         case RendererAPI::API::vulkan:
-            Renderer2D::init();
+            //Renderer2D::init();
             Renderer3D::init();
             DebugRenderer3D::init();
             //HN_CORE_INFO("Renderer::init - Vulkan selected (skipping Renderer2D/3D init for now).");
@@ -58,13 +58,13 @@ namespace Honey {
         switch (get_api()) {
         case RendererAPI::API::opengl:
             DebugRenderer3D::shutdown();
-            Renderer2D::shutdown();
+            //Renderer2D::shutdown();
             Renderer3D::shutdown();
             break;
 
         case RendererAPI::API::vulkan:
             DebugRenderer3D::shutdown();
-            Renderer2D::shutdown();
+            //Renderer2D::shutdown();
             Renderer3D::shutdown();
             //HN_CORE_INFO("Renderer::init - Vulkan selected (skipping Renderer2D/3D init for now).");
             break;
@@ -287,7 +287,7 @@ namespace Honey {
         }
 
         Renderer3D::prewarm_pipelines(native_render_pass);
-        Renderer2D::prewarm_pipelines(native_render_pass);
+        //Renderer2D::prewarm_pipelines(native_render_pass);
         HN_CORE_INFO("Renderer::prewarm_pipelines: done.");
     }
 

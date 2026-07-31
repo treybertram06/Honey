@@ -17,6 +17,7 @@
 
 #include <unordered_map>
 
+#if HN_RENDERER_2D_ENABLED
 static const std::filesystem::path asset_root = ASSET_ROOT;
 
 namespace Honey {
@@ -1718,3 +1719,5 @@ namespace Honey {
 
     void Renderer2D::reset_stats() { memset(&s_data->stats, 0, sizeof(Statistics)); }
 } // namespace Honey
+
+#endif

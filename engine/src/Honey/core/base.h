@@ -108,3 +108,6 @@ namespace Honey {
 #else
     #define CURRENT_FUNCTION __func__
 #endif
+
+// Disable 2D renderer
+#define HN_RENDERER_2D_ENABLED 0

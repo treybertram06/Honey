@@ -920,7 +920,7 @@ namespace Honey {
         HN_PROFILE_FUNCTION();
 
         bool parallel_mesh_submit_enabled = Settings::get().renderer.enable_parallel_mesh_submission;
-
+#if HN_RENDERER_2D_ENABLED
         {
             HN_PROFILE_SCOPE("Render2DScene");
             Renderer2D::begin_scene(view_proj);
@@ -962,7 +962,7 @@ namespace Honey {
 
             Renderer2D::end_scene();
         }
-
+#endif
         {
             HN_PROFILE_SCOPE("Render3DScene");
             // Gather and submit lights before draw
