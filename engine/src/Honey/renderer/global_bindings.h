@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <array>
 
 #include "camera.h"
@@ -35,4 +36,13 @@ namespace Honey {
     }};
 
     inline constexpr uint32_t k_global_set = 0;
+
+    // Largest raw shader_binding value in the table above; global-binding slot arrays must be sized
+    // to this + 1 since they're indexed by shader_binding, not by table position (GlobalBinding::Count
+    // undercounts once bindings skip numbers, as DirShadow's shader_binding=7 does today).
+    inline constexpr uint32_t k_max_global_shader_binding = [] {
+        uint32_t m = 0;
+        for (const auto& b : k_global_bindings) m = std::max(m, b.shader_binding);
+        return m;
+    }();
 }

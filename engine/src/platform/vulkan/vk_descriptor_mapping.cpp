@@ -111,14 +111,11 @@ namespace Honey {
                 // sidesteps the heap entirely. It is only legal when the mapped resource is NOT an
                 // array (Vulkan VUID), so scalar samplers (count <= 1) take the embedded path while
                 // the rare array sampler falls back to the samplerHeapOffset path.
+                HN_CORE_ASSERT(b.count <= 1,
+                    "VulkanDescriptorMapping: array static samplers are not supported (the heap "
+                    "samplerHeapOffset path doesn't work on this driver); split into scalar sampler bindings.");
                 m.source = VK_DESCRIPTOR_MAPPING_SOURCE_HEAP_WITH_CONSTANT_OFFSET_EXT;
-                if (b.count <= 1) {
-                    m.sourceData.constantOffset.pEmbeddedSampler = heap.static_sampler_ci(s);
-                } else {
-                    HN_CORE_ASSERT(false, "VulkanDescriptorMapping: heap static samplers seem to just not work, so you'll need to create an embedded sampler");
-                    m.sourceData.constantOffset.samplerHeapOffset      = heap.static_sampler_byte_offset(s);
-                    m.sourceData.constantOffset.samplerHeapArrayStride = heap.sampler_descriptor_stride();
-                }
+                m.sourceData.constantOffset.pEmbeddedSampler = heap.static_sampler_ci(s);
             } else if (b.set == 0 && (b.type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ||
                 b.type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)) {
                 HN_CORE_ASSERT(heap.has_global_binding(b.binding),

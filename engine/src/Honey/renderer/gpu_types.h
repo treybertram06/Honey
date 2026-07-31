@@ -160,9 +160,9 @@ namespace Honey {
     // Shared per-pass push block for heap-mode (VK_EXT_descriptor_heap) pipelines.
     struct PassPushData {
         uint32_t resource_heap_base; // byte offset of this pass's transient block in the resource heap
-        uint32_t sampler_heap_base;  // byte base of the sampler region (usually engine-constant)
-        uint32_t flags;
-        uint32_t pad;
+        uint32_t sampler_heap_base;  // reserved: currently unused, always 0 (kept for layout parity)
+        uint32_t flags;              // reserved: currently unused, always 0 (kept for layout parity)
+        uint32_t draw_data_base;     // meshlet passes only; unused (0) elsewhere
     };
 
     struct SSAOKernelUBOData {

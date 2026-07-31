@@ -80,8 +80,16 @@ namespace Honey {
             m_frame_slots[i].cursor = m_frame_slots[i].begin;
         }
 
-        // Sampler heap
+        // Sampler heap. Nothing allocates persistent sampler-heap entries (static samplers are
+        // embedded via pEmbeddedSampler, see bake_static_samplers), so the only hard requirement is
+        // the device's own reserved range -- which varies by driver (observed as large as 64 KiB) and
+        // isn't safe to guess at compile time. Derive the capacity from the queried device limits
+        // instead, with a little headroom for alignment/future use.
         m_sampler_reserved_size = VulkanUtils::align_up(m_props.minSamplerHeapReservedRange, m_props.samplerHeapAlignment);
+        const VkDeviceSize sampler_required = VulkanUtils::align_up(
+            std::max(m_sampler_reserved_size, (VkDeviceSize)m_props.minSamplerHeapReservedRangeWithEmbedded),
+            m_props.samplerHeapAlignment);
+        m_sampler_capacity = std::max(m_sampler_capacity, sampler_required + m_props.samplerHeapAlignment);
         m_sampler_persistent_offset = m_sampler_reserved_size;
         m_sampler_persistent_size = m_sampler_capacity - m_sampler_reserved_size;
         m_sampler_persistent_cursor = m_sampler_persistent_offset;
@@ -357,23 +365,15 @@ namespace Honey {
     }
 
     void VulkanDescriptorHeap::bake_static_samplers(float max_anisotropy) {
-        m_static_sampler_alloc = allocate_persistent_sampler((uint32_t)StaticSampler::Count);
-
         // Keep stable copies of each CI so mappings can point pEmbeddedSampler at them (they must
-        // outlive pipeline creation). The heap-baked descriptors below are retained as a fallback,
-        // but the active sampler-mapping path uses pEmbeddedSampler because the separate-sampler
-        // samplerHeapOffset path does not take effect on this driver (every static sampler resolved
-        // identically to the driver-reserved range, so REPEAT addressing was silently lost).
+        // outlive pipeline creation). Static samplers are embedded (pEmbeddedSampler) rather than
+        // heap-allocated because the separate-sampler samplerHeapOffset path does not take effect on
+        // this driver (every static sampler resolved identically to the driver-reserved range, so
+        // REPEAT addressing was silently lost -- cause of 3b58d67).
         m_static_sampler_ci[(uint32_t)StaticSampler::Linear]      = VulkanUtils::make_linear_sampler_ci();
         m_static_sampler_ci[(uint32_t)StaticSampler::Nearest]     = VulkanUtils::make_nearest_sampler_ci();
         m_static_sampler_ci[(uint32_t)StaticSampler::Anisotropic] = VulkanUtils::make_anisotropic_sampler_ci(max_anisotropy);
         m_static_sampler_ci[(uint32_t)StaticSampler::ShadowCmp]   = VulkanUtils::make_shadow_cmp_sampler_ci();
-
-        // Proper heap static samplers seem to not be supported on my driver
-        //write_sampler(m_static_sampler_alloc, (uint32_t)StaticSampler::Nearest,     m_static_sampler_ci[(uint32_t)StaticSampler::Nearest]);
-        //write_sampler(m_static_sampler_alloc, (uint32_t)StaticSampler::Linear,      m_static_sampler_ci[(uint32_t)StaticSampler::Linear]);
-        //write_sampler(m_static_sampler_alloc, (uint32_t)StaticSampler::Anisotropic, m_static_sampler_ci[(uint32_t)StaticSampler::Anisotropic]);
-        //write_sampler(m_static_sampler_alloc, (uint32_t)StaticSampler::ShadowCmp,   m_static_sampler_ci[(uint32_t)StaticSampler::ShadowCmp]);
     }
 
     void VulkanDescriptorHeap::push_pass_data(VkCommandBuffer cmd, const void* data, uint32_t size) {

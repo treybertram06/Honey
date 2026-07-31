@@ -4,6 +4,7 @@
 #include <mutex>
 
 #include "Honey/core/timer.h"
+#include "Honey/renderer/global_bindings.h"
 
 namespace Honey {
 
@@ -61,14 +62,6 @@ namespace Honey {
         VkDeviceAddress resource_device_address() const { return m_resource_heap_addr; }
         VkDeviceAddress sampler_device_address()  const { return m_sampler_heap_addr; }
 
-        uint32_t static_sampler_byte_offset(StaticSampler s) const {
-            HN_CORE_ASSERT(false, "Do not call this");
-            return m_static_sampler_alloc.offset + (uint32_t)s * m_static_sampler_alloc.stride;
-        }
-        uint32_t sampler_descriptor_stride() const {
-            HN_CORE_ASSERT(false, "Do not call this");
-            return m_descriptor_sizes.sampler;
-        }
         // Stable VkSamplerCreateInfo for a static sampler, usable as a mapping's pEmbeddedSampler.
         // Lives for the heap's lifetime, so the pointer stays valid through pipeline creation.
         const VkSamplerCreateInfo* static_sampler_ci(StaticSampler s) const { return &m_static_sampler_ci[(uint32_t)s]; }
@@ -146,8 +139,8 @@ namespace Honey {
         VkDeviceSize m_resource_persistent_cursor = 0;
         VkDeviceSize m_resource_persistent_capacity = 0;
 
-        std::array<Allocation, 8> m_global_slots{}; // Probably shouldn't hardcode the size here
-        std::array<bool, 8> m_global_slots_valid{};
+        std::array<Allocation, k_max_global_shader_binding + 1> m_global_slots{};
+        std::array<bool, k_max_global_shader_binding + 1> m_global_slots_valid{};
 
         // Per frame transient regions
         VkDeviceSize m_transient_reserved_size = 0;
@@ -180,12 +173,20 @@ namespace Honey {
         VkDeviceSize m_sampler_persistent_offset = 0;
         VkDeviceSize m_sampler_persistent_size = 0;
         VkDeviceSize m_sampler_persistent_cursor = 0;
-        Allocation m_static_sampler_alloc{};
         VkSamplerCreateInfo m_static_sampler_ci[(uint32_t)StaticSampler::Count] = {}; // embedded-sampler source, kept stable
 
         // Capacities and tracking
-        VkDeviceSize m_resource_capacity = 4 * 1024 * 1024; // 4 MiB
-        VkDeviceSize m_sampler_capacity = 64 * 1024; // 64 KiB
+        // Right-sized from a Bistro high-water reading (persistent 371.6/512.5 KiB, transient
+        // 0.44/1744.5 KiB per frame-slot at the old 4 MiB capacity) -- the persistent region is
+        // already its own budget (see m_resource_persistent_capacity above) and barely moves with
+        // this constant, so nearly all of the old 4 MiB was unused transient headroom. 1 MiB leaves
+        // the persistent region its full ~512 KiB budget plus roughly 200 KiB of transient per
+        // frame-slot, ~450x the observed per-frame usage.
+        VkDeviceSize m_resource_capacity = 1 * 1024 * 1024; // 1 MiB
+        // Floor value; the constructor grows this to fit the queried device's reserved-range
+        // requirement (which varies by driver) since nothing else allocates persistent sampler-heap
+        // entries (static samplers are embedded via pEmbeddedSampler, see bake_static_samplers).
+        VkDeviceSize m_sampler_capacity = 8 * 1024; // 8 KiB floor
         VkDeviceSize m_resource_max_size_reached = 0;
 
         // Resource heap handles

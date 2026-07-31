@@ -485,14 +485,11 @@ namespace Honey {
         HN_CORE_ASSERT(ctx, "push_meshlet_pass_data: no active VulkanContext");
         auto* heap = ctx->get_backend()->get_descriptor_heap();
 
-        // Reuses PassPushData's reserved `pad` word to carry draw_data_base — the meshlet shaders'
-        // push_constant block reads it under that name (same 16-byte layout, offsetof(resource_heap_base) == 0
-        // still matches the set=1 PUSH_INDEX mapping).
         PassPushData pd{};
         pd.resource_heap_base = resource_heap_base;
         pd.sampler_heap_base  = 0;
         pd.flags              = 0;
-        pd.pad                = draw_data_base;
+        pd.draw_data_base     = draw_data_base;
 
         ctx->queue_custom_vulkan_cmd([heap, pd](VkCommandBuffer cmd, uint32_t, uint32_t) {
             heap->push_pass_data(cmd, &pd, sizeof(pd));
