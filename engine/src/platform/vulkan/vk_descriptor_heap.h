@@ -34,12 +34,20 @@ namespace Honey {
 
         void write_image (const Allocation& alloc, uint32_t index,
                           const VkImageViewCreateInfo& view, VkImageLayout layout,
-                          VkDescriptorType type, const char* debug_name = nullptr);
+                          VkDescriptorType type, const char* debug_name = nullptr,
+                          const char* pass_name = nullptr);
         void write_buffer(const Allocation& alloc, uint32_t index,
                           VkDeviceAddress addr, VkDeviceSize range, VkDescriptorType type,
-                          const char* debug_name = nullptr);
+                          const char* debug_name = nullptr, const char* pass_name = nullptr);
         void write_sampler(const Allocation& alloc, uint32_t index, const VkSamplerCreateInfo& sampler_ci,
                           const char* debug_name = nullptr);
+
+        // Heap-dump support (Step 10): records only writes that pass a non-null `pass_name` above,
+        // i.e. per-pass frame-graph writes — persistent/global/bindless writes aren't pass-scoped
+        // and are intentionally left out. Unlike m_shadow_table this is always compiled, since the
+        // debug panel that reads it runs in ordinary (non-assert) editor builds too.
+        struct DumpEntry { uint32_t offset; uint32_t size; VkDescriptorType type; std::string resource_name; std::string pass_name; };
+        std::vector<DumpEntry> get_frame_dump_entries() const;
 
 #if defined(HN_ENABLE_ASSERTS)
         // CPU-side mirror of every descriptor write. VK_EXT_descriptor_heap gives up driver
@@ -167,6 +175,14 @@ namespace Honey {
         std::mutex m_shadow_mutex;
         std::unordered_map<uint32_t, ShadowEntry> m_shadow_table;
 #endif
+
+        // Heap-dump support: unlike m_shadow_table, always compiled, and reset wholesale every
+        // frame rather than tracked per-offset (the debug panel just wants "what did this frame
+        // write", not persistent correctness tracking).
+        void record_dump_entry(uint32_t byte_offset, uint32_t size, VkDescriptorType type,
+                                const char* debug_name, const char* pass_name);
+        mutable std::mutex m_dump_mutex;
+        std::vector<DumpEntry> m_frame_dump_entries;
 
         // Sampler heap layout
         VkDeviceSize m_sampler_reserved_size = 0;

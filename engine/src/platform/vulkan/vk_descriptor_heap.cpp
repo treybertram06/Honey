@@ -284,7 +284,8 @@ namespace Honey {
     }
 
     void VulkanDescriptorHeap::write_image(const Allocation& alloc, uint32_t index, const VkImageViewCreateInfo& view,
-                                           VkImageLayout layout, VkDescriptorType type, const char* debug_name) {
+                                           VkImageLayout layout, VkDescriptorType type, const char* debug_name,
+                                           const char* pass_name) {
 
         HN_CORE_ASSERT(alloc.stride == stride_for(type),
             "[VulkanDescriptorHeap] write_image: descriptor type does not match allocation");
@@ -312,10 +313,12 @@ namespace Honey {
 #if defined(HN_ENABLE_ASSERTS)
         shadow_record(alloc.offset + (uint32_t)index * alloc.stride, type, debug_name);
 #endif
+        if (pass_name)
+            record_dump_entry(alloc.offset + (uint32_t)index * alloc.stride, alloc.stride, type, debug_name, pass_name);
     }
 
     void VulkanDescriptorHeap::write_buffer(const Allocation& alloc, uint32_t index, VkDeviceAddress addr, VkDeviceSize range,
-        VkDescriptorType type, const char* debug_name) {
+        VkDescriptorType type, const char* debug_name, const char* pass_name) {
 
         HN_CORE_ASSERT(alloc.stride == stride_for(type),
             "[VulkanDescriptorHeap] write_buffer: descriptor type does not match allocation");
@@ -342,6 +345,8 @@ namespace Honey {
 #if defined(HN_ENABLE_ASSERTS)
         shadow_record(alloc.offset + (uint32_t)index * alloc.stride, type, debug_name);
 #endif
+        if (pass_name)
+            record_dump_entry(alloc.offset + (uint32_t)index * alloc.stride, alloc.stride, type, debug_name, pass_name);
     }
 
     void VulkanDescriptorHeap::write_sampler(const Allocation& alloc, uint32_t index, const VkSamplerCreateInfo& sampler_ci,
@@ -416,10 +421,30 @@ namespace Honey {
     }
 #endif
 
+    void VulkanDescriptorHeap::record_dump_entry(uint32_t byte_offset, uint32_t size, VkDescriptorType type,
+                                                  const char* debug_name, const char* pass_name) {
+        std::scoped_lock lock(m_dump_mutex);
+        m_frame_dump_entries.push_back(DumpEntry{
+            byte_offset, size, type,
+            debug_name ? debug_name : "?",
+            pass_name,
+        });
+    }
+
+    std::vector<VulkanDescriptorHeap::DumpEntry> VulkanDescriptorHeap::get_frame_dump_entries() const {
+        std::scoped_lock lock(m_dump_mutex);
+        return m_frame_dump_entries;
+    }
+
     void VulkanDescriptorHeap::begin_frame(uint32_t frame_in_flight) {
         HN_CORE_ASSERT(frame_in_flight < m_frame_slots.size(), "[VulkanDescriptorHeap] frame_in_flight out of range");
         m_current_frame = frame_in_flight;
         auto& slot = m_frame_slots[frame_in_flight];
+
+        {
+            std::scoped_lock lock(m_dump_mutex);
+            m_frame_dump_entries.clear();
+        }
 
 #if defined(HN_ENABLE_ASSERTS)
         // Drop shadow entries for the transient range this slot is about to recycle — the bump

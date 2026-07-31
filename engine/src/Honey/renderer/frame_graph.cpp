@@ -12,6 +12,7 @@
 #include "platform/vulkan/vk_buffer.h"
 #include "platform/vulkan/vk_descriptor_heap.h"
 #include "platform/vulkan/vk_descriptor_mapping.h"
+#include "platform/vulkan/vk_gpu_profiler.h"
 
 #include <algorithm>
 #include <chrono>
@@ -890,6 +891,8 @@ namespace Honey {
             plan.built = true;
         }
 
+        HN_GPU_SCOPE(m_cmd, "FG: Heap Bind");
+
         // Re-bind the descriptor heaps for this pass. Per VK_EXT_descriptor_heap, "setting
         // descriptor set or descriptor buffer state will immediately invalidate all descriptor
         // heaps" — and every legacy (layout-mode) pass between frame start and here calls
@@ -934,7 +937,8 @@ namespace Honey {
                 auto* sb = dynamic_cast<VulkanStorageBuffer*>(res.storage_buffer.get());
                 HN_CORE_ASSERT(sb, "bind_heap_pipeline: pass '{0}' buffer resource '{1}' is not a VulkanStorageBuffer",
                                m_pass->name, res.name);
-                heap->write_buffer(sub, 0, sb->device_address(), sb->get_size(), e.type, res.name.c_str());
+                heap->write_buffer(sub, 0, sb->device_address(), sb->get_size(), e.type, res.name.c_str(),
+                                    m_pass->name.c_str());
             } else {
                 VkImageViewCreateInfo ci{};
                 VkImageLayout layout;
@@ -949,7 +953,7 @@ namespace Honey {
                     ci = view_ci_for(*fb, e.view_kind, e.attachment);
                     layout = layout_for_view_kind(e.view_kind);
                 }
-                heap->write_image(sub, 0, ci, layout, e.type, res.name.c_str());
+                heap->write_image(sub, 0, ci, layout, e.type, res.name.c_str(), m_pass->name.c_str());
 
             }
         }
