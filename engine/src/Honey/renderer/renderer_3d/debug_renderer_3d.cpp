@@ -71,7 +71,7 @@ Ref<Pipeline> get_or_create_pipeline(void* rp_native, uint32_t color_attachment_
     if (color_attachment_count > 0)
         spec.perColorAttachmentBlend[0].enabled = true;
 
-    auto pipeline = Pipeline::create(spec, rp_native);
+    auto pipeline = Pipeline::create_heap_mode(spec, rp_native);
     s_data->pipeline_cache.emplace(rp_native, pipeline);
     return pipeline;
 }
@@ -154,7 +154,7 @@ void DebugRenderer3D::end_scene()
     void* rp_native = vk_fb->get_render_pass();
     Ref<Pipeline> pipe = get_or_create_pipeline(rp_native, vk_fb->get_color_attachment_count());
 
-    RenderCommand::bind_pipeline(pipe);
+    RenderCommand::bind_heap_pipeline(pipe);
 
     // Submit camera — debug shader only needs binding 0 (camera UBO).
     // Texture bindings (4) are PARTIALLY_BOUND so they don't need to be valid
@@ -162,7 +162,7 @@ void DebugRenderer3D::end_scene()
     CameraUBO cam{};
     cam.view_proj = s_data->view_proj;
     VulkanRendererAPI::submit_camera(cam);
-    VulkanRendererAPI::flush_globals();
+    VulkanRendererAPI::flush_globals_to_heap();
 
     s_data->vertex_array->bind();
     RenderCommand::draw_indexed(s_data->vertex_array, s_data->vertex_count);

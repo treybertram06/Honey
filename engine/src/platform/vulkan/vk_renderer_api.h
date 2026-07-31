@@ -27,6 +27,7 @@ namespace Honey {
         uint32_t get_max_texture_slots() override;
 
         void bind_pipeline(const Ref<Pipeline>& pipeline) override;
+        void bind_heap_pipeline(const Ref<Pipeline>& pipeline) override;
 
         void draw_indexed(const Ref<VertexArray>&, uint32_t) override;
         void draw_indexed_instanced(const Ref<VertexArray>&, uint32_t, uint32_t) override;

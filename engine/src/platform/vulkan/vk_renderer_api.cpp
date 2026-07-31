@@ -74,6 +74,27 @@ namespace Honey {
         ctx->set_current_pipeline_layout(layout);
     }
 
+    void VulkanRendererAPI::bind_heap_pipeline(const Ref<Pipeline>& pipeline) {
+        require_frame_begun();
+        HN_CORE_ASSERT(pipeline, "[VulkanRendererAPI] heap-mode pipeline is null");
+        auto* ctx = s_recording_context;
+
+        VkPipeline vk_pipeline = reinterpret_cast<VkPipeline>(pipeline->get_native_pipeline());
+        HN_CORE_ASSERT(vk_pipeline, "[VulkanRendererAPI] native VkPipeline is null");
+
+        const VkExtent2D ext = ctx->get_current_pass_extent();
+        auto* heap = ctx->get_backend()->get_descriptor_heap();
+
+        ctx->queue_custom_vulkan_cmd([vk_pipeline, ext, heap](VkCommandBuffer cmd, uint32_t, uint32_t) {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vk_pipeline);
+            VkViewport vp{ 0, 0, (float)ext.width, (float)ext.height, 0.0f, 1.0f };
+            VkRect2D sc{ { 0, 0 }, { ext.width, ext.height } };
+            vkCmdSetViewport(cmd, 0, 1, &vp);
+            vkCmdSetScissor(cmd, 0, 1, &sc);
+            heap->bind(cmd);
+        });
+    }
+
     void VulkanRendererAPI::set_clear_color(const glm::vec4& color) {
         require_frame_begun();
         s_recording_context->set_clear_color(color);

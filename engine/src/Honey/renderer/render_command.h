@@ -38,6 +38,10 @@ namespace Honey {
             return s_renderer_api->bind_pipeline(pipeline);
         }
 
+        inline static void bind_heap_pipeline(const Ref<Pipeline>& pipeline) {
+            return s_renderer_api->bind_heap_pipeline(pipeline);
+        }
+
         inline static void draw_indexed(const Ref<VertexArray>& vertex_array, uint32_t index_count = 0) {
             s_renderer_api->draw_indexed(vertex_array, index_count);
         }

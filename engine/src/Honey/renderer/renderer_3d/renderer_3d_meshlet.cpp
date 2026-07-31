@@ -11,26 +11,6 @@ static const std::filesystem::path asset_root = ASSET_ROOT;
 
 namespace Honey::Renderer3DInternal {
 
-    namespace {
-        // Heap-mode pipelines have a null VkPipelineLayout, so RenderCommand::bind_pipeline (which
-        // asserts a non-null layout) can't be used
-        void bind_meshlet_pipeline(VulkanContext* vk_ctx, const Ref<Pipeline>& pipe) {
-            VkPipeline vk_pipe = reinterpret_cast<VkPipeline>(pipe->get_native_pipeline());
-            HN_CORE_ASSERT(vk_pipe, "flush_meshlet_draws: heap-mode pipeline is null");
-            const VkExtent2D ext = vk_ctx->get_current_pass_extent();
-            auto* heap = vk_ctx->get_backend()->get_descriptor_heap();
-
-            vk_ctx->queue_custom_vulkan_cmd([vk_pipe, ext, heap](VkCommandBuffer cmd, uint32_t, uint32_t) {
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vk_pipe);
-                VkViewport vp{ 0, 0, (float)ext.width, (float)ext.height, 0.0f, 1.0f };
-                VkRect2D sc{ { 0, 0 }, { ext.width, ext.height } };
-                vkCmdSetViewport(cmd, 0, 1, &vp);
-                vkCmdSetScissor(cmd, 0, 1, &sc);
-                heap->bind(cmd);
-            });
-        }
-    }
-
     Ref<Pipeline> get_or_create_meshlet_pipeline(void* rp_native, bool blend, bool cull_none) {
         HN_CORE_ASSERT(rp_native, "get_or_create_meshlet_pipeline: rp_native is null");
         PipelineVariantKey key{rp_native, (uint8_t)(blend ? 1 : 0), (uint8_t)(cull_none ? 1 : 0)};
@@ -114,7 +94,7 @@ namespace Honey::Renderer3DInternal {
             Ref<Pipeline> first_pipe = deferred
                 ? get_or_create_meshlet_gbuffer_pipeline(rp_native, cull_none)
                 : get_or_create_meshlet_pipeline(rp_native, blend, cull_none);
-            bind_meshlet_pipeline(vk_ctx, first_pipe);
+            RenderCommand::bind_heap_pipeline(first_pipe);
             g_renderer3d_data->stats.pipeline_binds++;
         }
 
@@ -198,7 +178,7 @@ namespace Honey::Renderer3DInternal {
                     ? get_or_create_meshlet_gbuffer_pipeline(rp_native, cull_none)
                     : get_or_create_meshlet_pipeline(rp_native, blend, cull_none);
                 if (pipe != current_pipe) {
-                    bind_meshlet_pipeline(vk_ctx, pipe);
+                    RenderCommand::bind_heap_pipeline(pipe);
                     g_renderer3d_data->stats.pipeline_binds++;
                     current_pipe = pipe;
                 }

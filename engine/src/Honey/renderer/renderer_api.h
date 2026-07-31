@@ -39,6 +39,7 @@ namespace Honey {
         virtual uint32_t get_max_texture_slots() = 0;
 
         virtual void bind_pipeline(const Ref<Pipeline>& pipeline) = 0;
+        virtual void bind_heap_pipeline(const Ref<Pipeline>& pipeline) = 0;
 
         virtual std::string get_vendor() = 0;
 
