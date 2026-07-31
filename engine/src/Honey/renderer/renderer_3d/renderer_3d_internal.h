@@ -20,22 +20,6 @@
 
 namespace Honey::Renderer3DInternal {
 
-    struct BatchValue {
-        Ref<VertexArray> va;
-        Ref<Material> material;
-        std::vector<glm::mat4> transforms;
-        std::vector<int32_t> entity_ids;
-    };
-
-    struct BatchKey {
-        const VertexArray* va = nullptr;
-        const Material* mat = nullptr;
-
-        bool operator==(const BatchKey& other) const {
-            return va == other.va && mat == other.mat;
-        }
-    };
-
     struct PipelineVariantKey {
         void* render_pass = nullptr;
         uint8_t blend = 0;
@@ -72,18 +56,10 @@ namespace Honey::Renderer3DInternal {
         uint32_t indirect_byte_offset = 0;       // byte offset into the frame's indirect buffer
     };
 
-    struct ClassicShadowDrawEntry {
-        VkBuffer vertex_buffer = VK_NULL_HANDLE;
-        VkBuffer index_buffer  = VK_NULL_HANDLE;
-        uint32_t index_count   = 0;
-        uint32_t draw_count    = 0;
-        uint32_t draw_data_base = 0;
-    };
-
     struct Renderer3DData {
         static constexpr uint32_t max_textures = 1024;
 
-        GeometryPath geometry_path = GeometryPath::Meshlet;
+        //GeometryPath geometry_path = GeometryPath::Meshlet; // Leaving this here in case I re-use the setting for classic-geo emulation to support older hardware (Proud 1080Ti owner)
         std::vector<MeshletDrawCommand> meshlet_draws;
 
         std::array<Ref<StorageBuffer>, VulkanContext::k_max_frames_in_flight> indirect_buffers{};
@@ -105,10 +81,8 @@ namespace Honey::Renderer3DInternal {
 
         Ref<ShaderCache> shader_cache;
 
-        std::unordered_map<PipelineVariantKey, Ref<Pipeline>, PipelineVariantKeyHash> vk_forward_pipelines;
         std::unordered_map<PipelineVariantKey, Ref<Pipeline>, PipelineVariantKeyHash> vk_meshlet_pipelines;
         std::unordered_map<PipelineVariantKey, Ref<Pipeline>, PipelineVariantKeyHash> vk_meshlet_gbuffer_pipelines;
-        std::unordered_map<PipelineVariantKey, Ref<Pipeline>, PipelineVariantKeyHash> vk_gbuffer_pipelines;
         std::unordered_map<PipelineVariantKey, Ref<Pipeline>, PipelineVariantKeyHash> vk_lighting_pipelines;
         std::unordered_map<PipelineVariantKey, Ref<Pipeline>, PipelineVariantKeyHash> vk_ssao_pipelines;
 
@@ -125,25 +99,11 @@ namespace Honey::Renderer3DInternal {
 
         Ref<Material> default_material;
 
-        struct BatchKeyHash {
-            size_t operator()(const BatchKey& key) const {
-                size_t h1 = std::hash<const void*>{}(key.va);
-                size_t h2 = std::hash<const void*>{}(key.mat);
-                return h1 ^ (h2 + 0x9e3779b97f4a7c15ull + (h1 << 6) + (h1 >> 2));
-            }
-        };
-
-        std::unordered_map<BatchKey, BatchValue, BatchKeyHash> batches;
-
-        Ref<VertexBuffer> instance_vb;
-        uint32_t instance_vb_capacity = 0;
-
         Renderer3D::Statistics stats;
         std::unordered_set<const void*> unique_meshes_this_frame;
 
         // Populated during flush_meshlet_draws; consumed by shadow.draw executor (runs after GBuffer).
         std::vector<ShadowDrawEntry> shadow_draw_list;
-        std::vector<ClassicShadowDrawEntry> classic_shadow_draw_list;
 
         bool  directional_shadows_enabled  = false;
         float directional_shadow_distance  = 50.0f;
@@ -153,22 +113,12 @@ namespace Honey::Renderer3DInternal {
         float scene_camera_aspect_ratio    = 1.0f;
     };
 
-    struct InstanceData {
-        glm::mat4 model;
-        int32_t entity_id;
-    };
-    static_assert(sizeof(InstanceData) == 68, "InstanceData size mismatch");
-
     extern Renderer3DData* g_renderer3d_data;
 
     using PipelineFactory = std::function<Ref<Pipeline>(void* rp, bool blend, bool cull_none)>;
 
     GPUMaterial build_gpu_material(const Material* mat);
-    void ensure_instance_buffer_capacity(uint32_t required_instances);
-    void flush_batches_vulkan(const PipelineFactory& get_pipeline);
 
-    Ref<Pipeline> get_or_create_forward_pipeline(void* rp_native, bool blend, bool cull_none);
-    Ref<Pipeline> get_or_create_gbuffer_pipeline(void* rp_native, bool blend, bool cull_none);
     Ref<Pipeline> get_or_create_meshlet_pipeline(void* rp_native, bool blend, bool cull_none);
     Ref<Pipeline> get_or_create_meshlet_gbuffer_pipeline(void* rp_native, bool cull_none);
     void flush_meshlet_draws();

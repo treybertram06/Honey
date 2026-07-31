@@ -19,22 +19,14 @@ namespace Honey {
         auto& data = *Renderer3DInternal::g_renderer3d_data;
         auto& rs = Settings::get().renderer;
 
-        data.geometry_path = rs.geometry_path;
+        //data.geometry_path = rs.geometry_path;
         data.shader_cache = Renderer::get_shader_cache();
         data.default_material = Material::create();
-        data.batches.clear();
-        data.instance_vb.reset();
-        data.instance_vb_capacity = 0;
         data.meshlet_draws.clear();
-
-        data.max_texture_slots = VulkanRendererAPI::k_max_texture_slots;
-        data.texture_slots.clear();
-        data.texture_slots.resize(data.max_texture_slots);
 
         data.white_texture = Texture2D::create(1, 1);
         const uint32_t white = 0xFFFFFFFFu;
         data.white_texture->set_data((void*)&white, sizeof(uint32_t));
-        data.texture_slots[0] = data.white_texture;
 
         // Bindless slot 0 is the shader-side fallback (max(tex_idx, 0)); back it with white.
         if (Renderer::get_api() == RendererAPI::API::vulkan)
@@ -86,11 +78,6 @@ namespace Honey {
         data.vk_globals_stack.push_back(state);
         VulkanRendererAPI::submit_camera(camera_ubo);
 
-        data.texture_slot_index = 1;
-        if (!data.texture_slots.empty())
-            data.texture_slots[0] = data.white_texture;
-
-        data.batches.clear();
         data.unique_meshes_this_frame.clear();
         data.meshlet_draws.clear();
     }
@@ -110,11 +97,6 @@ namespace Honey {
         data.vk_globals_stack.push_back(state);
         VulkanRendererAPI::submit_camera(camera_ubo);
 
-        data.texture_slot_index = 1;
-        if (!data.texture_slots.empty())
-            data.texture_slots[0] = data.white_texture;
-
-        data.batches.clear();
         data.unique_meshes_this_frame.clear();
         data.meshlet_draws.clear();
     }
@@ -143,11 +125,6 @@ namespace Honey {
         data.vk_globals_stack.push_back(state);
         VulkanRendererAPI::submit_camera(camera_ubo);
 
-        data.texture_slot_index = 1;
-        if (!data.texture_slots.empty())
-            data.texture_slots[0] = data.white_texture;
-
-        data.batches.clear();
         data.unique_meshes_this_frame.clear();
         data.meshlet_draws.clear();
     }
@@ -160,13 +137,13 @@ namespace Honey {
 
         auto& data = *Renderer3DInternal::g_renderer3d_data;
 
+        // This could be reduced down to a single call after pulling out
+        // the classic-geo pipeline, but I'll leave it for now
         switch (Settings::get().renderer.renderer_type) {
         case RendererSettings::RendererType::forward:
-            Renderer3DInternal::flush_batches_vulkan(Renderer3DInternal::get_or_create_forward_pipeline);
             Renderer3DInternal::flush_meshlet_draws();
             break;
         case RendererSettings::RendererType::deferred:
-            Renderer3DInternal::flush_batches_vulkan(Renderer3DInternal::get_or_create_gbuffer_pipeline);
             Renderer3DInternal::flush_meshlet_draws();
             break;
         default:
@@ -202,59 +179,7 @@ namespace Honey {
         VulkanRendererAPI::submit_tiled_lighting(data);
     }
 
-    void Renderer3D::draw_mesh(const Ref<VertexArray>& vertex_array, const glm::mat4& transform, int entity_id) {
-        draw_mesh(vertex_array, Renderer3DInternal::g_renderer3d_data->default_material, transform, entity_id);
-    }
-
-    void Renderer3D::draw_mesh(const Ref<VertexArray>& vertex_array,
-                               const Ref<Material>& material,
-                               const glm::mat4& transform,
-                               int entity_id) {
-        HN_PROFILE_FUNCTION();
-        HN_CORE_ASSERT(vertex_array, "Renderer3D::draw_mesh: vertex_array is null");
-        HN_CORE_ASSERT(material, "Renderer3D::draw_mesh: material is null");
-
-        auto& data = *Renderer3DInternal::g_renderer3d_data;
-        data.stats.mesh_submissions++;
-        data.unique_meshes_this_frame.insert(vertex_array.get());
-        data.stats.unique_meshes = (uint32_t)data.unique_meshes_this_frame.size();
-
-        Renderer3DInternal::BatchKey key{};
-        key.va = vertex_array.get();
-        key.mat = material.get();
-
-        auto it = data.batches.find(key);
-        if (it == data.batches.end()) {
-            Renderer3DInternal::BatchValue value{};
-            value.va = vertex_array;
-            value.material = material;
-            value.transforms.reserve(128);
-            value.entity_ids.reserve(128);
-            it = data.batches.emplace(key, std::move(value)).first;
-        }
-
-        it->second.transforms.push_back(transform);
-        it->second.entity_ids.push_back(entity_id);
-    }
-
     void Renderer3D::submit_submesh(const Submesh& submesh,
-                                    const Ref<Material>& material,
-                                    const glm::mat4& transform,
-                                    int entity_id,
-                                    const Mesh* mesh) {
-        HN_PROFILE_FUNCTION();
-        HN_CORE_ASSERT(material, "Renderer3D::submit_submesh: material is null");
-
-        if (Renderer3DInternal::g_renderer3d_data->geometry_path == GeometryPath::Meshlet && submesh.meshlets.has_value()) {
-            submit_meshlet_submesh(submesh, material, transform, entity_id, mesh);
-            return;
-        }
-
-        HN_CORE_ASSERT(submesh.vao, "Renderer3D::submit_submesh: submesh.vao is null");
-        draw_mesh(submesh.vao, material, transform, entity_id);
-    }
-
-    void Renderer3D::submit_meshlet_submesh(const Submesh& submesh,
                                             const Ref<Material>& material,
                                             const glm::mat4& transform,
                                             int entity_id,
@@ -280,10 +205,6 @@ namespace Honey {
             return;
 
         HN_CORE_ASSERT(native_render_pass, "Renderer3D::prewarm_pipelines: native_render_pass is null");
-    }
-
-    void Renderer3D::set_geometry_render_path(GeometryPath path) {
-        Renderer3DInternal::g_renderer3d_data->geometry_path = path;
     }
 
     void Renderer3D::set_directional_shadow_enabled(bool enabled, float shadow_distance) {

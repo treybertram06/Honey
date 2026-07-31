@@ -12,24 +12,6 @@ static const std::filesystem::path asset_root = ASSET_ROOT;
 
 namespace Honey::Renderer3DInternal {
 
-    Ref<Pipeline> get_or_create_gbuffer_pipeline(void* rp_native, bool blend, bool cull_none) {
-        PipelineVariantKey key{rp_native, 0, (uint8_t)(cull_none ? 1 : 0)};
-
-        auto it = g_renderer3d_data->vk_gbuffer_pipelines.find(key);
-        if (it != g_renderer3d_data->vk_gbuffer_pipelines.end())
-            return it->second;
-
-        auto spec = PipelineSpec::from_shader(asset_root / "shaders" / "Renderer3D_DeferredGeometry.glsl");
-        spec.perColorAttachmentBlend.clear();
-        spec.perColorAttachmentBlend.resize(3, AttachmentBlendState{});
-        if (cull_none)
-            spec.cullMode = CullMode::None;
-
-        auto pipeline = Pipeline::create(spec, rp_native);
-        g_renderer3d_data->vk_gbuffer_pipelines.emplace(key, pipeline);
-        return pipeline;
-    }
-
     namespace {
         Ref<Pipeline> get_or_create_lighting_pipeline(void* rp_native) {
             PipelineVariantKey key{rp_native, 0, 0};

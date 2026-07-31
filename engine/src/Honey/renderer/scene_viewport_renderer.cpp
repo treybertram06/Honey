@@ -141,7 +141,7 @@ namespace Honey {
             m_frame_graph_dirty = true;
 
         m_settings = settings;
-        Renderer3D::set_geometry_render_path(m_settings.geometry_path);
+        //Renderer3D::set_geometry_render_path(m_settings.geometry_path);
         Renderer2D::set_debug_pick_enabled(m_settings.debug_pick_enabled);
     }
 
