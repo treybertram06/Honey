@@ -212,7 +212,7 @@ namespace Honey::Renderer3DInternal {
                 for (uint32_t local_i = 0; local_i < mesh_draw_count; ++local_i) {
                     const uint32_t draw_idx = variant_draws[local_i];
                     const auto& cmd = g_renderer3d_data->meshlet_draws[draw_idx];
-                    const auto& geo = *cmd.submesh->meshlets;
+                    const auto& geo = cmd.submesh->meshlets;
 
                     indirect_cmds.push_back({geo.meshlet_count, 1, 1});
                     draw_data.push_back({

@@ -1155,12 +1155,11 @@ namespace Honey {
                 const auto& submeshes = mrc.mesh->get_submeshes();
                 for (size_t si = 0; si < submeshes.size(); ++si) {
                     const Submesh& sm = submeshes[si];
-                    if (!sm.meshlets.has_value()) continue;
-                    if (sm.meshlets->flat_index_tri_count == 0) continue;
+                    if (sm.meshlets.flat_index_tri_count == 0) continue;
 
-                    const uint32_t tri_count = sm.meshlets->flat_index_tri_count;
+                    const uint32_t tri_count = sm.meshlets.flat_index_tri_count;
                     const VkDeviceAddress ibuf_addr = ibuf_base_addr
-                        + (VkDeviceAddress)sm.meshlets->flat_index_first * 3u * sizeof(uint32_t);
+                        + (VkDeviceAddress)sm.meshlets.flat_index_first * 3u * sizeof(uint32_t);
 
                     // Allocate BLAS if not cached — GPU build is deferred to build_and_compact_pending_blas().
                     if (!s_res->blas_cache.count(&sm))

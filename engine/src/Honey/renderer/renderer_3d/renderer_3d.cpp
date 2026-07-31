@@ -186,7 +186,6 @@ namespace Honey {
                                             const Mesh* mesh) {
         HN_PROFILE_FUNCTION();
         HN_CORE_ASSERT(material, "Renderer3D::submit_meshlet_submesh: material is null");
-        HN_CORE_ASSERT(submesh.meshlets.has_value(), "Renderer3D::submit_meshlet_submesh: submesh.meshlets is null");
 
         Renderer3DInternal::g_renderer3d_data->meshlet_draws.push_back(
             Renderer3DInternal::MeshletDrawCommand{

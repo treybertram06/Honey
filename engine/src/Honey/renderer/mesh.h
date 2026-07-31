@@ -1,13 +1,14 @@
 #pragma once
 
 #include "Honey/core/base.h"
-#include "vertex_array.h"
 #include "material.h"
 
 #include <string>
 #include <vector>
 #include <optional>
 #include <array>
+
+#include "buffer.h"
 
 namespace Honey {
 
@@ -68,8 +69,7 @@ namespace Honey {
     struct Submesh {
         Ref<Material> material;
 
-        Ref<VertexArray> vao; // TODO: pull out of submesh and replace with a ClassicGeometry type
-        std::optional<MeshletGeometry> meshlets;
+        MeshletGeometry meshlets;
 
         // Optional debug name (useful when inspecting glTF primitives)
         std::string name;

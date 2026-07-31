@@ -7,7 +7,6 @@
 #include "Honey/renderer/buffer.h"
 #include "Honey/renderer/renderer.h"
 #include "Honey/renderer/texture.h"
-#include "Honey/renderer/vertex_array.h"
 #include "Honey/renderer/renderer_api.h"
 #include "platform/vulkan/vk_renderer_api.h"
 
@@ -651,24 +650,6 @@ namespace Honey {
             return mat;
         }
 
-        static void set_default_layout_pnuv(const Ref<VertexBuffer>& vb) {
-            vb->set_layout({
-                { ShaderDataType::Float3, "a_position"       },
-                { ShaderDataType::UInt,   "a_normal_packed"  },
-                { ShaderDataType::UInt,   "a_tangent_packed" },
-                { ShaderDataType::UInt,   "a_uv0_packed"     },
-            });
-        }
-
-        static BufferLayout make_pnuv_layout() {
-            return {
-                { ShaderDataType::Float3, "a_position"       },
-                { ShaderDataType::UInt,   "a_normal_packed"  },
-                { ShaderDataType::UInt,   "a_tangent_packed" },
-                { ShaderDataType::UInt,   "a_uv0_packed"     },
-            };
-        }
-
         static void generate_tangents(std::vector<VertexBuild>& vertices, const std::vector<uint32_t>& indices) {
             if (vertices.empty() || indices.empty())
                 return;
@@ -852,7 +833,7 @@ namespace Honey {
             glm::mat4 transform{1.0f};
             std::vector<VertexPBR> vertices;
             std::vector<uint32_t> indices;
-            std::optional<MeshletGeometry> meshlets;
+            MeshletGeometry meshlets;
         };
 
         struct PendingMeshletBuffersPayload {
@@ -1481,37 +1462,8 @@ namespace Honey {
                 pr.submesh.transform = worldTransform;
 
                 if (auto result = build_meshlet_geometry(primData.vertices, primData.indices)) {
-                    // VAO for classic fallback — plain VB, separate from the meshlet SSBO
-                    Ref<VertexArray> vao = VertexArray::create();
-                    Ref<VertexBuffer> vb = VertexBuffer::create(
-                        (uint32_t)(result->opt_vertices.size() * sizeof(VertexPBR)));
-                    vb->set_data(result->opt_vertices.data(),
-                                 (uint32_t)(result->opt_vertices.size() * sizeof(VertexPBR)));
-                    set_default_layout_pnuv(vb);
-                    vao->add_vertex_buffer(vb);
-                    vao->set_index_buffer(IndexBuffer::create(
-                        const_cast<uint32_t*>(result->opt_indices.data()),
-                        (uint32_t)result->opt_indices.size()
-                    ));
-                    pr.submesh.vao = vao;
-
-                    //HN_CORE_INFO("Built {} meshlets for submesh '{}'",
-                    //             result->geometry.meshlet_count, pr.submesh.name);
                     pr.submesh.meshlets = result->geometry; // offsets will be filled in second pass
                     pr.meshlet_build    = std::move(*result);
-                } else {
-                    Ref<VertexArray> vao = VertexArray::create();
-                    Ref<VertexBuffer> vb = VertexBuffer::create(
-                        (uint32_t)(primData.vertices.size() * sizeof(VertexPBR)));
-                    vb->set_data(primData.vertices.data(),
-                                 (uint32_t)(primData.vertices.size() * sizeof(VertexPBR)));
-                    set_default_layout_pnuv(vb);
-                    vao->add_vertex_buffer(vb);
-                    vao->set_index_buffer(IndexBuffer::create(
-                        const_cast<uint32_t*>(primData.indices.data()),
-                        (uint32_t)primData.indices.size()
-                    ));
-                    pr.submesh.vao = vao;
                 }
 
                 out_prims.push_back(std::move(pr));
@@ -1586,13 +1538,13 @@ namespace Honey {
                     global_bounds.insert(global_bounds.end(),
                         mb.bounds.begin(), mb.bounds.end());
 
-                    pr.submesh.meshlets->vertex_offset            = v_off;
-                    pr.submesh.meshlets->meshlets_offset          = m_off;
-                    pr.submesh.meshlets->meshlet_vertices_offset  = mv_off;
-                    pr.submesh.meshlets->meshlet_triangles_offset = mt_off;
-                    pr.submesh.meshlets->bounds_offset            = m_off;
-                    pr.submesh.meshlets->flat_index_first         = flat_first;
-                    pr.submesh.meshlets->flat_index_tri_count     = (uint32_t)global_flat_indices.size() / 3 - flat_first;
+                    pr.submesh.meshlets.vertex_offset            = v_off;
+                    pr.submesh.meshlets.meshlets_offset          = m_off;
+                    pr.submesh.meshlets.meshlet_vertices_offset  = mv_off;
+                    pr.submesh.meshlets.meshlet_triangles_offset = mt_off;
+                    pr.submesh.meshlets.bounds_offset            = m_off;
+                    pr.submesh.meshlets.flat_index_first         = flat_first;
+                    pr.submesh.meshlets.flat_index_tri_count     = (uint32_t)global_flat_indices.size() / 3 - flat_first;
                 }
 
                 GlobalMeshletBuffers global_bufs{};
@@ -1720,11 +1672,11 @@ namespace Honey {
 
                     global.bounds.insert(global.bounds.end(), mb.bounds.begin(), mb.bounds.end());
 
-                    build.submesh.meshlets->vertex_offset = v_off;
-                    build.submesh.meshlets->meshlets_offset = m_off;
-                    build.submesh.meshlets->meshlet_vertices_offset = mv_off;
-                    build.submesh.meshlets->meshlet_triangles_offset = mt_off;
-                    build.submesh.meshlets->bounds_offset = m_off;
+                    build.submesh.meshlets.vertex_offset = v_off;
+                    build.submesh.meshlets.meshlets_offset = m_off;
+                    build.submesh.meshlets.meshlet_vertices_offset = mv_off;
+                    build.submesh.meshlets.meshlet_triangles_offset = mt_off;
+                    build.submesh.meshlets.bounds_offset = m_off;
                 }
 
                 out.meshlet_buffers = std::move(global);
@@ -1815,18 +1767,6 @@ namespace Honey {
                 submesh.transform = submeshPayload.transform;
                 submesh.meshlets = submeshPayload.meshlets;
 
-                Ref<VertexArray> vao = VertexArray::create();
-                Ref<VertexBuffer> vb = VertexBuffer::create(
-                    static_cast<uint32_t>(submeshPayload.vertices.size() * sizeof(VertexPBR)));
-                vb->set_data(submeshPayload.vertices.data(),
-                             static_cast<uint32_t>(submeshPayload.vertices.size() * sizeof(VertexPBR)));
-                set_default_layout_pnuv(vb);
-                vao->add_vertex_buffer(vb);
-                vao->set_index_buffer(IndexBuffer::create(
-                    const_cast<uint32_t*>(submeshPayload.indices.data()),
-                    static_cast<uint32_t>(submeshPayload.indices.size())));
-                submesh.vao = vao;
-
                 out->add_submesh(std::move(submesh));
             }
 
@@ -1844,8 +1784,7 @@ namespace Honey {
                     tri_prefix[i + 1] = tri_prefix[i] + mb.meshlets[i].triangle_count;
 
                 for (auto& sm : out->get_submeshes()) {
-                    if (!sm.meshlets.has_value()) continue;
-                    auto& mg = *sm.meshlets;
+                    auto& mg = sm.meshlets;
                     mg.flat_index_first     = tri_prefix[mg.meshlets_offset];
                     mg.flat_index_tri_count = tri_prefix[mg.meshlets_offset + mg.meshlet_count] - tri_prefix[mg.meshlets_offset];
                 }
