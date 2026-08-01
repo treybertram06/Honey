@@ -27,7 +27,6 @@ namespace Honey {
             // Default, mesh shader path
             Ref<Pipeline>  shadow_pipeline_ref; // keeps VkPipeline alive
             VkPipeline     shadow_pipeline = VK_NULL_HANDLE;
-            VkPipelineLayout shadow_layout = VK_NULL_HANDLE;
 
             bool           cubemap_first_frame = true;
             bool           shadow_resources_registered = false;
@@ -137,18 +136,6 @@ namespace Honey {
         auto* res = s_res;
         const uint32_t frame = res->vk_ctx->get_current_frame() % VulkanContext::k_max_frames_in_flight;
 
-        // Register shadow cubemap resources on the first frame so the deferred lighting descriptor
-        // at set=1 binding=4 always has a valid cube-array + comparison sampler, even when there
-        // are no shadow-casting lights yet (avoids VK_IMAGE_VIEW_TYPE_2D vs Cube validation error).
-        if (!res->shadow_resources_registered) {
-            VkImageView  cube_view    = ctx.get_resource_cube_array_view("shadowCubemap");
-            VkSampler    cmp_sampler  = ctx.get_resource_depth_comparison_sampler("shadowCubemap");
-            if (cube_view && cmp_sampler) {
-                res->vk_ctx->set_shadow_cubemap_resources(cube_view, cmp_sampler);
-                res->shadow_resources_registered = true;
-            }
-        }
-
         // Build shadow matrices from current scene lights and upload.
         {
             HN_PROFILE_SCOPE("ShadowDraw::prepare_shadow_data");
@@ -207,7 +194,6 @@ namespace Honey {
 
             res->shadow_pipeline_ref = pipe;  // keeps VkPipeline alive past this scope
             res->shadow_pipeline = reinterpret_cast<VkPipeline>(pipe->get_native_pipeline());
-            res->shadow_layout   = reinterpret_cast<VkPipelineLayout>(pipe->get_native_pipeline_layout());
         }
 
         if (!res->shadow_pipeline) return;
@@ -244,7 +230,6 @@ namespace Honey {
             }
 
             const VkPipeline       active_pipeline = res->shadow_pipeline;
-            const VkPipelineLayout active_layout   = res->shadow_layout;
 
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, active_pipeline);
 
@@ -326,11 +311,6 @@ namespace Honey {
         // A new one will be created lazily on the first draw after rebuild.
         s_res->shadow_pipeline_ref.reset();
         s_res->shadow_pipeline = VK_NULL_HANDLE;
-        s_res->shadow_layout   = VK_NULL_HANDLE;
-
-        // Clear stale handles in VulkanContext before the old framebuffer is destroyed.
-        if (s_res->vk_ctx)
-            s_res->vk_ctx->set_shadow_cubemap_resources(VK_NULL_HANDLE, VK_NULL_HANDLE);
     }
 
     // -------------------------------------------------------------------------
@@ -342,7 +322,6 @@ namespace Honey {
             // Default, mesh path
             Ref<Pipeline> pipeline_ref;
             VkPipeline    pipeline    = VK_NULL_HANDLE;
-            VkPipelineLayout layout   = VK_NULL_HANDLE;
 
             bool resources_registered = false;
             bool first_frame          = true;
@@ -482,16 +461,6 @@ namespace Honey {
         if (!s_dir)
             s_dir = new DirShadowResources{};
 
-        // Register the shadow map's 2D view and comparison sampler with VulkanContext for set=0 binding=9 (forward pass).
-        if (!s_dir->resources_registered) {
-            VkImageView  map_view    = ctx.get_resource_depth_sampler_image_view("shadowDirMap");
-            VkSampler    cmp_sampler = ctx.get_resource_depth_comparison_sampler("shadowDirMap");
-            if (map_view && cmp_sampler) {
-                vk_ctx->set_dir_shadow_resources(map_view, cmp_sampler);
-                s_dir->resources_registered = true;
-            }
-        }
-
         // Upload SSBO so the lighting shader always has valid data.
         {
             HN_PROFILE_SCOPE("DirShadow::compute_and_upload_ssbo");
@@ -569,7 +538,6 @@ namespace Honey {
 
             s_dir->pipeline_ref = pipe;
             s_dir->pipeline     = reinterpret_cast<VkPipeline>(pipe->get_native_pipeline());
-            s_dir->layout       = reinterpret_cast<VkPipelineLayout>(pipe->get_native_pipeline_layout());
         }
         if (!s_dir->pipeline) return;
         if (!data->indirect_buffers[frame]) return;
@@ -603,7 +571,6 @@ namespace Honey {
             }
 
             const VkPipeline       active_pipeline = s_dir->pipeline;
-            const VkPipelineLayout active_layout   = s_dir->layout;
 
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, active_pipeline);
 
@@ -679,10 +646,6 @@ namespace Honey {
         s_dir->first_frame = true;
         s_dir->pipeline_ref.reset();
         s_dir->pipeline = VK_NULL_HANDLE;
-        s_dir->layout   = VK_NULL_HANDLE;
-
-        if (s_res && s_res->vk_ctx)
-            s_res->vk_ctx->set_dir_shadow_resources(VK_NULL_HANDLE, VK_NULL_HANDLE);
     }
 
     void Renderer3DShadow::register_frame_graph_executors() {

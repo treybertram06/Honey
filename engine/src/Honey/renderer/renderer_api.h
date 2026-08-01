@@ -36,10 +36,7 @@ namespace Honey {
         virtual void set_viewport(uint32_t x, uint32_t y, uint32_t width, uint32_t height) = 0;
         virtual void clear() = 0;
 
-        virtual uint32_t get_max_texture_slots() = 0;
-
         virtual void bind_pipeline(const Ref<Pipeline>& pipeline) = 0;
-        virtual void bind_heap_pipeline(const Ref<Pipeline>& pipeline) = 0;
 
         virtual std::string get_vendor() = 0;
 

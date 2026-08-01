@@ -172,11 +172,6 @@ namespace Honey {
             vkDestroyPipeline(device, reinterpret_cast<VkPipeline>(m_pipeline), nullptr);
             m_pipeline = nullptr;
         }
-        if (m_layout) {
-            vkDestroyPipelineLayout(device, reinterpret_cast<VkPipelineLayout>(m_layout), nullptr);
-            m_layout = nullptr;
-        }
-        m_heap_mode = false;
         if (m_vert_module) {
             vkDestroyShaderModule(device, reinterpret_cast<VkShaderModule>(m_vert_module), nullptr);
             m_vert_module = nullptr;
@@ -198,26 +193,21 @@ namespace Honey {
     void VulkanPipeline::create(
         VkDevice device,
         VkRenderPass render_pass,
-        VkDescriptorSetLayout global_set_layout,
         const std::string& vertex_spirv_path,
         const std::string& fragment_spirv_path,
         const PipelineSpec& spec,
         VkPipelineCache pipeline_cache,
-        VkDescriptorSetLayout extra_set_layout,
-        const VulkanDescriptorHeap* heap,
-        bool heap_mode
+        const VulkanDescriptorHeap* heap
     ) {
         HN_PROFILE_FUNCTION();
 
         HN_CORE_ASSERT(device, "VulkanPipeline::create called with null device");
         HN_CORE_ASSERT(render_pass, "VulkanPipeline::create called with null render pass");
-        HN_CORE_ASSERT(heap_mode || global_set_layout, "VulkanPipeline::create called with null descriptor set layout");
-        HN_CORE_ASSERT(!heap_mode || heap, "VulkanPipeline::create heap_mode requires a descriptor heap");
+        HN_CORE_ASSERT(heap, "VulkanPipeline::create requires a descriptor heap");
         HN_CORE_ASSERT(!vertex_spirv_path.empty() && !fragment_spirv_path.empty(),
                        "VulkanPipeline::create called with empty SPIR-V paths");
 
         destroy(device);
-        m_heap_mode = heap_mode;
 
         m_vert_module = create_shader_module_from_file(device, vertex_spirv_path);
         m_frag_module = create_shader_module_from_file(device, fragment_spirv_path);
@@ -350,26 +340,7 @@ namespace Honey {
         VkShaderDescriptorSetAndBindingMappingInfoEXT mapping_info{};
         VkPipelineCreateFlags2CreateInfo flags2{};
 
-        if (!heap_mode) {
-            VkPipelineLayoutCreateInfo layout_ci{};
-            layout_ci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-            VkDescriptorSetLayout set_layouts[] = { global_set_layout, extra_set_layout };
-            layout_ci.setLayoutCount = extra_set_layout ? 2u : 1u;
-            layout_ci.pSetLayouts = set_layouts;
 
-            VkPushConstantRange pc_range{};
-            pc_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-            pc_range.offset = 0;
-            pc_range.size = k_push_constant_max_size;
-
-            layout_ci.pushConstantRangeCount = 1;
-            layout_ci.pPushConstantRanges = &pc_range;
-
-            VkPipelineLayout layout = VK_NULL_HANDLE;
-            VkResult layout_res = vkCreatePipelineLayout(device, &layout_ci, nullptr, &layout);
-            HN_CORE_ASSERT(layout_res == VK_SUCCESS, "vkCreatePipelineLayout failed");
-            m_layout = layout;
-        } else {
             const uint32_t expected_push_size = spec.expected_push_constant_size != 0
                 ? spec.expected_push_constant_size : (uint32_t)sizeof(PassPushData);
             HN_CORE_ASSERT(expected_push_size <= heap->max_push_data_size(),
@@ -382,7 +353,6 @@ namespace Honey {
                            spec.reflection.push_constant_size == expected_push_size,
                            "'{0}': GLSL push_constant block is {1} bytes but the engine pushes {2} bytes",
                            spec.shaderGLSLPath.string(), spec.reflection.push_constant_size, expected_push_size);
-            m_layout = VK_NULL_HANDLE;
 
             mappings = build_descriptor_mappings(spec.reflection, *heap);
             mapping_info.sType        = VK_STRUCTURE_TYPE_SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT;
@@ -398,11 +368,11 @@ namespace Honey {
             flags2.sType = VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO;
             flags2.flags = VK_PIPELINE_CREATE_2_DESCRIPTOR_HEAP_BIT_EXT;
             flags2.pNext = nullptr;
-        }
+
 
         VkGraphicsPipelineCreateInfo pipe{};
         pipe.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-        pipe.pNext = heap_mode ? static_cast<const void*>(&flags2) : nullptr;
+        pipe.pNext = static_cast<const void*>(&flags2);
         pipe.stageCount = 2;
         pipe.pStages = stages;
         pipe.pVertexInputState   = &vertex_input;
@@ -413,7 +383,7 @@ namespace Honey {
         pipe.pDepthStencilState  = &depth;
         pipe.pColorBlendState    = &blend;
         pipe.pDynamicState       = &dynamic_state;
-        pipe.layout    = reinterpret_cast<VkPipelineLayout>(m_layout); // VK_NULL_HANDLE in heap mode
+        pipe.layout    = VK_NULL_HANDLE; // VK_NULL_HANDLE in heap mode
         pipe.renderPass = render_pass;
         pipe.subpass   = 0;
 
@@ -426,26 +396,21 @@ namespace Honey {
     void VulkanPipeline::create_mesh(
         VkDevice device,
         VkRenderPass render_pass,
-        VkDescriptorSetLayout global_set_layout,
         const std::string& task_spirv_path,
         const std::string& mesh_spirv_path,
         const std::string& fragment_spirv_path,
         const PipelineSpec& spec,
         VkPipelineCache pipeline_cache,
-        VkDescriptorSetLayout extra_set_layout,
-        const VulkanDescriptorHeap* heap,
-        bool heap_mode
+        const VulkanDescriptorHeap* heap
     ) {
         HN_PROFILE_FUNCTION();
         HN_CORE_ASSERT(device, "VulkanPipeline::create_mesh called with null device");
         HN_CORE_ASSERT(render_pass, "VulkanPipeline::create_mesh called with null render pass");
-        HN_CORE_ASSERT(heap_mode || global_set_layout, "VulkanPipeline::create_mesh called with null descriptor set layout");
-        HN_CORE_ASSERT(!heap_mode || heap, "VulkanPipeline::create_mesh heap_mode requires a descriptor heap");
+        HN_CORE_ASSERT(heap, "VulkanPipeline::create_mesh requires a descriptor heap");
         HN_CORE_ASSERT(!mesh_spirv_path.empty() && !fragment_spirv_path.empty(),
                        "VulkanPipeline::create_mesh called with empty mesh or fragment SPIR-V path");
 
         destroy(device);
-        m_heap_mode = heap_mode;
 
         const bool has_task = !task_spirv_path.empty();
         if (has_task)
@@ -570,29 +535,6 @@ namespace Honey {
         VkShaderDescriptorSetAndBindingMappingInfoEXT mapping_info{};
         VkPipelineCreateFlags2CreateInfo flags2{};
 
-        if (!heap_mode) {
-            VkPipelineLayoutCreateInfo layout_ci{};
-            layout_ci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-            VkDescriptorSetLayout set_layouts[] = { global_set_layout, extra_set_layout };
-            layout_ci.setLayoutCount = extra_set_layout ? 2u : 1u;
-            layout_ci.pSetLayouts = set_layouts;
-
-            // Push constants must cover all stages that read them
-            VkPushConstantRange pc_range{};
-            pc_range.stageFlags = VK_SHADER_STAGE_TASK_BIT_EXT |
-                                  VK_SHADER_STAGE_MESH_BIT_EXT |
-                                  VK_SHADER_STAGE_FRAGMENT_BIT;
-            pc_range.offset = 0;
-            pc_range.size = k_push_constant_max_size;
-
-            layout_ci.pushConstantRangeCount = 1;
-            layout_ci.pPushConstantRanges = &pc_range;
-
-            VkPipelineLayout layout = VK_NULL_HANDLE;
-            VkResult layout_res = vkCreatePipelineLayout(device, &layout_ci, nullptr, &layout);
-            HN_CORE_ASSERT(layout_res == VK_SUCCESS, "vkCreatePipelineLayout failed (mesh pipeline)");
-            m_layout = layout;
-        } else {
             const uint32_t expected_push_size = spec.expected_push_constant_size != 0
                 ? spec.expected_push_constant_size : (uint32_t)sizeof(PassPushData);
             HN_CORE_ASSERT(expected_push_size <= heap->max_push_data_size(),
@@ -605,7 +547,6 @@ namespace Honey {
                            spec.reflection.push_constant_size == expected_push_size,
                            "'{0}': GLSL push_constant block is {1} bytes but the engine pushes {2} bytes",
                            spec.shaderGLSLPath.string(), spec.reflection.push_constant_size, expected_push_size);
-            m_layout = VK_NULL_HANDLE;
 
             mappings = build_descriptor_mappings(spec.reflection, *heap);
             mapping_info.sType        = VK_STRUCTURE_TYPE_SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT;
@@ -622,11 +563,11 @@ namespace Honey {
             flags2.sType = VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO;
             flags2.flags = VK_PIPELINE_CREATE_2_DESCRIPTOR_HEAP_BIT_EXT;
             flags2.pNext = nullptr;
-        }
+
 
         VkGraphicsPipelineCreateInfo pipe{};
         pipe.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-        pipe.pNext = heap_mode ? static_cast<const void*>(&flags2) : nullptr;
+        pipe.pNext = static_cast<const void*>(&flags2);
         pipe.stageCount = stage_count;
         pipe.pStages = stages;
         pipe.pVertexInputState   = nullptr;  // no vertex buffer input — mesh shader reads SSBOs directly
@@ -637,7 +578,7 @@ namespace Honey {
         pipe.pDepthStencilState  = &depth;
         pipe.pColorBlendState    = &blend;
         pipe.pDynamicState       = &dynamic_state;
-        pipe.layout    = reinterpret_cast<VkPipelineLayout>(m_layout); // VK_NULL_HANDLE in heap mode
+        pipe.layout    = VK_NULL_HANDLE; // VK_NULL_HANDLE in heap mode
         pipe.renderPass = render_pass;
         pipe.subpass   = 0;
 

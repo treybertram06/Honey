@@ -49,18 +49,7 @@ namespace Honey {
         return ss.str();
     }
 
-    uint32_t OpenGLRendererAPI::get_max_texture_slots() {
-        int max_texture_units;
-        glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &max_texture_units);
-        return (uint32_t)max_texture_units;
-
-    }
-
     void OpenGLRendererAPI::bind_pipeline(const Ref<Pipeline>& pipeline) {
-        //no-op?
-    }
-
-    void OpenGLRendererAPI::bind_heap_pipeline(const Ref<Pipeline>& pipeline) {
         //no-op
     }
 

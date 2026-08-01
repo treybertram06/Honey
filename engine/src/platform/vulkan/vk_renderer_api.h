@@ -24,10 +24,7 @@ namespace Honey {
 
         std::string get_vendor() override;
 
-        uint32_t get_max_texture_slots() override;
-
         void bind_pipeline(const Ref<Pipeline>& pipeline) override;
-        void bind_heap_pipeline(const Ref<Pipeline>& pipeline) override;
 
         void draw_indexed(const Ref<VertexArray>&, uint32_t) override;
         void draw_indexed_instanced(const Ref<VertexArray>&, uint32_t, uint32_t) override;
@@ -45,14 +42,6 @@ namespace Honey {
         static Ref<StorageBuffer> get_mesh_draw_data_buffer(const GlobalMeshletBuffers& bufs);
         static uint32_t get_mesh_block_offset(const GlobalMeshletBuffers& bufs);
         static void  push_meshlet_pass_data(uint32_t resource_heap_base, uint32_t draw_data_base);
-
-        static void submit_instanced_draw(
-            const Ref<VertexArray>& vertex_array,
-            const Ref<VertexBuffer>& instance_vb,
-            uint32_t index_count,
-            uint32_t instance_count,
-            uint32_t instance_byte_offset = 0
-        );
 
         void set_wireframe(bool) override;
         void set_depth_test(bool) override;
@@ -82,12 +71,6 @@ namespace Honey {
         static void submit_push_constants_mat4(const glm::mat4& value);
         static void submit_push_constants(const void* data, uint32_t size, uint32_t offset = 0, VkShaderStageFlags stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 
-        static constexpr uint32_t k_max_texture_slots = 1024;
-
-        static void submit_bound_textures(const std::array<void*, k_max_texture_slots>& textures, uint32_t texture_count);
-        static bool consume_bound_textures(std::array<void*, k_max_texture_slots>& out_textures, uint32_t& out_texture_count);
-
-        static void flush_globals();
         static void flush_globals_to_heap();
 
         struct GlobalsState {

@@ -30,16 +30,8 @@ namespace Honey {
             s_renderer_api->clear();
         }
 
-        static uint32_t get_max_texture_slots() {
-            return s_renderer_api->get_max_texture_slots();
-        }
-
-        inline static void bind_pipeline(const Ref<Pipeline>& pipeline) {
-            return s_renderer_api->bind_pipeline(pipeline);
-        }
-
         inline static void bind_heap_pipeline(const Ref<Pipeline>& pipeline) {
-            return s_renderer_api->bind_heap_pipeline(pipeline);
+            return s_renderer_api->bind_pipeline(pipeline);
         }
 
         inline static void draw_indexed(const Ref<VertexArray>& vertex_array, uint32_t index_count = 0) {

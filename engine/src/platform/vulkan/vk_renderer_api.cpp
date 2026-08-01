@@ -39,42 +39,7 @@ namespace Honey {
         m_physical_device = vk->get_physical_device();
     }
 
-    uint32_t VulkanRendererAPI::get_max_texture_slots() {
-        return k_max_texture_slots;
-    }
-
     void VulkanRendererAPI::bind_pipeline(const Ref<Pipeline>& pipeline) {
-        require_frame_begun();
-        HN_CORE_ASSERT(pipeline, "VulkanRendererAPI::bind_pipeline: pipeline is null");
-
-        auto* ctx = s_recording_context;
-        VkCommandBuffer cmd = ctx->get_recording_cmd();
-
-        VkPipeline    vk_pipeline = reinterpret_cast<VkPipeline>(pipeline->get_native_pipeline());
-        VkPipelineLayout layout   = reinterpret_cast<VkPipelineLayout>(pipeline->get_native_pipeline_layout());
-
-        HN_CORE_ASSERT(vk_pipeline, "VulkanRendererAPI::bind_pipeline: native VkPipeline is null");
-        HN_CORE_ASSERT(layout,      "VulkanRendererAPI::bind_pipeline: native VkPipelineLayout is null");
-
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vk_pipeline);
-
-        const VkExtent2D ext = ctx->get_current_pass_extent();
-        VkViewport viewport{};
-        viewport.x = 0.0f; viewport.y = 0.0f;
-        viewport.width  = static_cast<float>(ext.width);
-        viewport.height = static_cast<float>(ext.height);
-        viewport.minDepth = 0.0f; viewport.maxDepth = 1.0f;
-        vkCmdSetViewport(cmd, 0, 1, &viewport);
-
-        VkRect2D scissor{};
-        scissor.offset = { 0, 0 };
-        scissor.extent = { ext.width, ext.height };
-        vkCmdSetScissor(cmd, 0, 1, &scissor);
-
-        ctx->set_current_pipeline_layout(layout);
-    }
-
-    void VulkanRendererAPI::bind_heap_pipeline(const Ref<Pipeline>& pipeline) {
         require_frame_begun();
         HN_CORE_ASSERT(pipeline, "[VulkanRendererAPI] heap-mode pipeline is null");
         auto* ctx = s_recording_context;
@@ -231,24 +196,6 @@ namespace Honey {
         return bufs.meshlet_blocks[slot].offset;
     }
 
-    void VulkanRendererAPI::submit_instanced_draw(
-        const Ref<VertexArray>& vertex_array,
-        const Ref<VertexBuffer>& instance_vb,
-        uint32_t index_count,
-        uint32_t instance_count,
-        uint32_t instance_byte_offset
-    ) {
-        require_frame_begun();
-        HN_CORE_ASSERT(vertex_array, "submit_instanced_draw: vertex_array is null");
-        HN_CORE_ASSERT(instance_vb, "submit_instanced_draw: instance_vb is null");
-        HN_CORE_ASSERT(instance_count > 0, "submit_instanced_draw: instance_count must be > 0");
-        HN_CORE_ASSERT((instance_byte_offset % 4u) == 0u, "submit_instanced_draw: instance_byte_offset must be 4-byte aligned");
-
-        do_draw_indexed(s_recording_context->get_recording_cmd(),
-                        vertex_array, index_count, instance_count,
-                        &instance_vb, &instance_byte_offset, 1);
-    }
-
     void VulkanRendererAPI::set_wireframe(bool) {
         if (auto* vk = get_vulkan_context())
             vk->mark_pipeline_dirty();
@@ -327,49 +274,12 @@ namespace Honey {
         p.hasCamera = true;
     }
 
-    void VulkanRendererAPI::flush_globals() {
-        require_frame_begun();
-        auto* ctx = s_recording_context;
-        auto& p   = ctx->pending_globals();
-
-        ctx->apply_pending_globals(ctx->get_recording_cmd(),
-                                   ctx->get_current_pipeline_layout(),
-                                   ctx->get_current_frame(), p);
-
-        p.hasCamera    = false;
-        p.hasTextures  = false;
-        p.textureCount = 0;
-        p.textures     = {};
-    }
-
     void VulkanRendererAPI::flush_globals_to_heap() {
         require_frame_begun();
         auto* ctx = s_recording_context;
         HN_CORE_ASSERT(ctx->pending_globals().hasCamera, "flush_globals_heap: no camera submitted");
         ctx->flush_globals_to_heap();   // writes all 5 globals into the host-side globals state
         ctx->pending_globals().hasCamera = false;
-    }
-
-    void VulkanRendererAPI::submit_bound_textures(const std::array<void*, k_max_texture_slots>& textures, uint32_t texture_count) {
-        require_frame_begun();
-        auto& p = s_recording_context->pending_globals();
-
-        HN_CORE_ASSERT(texture_count > 0, "VulkanRendererAPI::submit_bound_textures called with texture_count == 0");
-        HN_CORE_ASSERT(texture_count <= k_max_texture_slots,
-                       "VulkanRendererAPI::submit_bound_textures texture_count ({0}) exceeds k_max_texture_slots ({1})",
-                       texture_count, k_max_texture_slots);
-        HN_CORE_ASSERT(textures[0],
-                       "VulkanRendererAPI::submit_bound_textures requires textures[0] to be a valid fallback (e.g. white texture)");
-
-        void* fallback = textures[0];
-
-        p.textures.resize(texture_count);
-        for (uint32_t i = 0; i < texture_count; ++i) {
-            p.textures[i] = textures[i] ? textures[i] : fallback;
-        }
-
-        p.textureCount = texture_count;
-        p.hasTextures = true;
     }
 
     void VulkanRendererAPI::submit_push_constants_mat4(const glm::mat4& value) {
@@ -389,21 +299,6 @@ namespace Honey {
         HN_CORE_ASSERT(layout != VK_NULL_HANDLE,
             "submit_push_constants: no pipeline layout bound yet. Call bind_pipeline() first.");
         vkCmdPushConstants(cmd, layout, stageFlags, offset, size, data);
-    }
-
-    bool VulkanRendererAPI::consume_bound_textures(std::array<void*, k_max_texture_slots>& out_textures, uint32_t& out_texture_count) {
-        auto& p = s_recording_context->pending_globals();
-        if (!p.hasTextures)
-            return false;
-
-        out_texture_count = p.textureCount;
-        for (uint32_t i = 0; i < p.textureCount; ++i)
-            out_textures[i] = p.textures[i];
-
-        p.hasTextures = false;
-        p.textures.clear();
-        p.textureCount = 0;
-        return true;
     }
 
     void VulkanRendererAPI::submit_lights(const LightsUBO& lights) {

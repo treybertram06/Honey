@@ -34,10 +34,7 @@ namespace Honey {
         VulkanBackend* get_backend() const { return m_backend; }
         VkDevice get_device() const { return m_device; }
         VkPhysicalDevice get_physical_device() const { return m_physical_device; }
-        VkDescriptorSetLayout get_global_set_layout() const { return m_global_set_layout; }
         VkDescriptorSetLayout get_font_set_layout()   const { return m_font_set_layout; }
-        // Returns the frame's global descriptor set (chunk 0; shadow draw uses it to access binding 6).
-        VkDescriptorSet get_global_descriptor_set(uint32_t frame) const { return m_global_descriptor_sets[frame][0]; }
         // Returns the font SSBO descriptor set for the given frame (all chunk sets are identical).
         VkDescriptorSet get_font_descriptor_set(uint32_t frame) const { return m_fonts_descriptor_sets[frame][0]; }
 
@@ -163,11 +160,6 @@ namespace Honey {
         VkPipelineLayout get_current_pipeline_layout() const { return m_current_pipeline_layout; }
         void set_current_pipeline_layout(VkPipelineLayout layout) { m_current_pipeline_layout = layout; }
 
-        // Uploads UBOs, updates the global descriptor set, and records vkCmdBindDescriptorSets.
-        // Called directly by VulkanRendererAPI::flush_globals() in the direct-recording path.
-        void apply_pending_globals(VkCommandBuffer cmd, VkPipelineLayout layout, uint32_t frame,
-                                   const PendingGlobals& g);
-
         uint32_t get_swapchain_image_format() const { return m_swapchain_image_format; }
         uint32_t get_swapchain_extent_width()  const { return m_swapchain_extent_width; }
         uint32_t get_swapchain_extent_height() const { return m_swapchain_extent_height; }
@@ -219,10 +211,16 @@ namespace Honey {
 
         void destroy();
 
-        void create_global_descriptor_resources();
-        void cleanup_global_descriptor_resources();
         void create_global_descriptor_heap_resources();
         void cleanup_global_descriptor_heap_resources();
+
+        // Per-frame host-visible buffers the heap path still sources from: the materials SSBO
+        // (bound into the heap by device address, see write_materials_heap_binding) and the
+        // shadow-matrix SSBOs (upload_shadow_matrices / upload_directional_shadows gate their
+        // m_globals_cpu mirror writes on these existing). Survivors of the classic descriptor
+        // machinery — to be re-homed by the full heap migration.
+        void create_global_buffer_resources();
+        void cleanup_global_buffer_resources();
 
         // Records the staging -> m_globals_buffer upload at the top of the frame's command buffer.
         void record_globals_upload(VkCommandBuffer cmd);
@@ -329,12 +327,6 @@ private:
         void* m_curve_ubos[k_max_frames_in_flight]{};        // VkBuffer
         void* m_curve_ubo_memories[k_max_frames_in_flight]{}; // VkDeviceMemory
         uint32_t m_curve_ubo_size = 0;
-
-
-        VkDescriptorSetLayout m_global_set_layout = nullptr;
-        VkDescriptorPool m_descriptor_pool = nullptr;
-        VkDescriptorSet m_global_descriptor_sets[k_max_frames_in_flight][k_max_chunks_per_frame]{};
-        uint32_t m_chunk_ds_index[k_max_frames_in_flight]{};
 
         // Set-0 globals for heap-mode pipelines. m_globals_buffer is DEVICE_LOCAL and its device
         // address is baked into the descriptor-heap slots once at init (and from there into every

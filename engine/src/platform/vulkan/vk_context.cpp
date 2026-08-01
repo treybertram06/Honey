@@ -399,320 +399,93 @@ namespace Honey {
         m_framebuffer_resized = false;
     }
 
-    void VulkanContext::create_global_descriptor_resources() {
+    void VulkanContext::create_global_buffer_resources() {
         HN_PROFILE_FUNCTION();
-        HN_CORE_ASSERT(m_device && m_physical_device, "create_global_descriptor_resources called without device");
+        HN_CORE_ASSERT(m_device && m_physical_device, "create_global_buffer_resources called without device");
 
-        uint16_t binding_index = 0;
-        // Descriptor set layout: set=0
-        // binding 0 => camera UBO (vertex)
-        VkDescriptorSetLayoutBinding camera_ubo_binding{};
-        camera_ubo_binding.binding = binding_index++;
-        camera_ubo_binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        camera_ubo_binding.descriptorCount = 1;
-        camera_ubo_binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
-                                       | VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT;
-
-        // binding 1 => lights UBO
-        VkDescriptorSetLayoutBinding lights_ubo_binding{};
-        lights_ubo_binding.binding = binding_index++;
-        lights_ubo_binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        lights_ubo_binding.descriptorCount = 1;
-        lights_ubo_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-        // binding 2 => materials SSBO
-        VkDescriptorSetLayoutBinding material_ssbo_binding{};
-        material_ssbo_binding.binding = binding_index++;
-        material_ssbo_binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        material_ssbo_binding.descriptorCount = 1;
-        material_ssbo_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-        // binding 3 => sampler (fragment)
-        VkDescriptorSetLayoutBinding sampler_binding{};
-        sampler_binding.binding = binding_index++;
-        sampler_binding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
-        sampler_binding.descriptorCount = 1;
-        sampler_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-        // binding 4 => texture array (sampled images, fragment)
-        // With variable descriptor count: descriptorCount here is the MAX.
-        VkDescriptorSetLayoutBinding tex_binding{};
-        tex_binding.binding = binding_index++;
-        tex_binding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-        tex_binding.descriptorCount = VulkanRendererAPI::k_max_texture_slots;
-        tex_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-        // binding 5 => tiled lighting SSBO (fragment)
-        VkDescriptorSetLayoutBinding tiled_lighting_binding{};
-        tiled_lighting_binding.binding = binding_index++;
-        tiled_lighting_binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        tiled_lighting_binding.descriptorCount = 1;
-        tiled_lighting_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-        // binding 6 => shadow matrices SSBO (fragment + mesh/task for shadow draw shader)
-        VkDescriptorSetLayoutBinding shadow_matrices_binding{};
-        shadow_matrices_binding.binding = binding_index++;
-        shadow_matrices_binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        shadow_matrices_binding.descriptorCount = 1;
-        shadow_matrices_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT
-                                           | VK_SHADER_STAGE_TASK_BIT_EXT
-                                           | VK_SHADER_STAGE_MESH_BIT_EXT;
-
-        // binding 7 => directional light shadow matrices SSBO (fragment + mesh/task for shadow draw shader)
-        VkDescriptorSetLayoutBinding dir_shadow_matrices_binding{};
-        dir_shadow_matrices_binding.binding = binding_index++;
-        dir_shadow_matrices_binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        dir_shadow_matrices_binding.descriptorCount = 1;
-        dir_shadow_matrices_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT
-                                           | VK_SHADER_STAGE_TASK_BIT_EXT
-                                           | VK_SHADER_STAGE_MESH_BIT_EXT;
-
-        // binding 8 => shadow cubemap array comparison sampler (fragment — forward pass shadow lookup)
-        VkDescriptorSetLayoutBinding shadow_cubemap_binding{};
-        shadow_cubemap_binding.binding         = binding_index++;
-        shadow_cubemap_binding.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        shadow_cubemap_binding.descriptorCount = 1;
-        shadow_cubemap_binding.stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-        // binding 9 => directional shadow map 2D array comparison sampler (fragment — forward pass shadow lookup)
-        VkDescriptorSetLayoutBinding dir_shadow_map_binding{};
-        dir_shadow_map_binding.binding         = binding_index++;
-        dir_shadow_map_binding.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        dir_shadow_map_binding.descriptorCount = 1;
-        dir_shadow_map_binding.stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-        VkDescriptorSetLayoutBinding bindings[] = {
-            camera_ubo_binding,
-            lights_ubo_binding,
-            material_ssbo_binding,
-            sampler_binding,
-            tex_binding,
-            tiled_lighting_binding,
-            shadow_matrices_binding,
-            dir_shadow_matrices_binding,
-            shadow_cubemap_binding,
-            dir_shadow_map_binding
-        };
-
-        // ---- Descriptor indexing / bindless binding flags (variable descriptor count) ----
-        VkDescriptorBindingFlags binding_flags[10]{};
-        binding_flags[0] = 0; // Camera UBO
-        binding_flags[1] = 0; // Lights UBO
-        binding_flags[2] = 0; // Material SSBO
-        binding_flags[3] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT; // sampler
-        binding_flags[4] = // tex
-            VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
-            VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
-        binding_flags[5] = 0; // Tiled lighting SSBO
-        binding_flags[6] = 0; // Shadow matrices SSBO
-        binding_flags[7] = 0; // Directional shadow SSBO
-        binding_flags[8] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT; // Shadow cubemap sampler
-        binding_flags[9] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT; // Directional shadow map sampler
-
-        HN_CORE_ASSERT(sizeof(binding_flags) / sizeof(VkDescriptorBindingFlags) == binding_index &&
-            sizeof(bindings) / sizeof(VkDescriptorSetLayoutBinding) == binding_index, "Inconsistency in "
-        "binding count and binding flags! You likely forgot to update one of them when adding a new binding.");
-
-        VkDescriptorSetLayoutBindingFlagsCreateInfo binding_flags_ci{};
-        binding_flags_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
-        binding_flags_ci.bindingCount = binding_index;
-        binding_flags_ci.pBindingFlags = binding_flags;
-
-        VkDescriptorSetLayoutCreateInfo layout_ci{};
-        layout_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        layout_ci.pNext = &binding_flags_ci;
-        layout_ci.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
-        layout_ci.bindingCount = binding_index;
-        layout_ci.pBindings = bindings;
-
-        {
-            VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
-            VkResult r = vkCreateDescriptorSetLayout(reinterpret_cast<VkDevice>(m_device), &layout_ci, nullptr, &set_layout);
-            HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateDescriptorSetLayout failed");
-            m_global_set_layout = reinterpret_cast<VkDescriptorSetLayout>(set_layout);
-
-            // Descriptor pool sized for frames-in-flight:
-            VkDescriptorPoolSize pool_sizes[10]{};
-            HN_CORE_ASSERT(sizeof(pool_sizes) / sizeof(VkDescriptorPoolSize) == binding_index,
-                "Inconsistency in descriptor pool size!");
-
-            // Camera UBO (binding 0)
-            pool_sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            pool_sizes[0].descriptorCount = k_max_frames_in_flight * k_max_chunks_per_frame;
-
-            // Lights UBO (binding 1)
-            pool_sizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            pool_sizes[1].descriptorCount = k_max_frames_in_flight * k_max_chunks_per_frame;
-
-            // Materials SSBO (binding 2)
-            pool_sizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            pool_sizes[2].descriptorCount = k_max_frames_in_flight * k_max_chunks_per_frame;
-
-            // Samplers (binding 3)
-            pool_sizes[3].type = VK_DESCRIPTOR_TYPE_SAMPLER;
-            pool_sizes[3].descriptorCount = k_max_frames_in_flight * k_max_chunks_per_frame;
-
-            // Sampled images (binding 4)
-            // Pool must cover the MAX possible descriptors you may allocate across sets.
-            pool_sizes[4].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-            pool_sizes[4].descriptorCount = k_max_frames_in_flight * k_max_chunks_per_frame * VulkanRendererAPI::k_max_texture_slots;
-
-            // Tiled lighting SSBO (binding 5)
-            pool_sizes[5].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            pool_sizes[5].descriptorCount = k_max_frames_in_flight * k_max_chunks_per_frame;
-
-            // Shadow matrices SSBO (binding 6)
-            pool_sizes[6].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            pool_sizes[6].descriptorCount = k_max_frames_in_flight * k_max_chunks_per_frame;
-
-            // Directional shadow SSBO (binding 7)
-            pool_sizes[7].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            pool_sizes[7].descriptorCount = k_max_frames_in_flight * k_max_chunks_per_frame;
-
-            // Shadow cubemap comparison sampler (binding 8)
-            pool_sizes[8].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            pool_sizes[8].descriptorCount = k_max_frames_in_flight * k_max_chunks_per_frame;
-
-            // Directional shadow map comparison sampler (binding 9)
-            pool_sizes[9].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            pool_sizes[9].descriptorCount = k_max_frames_in_flight * k_max_chunks_per_frame;
-
-            VkDescriptorPoolCreateInfo pool_ci{};
-            pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-            pool_ci.maxSets = k_max_frames_in_flight * k_max_chunks_per_frame;
-            pool_ci.poolSizeCount = sizeof(pool_sizes) / sizeof(VkDescriptorPoolSize);
-            pool_ci.pPoolSizes = pool_sizes;
-            pool_ci.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
-
-            // Required for UPDATE_AFTER_BIND descriptors/layouts
-            //pool_ci.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
-
-            VkDescriptorPool pool = VK_NULL_HANDLE;
-            r = vkCreateDescriptorPool(reinterpret_cast<VkDevice>(m_device), &pool_ci, nullptr, &pool);
-            HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateDescriptorPool failed");
-            m_descriptor_pool = reinterpret_cast<VkDescriptorPool>(pool);
-        }
-
-        // Create per-frame UBO + allocate per-frame descriptor sets
-        m_camera_ubo_size = sizeof(CameraUBO);
-        m_lights_ubo_size = sizeof(LightsUBO);
         m_materials_ssbo_size = sizeof(GPUMaterial) * k_max_material_count;
-        m_tiled_lighting_ssbo_size = sizeof(TiledLightingData);
         m_shadow_matrices_ssbo_size = sizeof(ShadowMatricesSSBO);
         m_dir_shadow_ssbo_size = sizeof(DirectionalShadowSSBO);
 
-        const uint32_t total_sets = k_max_frames_in_flight * k_max_chunks_per_frame;
+        auto create_buffer_for_frame = [&](std::string name,
+            uint32_t frame,
+            void** buffers,
+            void** memories,
+            uint32_t size,
+            VkBufferUsageFlags usage,
+            bool needs_device_address = false) {
+            VkBufferCreateInfo bi{};
+            bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+            bi.size = size;
+            bi.usage = usage | (needs_device_address ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0);
+            bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-        std::vector<VkDescriptorSetLayout> layouts(total_sets,
-            reinterpret_cast<VkDescriptorSetLayout>(m_global_set_layout));
+            VkBuffer buffer = VK_NULL_HANDLE;
+            VkResult r = vkCreateBuffer(reinterpret_cast<VkDevice>(m_device), &bi, nullptr, &buffer);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateBuffer ({0} buffer) failed", name);
 
-        std::vector<uint32_t> tex_capacities(total_sets, VulkanRendererAPI::k_max_texture_slots);
+            VkMemoryRequirements req{};
+            vkGetBufferMemoryRequirements(reinterpret_cast<VkDevice>(m_device), buffer, &req);
 
-        VkDescriptorSetVariableDescriptorCountAllocateInfo var_alloc{};
-        var_alloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO;
-        var_alloc.descriptorSetCount = total_sets;
-        var_alloc.pDescriptorCounts = tex_capacities.data();
+            VkMemoryAllocateFlagsInfo flags{};
+            flags.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+            flags.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
 
-        VkDescriptorSetAllocateInfo alloc{};
-        alloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-        alloc.pNext = &var_alloc;
-        alloc.descriptorPool = reinterpret_cast<VkDescriptorPool>(m_descriptor_pool);
-        alloc.descriptorSetCount = total_sets;
-        alloc.pSetLayouts = layouts.data();
-        {
-            std::vector<VkDescriptorSet> sets(total_sets);
-            VkResult r = vkAllocateDescriptorSets(reinterpret_cast<VkDevice>(m_device), &alloc, sets.data());
-            HN_CORE_ASSERT(r == VK_SUCCESS, "vkAllocateDescriptorSets failed");
+            VkMemoryAllocateInfo ai{};
+            ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+            ai.allocationSize = req.size;
+            ai.memoryTypeIndex = find_memory_type_local(
+                reinterpret_cast<VkPhysicalDevice>(m_physical_device),
+                req.memoryTypeBits,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+            );
+            ai.pNext = needs_device_address ? &flags : nullptr;
 
-            // Store allocated sets into the 2D per-frame/per-chunk array
-            for (uint32_t f = 0; f < k_max_frames_in_flight; ++f)
-                for (uint32_t c = 0; c < k_max_chunks_per_frame; ++c)
-                    m_global_descriptor_sets[f][c] = sets[f * k_max_chunks_per_frame + c];
+            VkDeviceMemory mem = VK_NULL_HANDLE;
+            r = vkAllocateMemory(reinterpret_cast<VkDevice>(m_device), &ai, nullptr, &mem);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "vkAllocateMemory ({0} buffer) failed", name);
 
-            auto create_buffer_for_frame = [&](std::string name,
-                uint32_t frame,
-                void** ubos,
-                void** ubo_memories,
-                uint32_t ubo_size,
-                uint32_t dst_binding,
-                VkBufferUsageFlags usage,
-                VkDescriptorType descriptor_type,
-                bool needs_device_address = false) {
-                // Create buffer for this frame
-                VkBufferCreateInfo bi{};
-                bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-                bi.size = ubo_size;
-                bi.usage = usage | (needs_device_address ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0);
-                bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            r = vkBindBufferMemory(reinterpret_cast<VkDevice>(m_device), buffer, mem, 0);
+            HN_CORE_ASSERT(r == VK_SUCCESS, "vkBindBufferMemory ({0} buffer) failed", name);
 
-                VkBuffer ubo = VK_NULL_HANDLE;
-                r = vkCreateBuffer(reinterpret_cast<VkDevice>(m_device), &bi, nullptr, &ubo);
-                HN_CORE_ASSERT(r == VK_SUCCESS, "vkCreateBuffer ({0} ubo) failed", name);
+            buffers[frame] = reinterpret_cast<void*>(buffer);
+            memories[frame] = reinterpret_cast<void*>(mem);
+        };
 
-                VkMemoryRequirements req{};
-                vkGetBufferMemoryRequirements(reinterpret_cast<VkDevice>(m_device), ubo, &req);
-
-                VkMemoryAllocateFlagsInfo flags{};
-                flags.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
-                flags.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
-
-                VkMemoryAllocateInfo ai{};
-                ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-                ai.allocationSize = req.size;
-                ai.memoryTypeIndex = find_memory_type_local(
-                    reinterpret_cast<VkPhysicalDevice>(m_physical_device),
-                    req.memoryTypeBits,
-                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
-                );
-                ai.pNext = needs_device_address ? &flags : nullptr;
-
-                VkDeviceMemory mem = VK_NULL_HANDLE;
-                r = vkAllocateMemory(reinterpret_cast<VkDevice>(m_device), &ai, nullptr, &mem);
-                HN_CORE_ASSERT(r == VK_SUCCESS, "vkAllocateMemory ({0} ubo) failed", name);
-
-                r = vkBindBufferMemory(reinterpret_cast<VkDevice>(m_device), ubo, mem, 0);
-                HN_CORE_ASSERT(r == VK_SUCCESS, "vkBindBufferMemory ({0} ubo) failed", name);
-
-                ubos[frame] = reinterpret_cast<void*>(ubo);
-                ubo_memories[frame] = reinterpret_cast<void*>(mem);
-
-                // Write this buffer binding to ALL chunk sets for this frame.
-                // Camera, lights, and materials are per-frame buffers shared across
-                // all chunks — every chunk descriptor set must point at the same buffer.
-                VkDescriptorBufferInfo dbi{};
-                dbi.buffer = ubo;
-                dbi.offset = 0;
-                dbi.range = ubo_size;
-
-                VkWriteDescriptorSet write_ubo{};
-                write_ubo.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                write_ubo.dstBinding = dst_binding;
-                write_ubo.dstArrayElement = 0;
-                write_ubo.descriptorType = descriptor_type;
-                write_ubo.descriptorCount = 1;
-                write_ubo.pBufferInfo = &dbi;
-
-                for (uint32_t c = 0; c < k_max_chunks_per_frame; ++c) {
-                    write_ubo.dstSet = m_global_descriptor_sets[frame][c];
-                    vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(m_device), 1, &write_ubo, 0, nullptr);
-                }
-            };
-
-            for (uint32_t frame = 0; frame < k_max_frames_in_flight; ++frame) {
-                create_buffer_for_frame("camera", frame, m_camera_ubos, m_camera_ubo_memories,
-                    m_camera_ubo_size, 0, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-                create_buffer_for_frame("lights", frame, m_lights_ubos, m_lights_ubo_memories,
-                    m_lights_ubo_size, 1, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-                create_buffer_for_frame("materials", frame, m_materials_ssbo, m_materials_ssbo_memories,
-                    m_materials_ssbo_size, 2, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, true);
-                create_buffer_for_frame("tiled_lighting", frame, m_tiled_lighting_ssbos, m_tiled_lighting_ssbo_memories,
-                    m_tiled_lighting_ssbo_size, 5, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-                create_buffer_for_frame("shadow_matrices", frame, m_shadow_matrices_ssbos, m_shadow_matrices_ssbo_memories,
-                    m_shadow_matrices_ssbo_size, 6, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-                create_buffer_for_frame("dir_shadow_matrices", frame, m_dir_shadow_ssbos, m_dir_shadow_ssbo_memories,
-                    m_dir_shadow_ssbo_size, 7, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-            }
+        for (uint32_t frame = 0; frame < k_max_frames_in_flight; ++frame) {
+            create_buffer_for_frame("materials", frame, m_materials_ssbo, m_materials_ssbo_memories,
+                m_materials_ssbo_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true);
+            create_buffer_for_frame("shadow_matrices", frame, m_shadow_matrices_ssbos, m_shadow_matrices_ssbo_memories,
+                m_shadow_matrices_ssbo_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+            create_buffer_for_frame("dir_shadow_matrices", frame, m_dir_shadow_ssbos, m_dir_shadow_ssbo_memories,
+                m_dir_shadow_ssbo_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
         }
+    }
+
+    void VulkanContext::cleanup_global_buffer_resources() {
+        HN_PROFILE_FUNCTION();
+        if (!m_device) return;
+
+        auto destroy_buffer_for_frame = [&](void** buffers, void** memories, uint32_t frame) {
+            if (buffers[frame]) {
+                vkDestroyBuffer(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkBuffer>(buffers[frame]), nullptr);
+                buffers[frame] = nullptr;
+            }
+            if (memories[frame]) {
+                vkFreeMemory(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkDeviceMemory>(memories[frame]), nullptr);
+                memories[frame] = nullptr;
+            }
+        };
+
+        for (uint32_t frame = 0; frame < k_max_frames_in_flight; ++frame) {
+            destroy_buffer_for_frame(m_materials_ssbo, m_materials_ssbo_memories, frame);
+            destroy_buffer_for_frame(m_shadow_matrices_ssbos, m_shadow_matrices_ssbo_memories, frame);
+            destroy_buffer_for_frame(m_dir_shadow_ssbos, m_dir_shadow_ssbo_memories, frame);
+        }
+
+        m_materials_ssbo_size = 0;
+        m_shadow_matrices_ssbo_size = 0;
+        m_dir_shadow_ssbo_size = 0;
     }
 
     void VulkanContext::create_font_descriptor_resources() {
@@ -962,84 +735,6 @@ namespace Honey {
         }
     }
 
-    void VulkanContext::cleanup_global_descriptor_resources() {
-        HN_PROFILE_FUNCTION();
-        if (!m_device) return;
-
-        for (uint32_t frame = 0; frame < k_max_frames_in_flight; ++frame) {
-            if (m_camera_ubos[frame]) {
-                vkDestroyBuffer(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkBuffer>(m_camera_ubos[frame]), nullptr);
-                m_camera_ubos[frame] = nullptr;
-            }
-            if (m_camera_ubo_memories[frame]) {
-                vkFreeMemory(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkDeviceMemory>(m_camera_ubo_memories[frame]), nullptr);
-                m_camera_ubo_memories[frame] = nullptr;
-            }
-
-            if (m_lights_ubos[frame]) {
-                vkDestroyBuffer(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkBuffer>(m_lights_ubos[frame]), nullptr);
-                m_lights_ubos[frame] = nullptr;
-            }
-            if (m_lights_ubo_memories[frame]) {
-                vkFreeMemory(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkDeviceMemory>(m_lights_ubo_memories[frame]), nullptr);
-                m_lights_ubo_memories[frame] = nullptr;
-            }
-
-            if (m_materials_ssbo[frame]) {
-                vkDestroyBuffer(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkBuffer>(m_materials_ssbo[frame]), nullptr);
-                m_materials_ssbo[frame] = nullptr;
-            }
-            if (m_materials_ssbo_memories[frame]) {
-                vkFreeMemory(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkDeviceMemory>(m_materials_ssbo_memories[frame]), nullptr);
-                m_materials_ssbo_memories[frame] = nullptr;
-            }
-
-            if (m_tiled_lighting_ssbos[frame]) {
-                vkDestroyBuffer(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkBuffer>(m_tiled_lighting_ssbos[frame]), nullptr);
-                m_tiled_lighting_ssbos[frame] = nullptr;
-            }
-            if (m_tiled_lighting_ssbo_memories[frame]) {
-                vkFreeMemory(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkDeviceMemory>(m_tiled_lighting_ssbo_memories[frame]), nullptr);
-                m_tiled_lighting_ssbo_memories[frame] = nullptr;
-            }
-
-            if (m_shadow_matrices_ssbos[frame]) {
-                vkDestroyBuffer(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkBuffer>(m_shadow_matrices_ssbos[frame]), nullptr);
-                m_shadow_matrices_ssbos[frame] = nullptr;
-            }
-            if (m_shadow_matrices_ssbo_memories[frame]) {
-                vkFreeMemory(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkDeviceMemory>(m_shadow_matrices_ssbo_memories[frame]), nullptr);
-                m_shadow_matrices_ssbo_memories[frame] = nullptr;
-            }
-
-            if (m_dir_shadow_ssbos[frame]) {
-                vkDestroyBuffer(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkBuffer>(m_dir_shadow_ssbos[frame]), nullptr);
-                m_dir_shadow_ssbos[frame] = nullptr;
-            }
-            if (m_dir_shadow_ssbo_memories[frame]) {
-                vkFreeMemory(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkDeviceMemory>(m_dir_shadow_ssbo_memories[frame]), nullptr);
-                m_dir_shadow_ssbo_memories[frame] = nullptr;
-            }
-
-            for (uint32_t c = 0; c < k_max_chunks_per_frame; ++c)
-                m_global_descriptor_sets[frame][c] = VK_NULL_HANDLE;
-        }
-
-        m_camera_ubo_size = 0;
-        m_lights_ubo_size = 0;
-        m_materials_ssbo_size = 0;
-        m_tiled_lighting_ssbo_size = 0;
-
-        if (m_descriptor_pool) {
-            vkDestroyDescriptorPool(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkDescriptorPool>(m_descriptor_pool), nullptr);
-            m_descriptor_pool = nullptr;
-        }
-        if (m_global_set_layout) {
-            vkDestroyDescriptorSetLayout(reinterpret_cast<VkDevice>(m_device), reinterpret_cast<VkDescriptorSetLayout>(m_global_set_layout), nullptr);
-            m_global_set_layout = nullptr;
-        }
-    }
-
     void VulkanContext::create_global_descriptor_heap_resources() {
         const VkDevice dev = reinterpret_cast<VkDevice>(m_device);
 
@@ -1269,26 +964,6 @@ namespace Honey {
         }
     }
 
-    void VulkanContext::set_shadow_cubemap_resources(VkImageView cube_array_view, VkSampler comparison_sampler) {
-        // Write into the global descriptor set (set=0, binding 8) for the forward pass.
-        if (!cube_array_view || !comparison_sampler) return;
-        VkDescriptorImageInfo img{};
-        img.sampler     = comparison_sampler;
-        img.imageView   = cube_array_view;
-        img.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-        for (uint32_t f = 0; f < k_max_frames_in_flight; ++f) {
-            for (uint32_t c = 0; c < k_max_chunks_per_frame; ++c) {
-                VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-                w.dstSet          = m_global_descriptor_sets[f][c];
-                w.dstBinding      = 8;
-                w.descriptorCount = 1;
-                w.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-                w.pImageInfo      = &img;
-                vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(m_device), 1, &w, 0, nullptr);
-            }
-        }
-    }
-
     void VulkanContext::upload_directional_shadows(uint32_t frame, const DirectionalShadowSSBO& data) {
         HN_CORE_ASSERT(frame < k_max_frames_in_flight, "upload_directional_shadows: frame index out of range");
         if (!m_dir_shadow_ssbo_memories[frame]) return;
@@ -1306,26 +981,6 @@ namespace Honey {
         if (!m_globals_cpu.empty()) {
             std::memcpy(m_globals_cpu.data() + m_globals_layout.offset[(size_t)GlobalBinding::DirShadow],
                         &data, sizeof(DirectionalShadowSSBO));
-        }
-    }
-
-    void VulkanContext::set_dir_shadow_resources(VkImageView cube_array_view, VkSampler comparison_sampler) {
-        // Write into the global descriptor set (set=0, binding 9) for the forward pass.
-        if (!cube_array_view || !comparison_sampler) return;
-        VkDescriptorImageInfo img{};
-        img.sampler     = comparison_sampler;
-        img.imageView   = cube_array_view;
-        img.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-        for (uint32_t f = 0; f < k_max_frames_in_flight; ++f) {
-            for (uint32_t c = 0; c < k_max_chunks_per_frame; ++c) {
-                VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-                w.dstSet          = m_global_descriptor_sets[f][c];
-                w.dstBinding      = 9;
-                w.descriptorCount = 1;
-                w.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-                w.pImageInfo      = &img;
-                vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(m_device), 1, &w, 0, nullptr);
-            }
         }
     }
 
@@ -1406,7 +1061,7 @@ namespace Honey {
         vkGetPhysicalDeviceProperties(m_physical_device, &physical_device_properties);
         m_globals_layout = GlobalsLayout::build(physical_device_properties.limits);
 
-        create_global_descriptor_resources();
+        create_global_buffer_resources();
         create_global_descriptor_heap_resources();
         create_font_descriptor_resources();
 
@@ -1459,7 +1114,6 @@ namespace Honey {
         m_last_bound_textures_valid[m_current_frame] = false;
         m_last_bound_texture_count[m_current_frame] = 0;
         m_last_bound_textures[m_current_frame] = {};
-        m_chunk_ds_index[m_current_frame] = 0;
 
         VkFence in_flight = m_in_flight_fences[m_current_frame];
         {
@@ -1549,7 +1203,7 @@ namespace Honey {
                 if (image_index < m_timestamp_valid.size())
                     m_timestamp_valid[image_index] = false;
             }
-        }
+                }
 
         vkResetFences(reinterpret_cast<VkDevice>(m_device), 1, &in_flight);
 
@@ -1589,7 +1243,7 @@ namespace Honey {
         m_pending_globals.reset();
     }
 
-   void VulkanContext::end_frame_recording() {
+    void VulkanContext::end_frame_recording() {
         assert_render_thread();
 
         if (!m_recording_active)
@@ -2055,151 +1709,6 @@ namespace Honey {
 
     void VulkanContext::cancel_pending_custom_vulkan_cmds() {
         // No-op: callbacks now fire immediately in queue_custom_vulkan_cmd.
-    }
-
-    void VulkanContext::apply_pending_globals(VkCommandBuffer cmd, VkPipelineLayout activeLayout,
-                                              uint32_t frame,
-                                              const PendingGlobals& g)
-    {
-        HN_CORE_ASSERT(activeLayout != VK_NULL_HANDLE, "apply_pending_globals: active pipeline layout is null");
-
-        HN_CORE_ASSERT(m_chunk_ds_index[frame] < k_max_chunks_per_frame,
-                       "Renderer3D: exceeded k_max_chunks_per_frame ({0}) — increase it in vk_context.h",
-                       k_max_chunks_per_frame);
-        VkDescriptorSet ds = m_global_descriptor_sets[frame][m_chunk_ds_index[frame]++];
-
-        // Camera UBO
-        if (g.hasCamera && m_camera_ubo_memories[frame] && m_camera_ubo_size == sizeof(CameraUBO)) {
-
-            auto gpu_camera = make_gpu_camera(g.cameraUBO);
-
-            void* mapped = nullptr;
-            VkResult mr = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
-                                      reinterpret_cast<VkDeviceMemory>(m_camera_ubo_memories[frame]),
-                                      0, m_camera_ubo_size, 0, &mapped);
-            HN_CORE_ASSERT(mr == VK_SUCCESS, "vkMapMemory camera ubo failed");
-            std::memcpy(mapped, &gpu_camera, sizeof(CameraUBO));
-            vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
-                          reinterpret_cast<VkDeviceMemory>(m_camera_ubo_memories[frame]));
-        }
-
-        // Lights UBO
-        if (m_lights_ubo_memories[frame] && m_lights_ubo_size == sizeof(LightsUBO)) {
-            void* mapped = nullptr;
-            VkResult mr = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
-                                      reinterpret_cast<VkDeviceMemory>(m_lights_ubo_memories[frame]),
-                                      0, m_lights_ubo_size, 0, &mapped);
-            HN_CORE_ASSERT(mr == VK_SUCCESS, "vkMapMemory lights ubo failed");
-            std::memcpy(mapped, &g.lightUBO, sizeof(LightsUBO));
-            vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
-                          reinterpret_cast<VkDeviceMemory>(m_lights_ubo_memories[frame]));
-        }
-
-        // Tiled lighting SSBO
-        if (m_tiled_lighting_ssbo_memories[frame] && m_tiled_lighting_ssbo_size == sizeof(TiledLightingData)) {
-            void* mapped = nullptr;
-            VkResult mr = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
-                                      reinterpret_cast<VkDeviceMemory>(m_tiled_lighting_ssbo_memories[frame]),
-                                      0, m_tiled_lighting_ssbo_size, 0, &mapped);
-            HN_CORE_ASSERT(mr == VK_SUCCESS, "vkMapMemory tiled lighting ssbo failed");
-            std::memcpy(mapped, &g.tiledLighting, sizeof(TiledLightingData));
-            vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
-                          reinterpret_cast<VkDeviceMemory>(m_tiled_lighting_ssbo_memories[frame]));
-        }
-
-        // Materials SSBO
-        if (m_materials_ssbo_memories[frame] && m_materials_ssbo_size == sizeof(GPUMaterial) * k_max_material_count) {
-            void* mapped = nullptr;
-            VkResult mr = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
-                                      reinterpret_cast<VkDeviceMemory>(m_materials_ssbo_memories[frame]),
-                                      0, m_materials_ssbo_size, 0, &mapped);
-            HN_CORE_ASSERT(mr == VK_SUCCESS, "vkMapMemory materials ssbo failed");
-            const uint32_t copy_size = (uint32_t)(g.materials.size() * sizeof(GPUMaterial));
-            uint8_t* dest = static_cast<uint8_t*>(mapped) + (g.materials_ssbo_offset * sizeof(GPUMaterial));
-            HN_CORE_ASSERT(
-                g.materials_ssbo_offset + (uint32_t)g.materials.size() <= k_max_material_count,
-                "Materials SSBO overflow: offset {0} + count {1} exceeds capacity {2}",
-                g.materials_ssbo_offset, g.materials.size(), k_max_material_count
-            );
-            std::memcpy(dest, g.materials.data(), copy_size);
-            vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
-                          reinterpret_cast<VkDeviceMemory>(m_materials_ssbo_memories[frame]));
-        } else {
-            HN_CORE_ERROR("apply_pending_globals: materials ssbo is null or there's a size mismatch");
-        }
-
-        // Sampler + texture descriptors
-        if (g.hasTextures) {
-            HN_CORE_ASSERT(g.textureCount > 0,
-                           "Vulkan: apply_pending_globals hasTextures=true but textureCount == 0");
-            HN_CORE_ASSERT(g.textureCount <= VulkanRendererAPI::k_max_texture_slots,
-                           "Vulkan: textureCount ({0}) exceeds k_max_texture_slots ({1})",
-                           g.textureCount, VulkanRendererAPI::k_max_texture_slots);
-            HN_CORE_ASSERT(g.textures[0],
-                           "Vulkan: expected texture slot 0 to be present and non-null");
-
-            const uint32_t write_count = std::max(1u, g.textureCount);
-
-            void* fallback_raw = g.textures[0];
-            auto* white_vk = dynamic_cast<VulkanTexture2D*>(reinterpret_cast<Texture2D*>(fallback_raw));
-            HN_CORE_ASSERT(white_vk, "Vulkan: slot 0 texture is not a VulkanTexture2D");
-
-            VkSampler sampler_handle = VK_NULL_HANDLE;
-            auto& rs = Settings::get().renderer;
-            switch (rs.texture_filter) {
-            case RendererSettings::TextureFilter::nearest:      sampler_handle = m_backend->get_sampler_nearest(); break;
-            case RendererSettings::TextureFilter::linear:       sampler_handle = m_backend->get_sampler_linear(); break;
-            case RendererSettings::TextureFilter::anisotropic:  sampler_handle = m_backend->get_sampler_anisotropic(); break;
-            }
-            if (!sampler_handle) sampler_handle = m_backend->get_sampler_linear();
-
-            VkDescriptorImageInfo sampler_info{};
-            sampler_info.sampler = sampler_handle;
-
-            VkWriteDescriptorSet write_sampler{};
-            write_sampler.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            write_sampler.dstSet = ds;
-            write_sampler.dstBinding = 3;
-            write_sampler.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
-            write_sampler.descriptorCount = 1;
-            write_sampler.pImageInfo = &sampler_info;
-
-            std::vector<VkDescriptorImageInfo> infos(write_count);
-
-            for (uint32_t i = 0; i < write_count; ++i) {
-                void* rawPtr = (i < g.textureCount && g.textures[i]) ? g.textures[i] : fallback_raw;
-                auto* vktex = dynamic_cast<VulkanTexture2D*>(reinterpret_cast<Texture2D*>(rawPtr));
-                if (!vktex) vktex = white_vk;
-
-                const bool ready = vktex->is_ready_for_sampling();
-                const uint32_t image_layout = vktex->get_vk_image_layout();
-                if (!ready || image_layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-                    vktex = white_vk;
-
-                infos[i].imageView   = reinterpret_cast<VkImageView>(vktex->get_vk_image_view());
-                infos[i].imageLayout = static_cast<VkImageLayout>(vktex->get_vk_image_layout());
-                infos[i].sampler     = VK_NULL_HANDLE;
-            }
-
-            VkWriteDescriptorSet write_images{};
-            write_images.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            write_images.dstSet = ds;
-            write_images.dstBinding = 4;
-            write_images.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-            write_images.descriptorCount = write_count;
-            write_images.pImageInfo = infos.data();
-
-            VkWriteDescriptorSet writes[] = { write_sampler, write_images };
-            vkUpdateDescriptorSets(reinterpret_cast<VkDevice>(m_device),
-                                   static_cast<uint32_t>(std::size(writes)), writes, 0, nullptr);
-
-            m_last_bound_textures[frame]       = g.textures;
-            m_last_bound_texture_count[frame]  = write_count;
-            m_last_bound_textures_valid[frame] = true;
-        }
-
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, activeLayout,
-                                0, 1, &ds, 0, nullptr);
     }
 
     bool VulkanContext::submit_one_time_graphics(const std::function<void(VkCommandBuffer)>& record) {
@@ -2945,7 +2454,7 @@ namespace Honey {
 
             //cleanup_pipeline();
             cleanup_swapchain();
-            cleanup_global_descriptor_resources();
+            cleanup_global_buffer_resources();
             cleanup_global_descriptor_heap_resources();
             cleanup_font_descriptor_resources();
             cleanup_secondary_command_pools();

@@ -17,37 +17,29 @@ namespace Honey {
         void create(
             VkDevice device,
             VkRenderPass render_pass,
-            VkDescriptorSetLayout global_set_layout,
             const std::string& vertex_spirv_path,
             const std::string& fragment_spirv_path,
             const PipelineSpec& spec,
             VkPipelineCache pipeline_cache  = nullptr,
-            VkDescriptorSetLayout extra_set_layout = nullptr, // optional set 1 layout (e.g. font SSBOs)
-            const VulkanDescriptorHeap* heap = nullptr,       // required iff heap_mode
-            bool heap_mode = false                            // true → null layout + descriptor-heap mapping
+            const VulkanDescriptorHeap* heap = nullptr
         );
 
         void create_mesh(
             VkDevice device,
             VkRenderPass render_pass,
-            VkDescriptorSetLayout global_set_layout,
             const std::string& task_spirv_path,
             const std::string& mesh_spirv_path,
             const std::string& fragment_spirv_path,
             const PipelineSpec& spec,
             VkPipelineCache pipeline_cache = nullptr,
-            VkDescriptorSetLayout extra_set_layout = nullptr, // optional set 1 layout (e.g. font SSBOs)
-            const VulkanDescriptorHeap* heap = nullptr,       // required iff heap_mode
-            bool heap_mode = false                            // true → null layout + descriptor-heap mapping
+            const VulkanDescriptorHeap* heap = nullptr
             );
 
         void destroy(VkDevice device);
 
         // Heap-mode pipelines carry no layout, so a null m_layout is valid when m_heap_mode.
-        bool valid() const { return m_pipeline != nullptr && (m_heap_mode || m_layout != nullptr); }
-        bool heap_mode() const { return m_heap_mode; }
+        bool valid() const { return m_pipeline != nullptr; }
         void* pipeline() const { return m_pipeline; }
-        void* layout() const { return m_layout; }
 
         // Engine contract: we allow pushing arbitrary data up to 128 bytes.
         // Vulkan guarantees at least 128 bytes via VkPhysicalDeviceLimits::maxPushConstantsSize.
@@ -57,8 +49,6 @@ namespace Honey {
         static VkShaderModule create_shader_module_from_file(VkDevice device, const std::string& path);
 
         void* m_pipeline = nullptr;     // VkPipeline
-        void* m_layout   = nullptr;     // VkPipelineLayout (null in heap mode)
-        bool  m_heap_mode = false;      // built with VK_EXT_descriptor_heap mapping, no layout
         void* m_vert_module = nullptr;  // VkShaderModule
         void* m_frag_module = nullptr;  // VkShaderModule
         void* m_task_module = nullptr;  // VkShaderModule
