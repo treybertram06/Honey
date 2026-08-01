@@ -404,8 +404,6 @@ namespace Honey {
         HN_CORE_ASSERT(m_device && m_physical_device, "create_global_buffer_resources called without device");
 
         m_materials_ssbo_size = sizeof(GPUMaterial) * k_max_material_count;
-        m_shadow_matrices_ssbo_size = sizeof(ShadowMatricesSSBO);
-        m_dir_shadow_ssbo_size = sizeof(DirectionalShadowSSBO);
 
         auto create_buffer_for_frame = [&](std::string name,
             uint32_t frame,
@@ -455,10 +453,6 @@ namespace Honey {
         for (uint32_t frame = 0; frame < k_max_frames_in_flight; ++frame) {
             create_buffer_for_frame("materials", frame, m_materials_ssbo, m_materials_ssbo_memories,
                 m_materials_ssbo_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true);
-            create_buffer_for_frame("shadow_matrices", frame, m_shadow_matrices_ssbos, m_shadow_matrices_ssbo_memories,
-                m_shadow_matrices_ssbo_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-            create_buffer_for_frame("dir_shadow_matrices", frame, m_dir_shadow_ssbos, m_dir_shadow_ssbo_memories,
-                m_dir_shadow_ssbo_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
         }
     }
 
@@ -479,13 +473,9 @@ namespace Honey {
 
         for (uint32_t frame = 0; frame < k_max_frames_in_flight; ++frame) {
             destroy_buffer_for_frame(m_materials_ssbo, m_materials_ssbo_memories, frame);
-            destroy_buffer_for_frame(m_shadow_matrices_ssbos, m_shadow_matrices_ssbo_memories, frame);
-            destroy_buffer_for_frame(m_dir_shadow_ssbos, m_dir_shadow_ssbo_memories, frame);
         }
 
         m_materials_ssbo_size = 0;
-        m_shadow_matrices_ssbo_size = 0;
-        m_dir_shadow_ssbo_size = 0;
     }
 
     void VulkanContext::create_font_descriptor_resources() {
@@ -945,43 +935,25 @@ namespace Honey {
 
     void VulkanContext::upload_shadow_matrices(uint32_t frame, const ShadowMatricesSSBO& data) {
         HN_CORE_ASSERT(frame < k_max_frames_in_flight, "upload_shadow_matrices: frame index out of range");
-        if (!m_shadow_matrices_ssbo_memories[frame]) return;
-        void* mapped = nullptr;
-        VkResult mr = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
-                                  reinterpret_cast<VkDeviceMemory>(m_shadow_matrices_ssbo_memories[frame]),
-                                  0, m_shadow_matrices_ssbo_size, 0, &mapped);
-        HN_CORE_ASSERT(mr == VK_SUCCESS, "vkMapMemory shadow matrices ssbo failed");
-        std::memcpy(mapped, &data, sizeof(ShadowMatricesSSBO));
-        vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
-                      reinterpret_cast<VkDeviceMemory>(m_shadow_matrices_ssbo_memories[frame]));
 
         // Heap-mode deferred lighting reads ShadowMatrices via the set-0 globals buffer
         // (k_global_bindings[ShadowMatrices]). flush_globals_to_heap() intentionally skips
         // this region, so the producer writes it here at the same layout offset.
-        if (!m_globals_cpu.empty()) {
-            std::memcpy(m_globals_cpu.data() + m_globals_layout.offset[(size_t)GlobalBinding::ShadowMatrices],
-                        &data, sizeof(ShadowMatricesSSBO));
-        }
+        HN_CORE_ASSERT(!m_globals_cpu.empty(), "[VulkanContext] m_globals_cpu cannot be empty following context init.");
+        std::memcpy(m_globals_cpu.data() + m_globals_layout.offset[(size_t)GlobalBinding::ShadowMatrices],
+            &data, sizeof(ShadowMatricesSSBO));
+
     }
 
     void VulkanContext::upload_directional_shadows(uint32_t frame, const DirectionalShadowSSBO& data) {
         HN_CORE_ASSERT(frame < k_max_frames_in_flight, "upload_directional_shadows: frame index out of range");
-        if (!m_dir_shadow_ssbo_memories[frame]) return;
-        void* mapped = nullptr;
-        VkResult mr = vkMapMemory(reinterpret_cast<VkDevice>(m_device),
-                                  reinterpret_cast<VkDeviceMemory>(m_dir_shadow_ssbo_memories[frame]),
-                                  0, m_dir_shadow_ssbo_size, 0, &mapped);
-        HN_CORE_ASSERT(mr == VK_SUCCESS, "vkMapMemory directional shadow matrices ssbo failed");
-        std::memcpy(mapped, &data, sizeof(DirectionalShadowSSBO));
-        vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
-                      reinterpret_cast<VkDeviceMemory>(m_dir_shadow_ssbo_memories[frame]));
 
         // Heap-mode deferred lighting reads DirShadow via the set-0 globals buffer
         // (k_global_bindings[DirShadow]); mirror the ShadowMatrices write above.
-        if (!m_globals_cpu.empty()) {
-            std::memcpy(m_globals_cpu.data() + m_globals_layout.offset[(size_t)GlobalBinding::DirShadow],
-                        &data, sizeof(DirectionalShadowSSBO));
-        }
+        HN_CORE_ASSERT(!m_globals_cpu.empty(), "[VulkanContext] m_globals_cpu cannot be empty after context init.");
+        std::memcpy(m_globals_cpu.data() + m_globals_layout.offset[(size_t)GlobalBinding::DirShadow],
+            &data, sizeof(DirectionalShadowSSBO));
+
     }
 
     void VulkanContext::init() {

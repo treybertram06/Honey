@@ -40,13 +40,8 @@ namespace Honey {
 
         // Shadow matrices SSBO (binding 6 in global set) — call once per frame before rendering.
         void upload_shadow_matrices(uint32_t frame, const ShadowMatricesSSBO& data);
-        // Writes shadow cubemap view/sampler into set=0 binding 8 (forward pass global set).
-        void set_shadow_cubemap_resources(VkImageView cube_array_view, VkSampler comparison_sampler);
-
         // Directional shadows SSBO (binding 7) - call once before rendering
         void upload_directional_shadows(uint32_t frame, const DirectionalShadowSSBO& data);
-        // Writes directional shadow map view/sampler into set=0 binding 9 (forward pass global set).
-        void set_dir_shadow_resources(VkImageView cube_array_view, VkSampler comparison_sampler);
 
         // RenderDoc / debug label helpers — no-ops when debug utils extension is absent.
         void cmd_begin_debug_label(VkCommandBuffer cmd, const char* name,
@@ -343,29 +338,9 @@ private:
         uint8_t* m_globals_staging_mapped[k_max_frames_in_flight]{};
         GlobalsLayout m_globals_layout{};
 
-        void* m_camera_ubos[k_max_frames_in_flight]{};        // VkBuffer
-        void* m_camera_ubo_memories[k_max_frames_in_flight]{}; // VkDeviceMemory
-        uint32_t m_camera_ubo_size = 0;
-
-        void* m_lights_ubos[k_max_frames_in_flight]{};        // VkBuffer
-        void* m_lights_ubo_memories[k_max_frames_in_flight]{}; // VkDeviceMemory
-        uint32_t m_lights_ubo_size = 0;
-
         void* m_materials_ssbo[k_max_frames_in_flight]{};        // VkBuffer
         void* m_materials_ssbo_memories[k_max_frames_in_flight]{}; // VkDeviceMemory
         uint32_t m_materials_ssbo_size = 0;
-
-        void* m_tiled_lighting_ssbos[k_max_frames_in_flight]{};        // VkBuffer
-        void* m_tiled_lighting_ssbo_memories[k_max_frames_in_flight]{}; // VkDeviceMemory
-        uint32_t m_tiled_lighting_ssbo_size = 0;
-
-        void* m_shadow_matrices_ssbos[k_max_frames_in_flight]{};        // VkBuffer
-        void* m_shadow_matrices_ssbo_memories[k_max_frames_in_flight]{}; // VkDeviceMemory
-        uint32_t m_shadow_matrices_ssbo_size = 0;
-
-        void* m_dir_shadow_ssbos[k_max_frames_in_flight]{};        // VkBuffer
-        void* m_dir_shadow_ssbo_memories[k_max_frames_in_flight]{}; // VkDeviceMemory
-        uint32_t m_dir_shadow_ssbo_size = 0;
 
         std::vector<void*> m_last_bound_textures[k_max_frames_in_flight];  // up to VulkanRendererAPI::k_max_texture_slots entries
         uint32_t m_last_bound_texture_count[k_max_frames_in_flight]{};
