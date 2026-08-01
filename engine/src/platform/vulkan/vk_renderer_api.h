@@ -4,6 +4,7 @@
 #include "Honey/renderer/renderer_api.h"
 #include "Honey/renderer/mesh.h"
 #include "vk_context.h"
+#include "vk_renderer_globals.h"
 
 #include <glm/glm.hpp>
 #include <array>
@@ -63,16 +64,25 @@ namespace Honey {
         // Called by VulkanContext while recording the frame
         static void set_recording_context(VulkanContext* ctx);
 
+        // Called once by Renderer::init / Renderer::shutdown — the globals object has device
+        // lifetime, unlike the per-frame recording context above.
+        static void set_globals(VulkanRendererGlobals* globals);
+
         static void submit_camera(const CameraUBO& camera);
         static void submit_lights(const LightsUBO& lights);
         static void submit_tiled_lighting(const TiledLightingData& data);
         static void submit_materials(const std::vector<GPUMaterial>& materials, uint32_t materials_ssbo_offset);
+        static void submit_shadow_matrices(const ShadowMatricesSSBO& data);
+        static void submit_directional_shadows(const DirectionalShadowSSBO& data);
 
         static void submit_push_constants_mat4(const glm::mat4& value);
         static void submit_push_constants(const void* data, uint32_t size, uint32_t offset = 0, VkShaderStageFlags stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 
         static void flush_globals_to_heap();
 
+        // Pre-existing gap, preserved by the RendererGlobals migration rather than fixed silently:
+        // this does not carry `materials` / `materials_ssbo_offset`, so a get/set round-trip drops
+        // whatever materials the saved scope had pending.
         struct GlobalsState {
             CameraUBO cameraUBO{};
             bool hasCamera = false;

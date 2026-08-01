@@ -7,6 +7,8 @@
 
 namespace Honey {
 
+    class VulkanRendererGlobals;
+
     class Renderer {
     public:
 
@@ -15,7 +17,14 @@ namespace Honey {
         static void shutdown();
         static void on_window_resize(uint32_t width, uint32_t height);
 
+        // Set-0 globals data plane (Vulkan only; null under other backends). Device lifetime —
+        // created in init(), destroyed in shutdown(). Shared infrastructure: Renderer3D,
+        // DebugRenderer3D and the future Renderer2D rewrite all consume it.
+        // Will be abstracted into api-agnostic equivalent when I get around to it
+        static VulkanRendererGlobals* globals();
+
         static void begin_frame();
+        static void end_frame();
 
         static void set_render_target(const Ref<Framebuffer>& framebuffer);
         static Ref<Framebuffer> get_render_target() { return s_current_target; }

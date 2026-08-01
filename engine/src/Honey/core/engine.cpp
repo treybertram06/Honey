@@ -209,6 +209,8 @@ namespace Honey {
                     // Any future direct window-space rendering would go here
                     Renderer::end_pass();
                 }
+
+                Renderer::end_frame();
             }
 
             m_window->on_update();

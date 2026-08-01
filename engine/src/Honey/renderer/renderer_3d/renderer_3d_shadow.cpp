@@ -65,7 +65,7 @@ namespace Honey {
             return glm::perspectiveRH_ZO(glm::radians(90.0f), 1.0f, 0.05f, range);
         }
 
-        void prepare_shadow_data(uint32_t frame, const LightsUBO& lights) {
+        void prepare_shadow_data(const LightsUBO& lights) {
             auto* res = s_res;
             const int total_lights = lights.directional_light.point_light_count;
             res->shadow_light_count = 0;
@@ -91,7 +91,7 @@ namespace Honey {
             }
             ssbo.shadow_light_count = res->shadow_light_count;
 
-            res->vk_ctx->upload_shadow_matrices(frame, ssbo);
+            VulkanRendererAPI::submit_shadow_matrices(ssbo);
         }
     } // anonymous namespace
 
@@ -139,7 +139,7 @@ namespace Honey {
         // Build shadow matrices from current scene lights and upload.
         {
             HN_PROFILE_SCOPE("ShadowDraw::prepare_shadow_data");
-            prepare_shadow_data(frame, Renderer3DInternal::g_renderer3d_data->scene_lights);
+            prepare_shadow_data(Renderer3DInternal::g_renderer3d_data->scene_lights);
         }
 
         // On the very first frame, transition all cubemap layers to SHADER_READ so the deferred
@@ -486,7 +486,7 @@ namespace Honey {
             }
             {
                 HN_PROFILE_SCOPE("DirShadow::upload_ssbo");
-                vk_ctx->upload_directional_shadows(frame, ssbo);
+                VulkanRendererAPI::submit_directional_shadows(ssbo);
             }
         }
 

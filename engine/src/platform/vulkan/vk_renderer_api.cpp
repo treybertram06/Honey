@@ -18,13 +18,26 @@ namespace Honey {
         return dynamic_cast<VulkanContext*>(base);
     }
 
+    // Device lifetime, so not thread_local like the recording context above. Every producer below
+    // goes through require_frame_begun(), which pins them to the render thread.
+    static VulkanRendererGlobals* s_globals = nullptr;
+
     static void require_frame_begun() {
         HN_CORE_ASSERT(s_recording_context && s_recording_context->is_recording(),
             "VulkanRendererAPI: frame not begun. Call Renderer::begin_frame() before submitting any Vulkan render commands.");
     }
 
+    static VulkanRendererGlobals& globals() {
+        HN_CORE_ASSERT(s_globals, "VulkanRendererAPI: globals not set. Renderer::init() must run first.");
+        return *s_globals;
+    }
+
     void VulkanRendererAPI::set_recording_context(VulkanContext* ctx) {
         s_recording_context = ctx;
+    }
+
+    void VulkanRendererAPI::set_globals(VulkanRendererGlobals* g) {
+        s_globals = g;
     }
 
     void VulkanRendererAPI::init() {
@@ -269,17 +282,17 @@ namespace Honey {
 
     void VulkanRendererAPI::submit_camera(const CameraUBO& camera) {
         require_frame_begun();
-        auto& p = s_recording_context->pending_globals();
+        auto& p = globals().pending_globals();
         p.cameraUBO = camera;
         p.hasCamera = true;
     }
 
     void VulkanRendererAPI::flush_globals_to_heap() {
         require_frame_begun();
-        auto* ctx = s_recording_context;
-        HN_CORE_ASSERT(ctx->pending_globals().hasCamera, "flush_globals_heap: no camera submitted");
-        ctx->flush_globals_to_heap();   // writes all 5 globals into the host-side globals state
-        ctx->pending_globals().hasCamera = false;
+        auto& g = globals();
+        HN_CORE_ASSERT(g.pending_globals().hasCamera, "flush_globals_heap: no camera submitted");
+        g.flush_pending(s_recording_context->get_current_frame());   // writes all 5 globals into the host-side globals state
+        g.pending_globals().hasCamera = false;
     }
 
     void VulkanRendererAPI::submit_push_constants_mat4(const glm::mat4& value) {
@@ -303,24 +316,34 @@ namespace Honey {
 
     void VulkanRendererAPI::submit_lights(const LightsUBO& lights) {
         require_frame_begun();
-        s_recording_context->pending_globals().lightUBO = lights;
+        globals().pending_globals().lightUBO = lights;
     }
 
     void VulkanRendererAPI::submit_tiled_lighting(const TiledLightingData& data) {
         require_frame_begun();
-        s_recording_context->pending_globals().tiledLighting = data;
+        globals().pending_globals().tiledLighting = data;
     }
 
     void VulkanRendererAPI::submit_materials(const std::vector<GPUMaterial>& materials, uint32_t materials_ssbo_offset) {
         require_frame_begun();
-        auto& p = s_recording_context->pending_globals();
+        auto& p = globals().pending_globals();
         p.materials = materials;
         p.materials_ssbo_offset = materials_ssbo_offset;
     }
 
+    void VulkanRendererAPI::submit_shadow_matrices(const ShadowMatricesSSBO& data) {
+        require_frame_begun();
+        globals().set_shadow_matrices(data);
+    }
+
+    void VulkanRendererAPI::submit_directional_shadows(const DirectionalShadowSSBO& data) {
+        require_frame_begun();
+        globals().set_directional_shadows(data);
+    }
+
     VulkanRendererAPI::GlobalsState VulkanRendererAPI::get_globals_state() {
         require_frame_begun();
-        const auto& p = s_recording_context->pending_globals();
+        const auto& p = globals().pending_globals();
 
         GlobalsState s{};
         s.cameraUBO     = p.cameraUBO;
@@ -337,7 +360,7 @@ namespace Honey {
 
     void VulkanRendererAPI::set_globals_state(const GlobalsState& state) {
         require_frame_begun();
-        auto& p = s_recording_context->pending_globals();
+        auto& p = globals().pending_globals();
 
         p.cameraUBO             = state.cameraUBO;
         p.hasCamera             = state.hasCamera;
@@ -346,7 +369,7 @@ namespace Honey {
         p.textures              = state.textures;
         p.textureCount          = state.textureCount;
         p.hasTextures           = state.hasTextures;
-        p.source                = static_cast<VulkanContext::PendingGlobals::Source>(state.source);
+        p.source                = static_cast<VulkanRendererGlobals::PendingGlobals::Source>(state.source);
     }
 
     // ---------------------------------------------------------------------------

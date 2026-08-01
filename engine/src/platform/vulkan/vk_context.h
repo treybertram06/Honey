@@ -7,7 +7,6 @@
 #include <glm/glm.hpp>
 #include <functional>
 
-#include "vk_globals.h"
 #include "vk_gpu_profiler.h"
 #include "vk_pipeline.h"
 #include "../../Honey/renderer/gpu_types.h"
@@ -37,11 +36,6 @@ namespace Honey {
         VkDescriptorSetLayout get_font_set_layout()   const { return m_font_set_layout; }
         // Returns the font SSBO descriptor set for the given frame (all chunk sets are identical).
         VkDescriptorSet get_font_descriptor_set(uint32_t frame) const { return m_fonts_descriptor_sets[frame][0]; }
-
-        // Shadow matrices SSBO (binding 6 in global set) — call once per frame before rendering.
-        void upload_shadow_matrices(uint32_t frame, const ShadowMatricesSSBO& data);
-        // Directional shadows SSBO (binding 7) - call once before rendering
-        void upload_directional_shadows(uint32_t frame, const DirectionalShadowSSBO& data);
 
         // RenderDoc / debug label helpers — no-ops when debug utils extension is absent.
         void cmd_begin_debug_label(VkCommandBuffer cmd, const char* name,
@@ -91,38 +85,6 @@ namespace Honey {
         void mark_pipeline_dirty() { /* m_pipeline_dirty = true; */ } // Pipelines are owned by renderer2d now
         const VulkanPipelineCacheBlob& get_pipeline_cache() const { return m_backend->get_pipeline_cache(); }
         void request_swapchain_recreation() { m_framebuffer_resized = true; }
-
-        // Per-frame accumulated GPU globals — populated by submit_camera / submit_lights / etc.
-        // and consumed by flush_globals() → apply_pending_globals().
-        struct PendingGlobals {
-            CameraUBO cameraUBO{};
-            bool hasCamera = false;
-
-            LightsUBO lightUBO{};
-            TiledLightingData tiledLighting{};
-
-            std::vector<GPUMaterial> materials{};
-            uint32_t materials_ssbo_offset = 0;
-
-            std::vector<void*> textures;
-            uint32_t textureCount = 0;
-            bool hasTextures = false;
-
-            enum class Source : uint8_t { Unknown = 0, Renderer2D, Renderer3D } source = Source::Unknown;
-
-            void reset() {
-                hasCamera   = false;
-                hasTextures = false;
-                textures.clear();
-                textureCount = 0;
-                source = Source::Unknown;
-            }
-        };
-
-        PendingGlobals& pending_globals() { return m_pending_globals; }
-        const PendingGlobals& pending_globals() const { return m_pending_globals; }
-
-        void flush_globals_to_heap();
 
         glm::vec4 get_clear_color() const { return m_pending_clear_color; }
         void      set_clear_color(const glm::vec4& c) { m_pending_clear_color = c; }
@@ -206,23 +168,8 @@ namespace Honey {
 
         void destroy();
 
-        void create_global_descriptor_heap_resources();
-        void cleanup_global_descriptor_heap_resources();
-
-        // Per-frame host-visible buffers the heap path still sources from: the materials SSBO
-        // (bound into the heap by device address, see write_materials_heap_binding) and the
-        // shadow-matrix SSBOs (upload_shadow_matrices / upload_directional_shadows gate their
-        // m_globals_cpu mirror writes on these existing). Survivors of the classic descriptor
-        // machinery — to be re-homed by the full heap migration.
-        void create_global_buffer_resources();
-        void cleanup_global_buffer_resources();
-
-        // Records the staging -> m_globals_buffer upload at the top of the frame's command buffer.
-        void record_globals_upload(VkCommandBuffer cmd);
         void create_font_descriptor_resources();
         void cleanup_font_descriptor_resources();
-
-        void write_materials_heap_binding(uint32_t frame);
 
         bool submit_one_time_on_queue(
             VkQueue queue,
@@ -323,25 +270,6 @@ private:
         void* m_curve_ubo_memories[k_max_frames_in_flight]{}; // VkDeviceMemory
         uint32_t m_curve_ubo_size = 0;
 
-        // Set-0 globals for heap-mode pipelines. m_globals_buffer is DEVICE_LOCAL and its device
-        // address is baked into the descriptor-heap slots once at init (and from there into every
-        // pipeline's descriptor mappings), so it must never move. Producers therefore write into
-        // m_globals_cpu — plain host memory, invisible to the GPU — which is copied into the
-        // current frame's staging buffer at end of recording and uploaded by a vkCmdCopyBuffer
-        // recorded at the top of the frame. That keeps the CPU from overwriting bytes the GPU is
-        // still reading for a previous in-flight frame.
-        VkBuffer m_globals_buffer{};
-        VkDeviceMemory m_globals_alloc{};
-        std::vector<uint8_t> m_globals_cpu{};
-        VkBuffer m_globals_staging[k_max_frames_in_flight]{};
-        VkDeviceMemory m_globals_staging_alloc[k_max_frames_in_flight]{};
-        uint8_t* m_globals_staging_mapped[k_max_frames_in_flight]{};
-        GlobalsLayout m_globals_layout{};
-
-        void* m_materials_ssbo[k_max_frames_in_flight]{};        // VkBuffer
-        void* m_materials_ssbo_memories[k_max_frames_in_flight]{}; // VkDeviceMemory
-        uint32_t m_materials_ssbo_size = 0;
-
         std::vector<void*> m_last_bound_textures[k_max_frames_in_flight];  // up to VulkanRendererAPI::k_max_texture_slots entries
         uint32_t m_last_bound_texture_count[k_max_frames_in_flight]{};
         bool m_last_bound_textures_valid[k_max_frames_in_flight]{};
@@ -363,7 +291,6 @@ private:
         std::vector<VkSemaphore> m_render_finished_semaphores;
         std::vector<VkFence> m_in_flight_fences;
 
-        PendingGlobals m_pending_globals{};
         glm::vec4     m_pending_clear_color{0.1f, 0.1f, 0.1f, 1.0f};
 
         uint32_t m_current_frame = 0;

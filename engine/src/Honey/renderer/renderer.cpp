@@ -9,6 +9,8 @@
 #include "platform/vulkan/vk_context.h"
 #include "platform/vulkan/vk_framebuffer.h"
 #include "platform/vulkan/vk_backend.h"
+#include "platform/vulkan/vk_renderer_globals.h"
+#include "platform/vulkan/vk_renderer_api.h"
 #include "imgui.h"
 
 namespace Honey {
@@ -17,6 +19,10 @@ namespace Honey {
     Ref<ShaderCache> Renderer::m_shader_cache = nullptr;
     Ref<Framebuffer> Renderer::s_current_target = nullptr;
     bool Renderer::s_pass_open = false;
+
+    static Scope<VulkanRendererGlobals> s_globals = nullptr;
+
+    VulkanRendererGlobals* Renderer::globals() { return s_globals.get(); }
 
     Ref<ShaderCache> Renderer::get_shader_cache() {
         HN_CORE_ASSERT(m_shader_cache, "Renderer::shader_cache() called before Renderer::init()");
@@ -38,6 +44,12 @@ namespace Honey {
             break;
 
         case RendererAPI::API::vulkan:
+            // Must precede Renderer3D::init(): pipeline creation asserts that every set-0 global
+            // binding is registered in the descriptor heap, and registration happens here.
+            s_globals = CreateScope<VulkanRendererGlobals>();
+            s_globals->init(&Application::get().get_vulkan_backend());
+            VulkanRendererAPI::set_globals(s_globals.get());
+
             //Renderer2D::init();
             Renderer3D::init();
             DebugRenderer3D::init();
@@ -82,6 +94,14 @@ namespace Honey {
             if (ctx) {
                 ctx->wait_idle();
             }
+
+            // After wait_idle so nothing in flight still reads the globals buffer, and before
+            // VulkanContext::destroy() (window teardown) and VulkanBackend::shutdown().
+            VulkanRendererAPI::set_globals(nullptr);
+            if (s_globals) {
+                s_globals->shutdown();
+                s_globals.reset();
+            }
         }
 
         RenderCommand::shutdown();
@@ -110,10 +130,33 @@ namespace Honey {
 
         vk->begin_frame_recording();
 
+        // begin_frame_recording bails without starting a command buffer on a fence-wait failure or
+        // an out-of-date swapchain; end_frame() carries the same guard so the begin/snapshot
+        // pairing stays exact.
+        if (vk->is_recording())
+            s_globals->begin_frame(vk->get_recording_cmd(), vk->get_current_frame());
+
         if (!s_pipelines_prewarmed) {
             prewarm_pipelines(nullptr);
             s_pipelines_prewarmed = true;
         }
+    }
+
+    void Renderer::end_frame() {
+        HN_PROFILE_FUNCTION();
+
+        if (get_api() != RendererAPI::API::vulkan)
+            return;
+
+        auto* base = Application::get().get_window().get_context();
+        auto* vk = dynamic_cast<VulkanContext*>(base);
+        HN_CORE_ASSERT(vk, "Renderer::end_frame() expected VulkanContext when Vulkan is active");
+
+        // Snapshot after every globals producer has run and before swap_buffers() →
+        // end_frame_recording() submits the frame. The copy recorded at the top of the frame reads
+        // this staging buffer at execution time, i.e. after submit.
+        if (vk->is_recording())
+            s_globals->snapshot(vk->get_current_frame());
     }
 
     void Renderer::set_render_target(const Ref<Framebuffer>& framebuffer) {

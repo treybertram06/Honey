@@ -164,6 +164,8 @@ add_library(engine STATIC
         src/Honey/audio/audio_system.cpp
         src/platform/vulkan/vk_context.h
         src/platform/vulkan/vk_context.cpp
+        src/platform/vulkan/vk_renderer_globals.h
+        src/platform/vulkan/vk_renderer_globals.cpp
         src/platform/vulkan/vk_renderer_api.h
         src/platform/vulkan/vk_renderer_api.cpp
         src/platform/vulkan/vk_vertex_array.h
