@@ -13,11 +13,11 @@ namespace Honey {
     class VulkanBackend;
 
     // Owns the data plane behind the descriptor heap's set-0 global bindings: the device-local
-    // globals buffer, its host mirror and per-frame staging, the pending producer state, and — until
-    // Part C of the migration lands — the materials SSBO. Its schema is k_global_bindings; every
-    // noun in that table is a renderer concept, which is why this is renderer-owned state and not a
-    // VulkanContext member. The descriptor heap itself stays on VulkanBackend: slot allocation is
-    // mechanism, the bytes behind the slots are policy.
+    // globals and materials buffers, their host mirrors and per-frame staging, and the pending
+    // producer state. Its schema is k_global_bindings; every noun in that table is a renderer
+    // concept, which is why this is renderer-owned state and not a VulkanContext member. The
+    // descriptor heap itself stays on VulkanBackend: slot allocation is mechanism, the bytes
+    // behind the slots are policy.
     //
     // Device lifetime: created once by Renderer::init, destroyed once by Renderer::shutdown. Frame
     // graph rebuilds, swapchain recreation and RendererType switches must not touch it —
@@ -25,6 +25,10 @@ namespace Honey {
     // re-inits this without a backend restart is a bug by construction.
     class VulkanRendererGlobals {
     public:
+        // Element capacity of the materials buffer. A renderer concept, so it lives here rather
+        // than on VulkanContext.
+        static constexpr uint32_t k_max_material_count = 16384;
+
         // Per-frame accumulated GPU globals — populated by VulkanRendererAPI::submit_camera /
         // submit_lights / etc. and folded into the host mirror by flush_pending().
         struct PendingGlobals {
@@ -77,12 +81,8 @@ namespace Honey {
         void create_globals_resources();
         void register_heap_bindings();
 
-        // Per-frame host-visible materials SSBOs, bound into the heap by device address. Survivor of
-        // the classic descriptor machinery — Part C replaces this with a single device-local buffer
-        // fed by staging, at which point these and write_materials_heap_binding() go away.
         void create_materials_resources();
         void cleanup_materials_resources();
-        void write_materials_heap_binding(uint32_t frame);
 
         VulkanBackend*   m_backend         = nullptr;
         VkDevice         m_device          = VK_NULL_HANDLE;
@@ -103,9 +103,34 @@ namespace Honey {
         uint8_t* m_globals_staging_mapped[VulkanContext::k_max_frames_in_flight]{};
         GlobalsLayout m_globals_layout{};
 
-        void* m_materials_ssbo[VulkanContext::k_max_frames_in_flight]{};          // VkBuffer
-        void* m_materials_ssbo_memories[VulkanContext::k_max_frames_in_flight]{}; // VkDeviceMemory
-        uint32_t m_materials_ssbo_size = 0;
+        // Materials, on the same mirror -> staging -> device-local pattern as the globals above,
+        // with one difference forced by timing: the copy region has to be fixed when the copy is
+        // *recorded* (frame top, outside any render pass), but producers only supply materials
+        // mid-frame, from inside the g-buffer pass. A dirty range describes what changed and can
+        // therefore only be computed after the change — too late. m_materials_hwm is a bound
+        // instead: a monotonic high-water element count, known at frame top, guaranteed to cover
+        // everything live. Copying a superset is always correct; the surplus is a re-copy of
+        // identical bytes. Cost tracks the live material count, not the ~3.5 MB capacity.
+        //
+        // Consequence, deliberate: on a frame whose material count exceeds the session high (scene
+        // load, entity add) the new tail lands one frame late and reads the default material. The
+        // count is view-independent, so this never fires on camera motion.
+        static constexpr uint32_t k_materials_capacity_bytes = sizeof(GPUMaterial) * k_max_material_count;
+
+        VkBuffer m_materials_buffer{};
+        VkDeviceMemory m_materials_alloc{};
+        std::vector<uint8_t> m_materials_cpu{};
+        VkBuffer m_materials_staging[VulkanContext::k_max_frames_in_flight]{};
+        VkDeviceMemory m_materials_staging_alloc[VulkanContext::k_max_frames_in_flight]{};
+        uint8_t* m_materials_staging_mapped[VulkanContext::k_max_frames_in_flight]{};
+
+        uint32_t m_materials_hwm = 0;
+        // Element count begin_frame() recorded for that frame, read back by snapshot() so the
+        // staged byte count and the recorded copy region cannot drift apart.
+        uint32_t m_materials_upload_elems[VulkanContext::k_max_frames_in_flight]{};
+        // Makes frame 0 a one-time full-capacity copy, so the device buffer holds default
+        // materials from the start rather than uninitialised memory.
+        bool m_materials_initial_upload = true;
 
         PendingGlobals m_pending_globals{};
 

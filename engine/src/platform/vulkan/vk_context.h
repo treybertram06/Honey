@@ -190,7 +190,6 @@ namespace Honey {
 public:
         static constexpr uint32_t k_max_frames_in_flight  = 2;
         static constexpr uint32_t k_max_chunks_per_frame  = 32;
-        static constexpr uint32_t k_max_material_count    = 16384;
         // 8 bands × 95 printable ASCII glyphs (codepoints 32–126)
         static constexpr uint32_t k_max_font_band_entries = 760;
         // Upper bound for total curves after per-band replication

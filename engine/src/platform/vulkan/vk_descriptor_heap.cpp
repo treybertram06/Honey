@@ -566,12 +566,6 @@ namespace Honey {
         m_global_slots_valid[binding] = true;
     }
 
-    void VulkanDescriptorHeap::write_global_buffer(uint32_t binding, VkDeviceAddress addr, VkDeviceSize range,
-        VkDescriptorType type) {
-        HN_CORE_ASSERT(has_global_binding(binding), "[VulkanDescriptorHeap] No global slot registered for binding {0}", binding);
-        write_buffer(m_global_slots[binding], 0, addr, range, type);
-    }
-
     uint32_t VulkanDescriptorHeap::global_binding_offset(uint32_t binding) const {
         HN_CORE_ASSERT(has_global_binding(binding), "[VulkanDescriptorHeap] No global slot registered for binding {0}", binding);
         return m_global_slots[binding].offset;

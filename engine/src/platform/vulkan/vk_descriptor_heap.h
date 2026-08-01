@@ -78,7 +78,6 @@ namespace Honey {
         VkDeviceSize max_push_data_size() const { return m_props.maxPushDataSize; }
 
         void register_global_binding(uint32_t binding, const Allocation& slot);
-        void write_global_buffer(uint32_t binding, VkDeviceAddress addr, VkDeviceSize range, VkDescriptorType type);
         uint32_t global_binding_offset(uint32_t binding) const;
         bool has_global_binding(uint32_t binding) const;
 
