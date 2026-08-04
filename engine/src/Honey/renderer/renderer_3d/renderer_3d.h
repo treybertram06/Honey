@@ -50,14 +50,11 @@ namespace Honey {
 		static void flush_deferred_lighting(FrameGraphPassContext& ctx);
 
 		// Generic mesh rendering
-		static void draw_mesh(const Ref<VertexArray>& vertex_array, const glm::mat4& transform, int entity_id = -1);
-		static void draw_mesh(const Ref<VertexArray>& vertex_array, const Ref<Material>& material, const glm::mat4& transform, int entity_id = -1);
 		static void submit_submesh(const Submesh& submesh, const Ref<Material>& material, const glm::mat4& transform, int entity_id = -1, const Mesh* mesh = nullptr);
-		static void submit_meshlet_submesh(const Submesh& submesh, const Ref<Material>& material, const glm::mat4& transform, int entity_id = -1, const Mesh* mesh = nullptr);
 
 		static void prewarm_pipelines(void* native_render_pass);
 
-		static void set_geometry_render_path(GeometryPath path);
+		//static void set_geometry_render_path(GeometryPath path);
 
 		// Directional shadow settings — call each frame before the shadow pass executes.
 		static void set_directional_shadow_enabled(bool enabled, float shadow_distance = 50.0f);
