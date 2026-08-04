@@ -21,8 +21,10 @@ namespace Honey {
     bool Renderer::s_pass_open = false;
 
     static Scope<VulkanRendererGlobals> s_globals = nullptr;
-
     VulkanRendererGlobals* Renderer::globals() { return s_globals.get(); }
+
+    static Scope<VulkanIconGlobals> s_icon_globals = nullptr;
+    VulkanIconGlobals* Renderer::icon_globals() { return s_icon_globals.get(); }
 
     Ref<ShaderCache> Renderer::get_shader_cache() {
         HN_CORE_ASSERT(m_shader_cache, "Renderer::shader_cache() called before Renderer::init()");
@@ -49,6 +51,9 @@ namespace Honey {
             s_globals = CreateScope<VulkanRendererGlobals>();
             s_globals->init(&Application::get().get_vulkan_backend());
             VulkanRendererAPI::set_globals(s_globals.get());
+
+            s_icon_globals = CreateScope<VulkanIconGlobals>();
+            s_icon_globals->init(&Application::get().get_vulkan_backend());
 
             //Renderer2D::init();
             Renderer3D::init();
@@ -101,6 +106,10 @@ namespace Honey {
             if (s_globals) {
                 s_globals->shutdown();
                 s_globals.reset();
+            }
+            if (s_icon_globals) {
+                s_icon_globals->shutdown();
+                s_icon_globals.reset();
             }
         }
 

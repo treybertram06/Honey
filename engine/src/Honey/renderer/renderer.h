@@ -4,6 +4,7 @@
 #include "render_command.h"
 #include "shader.h"
 #include "shader_cache.h"
+#include "platform/vulkan/vk_icon_globals.h"
 
 namespace Honey {
 
@@ -22,6 +23,7 @@ namespace Honey {
         // DebugRenderer3D and the future Renderer2D rewrite all consume it.
         // Will be abstracted into api-agnostic equivalent when I get around to it
         static VulkanRendererGlobals* globals();
+        static VulkanIconGlobals* icon_globals();
 
         static void begin_frame();
         static void end_frame();

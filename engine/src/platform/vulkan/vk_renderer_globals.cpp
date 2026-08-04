@@ -138,13 +138,12 @@ namespace Honey {
             // heap slot is a host write to memory the GPU may be reading for a frame still in
             // flight — the bug this migration exists to remove.
             if (g.kind == GlobalBufferKind::ExternalStorage) {
-                HN_CORE_ASSERT(g.id == GlobalBinding::Materials,
-                    "[VulkanRendererGlobals] Unexpected ExternalStorage binding '{0}' — only Materials "
-                    "has a backing buffer here", g.debug_name);
-                auto slot = heap->allocate_persistent_resource(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1);
-                heap->write_buffer(slot, 0, materials_base, k_materials_capacity_bytes,
-                                   VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-                heap->register_global_binding(g.shader_binding, slot);
+                if (g.id == GlobalBinding::Materials) {
+                    auto slot = heap->allocate_persistent_resource(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1);
+                    heap->write_buffer(slot, 0, materials_base, k_materials_capacity_bytes,
+                                       VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+                    heap->register_global_binding(g.shader_binding, slot);
+                }
                 continue;
             }
             const VkDescriptorType dt = (g.kind == GlobalBufferKind::Uniform)

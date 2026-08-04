@@ -32,9 +32,6 @@ namespace Honey {
         VulkanBackend* get_backend() const { return m_backend; }
         VkDevice get_device() const { return m_device; }
         VkPhysicalDevice get_physical_device() const { return m_physical_device; }
-        VkDescriptorSetLayout get_font_set_layout()   const { return m_font_set_layout; }
-        // Returns the font SSBO descriptor set for the given frame (all chunk sets are identical).
-        VkDescriptorSet get_font_descriptor_set(uint32_t frame) const { return m_fonts_descriptor_sets[frame][0]; }
 
         // RenderDoc / debug label helpers — no-ops when debug utils extension is absent.
         void cmd_begin_debug_label(VkCommandBuffer cmd, const char* name,
@@ -125,16 +122,6 @@ namespace Honey {
 
         void refresh_all_texture_samplers() override;
 
-        // Uploads font curve data into both frames' SSBOs. Call once after loading a font.
-        void upload_font_data(const void* band_table_data, uint32_t band_table_bytes,
-                              const void* curve_data,       uint32_t curve_bytes);
-
-        // Uploads icon curve data into the icon region of both frames' SSBOs (offset past font data).
-        void upload_icon_data(const void* band_table_data, uint32_t band_table_bytes,
-                              uint32_t band_table_byte_offset,
-                              const void* curve_data,       uint32_t curve_bytes,
-                              uint32_t curve_byte_offset);
-
         GpuProfiler& get_gpu_profiler() { return m_gpu_profiler; }
 
         uint32_t get_gpu_zone_count() const override { return m_gpu_profiler.get_slot_count(); }
@@ -167,9 +154,6 @@ namespace Honey {
 
         void destroy();
 
-        void create_font_descriptor_resources();
-        void cleanup_font_descriptor_resources();
-
         bool submit_one_time_on_queue(
             VkQueue queue,
             uint32_t queue_family,
@@ -189,16 +173,6 @@ namespace Honey {
 public:
         static constexpr uint32_t k_max_frames_in_flight  = 2;
         static constexpr uint32_t k_max_chunks_per_frame  = 32;
-        // 8 bands × 95 printable ASCII glyphs (codepoints 32–126)
-        static constexpr uint32_t k_max_font_band_entries = 760;
-        // Upper bound for total curves after per-band replication
-        static constexpr uint32_t k_max_font_curves       = 16384;
-        // Icon region (lives at offset past the font region in the same SSBOs)
-        static constexpr uint32_t k_max_icon_band_entries = 4096;
-        static constexpr uint32_t k_max_icon_curves       = 32768;
-        // Combined SSBO capacities
-        static constexpr uint32_t k_total_band_entries    = k_max_font_band_entries + k_max_icon_band_entries;
-        static constexpr uint32_t k_total_curves          = k_max_font_curves + k_max_icon_curves;
 
 private:
 
@@ -254,19 +228,6 @@ private:
         std::vector<VkImage> m_swapchain_depth_images;
         std::vector<VkDeviceMemory> m_swapchain_depth_memories;
         std::vector<VkImageView> m_swapchain_depth_image_views;
-
-        // Fonts
-        VkDescriptorSetLayout m_font_set_layout = nullptr;
-        VkDescriptorPool m_font_descriptor_pool = nullptr;
-        VkDescriptorSet m_fonts_descriptor_sets[k_max_frames_in_flight][k_max_chunks_per_frame]{};
-
-        void* m_band_table_ubos[k_max_frames_in_flight]{};        // VkBuffer
-        void* m_band_table_ubo_memories[k_max_frames_in_flight]{}; // VkDeviceMemory
-        uint32_t m_band_table_ubo_size = 0;
-
-        void* m_curve_ubos[k_max_frames_in_flight]{};        // VkBuffer
-        void* m_curve_ubo_memories[k_max_frames_in_flight]{}; // VkDeviceMemory
-        uint32_t m_curve_ubo_size = 0;
 
         std::vector<void*> m_last_bound_textures[k_max_frames_in_flight];  // up to VulkanRendererAPI::k_max_texture_slots entries
         uint32_t m_last_bound_texture_count[k_max_frames_in_flight]{};
