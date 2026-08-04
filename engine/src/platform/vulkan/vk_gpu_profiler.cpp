@@ -111,15 +111,24 @@ void GpuProfiler::readback(VkDevice device, uint32_t image_index) {
 
 void GpuProfiler::write_begin(VkCommandBuffer cmd, uint32_t slot, VkPipelineStageFlags flags) {
     if (!m_query_pool || slot >= k_max_zones) return;
+    const size_t written_idx = m_current_image_index * k_max_zones + slot;
+    // reset_frame() resets each zone's query pair exactly once per frame, so this zone
+    // can only accept one begin/end pair per frame. Some zones (e.g. a shared descriptor
+    // heap-bind helper called from several passes) legitimately re-enter the same call
+    // site more than once per frame — silently keep the first occurrence rather than
+    // issuing a second vkCmdWriteTimestamp into an already-written, unreset query.
+    if (written_idx < m_written.size() && m_written[written_idx]) return;
     const uint32_t query_idx = m_current_image_index * k_max_zones * 2 + slot * 2;
     vkCmdWriteTimestamp(cmd, static_cast<VkPipelineStageFlagBits>(flags), m_query_pool, query_idx);
 }
 
 void GpuProfiler::write_end(VkCommandBuffer cmd, uint32_t slot, VkPipelineStageFlags flags) {
     if (!m_query_pool || slot >= k_max_zones) return;
+    const size_t written_idx = m_current_image_index * k_max_zones + slot;
+    if (written_idx < m_written.size() && m_written[written_idx]) return; // see write_begin
     const uint32_t query_idx = m_current_image_index * k_max_zones * 2 + slot * 2 + 1;
     vkCmdWriteTimestamp(cmd, static_cast<VkPipelineStageFlagBits>(flags), m_query_pool, query_idx);
-    m_written[m_current_image_index * k_max_zones + slot] = true;
+    m_written[written_idx] = true;
 }
 
 // --- Results ---

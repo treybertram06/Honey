@@ -803,9 +803,6 @@ namespace Honey {
             }
         }
 
-        m_gpu_profiler.readback(m_device, m_recording_image_index);
-        m_gpu_profiler.set_current_image_index(m_recording_image_index);
-
         {
             HN_PROFILE_SCOPE("ResetSecondaryCommandPools");
             reset_secondary_command_pools_for_frame(m_current_frame);
@@ -839,6 +836,9 @@ namespace Honey {
             HN_CORE_ASSERT(acquire_res == VK_SUCCESS || acquire_res == VK_SUBOPTIMAL_KHR,
                            "vkAcquireNextImageKHR failed: {0}", vk_result_to_string(acquire_res));
         }
+
+        m_gpu_profiler.readback(m_device, image_index);
+        m_gpu_profiler.set_current_image_index(image_index);
 
         if (m_timestamp_query_pool &&
                 image_index < m_timestamp_written.size() &&

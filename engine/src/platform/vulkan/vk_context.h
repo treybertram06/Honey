@@ -9,7 +9,6 @@
 
 #include "vk_gpu_profiler.h"
 #include "vk_pipeline.h"
-#include "../../Honey/renderer/gpu_types.h"
 #include "Honey/renderer/framebuffer.h"
 
 struct GLFWwindow;
