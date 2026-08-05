@@ -19,6 +19,8 @@
 
 #include <filesystem>
 
+#include "renderer_3d/renderer_3d_vector_icon.h"
+
 namespace Honey {
 
     static const std::filesystem::path asset_root = ASSET_ROOT;
@@ -38,6 +40,7 @@ namespace Honey {
             Renderer3DShadow::register_frame_graph_executors();
             Renderer3DPathTracer::register_frame_graph_executors();
             Renderer3DSSAO::register_frame_graph_executors();
+            Renderer3DVectorIcon::register_frame_graph_executors();
 
             auto& registry = FrameGraphRegistry::get();
 
@@ -87,6 +90,7 @@ namespace Honey {
                     Renderer3DPathTracer::init(vk_ctx);
                 }
                 Renderer3DSSAO::init(vk_ctx);
+                Renderer3DVectorIcon::init(vk_ctx);
             }
         }
 
@@ -116,6 +120,7 @@ namespace Honey {
         Renderer3DShadow::shutdown();
         Renderer3DPathTracer::shutdown();
         Renderer3DSSAO::shutdown();
+        Renderer3DVectorIcon::shutdown();
         m_frame_graph.reset();
         m_output_framebuffer.reset();
         m_gbuffer_framebuffer.reset();
