@@ -173,4 +173,23 @@ namespace Honey {
     };
     static_assert(sizeof(SSAOKernelUBOData) == 528, "SSAOKernelUBOData size mismatch");
 
+    // One instance per SlugIcon *shape* (a multi-shape SVG fans out into one GPUIconInstance per
+    // shape, all sharing the same world_pos/tint/entity_id/sizemode — see VectorIcon::get_shapes()).
+    struct alignas(16) GPUIconInstance {
+        alignas(16) glm::vec4 world_pos;  // xyz = world position, w = size
+        alignas(16) glm::vec4 tint;       // caller-supplied tint (submit_icon)
+        alignas(16) glm::vec4 fill_color; // this shape's own SVG fill color
+        alignas(16) glm::vec4 bbox;       // xy = shape bbox_min, zw = shape bbox_max (SVG units)
+
+        glm::vec2 canvas_size; // icon's overall canvas size (SVG units) - shared across an icon's shapes
+        int32_t   entity_id;
+        uint32_t  sizemode;
+
+        uint32_t  band_offset; // this shape's own band-table slice (already rebased into the icon's slot)
+        uint32_t  band_count;
+        uint32_t  _pad0 = 0;
+        uint32_t  _pad1 = 0;
+    };
+    static_assert(sizeof(GPUIconInstance) == 96, "GPUIconInstance layout mismatch");
+
 } // namespace Honey

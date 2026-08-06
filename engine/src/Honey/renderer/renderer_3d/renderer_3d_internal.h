@@ -15,6 +15,7 @@
 #include "Honey/renderer/pipeline.h"
 #include "Honey/renderer/renderer_3d/renderer_3d.h"
 #include "Honey/renderer/shader_cache.h"
+#include "Honey/renderer/vector_icon.h"
 #include "platform/vulkan/vk_context.h"
 #include "platform/vulkan/vk_renderer_api.h"
 
@@ -49,6 +50,14 @@ namespace Honey::Renderer3DInternal {
         int entity_id = -1;
     };
 
+    struct IconDrawCommand {
+        const Ref<VectorIcon> icon;
+        glm::vec4 world_pos{1.0f}; // .w represents scale
+        glm::vec4 tint{1.0f};
+        int entity_id = -1;
+        Renderer3D::SizeMode sizemode = Renderer3D::SizeMode::WorldSpace; // screen-space / world-space
+    };
+
     struct ShadowDrawEntry {
         uint32_t mesh_block_offset    = 0;       // per-mesh persistent heap block byte offset (set=1)
         uint32_t draw_data_base       = 0;       // base index; shader uses draw_data_base + gl_DrawID
@@ -61,9 +70,11 @@ namespace Honey::Renderer3DInternal {
 
         //GeometryPath geometry_path = GeometryPath::Meshlet; // Leaving this here in case I re-use the setting for classic-geo emulation to support older hardware (Proud 1080Ti owner)
         std::vector<MeshletDrawCommand> meshlet_draws;
-
         std::array<Ref<StorageBuffer>, VulkanContext::k_max_frames_in_flight> indirect_buffers{};
         std::array<Ref<StorageBuffer>, VulkanContext::k_max_frames_in_flight> count_buffers{};
+
+        std::vector<IconDrawCommand> icon_draws;
+        std::array<Ref<StorageBuffer>, VulkanContext::k_max_frames_in_flight> icon_instance_buffers{};
 
         std::vector<GPUMaterial> frame_gpu_materials;
         std::vector<const Mesh*> frame_mesh_order;

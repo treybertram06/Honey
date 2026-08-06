@@ -23,6 +23,7 @@ namespace Honey {
         data.shader_cache = Renderer::get_shader_cache();
         data.default_material = Material::create();
         data.meshlet_draws.clear();
+        data.icon_draws.clear();
 
         data.white_texture = Texture2D::create(1, 1);
         const uint32_t white = 0xFFFFFFFFu;
@@ -80,6 +81,7 @@ namespace Honey {
 
         data.unique_meshes_this_frame.clear();
         data.meshlet_draws.clear();
+        data.icon_draws.clear();
     }
 
     void Renderer3D::begin_scene(const Camera& camera, const glm::mat4& transform) {
@@ -99,6 +101,7 @@ namespace Honey {
 
         data.unique_meshes_this_frame.clear();
         data.meshlet_draws.clear();
+        data.icon_draws.clear();
     }
 
     void Renderer3D::begin_scene(const glm::mat4& view_proj, const glm::vec3& position, const glm::mat4& view, const glm::mat4& projection, float exposure) {
@@ -127,6 +130,7 @@ namespace Honey {
 
         data.unique_meshes_this_frame.clear();
         data.meshlet_draws.clear();
+        data.icon_draws.clear();
     }
 
     void Renderer3D::end_scene() {
@@ -194,6 +198,21 @@ namespace Honey {
                 .material = material.get(),
                 .transform = transform,
                 .entity_id = entity_id,
+            });
+    }
+
+    void Renderer3D::submit_icon(const Ref<VectorIcon>& icon, const glm::vec3& world_pos, float size,
+        SizeMode sizemode, const glm::vec4& tint, int entity_id) {
+        HN_PROFILE_FUNCTION();
+        HN_CORE_ASSERT(icon, "Renderer3D::submit_icon: icon is null");
+
+        Renderer3DInternal::g_renderer3d_data->icon_draws.push_back(
+            Renderer3DInternal::IconDrawCommand{
+                .icon = icon,
+                .world_pos = { world_pos, size },
+                .tint = tint,
+                .entity_id = entity_id,
+                .sizemode = sizemode,
             });
     }
 

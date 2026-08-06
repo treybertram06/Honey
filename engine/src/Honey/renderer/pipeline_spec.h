@@ -15,6 +15,7 @@ namespace Honey {
         Triangles,
         Lines,
         Points,
+        TriangleStrip,
     };
 
     enum class CullMode {

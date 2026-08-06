@@ -975,6 +975,18 @@ namespace Honey {
         heap->push_pass_data(m_cmd, &pd, sizeof(pd));
     }
 
+    uint32_t FrameGraphPassContext::get_pass_binding_block_offset(uint32_t set, uint32_t binding) const {
+        HN_CORE_ASSERT(m_pass && m_pass->descriptor_plan && m_pass->descriptor_plan->built,
+            "get_pass_binding_block_offset: call after bind_heap_pipeline() this pass");
+        for (const auto& e : m_pass->descriptor_plan->entries) {
+            if (e.set == set && e.binding == binding)
+                return e.block_offset;
+        }
+        HN_CORE_ASSERT(false, "get_pass_binding_block_offset: pass '{0}' has no reflected binding at set={1}, binding={2}",
+                       m_pass->name, set, binding);
+        return 0;
+    }
+
     void* FrameGraphPassContext::user_context() const {
         return m_exec_context ? m_exec_context->user_context : nullptr;
     }

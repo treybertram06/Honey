@@ -15,6 +15,7 @@
 #include "../gpu_types.h"
 #include "../framebuffer.h"
 #include "Honey/renderer/frame_graph.h"
+#include "Honey/renderer/vector_icon.h"
 
 namespace Honey {
 
@@ -30,6 +31,10 @@ namespace Honey {
             uint32_t pipeline_binds = 0;
             uint32_t push_constant_updates = 0;
         };
+		enum class SizeMode {
+			ScreenSpace,
+			WorldSpace
+		};
 
 		static void init();
 		static void shutdown();
@@ -51,6 +56,8 @@ namespace Honey {
 
 		// Generic mesh rendering
 		static void submit_submesh(const Submesh& submesh, const Ref<Material>& material, const glm::mat4& transform, int entity_id = -1, const Mesh* mesh = nullptr);
+		static void submit_icon(const Ref<VectorIcon>& icon, const glm::vec3& world_pos, float size,
+			SizeMode sizemode, const glm::vec4& tint = glm::vec4(1.0f), int entity_id = -1);
 
 		static void prewarm_pipelines(void* native_render_pass);
 

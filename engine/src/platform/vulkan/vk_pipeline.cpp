@@ -241,6 +241,7 @@ namespace Honey {
         case PrimitiveTopology::Triangles: input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST; break;
         case PrimitiveTopology::Lines:     input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;     break;
         case PrimitiveTopology::Points:    input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;    break;
+        case PrimitiveTopology::TriangleStrip: input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP; break;
         default:                           input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST; break;
         }
         input_assembly.primitiveRestartEnable = VK_FALSE;

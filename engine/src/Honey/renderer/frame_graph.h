@@ -360,6 +360,15 @@ namespace Honey {
         // for passes that must hand-write an extra descriptor. Default: no executor needs it.
         DescriptorAllocation get_pass_descriptor_allocation() const { return m_last_pass_alloc; }
 
+        // Escape hatch, part two: the byte offset *within* that block reserved for one specific
+        // shader-declared (set, binding) — e.g. a binding bind_heap_pipeline couldn't auto-resolve
+        // because no .hnfg read binding matches it (an ad-hoc, CPU-built-per-frame SSBO). The slot
+        // is always reserved (sized from shader reflection) even when left unwritten by the
+        // automatic pass; this just tells the caller where it is so they can hand-write it, the
+        // same way get_pass_descriptor_allocation() hands back the whole block. Must be called
+        // after bind_heap_pipeline() this pass.
+        uint32_t get_pass_binding_block_offset(uint32_t set, uint32_t binding) const;
+
         // Vulkan-only helpers for compute/transfer/graphics frame-graph passes.
         bool submit_vulkan_compute(const FGVulkanRecordCommands& record) const;
         bool submit_vulkan_transfer(const FGVulkanRecordCommands& record) const;

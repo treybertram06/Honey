@@ -30,24 +30,24 @@ namespace Honey {
         m_backend = nullptr;
     }
 
-    VulkanIconGlobals::IconSlot VulkanIconGlobals::allocate_icon_slot(uint32_t band_count, uint32_t curve_count) {
+    VectorIcon::IconSlot VulkanIconGlobals::allocate_icon_slot(uint32_t band_count, uint32_t curve_count) {
         std::scoped_lock lock(m_alloc_mutex);
         const uint64_t key = (uint64_t(band_count) << 32) | curve_count;
         auto it = m_freelist.find(key);
         if (it != m_freelist.end() && !it->second.empty()) {
-            IconSlot s = it->second.back();
+            VectorIcon::IconSlot s = it->second.back();
             it->second.pop_back();
             return s;
         }
         HN_CORE_ASSERT(m_band_cursor + band_count <= k_total_band_entries, "[VulkanIconGlobals] Icon band table exhausted.");
         HN_CORE_ASSERT(m_curve_cursor + curve_count <= k_total_curves, "[VulkanIconGlobals] Icon curve buffer exhausted.");
-        IconSlot s{ m_band_cursor, band_count, m_curve_cursor, curve_count };
+        VectorIcon::IconSlot s{ m_band_cursor, band_count, m_curve_cursor, curve_count };
         m_band_cursor += band_count;
         m_curve_cursor += curve_count;
         return s;
     }
 
-    void VulkanIconGlobals::free_icon_slot(const IconSlot& slot) {
+    void VulkanIconGlobals::free_icon_slot(const VectorIcon::IconSlot& slot) {
         std::scoped_lock lock(m_alloc_mutex);
         const uint64_t key = (uint64_t(slot.band_count) << 32) | slot.curve_count;
         m_freelist[key].push_back(slot);
@@ -60,9 +60,32 @@ namespace Honey {
         const VkDeviceSize total_bytes = band_bytes + curve_bytes;
 
         // create_staging_buffer-equivalent: HOST_VISIBLE|HOST_COHERENT, TRANSFER_SRC, one-shot.
-        VkBuffer staging; VkDeviceMemory staging_mem;
-        /* vkCreateBuffer / vkGetBufferMemoryRequirements / vkAllocateMemory / vkBindBufferMemory,
-           exactly like VulkanTexture2D::create_staging_buffer (vk_texture.cpp:304-333). */
+        // Mirrors VulkanTexture2D::create_staging_buffer (vk_texture.cpp:304-333).
+        VkBufferCreateInfo staging_bi{};
+        staging_bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        staging_bi.size = total_bytes;
+        staging_bi.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        staging_bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        VkBuffer staging = VK_NULL_HANDLE;
+        VkResult res = vkCreateBuffer(m_device, &staging_bi, nullptr, &staging);
+        HN_CORE_ASSERT(res == VK_SUCCESS, "[VulkanIconGlobals] vkCreateBuffer (staging) failed");
+
+        VkMemoryRequirements staging_req{};
+        vkGetBufferMemoryRequirements(m_device, staging, &staging_req);
+
+        VkMemoryAllocateInfo staging_ai{};
+        staging_ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        staging_ai.allocationSize = staging_req.size;
+        staging_ai.memoryTypeIndex = VulkanUtils::find_memory_type(m_physical_device, staging_req.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+        VkDeviceMemory staging_mem = VK_NULL_HANDLE;
+        res = vkAllocateMemory(m_device, &staging_ai, nullptr, &staging_mem);
+        HN_CORE_ASSERT(res == VK_SUCCESS, "[VulkanIconGlobals] vkAllocateMemory (staging) failed");
+
+        res = vkBindBufferMemory(m_device, staging, staging_mem, 0);
+        HN_CORE_ASSERT(res == VK_SUCCESS, "[VulkanIconGlobals] vkBindBufferMemory (staging) failed");
 
         void* mapped = nullptr;
         vkMapMemory(m_device, staging_mem, 0, total_bytes, 0, &mapped);
@@ -143,6 +166,11 @@ namespace Honey {
         heap->write_buffer(band_slot, 0, base,
             VkDeviceSize(k_total_band_entries) * sizeof(BandEntry), VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
         heap->register_global_binding(k_global_bindings[(size_t)GlobalBinding::IconBandTable].shader_binding, band_slot);
+
+        auto curve_slot = heap->allocate_persistent_resource(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1);
+        heap->write_buffer(curve_slot, 0, base + m_curve_region_offset,
+            VkDeviceSize(k_total_curves) * sizeof(QuadBezier), VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+        heap->register_global_binding(k_global_bindings[(size_t)GlobalBinding::IconCurves].shader_binding, curve_slot);
     }
 
 }

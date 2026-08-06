@@ -9,6 +9,8 @@
 #include <vulkan/vulkan.h>
 #include <vector>
 
+#include "Honey/renderer/vector_icon.h"
+
 namespace Honey {
 
     class VulkanBackend;
@@ -28,9 +30,8 @@ namespace Honey {
         void shutdown();
 
         // Slot allocator
-        struct IconSlot { uint32_t band_offset, band_count, curve_offset, curve_count; };
-        IconSlot allocate_icon_slot(uint32_t band_count, uint32_t curve_count);
-        void free_icon_slot(const IconSlot& slot);
+        VectorIcon::IconSlot allocate_icon_slot(uint32_t band_count, uint32_t curve_count);
+        void free_icon_slot(const VectorIcon::IconSlot& slot);
 
         // One-shot transient-staging upload
         void upload_icon_data(const BandEntry* bands, uint32_t band_count, uint32_t band_offset,
@@ -52,7 +53,7 @@ namespace Honey {
         std::mutex m_alloc_mutex;
 
         uint32_t m_band_cursor = 0, m_curve_cursor = 0;
-        std::unordered_map<uint64_t, std::vector<IconSlot>> m_freelist; // keyed by (band_count<<32 | curve_count)
+        std::unordered_map<uint64_t, std::vector<VectorIcon::IconSlot>> m_freelist; // keyed by (band_count<<32 | curve_count)
 
     };
 
