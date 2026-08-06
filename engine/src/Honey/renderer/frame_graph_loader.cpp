@@ -219,6 +219,32 @@ namespace Honey {
             return false;
         }
 
+        // Shared by every size mode that supports scaling (SwapchainRelative, MatchResource).
+        // A missing Scale node leaves the desc's 1.0 defaults untouched.
+        static void parse_scale(const YAML::Node& n,
+                                FGTextureDesc& out,
+                                FGCompileDiagnostics& diags,
+                                std::string_view scope)
+        {
+            if (!n)
+                return;
+
+            try {
+                if (n.IsScalar()) {
+                    const float s = n.as<float>();
+                    out.scale_x = s;
+                    out.scale_y = s;
+                } else if (n.IsSequence() && n.size() == 2) {
+                    out.scale_x = n[0].as<float>();
+                    out.scale_y = n[1].as<float>();
+                } else {
+                    diags.add_error("Scale must be a float or [x, y]", scope);
+                }
+            } catch (const YAML::BadConversion&) {
+                diags.add_error("Scale contains non-float values", scope);
+            }
+        }
+
         static bool parse_texture_format(const YAML::Node& n,
                                          FramebufferTextureFormat& out,
                                          FGCompileDiagnostics& diags,
@@ -413,6 +439,7 @@ namespace Honey {
                 if (resource.type == FGResourceType::Texture) {
                     parse_texture_format(body["Format"], resource.texture.format, out_diagnostics, scope);
 
+                    const YAML::Node match_node = body["MatchSize"];
                     const YAML::Node width_node = body["Width"];
                     const YAML::Node height_node = body["Height"];
 
@@ -421,7 +448,22 @@ namespace Honey {
                     const bool height_swapchain =
                         height_node && height_node.IsScalar() && iequals(height_node.as<std::string>(), "swapchain");
 
-                    if (width_swapchain || height_swapchain) {
+                    // MatchSize is checked first because it is mutually exclusive with both other
+                    // forms - a resource takes its size from exactly one source. Note that a
+                    // malformed declaration deliberately leaves size_mode alone, so it falls through
+                    // to the SwapchainRelative default rather than becoming a MatchResource with an
+                    // empty target name.
+                    if (match_node) {
+                        if (!match_node.IsScalar()) {
+                            out_diagnostics.add_error("MatchSize must be a scalar resource name", scope);
+                        } else if (width_node || height_node) {
+                            out_diagnostics.add_error("MatchSize cannot be combined with explicit Width/Height", scope);
+                        } else {
+                            resource.texture.size_mode = FGSizeMode::MatchResource;
+                            resource.texture.match_resource = match_node.as<std::string>();
+                            parse_scale(body["Scale"], resource.texture, out_diagnostics, scope);
+                        }
+                    } else if (width_swapchain || height_swapchain) {
                         if (!(width_swapchain && height_swapchain)) {
                             out_diagnostics.add_error("Width/Height must both be 'swapchain' when using swapchain-relative size", scope);
                         }
@@ -430,22 +472,7 @@ namespace Honey {
                         resource.texture.scale_x = 1.0f;
                         resource.texture.scale_y = 1.0f;
 
-                        if (const auto scale_node = body["Scale"]) {
-                            try {
-                                if (scale_node.IsScalar()) {
-                                    const float s = scale_node.as<float>();
-                                    resource.texture.scale_x = s;
-                                    resource.texture.scale_y = s;
-                                } else if (scale_node.IsSequence() && scale_node.size() == 2) {
-                                    resource.texture.scale_x = scale_node[0].as<float>();
-                                    resource.texture.scale_y = scale_node[1].as<float>();
-                                } else {
-                                    out_diagnostics.add_error("Scale must be a float or [x, y]", scope);
-                                }
-                            } catch (const YAML::BadConversion&) {
-                                out_diagnostics.add_error("Scale contains non-float values", scope);
-                            }
-                        }
+                        parse_scale(body["Scale"], resource.texture, out_diagnostics, scope);
                     } else if (width_node && height_node) {
                         resource.texture.size_mode = FGSizeMode::Fixed;
                         try {

@@ -66,7 +66,7 @@ namespace Honey {
 
     enum class FGImportedTargetKind : uint8_t {
         Swapchain,
-        ExternalFramebuffer
+        ExternalFramebuffer,
     };
 
     // Which image view of a resource a shader binding samples. Reflection cannot infer this
@@ -81,7 +81,8 @@ namespace Honey {
 
     enum class FGSizeMode : uint8_t {
         Fixed,
-        SwapchainRelative
+        SwapchainRelative,
+        MatchResource,
     };
 
     enum class FGDiagSeverity : uint8_t {
@@ -103,9 +104,14 @@ namespace Honey {
         uint32_t width = 0;
         uint32_t height = 0;
 
-        // Used when size_mode == SwapchainRelative
+        // Used when size_mode == SwapchainRelative and MatchResource
         float scale_x = 1.0f;
         float scale_y = 1.0f;
+
+        // Used when size_mode == MatchResource - name of the resource whose resolved
+        // dimensions this one copies. Resolved in a deferred pass during compilation
+        // (the referenced resource may be declared later in the YAML), never inline.
+        std::string match_resource;
 
         uint32_t samples = 1;
 

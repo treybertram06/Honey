@@ -169,9 +169,67 @@ namespace Honey {
                     out_height = std::max(1u, static_cast<uint32_t>(std::round(static_cast<float>(base_h) * sy)));
                     return true;
                 }
+                case FGSizeMode::MatchResource: {
+                    // Unreachable: MatchResource cannot be resolved from a single desc - it needs
+                    // every other resource's dimensions, so the caller skips this function entirely
+                    // and resolve_matched_dimensions() handles it after the resource loop closes.
+                    HN_CORE_ASSERT(false, "try_resolve_dimensions called for a MatchResource texture");
+                    return false;
+                }
             }
 
             return false;
+        }
+
+        // Second-pass resolver for FGSizeMode::MatchResource. Runs after every resource exists so
+        // it does not depend on YAML declaration order, and so imported targets (whose dimensions
+        // are only filled in while walking the resource list) are already resolved.
+        static void resolve_matched_dimensions(
+            std::vector<FGCompiledResource>& resources,
+            const std::unordered_map<std::string, FGResourceHandle>& name_to_handle,
+            FGCompileDiagnostics& out_diagnostics)
+        {
+            for (auto& res : resources) {
+                if (res.type != FGResourceType::Texture)
+                    continue;
+                if (res.texture.size_mode != FGSizeMode::MatchResource)
+                    continue;
+
+                const auto it = name_to_handle.find(res.texture.match_resource);
+                if (it == name_to_handle.end()) {
+                    out_diagnostics.add_error(
+                        "MatchSize references unknown resource '" + res.texture.match_resource + "'",
+                        res.name);
+                    continue;
+                }
+
+                const auto& src = resources[it->second];
+
+                // Single level only - no chains, so this pass needs no topological sort or cycle
+                // detection. Also catches a resource naming itself (which would alias res/src).
+                if (src.type == FGResourceType::Texture &&
+                    src.texture.size_mode == FGSizeMode::MatchResource) {
+                    out_diagnostics.add_error(
+                        "MatchSize target '" + res.texture.match_resource + "' is itself MatchSize (chaining is not supported)",
+                        res.name);
+                    continue;
+                }
+
+                if (src.resolved_width == 0 || src.resolved_height == 0) {
+                    out_diagnostics.add_error(
+                        "MatchSize target '" + res.texture.match_resource + "' has unresolved dimensions",
+                        res.name);
+                    continue;
+                }
+
+                const float sx = (res.texture.scale_x > 0.0f) ? res.texture.scale_x : 1.0f;
+                const float sy = (res.texture.scale_y > 0.0f) ? res.texture.scale_y : 1.0f;
+
+                res.resolved_width = std::max(1u,
+                    static_cast<uint32_t>(std::round(static_cast<float>(src.resolved_width) * sx)));
+                res.resolved_height = std::max(1u,
+                    static_cast<uint32_t>(std::round(static_cast<float>(src.resolved_height) * sy)));
+            }
         }
 
         static bool try_parse_clear_color(const YAML::Node& clear_node, glm::vec4& out_color) {
@@ -1026,12 +1084,18 @@ namespace Honey {
             res.imported_kind = res_desc.imported_kind;
 
             if (res.type == FGResourceType::Texture) {
-                uint32_t rw = 0, rh = 0;
-                if (!try_resolve_dimensions(res.texture, rw, rh)) {
-                    out_diagnostics.add_error("Failed to resolve texture dimensions for resource", res.name);
-                } else {
-                    res.resolved_width = rw;
-                    res.resolved_height = rh;
+                // MatchResource is deliberately skipped here: it needs another resource's resolved
+                // dimensions, and that resource may be declared later in the YAML (or be an imported
+                // target still being filled in by this very loop). resolve_matched_dimensions()
+                // handles it once the loop closes, so sizing never depends on declaration order.
+                if (res.texture.size_mode != FGSizeMode::MatchResource) {
+                    uint32_t rw = 0, rh = 0;
+                    if (!try_resolve_dimensions(res.texture, rw, rh)) {
+                        out_diagnostics.add_error("Failed to resolve texture dimensions for resource", res.name);
+                    } else {
+                        res.resolved_width = rw;
+                        res.resolved_height = rh;
+                    }
                 }
                 res.attachment_index = k_invalid_attachment;
             } else if (res.type == FGResourceType::Buffer) {
@@ -1074,6 +1138,10 @@ namespace Honey {
             compiled->m_resource_name_to_handle.emplace(res.name, handle);
             compiled->m_resources.emplace_back(std::move(res));
         }
+
+        // Every resource now exists and every non-MatchResource size is known, so the deferred
+        // MatchResource sizes can be filled in.
+        resolve_matched_dimensions(compiled->m_resources, compiled->m_resource_name_to_handle, out_diagnostics);
 
         compiled->m_passes.reserve(desc.passes.size());
         for (const auto& pass_desc : desc.passes) {
