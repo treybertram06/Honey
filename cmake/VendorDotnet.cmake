@@ -22,6 +22,7 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
         set(DOTNET_RID "win-x86")
     endif()
     set(DOTNET_LIB_NAME "nethost.lib")
+    set(DOTNET_DLL_NAME "nethost.dll")
 else()
     message(FATAL_ERROR "Unsupported platform for .NET hosting: ${CMAKE_SYSTEM_NAME}")
 endif()
@@ -29,9 +30,12 @@ endif()
 set(DOTNET_NATIVE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/dotnet/native")
 set(DOTNET_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor/dotnet/include")
 set(DOTNET_LIB_PATH "${DOTNET_NATIVE_DIR}/${DOTNET_LIB_NAME}")
+if(DEFINED DOTNET_DLL_NAME)
+    set(DOTNET_DLL_PATH "${DOTNET_NATIVE_DIR}/${DOTNET_DLL_NAME}")
+endif()
 
-# Download + extract only if the lib isn't already present
-if(NOT EXISTS "${DOTNET_LIB_PATH}")
+# Download + extract only if the lib (and, on Windows, the DLL) isn't already present
+if(NOT EXISTS "${DOTNET_LIB_PATH}" OR (DEFINED DOTNET_DLL_PATH AND NOT EXISTS "${DOTNET_DLL_PATH}"))
     string(TOLOWER "microsoft.netcore.app.host.${DOTNET_RID}" DOTNET_PKG_NAME)
     set(DOTNET_NUPKG_URL
             "https://api.nuget.org/v3-flatcontainer/${DOTNET_PKG_NAME}/${DOTNET_VERSION}/${DOTNET_PKG_NAME}.${DOTNET_VERSION}.nupkg"
@@ -62,6 +66,14 @@ if(NOT EXISTS "${DOTNET_LIB_PATH}")
             "${CMAKE_BINARY_DIR}/_dotnet_host/extracted/runtimes/${DOTNET_RID}/native/${DOTNET_LIB_NAME}"
             DESTINATION "${DOTNET_NATIVE_DIR}"
     )
+
+    # On Windows, nethost is a DLL (nethost.lib is just the import lib) — copy it too
+    if(DEFINED DOTNET_DLL_NAME)
+        file(COPY
+                "${CMAKE_BINARY_DIR}/_dotnet_host/extracted/runtimes/${DOTNET_RID}/native/${DOTNET_DLL_NAME}"
+                DESTINATION "${DOTNET_NATIVE_DIR}"
+        )
+    endif()
 
     message(STATUS "[Honey] .NET hosting libs ready at ${DOTNET_NATIVE_DIR}")
 endif()
@@ -136,11 +148,24 @@ endif()
 # ------------------------------------------------------------------------------
 # Expose an imported target: Honey::DotnetHost
 # ------------------------------------------------------------------------------
-add_library(Honey::DotnetHost STATIC IMPORTED GLOBAL)
-set_target_properties(Honey::DotnetHost PROPERTIES
-        IMPORTED_LOCATION             "${DOTNET_LIB_PATH}"
-        INTERFACE_INCLUDE_DIRECTORIES "${DOTNET_INCLUDE_DIR}"
-)
+# On Windows, nethost is a DLL (nethost.lib is only the import lib), so the
+# target must be SHARED IMPORTED with both IMPORTED_IMPLIB and IMPORTED_LOCATION
+# set — otherwise $<TARGET_RUNTIME_DLLS:...> won't know to copy nethost.dll
+# next to the exe. On Linux/macOS, libnethost.a is genuinely static.
+if(DEFINED DOTNET_DLL_PATH)
+    add_library(Honey::DotnetHost SHARED IMPORTED GLOBAL)
+    set_target_properties(Honey::DotnetHost PROPERTIES
+            IMPORTED_IMPLIB               "${DOTNET_LIB_PATH}"
+            IMPORTED_LOCATION              "${DOTNET_DLL_PATH}"
+            INTERFACE_INCLUDE_DIRECTORIES "${DOTNET_INCLUDE_DIR}"
+    )
+else()
+    add_library(Honey::DotnetHost STATIC IMPORTED GLOBAL)
+    set_target_properties(Honey::DotnetHost PROPERTIES
+            IMPORTED_LOCATION             "${DOTNET_LIB_PATH}"
+            INTERFACE_INCLUDE_DIRECTORIES "${DOTNET_INCLUDE_DIR}"
+    )
+endif()
 
 # Bake the absolute runtime root path in so dotnet_host.cpp can find libhostfxr
 # without relying on a system .NET installation.

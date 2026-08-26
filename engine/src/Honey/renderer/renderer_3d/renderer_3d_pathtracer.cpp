@@ -1653,11 +1653,11 @@ namespace Honey {
 
             std::filesystem::path assets_dir(ASSET_ROOT);
             VkShaderModule extend_module = make_module(
-                (assets_dir / "shaders" / "PathTrace" / "PathTrace_Extend.rgen"), "PathTrace_Extend");
+                (assets_dir / "shaders" / "PathTrace" / "PathTrace_Extend.rgen").string(), "PathTrace_Extend");
             VkShaderModule miss_module = make_module(
-                (assets_dir / "shaders" / "PathTrace" / "PathTrace_Miss.rmiss"), "PathTrace_Miss");
+                (assets_dir / "shaders" / "PathTrace" / "PathTrace_Miss.rmiss").string(), "PathTrace_Miss");
             VkShaderModule hit_module = make_module(
-                (assets_dir / "shaders" / "PathTrace" / "PathTrace_ClosestHit.rchit"), "PathTrace_ClosestHit");
+                (assets_dir / "shaders" / "PathTrace" / "PathTrace_ClosestHit.rchit").string(), "PathTrace_ClosestHit");
 
             if (!compile_ok) {
                 HN_CORE_ERROR("[PathTracer] Shader compilation failed — Extend pipeline will not be built");
@@ -1838,9 +1838,9 @@ namespace Honey {
 
             std::filesystem::path assets_dir(ASSET_ROOT);
             VkShaderModule shadow_module = make_module(
-                (assets_dir / "shaders" / "PathTrace" / "PathTrace_Shadow.rgen"), "PathTrace_Shadow");
+                (assets_dir / "shaders" / "PathTrace" / "PathTrace_Shadow.rgen").string(), "PathTrace_Shadow");
             VkShaderModule miss_module = make_module(
-                (assets_dir / "shaders" / "PathTrace" / "PathTrace_ShadowMiss.rmiss"), "PathTrace_ShadowMiss");
+                (assets_dir / "shaders" / "PathTrace" / "PathTrace_ShadowMiss.rmiss").string(), "PathTrace_ShadowMiss");
             if (!compile_ok) {
                 HN_CORE_ERROR("[PathTracer] Shader compilation failed — Shadow pipeline will not be built");
                 if (shadow_module)      vkDestroyShaderModule(device, shadow_module,      nullptr);

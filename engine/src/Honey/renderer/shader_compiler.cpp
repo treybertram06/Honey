@@ -435,7 +435,7 @@ namespace Honey {
     }
 
     ShaderCompiler::ShaderStage ShaderCompiler::get_stage_from_extension(const std::filesystem::path& path) {
-        std::string extension = path.extension();
+        std::string extension = path.extension().string();
 
         // I cannot use a string in a switch statement for some reason...
         // RT types

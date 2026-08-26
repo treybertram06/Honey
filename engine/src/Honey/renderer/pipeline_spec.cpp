@@ -390,7 +390,7 @@ namespace Honey {
 
         auto bindings = reflect_vertex_input_bindings_from_spirv(spirv.vertex);
 
-        spec.reflection = reflect_descriptor_bindings_from_spirv({ spirv.vertex, spirv.fragment });
+        spec.reflection = reflect_descriptor_bindings_from_spirv(std::vector{ spirv.vertex, spirv.fragment });
 
         spec.vertexBindings.clear();
         spec.vertexBindings = std::move(bindings);
