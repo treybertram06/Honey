@@ -105,6 +105,7 @@ namespace Honey {
             FramebufferTextureFormat::RGBA8,
             FramebufferTextureFormat::RGBA16F,
             FramebufferTextureFormat::RGBA8,
+            FramebufferTextureFormat::RED_INTEGER,
             FramebufferTextureFormat::Depth
         };
         gbuffer_spec.width          = m_width;

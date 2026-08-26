@@ -40,7 +40,7 @@ namespace Honey::Renderer3DInternal {
 
         auto spec = PipelineSpec::from_shader(asset_root / "shaders" / "Renderer3D_MeshletDeferred.glsl");
         spec.perColorAttachmentBlend.clear();
-        spec.perColorAttachmentBlend.resize(3, AttachmentBlendState{});
+        spec.perColorAttachmentBlend.resize(4, AttachmentBlendState{}); // 4 is the number of attachments excluding depth: albedo, oct-normal + emissive, metallic/roughness/AO, entity id
         if (cull_none)
             spec.cullMode = CullMode::None;
 

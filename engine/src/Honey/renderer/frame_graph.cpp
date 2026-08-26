@@ -886,7 +886,7 @@ namespace Honey {
                 const std::string wanted_shader = b.name;
                 FGResourceHandle resolved = k_invalid_resource;
                 FGViewKind  view_kind = FGViewKind::Color2D;
-                uint32_t    attachment = 0;
+                uint32_t    attachment = k_invalid_attachment;
 
                 for (const auto& rb : m_pass->read_bindings) {
                     if (rb.handle >= m_graph->m_resources.size())
@@ -906,6 +906,29 @@ namespace Honey {
                     HN_CORE_ERROR("bind_heap_pipeline: pass '{0}' shader samples '{1}' (set {2}, binding {3}) "
                                   "but no declared read binding matches; descriptor will be undefined",
                                   m_pass->name, b.name, b.set, b.binding);
+                }
+
+                // Resolve which attachment a Color2D view actually reads. An explicit
+                // `Attachment:` in this pass's ReadBindings always wins; otherwise fall back to
+                // the resource's own attachment_index — set once, correctly, when it was compiled
+                // as one output of a multi-Writes: pass (e.g. vectorTexture/vectorEntityTexture
+                // both come out of VectorDraw's single framebuffer). Silently defaulting to 0 here
+                // used to mean "forgot Attachment:" and "meant attachment 0" were indistinguishable
+                // — that cost a very long debugging session tracking vector-icon entity-id picking
+                // down to vectorEntityTexture's read silently resolving to vectorTexture's own
+                // image instead. A resource with no single known attachment (a raw multi-attachment
+                // container like gBuffer) and no explicit override is a genuine ambiguity: fail
+                // loudly instead of guessing 0.
+                if (resolved != k_invalid_resource && view_kind == FGViewKind::Color2D) {
+                    if (attachment == k_invalid_attachment)
+                        attachment = m_graph->m_resources[resolved].attachment_index;
+
+                    HN_CORE_ASSERT(attachment != k_invalid_attachment,
+                        "bind_heap_pipeline: pass '{0}' shader binding '{1}' reads resource '{2}' via a "
+                        "Color2D view, but neither this ReadBindings entry nor the resource itself "
+                        "specifies which attachment to use — add 'Attachment: N' to this pass's "
+                        "ReadBindings entry for '{2}'",
+                        m_pass->name, wanted_shader, m_graph->m_resources[resolved].name);
                 }
 
                 PassDescriptorPlanEntry e{};

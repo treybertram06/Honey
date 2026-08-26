@@ -132,7 +132,12 @@ namespace Honey {
 
         // Heap-mode descriptor automation (optional, defaults give 1:1 name bridging).
         std::string shader_name;                    // explicit shader identifier; empty => "u_" + resource_name
-        uint32_t    attachment = 0;                 // color attachment index (FGViewKind::Color2D only)
+        // Color attachment index (FGViewKind::Color2D only). Defaults to k_invalid_attachment
+        // ("unspecified"), NOT 0 — a resource that is itself a single attachment of a multi-Writes:
+        // pass (see FGCompiledResource::attachment_index) supplies its own default at resolve time;
+        // an explicit 0 here is only needed to pick one attachment out of an inherently
+        // multi-attachment container resource (e.g. gBuffer), where there is no other default.
+        uint32_t    attachment = k_invalid_attachment;
         FGViewKind  view_kind  = FGViewKind::Color2D;
     };
 
@@ -267,7 +272,7 @@ namespace Honey {
 
         // Carried through from FGResourceBindingDesc for heap-mode descriptor automation.
         std::string shader_name;
-        uint32_t    attachment = 0;
+        uint32_t    attachment = k_invalid_attachment; // see FGResourceBindingDesc::attachment
         FGViewKind  view_kind  = FGViewKind::Color2D;
     };
 
