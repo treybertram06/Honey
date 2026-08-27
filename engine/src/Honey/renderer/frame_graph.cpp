@@ -919,7 +919,20 @@ namespace Honey {
                 // image instead. A resource with no single known attachment (a raw multi-attachment
                 // container like gBuffer) and no explicit override is a genuine ambiguity: fail
                 // loudly instead of guessing 0.
-                if (resolved != k_invalid_resource && view_kind == FGViewKind::Color2D) {
+                //
+                // Only Texture/ImportedTarget resources are actually resolved through
+                // view_ci_for() below and need an attachment index at all. Buffer reads (e.g.
+                // ssaoKernel's uniform binding) leave ReadBindings' ViewKind unset — which
+                // defaults to Color2D since buffers have no view kind of their own — and
+                // ImportedTexture wraps a single standalone Texture2D with no framebuffer/
+                // attachment concept, read via get_vk_image_view_ci() directly. Neither is
+                // ambiguous; gating on resource type (rather than excluding each non-attachment
+                // type one at a time) keeps this correct as new resource kinds are added.
+                const FGResourceType resolved_type = resolved != k_invalid_resource
+                    ? m_graph->m_resources[resolved].type : FGResourceType::Buffer;
+                const bool is_attachment_backed = resolved_type == FGResourceType::Texture ||
+                                                   resolved_type == FGResourceType::ImportedTarget;
+                if (resolved != k_invalid_resource && view_kind == FGViewKind::Color2D && is_attachment_backed) {
                     if (attachment == k_invalid_attachment)
                         attachment = m_graph->m_resources[resolved].attachment_index;
 
@@ -1311,7 +1324,15 @@ namespace Honey {
             }
 
             if (!pass.targets_swapchain) {
-                // Prefer imported external framebuffer outputs when present.
+                // Prefer imported external framebuffer outputs when present. A pass may write
+                // several separately-named resources that all alias the same externally-owned
+                // framebuffer (e.g. gAlbedo/gNormal/gPBRParams/gEntityID/gDepth all aliasing one
+                // physical G-buffer target) — assign each its attachment_index from its position in
+                // Writes:, mirroring exactly how the transient Texture clustering path below derives
+                // attachment_index from Writes:-list order. This is what lets a ReadBindings entry
+                // for one of these resources omit Attachment: entirely and still resolve correctly
+                // (see bind_heap_pipeline's attachment_index fallback).
+                uint32_t external_attachment_counter = 0;
                 for (const auto h : pass.writes) {
                     if (h >= compiled->m_resources.size())
                         continue;
@@ -1320,8 +1341,9 @@ namespace Honey {
                     if (out_res.type == FGResourceType::ImportedTarget &&
                         out_res.imported_kind == FGImportedTargetKind::ExternalFramebuffer)
                     {
-                        pass.target_framebuffer = out_res.framebuffer;
-                        break;
+                        if (!pass.target_framebuffer)
+                            pass.target_framebuffer = out_res.framebuffer;
+                        out_res.attachment_index = external_attachment_counter++;
                     }
                 }
 

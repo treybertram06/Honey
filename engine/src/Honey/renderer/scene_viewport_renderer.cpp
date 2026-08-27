@@ -59,7 +59,10 @@ namespace Honey {
             });
 
             registry.register_executor("deferred.lighting", [](FrameGraphPassContext& ctx) {
-                Ref<Framebuffer> gbuffer_fb = ctx.get_input_framebuffer("gBuffer");
+                // Any of the 5 gAlbedo/gNormal/gPBRParams/gEntityID/gDepth names resolves to the
+                // same underlying framebuffer (see the ImportedTarget registration in
+                // rebuild_frame_graph()) — gAlbedo is just the conventional pick.
+                Ref<Framebuffer> gbuffer_fb = ctx.get_input_framebuffer("gAlbedo");
                 Ref<Framebuffer> ssao_fb = ctx.get_input_framebuffer("ssaoTexture");
                 Ref<Framebuffer> shadow_cube_fb = ctx.get_input_framebuffer("shadowCubemap");
                 Ref<Framebuffer> shadow_dir_fb = ctx.get_input_framebuffer("shadowDirMap");
@@ -261,7 +264,16 @@ namespace Honey {
         FGCompileDiagnostics diags;
         FGCompileOptions options{};
         options.external_framebuffers.emplace("editorViewport", m_output_framebuffer);
-        options.external_framebuffers.emplace("gBuffer", m_gbuffer_framebuffer);
+        // gAlbedo/gNormal/gPBRParams/gEntityID/gDepth all alias the same physical G-buffer
+        // framebuffer (attachments 0-4, matching gbuffer_spec.attachments in init() below) — giving
+        // each attachment its own frame-graph resource name lets attachment_index be derived
+        // automatically from Writes:-list order instead of requiring a hand-written Attachment: N
+        // on every read binding (see frame_graph.cpp's ImportedTarget target-resolution loop).
+        options.external_framebuffers.emplace("gAlbedo", m_gbuffer_framebuffer);
+        options.external_framebuffers.emplace("gNormal", m_gbuffer_framebuffer);
+        options.external_framebuffers.emplace("gPBRParams", m_gbuffer_framebuffer);
+        options.external_framebuffers.emplace("gEntityID", m_gbuffer_framebuffer);
+        options.external_framebuffers.emplace("gDepth", m_gbuffer_framebuffer);
         if (auto noise = Renderer3DSSAO::get_noise_texture())
             options.imported_textures.emplace("ssaoNoise", noise);
         options.requested_output_resources.emplace_back("editorViewport");
