@@ -61,10 +61,15 @@ namespace Honey {
         bool show_jolt_debug_draw = false;
     };
 
+    struct EditorSettings {
+        float gizmo_icon_size = 32.0f;
+    };
+
     struct EngineSettings {
         RendererSettings renderer;
         PhysicsSettings physics;
         WindowSettings window;
+        EditorSettings editor;
     };
 
     class Settings {

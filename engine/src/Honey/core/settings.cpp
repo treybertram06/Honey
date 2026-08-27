@@ -244,6 +244,12 @@ namespace Honey {
 
         }
 
+        // ---------------- Editor -----------------
+        if (auto editor_node = root["Editor"]) {
+            if (auto n = editor_node["GizmoIconSize"])
+                s.editor.gizmo_icon_size = n.as<float>(s.editor.gizmo_icon_size);
+        }
+
         HN_CORE_INFO("Loaded settings from {}", filepath.string());
         return true;
     }
@@ -307,7 +313,13 @@ namespace Honey {
 
         out << YAML::EndMap; // Window
 
+        // ---------------- Editor -----------------
+        out << YAML::Key << "Editor" << YAML::Value;
+        out << YAML::BeginMap;
 
+        out << YAML::Key << "GizmoIconSize" << YAML::Value << s.editor.gizmo_icon_size;
+
+        out << YAML::EndMap; // Editor
 
         out << YAML::EndMap; // root
 
