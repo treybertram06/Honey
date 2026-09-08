@@ -259,6 +259,10 @@ add_library(engine STATIC
         src/platform/vulkan/vk_icon_globals.cpp
         src/Honey/renderer/renderer_3d/renderer_3d_vector_icon.cpp
         src/Honey/renderer/renderer_3d/renderer_3d_vector_icon.h
+        src/Honey/loaders/hdr_equirect_loader.cpp
+        src/Honey/loaders/hdr_equirect_loader.h
+        src/platform/vulkan/vk_texture_cube.h
+        src/platform/vulkan/vk_texture_cube.cpp
 )
 
 # Apply MSVC runtime to engine itself

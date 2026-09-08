@@ -61,4 +61,13 @@ namespace Honey {
         virtual void refresh_sampler() {}
     };
 
+    class TextureCube {
+    public:
+        virtual ~TextureCube() = default;
+        static Ref<TextureCube> create(const std::string& hdr_path);
+
+        virtual uint32_t get_width() const = 0;
+        virtual uint32_t get_bindless_index() const = 0;
+    };
+
 }
