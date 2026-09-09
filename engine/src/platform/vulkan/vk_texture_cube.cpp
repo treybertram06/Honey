@@ -182,7 +182,12 @@ namespace Honey {
         si.compareOp = VK_COMPARE_OP_ALWAYS;
         si.mipLodBias = 0.0f;
         si.minLod = 0.0f;
-        si.maxLod = static_cast<float>(m_mip_levels - 1);
+        // Only mip 0 is ever written (see convert_equirect_to_cube) -- mips 1..N-1 are
+        // transitioned to SHADER_READ_ONLY_OPTIMAL alongside it (a layout transition doesn't
+        // require valid content) but never get real data until mip-chain generation exists.
+        // Clamp sampling to mip 0 so nothing reads that uninitialized memory; raise this back
+        // to (m_mip_levels - 1) once the mip chain is actually generated.
+        si.maxLod = 0.0f;
         si.anisotropyEnable = VK_FALSE;
         si.magFilter = VK_FILTER_LINEAR;
         si.minFilter = VK_FILTER_LINEAR;

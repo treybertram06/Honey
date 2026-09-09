@@ -69,6 +69,32 @@ namespace Honey {
 
             return true;
         }
+
+        static bool is_supported_hdr_extension(const std::filesystem::path& p) {
+            auto ext = p.extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(),
+                           [](unsigned char c) { return (char)std::tolower(c); });
+
+            return ext == ".hdr";
+        }
+
+        static bool hdr_file_exists(const std::string& path) {
+            namespace fs = std::filesystem;
+            std::error_code ec;
+
+            fs::path p(path);
+
+            if (!fs::exists(p, ec) || ec)
+                return false;
+
+            if (!fs::is_regular_file(p, ec) || ec)
+                return false;
+
+            if (!is_supported_hdr_extension(p))
+                return false;
+
+            return true;
+        }
     }
 
     TextureCache& Texture2D::texture_cache_instance() {
@@ -82,6 +108,11 @@ namespace Honey {
     }
 
     Ref<TextureCube> TextureCube::create(const std::string& hdr_path) {
+        if (!hdr_file_exists(hdr_path)) {
+            HN_CORE_WARN("TextureCube::create: missing/invalid HDR path '{}'", hdr_path);
+            return nullptr;
+        }
+
         switch (Renderer::get_api()) {
             case RendererAPI::API::opengl:
             case RendererAPI::API::none:    HN_CORE_ASSERT(false, "RendererAPI::none is not supported."); return nullptr;

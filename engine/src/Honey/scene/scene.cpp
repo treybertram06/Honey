@@ -480,6 +480,7 @@ namespace Honey {
         copy_component_if_exists<DirectionalLightComponent>     (new_entity, source);
         copy_component_if_exists<PointLightComponent>           (new_entity, source);
         copy_component_if_exists<SpotLightComponent>            (new_entity, source);
+        copy_component_if_exists<SkyboxComponent>               (new_entity, source);
 
         // Link into the hierarchy before recursing so world transforms and
         // parent/child bookkeeping are correct at every level.
