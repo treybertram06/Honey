@@ -415,7 +415,7 @@ namespace Honey {
 
             file_path = new_path;
             if (!file_path.empty())
-                runtime_handle = TextureCube::create(file_path);
+                runtime_handle = TextureCube::create(file_path.string());
             else
                 runtime_handle = nullptr;
         }

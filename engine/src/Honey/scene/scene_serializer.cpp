@@ -334,7 +334,7 @@ namespace Honey {
             out << YAML::BeginMap;
 
             auto& sc = entity.get_component<SkyboxComponent>();
-            out << YAML::Key << "FilePath" << YAML::Value << sc.get_file_path();
+            out << YAML::Key << "FilePath" << YAML::Value << sc.get_file_path().string();
             out << YAML::Key << "Active" << YAML::Value << sc.active;
             out << YAML::Key << "Intensity" << YAML::Value << sc.intensity;
 
