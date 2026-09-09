@@ -406,6 +406,32 @@ namespace Honey {
         AudioSourceComponent(const AudioSourceComponent&) = default;
     };
 
+    struct SkyboxComponent {
+        SkyboxComponent() = default;
+        SkyboxComponent(const SkyboxComponent&) = default;
+
+        void update_file_synchronous(const std::filesystem::path& new_path) {
+            if (new_path == file_path) return;
+
+            file_path = new_path;
+            if (!file_path.empty())
+                runtime_handle = TextureCube::create(file_path);
+            else
+                runtime_handle = nullptr;
+        }
+        const std::filesystem::path& get_file_path() const { return file_path; }
+        bool is_loaded() const { return runtime_handle != nullptr; }
+        const Ref<TextureCube> get_runtime_handle() const { return runtime_handle; }
+
+        bool active = true;
+        float intensity = 1.0f;
+
+    private:
+        std::filesystem::path file_path;
+        Ref<TextureCube> runtime_handle = nullptr;
+
+    };
+
     struct PointLightComponent {
         glm::vec3 color = {1.0f, 1.0f, 1.0f};
         float intensity = 1.0f;

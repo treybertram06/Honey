@@ -42,6 +42,7 @@ namespace Honey {
                     uint32_t viewport_w = 1280, uint32_t viewport_h = 720, float camera_exposure = 1.0f);
 
         Entity get_primary_camera() const;
+        Entity get_active_skybox() const;
 
         entt::registry& get_registry() { return m_registry; }
         const entt::registry& get_registry() const { return m_registry; }

@@ -209,6 +209,16 @@ namespace Honey {
         return {}; // invalid entity if none found
     }
 
+    Entity Scene::get_active_skybox() const {
+        auto view = m_registry.view<SkyboxComponent>();
+        for (auto entity : view) {
+            auto& sc = view.get<SkyboxComponent>(entity);
+            if (sc.active)
+                return Entity(entity, const_cast<Scene*>(this));
+        }
+        return {}; // invalid entity if none found
+    }
+
     static void rebuild_colliders(Scene* scene, Entity entity) {
         if (!entity.has_component<Rigidbody2DComponent>())
             return;

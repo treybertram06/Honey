@@ -329,6 +329,18 @@ namespace Honey {
             out << YAML::EndMap;
         }
 
+        if (entity.has_component<SkyboxComponent>()) {
+            out << YAML::Key << "SkyboxComponent";
+            out << YAML::BeginMap;
+
+            auto& sc = entity.get_component<SkyboxComponent>();
+            out << YAML::Key << "FilePath" << YAML::Value << sc.get_file_path();
+            out << YAML::Key << "Active" << YAML::Value << sc.active;
+            out << YAML::Key << "Intensity" << YAML::Value << sc.intensity;
+
+            out << YAML::EndMap;
+        }
+
         if (entity.has_component<PointLightComponent>()) {
             out << YAML::Key << "PointLightComponent";
             out << YAML::BeginMap;
@@ -848,6 +860,14 @@ namespace Honey {
             cc.grid_width  = cloth_node["GridWidth"].as<uint32_t>();
             cc.grid_height = cloth_node["GridHeight"].as<uint32_t>();
             cc.substeps    = cloth_node["Substeps"].as<uint32_t>();
+        }
+
+        auto skybox_node = entity_node["SkyboxComponent"];
+        if (skybox_node) {
+            auto& sc = deserialized_entity.add_component<SkyboxComponent>();
+            sc.update_file_synchronous(skybox_node["FilePath"].as<std::string>());
+            sc.active = skybox_node["Active"].as<bool>();
+            sc.intensity = skybox_node["Intensity"].as<float>();
         }
 
         auto point_light_node = entity_node["PointLightComponent"];
