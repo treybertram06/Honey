@@ -38,6 +38,8 @@ namespace Honey {
             LightsUBO lightUBO{};
             TiledLightingData tiledLighting{};
 
+            EnvironmentUBO environmentUBO{};
+
             std::vector<GPUMaterial> materials{};
             uint32_t materials_ssbo_offset = 0;
 

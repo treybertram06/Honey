@@ -29,6 +29,11 @@ namespace Honey {
         void set_point_light_count(int count) { directional_light.point_light_count = count; }
     };
 
+    struct EnvironmentUBO {
+        int32_t cubemap_index = -1;
+        float intensity = 0.0f;
+    };
+
     // Per-frame tiled lighting data — uploaded as an SSBO to set=0 binding=5.
     // sorted_light_indices[i] is the original LightsUBO index of the i-th front-to-back light.
     // tile_light_masks[tile] is a bitmask where bit N means point_lights[N] affects that tile.

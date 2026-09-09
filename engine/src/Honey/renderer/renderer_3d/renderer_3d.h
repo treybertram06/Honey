@@ -47,6 +47,7 @@ namespace Honey {
 		static void end_scene();
 
 		static void submit_lights(const LightsUBO& lights);
+		static void submit_environment(const EnvironmentUBO& environment);
 		static void submit_tiled_lighting_data(const TiledLightingData& data);
 
 		// Deferred lighting pass — call after begin_scene/submit_lights for the GBuffer pass.

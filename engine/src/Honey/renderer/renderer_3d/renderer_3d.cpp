@@ -173,6 +173,17 @@ namespace Honey {
         VulkanRendererAPI::submit_lights(lights);
     }
 
+    void Renderer3D::submit_environment(const EnvironmentUBO& environment) {
+        HN_PROFILE_FUNCTION();
+        if (Renderer::get_api() != RendererAPI::API::vulkan) {
+            HN_CORE_WARN("Renderer3D::submit_environment: only Vulkan path implemented");
+            return;
+        }
+        auto& data = *Renderer3DInternal::g_renderer3d_data;
+        data.scene_environment = environment;
+        VulkanRendererAPI::submit_environment(environment);
+    }
+
     void Renderer3D::submit_tiled_lighting_data(const TiledLightingData& data) {
         HN_PROFILE_FUNCTION();
         if (Renderer::get_api() != RendererAPI::API::vulkan) {

@@ -70,6 +70,7 @@ namespace Honey {
 
         static void submit_camera(const CameraUBO& camera);
         static void submit_lights(const LightsUBO& lights);
+        static void submit_environment(const EnvironmentUBO& environment);
         static void submit_tiled_lighting(const TiledLightingData& data);
         static void submit_materials(const std::vector<GPUMaterial>& materials, uint32_t materials_ssbo_offset);
         static void submit_shadow_matrices(const ShadowMatricesSSBO& data);

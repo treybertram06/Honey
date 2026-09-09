@@ -393,6 +393,7 @@ namespace Honey {
         const CameraUBO gpu_camera = make_gpu_camera(p.cameraUBO);
         write(GlobalBinding::Camera, &gpu_camera);
         write(GlobalBinding::Lights, &p.lightUBO);
+        write(GlobalBinding::Environment, &p.environmentUBO);
         write(GlobalBinding::TiledLighting, &p.tiledLighting);
         // ShadowMatrices and DirShadow are NOT written here
 

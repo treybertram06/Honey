@@ -77,6 +77,7 @@ namespace Honey {
         cam_ubo.exposure  = data->scene_camera_exposure;
         VulkanRendererAPI::submit_camera(cam_ubo);
         VulkanRendererAPI::submit_lights(data->scene_lights);
+        VulkanRendererAPI::submit_environment(data->scene_environment);
         VulkanRendererAPI::submit_tiled_lighting(data->scene_tiled_lighting);
         VulkanRendererAPI::flush_globals_to_heap();
 

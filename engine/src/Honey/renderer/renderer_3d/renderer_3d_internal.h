@@ -103,6 +103,7 @@ namespace Honey::Renderer3DInternal {
         glm::vec3 scene_camera_pos{};
         float scene_camera_exposure = 1.0f;
         LightsUBO scene_lights{};
+        EnvironmentUBO scene_environment{};
         TiledLightingData scene_tiled_lighting{};
 
         Ref<Framebuffer> current_ssao_fb;

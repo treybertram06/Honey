@@ -319,6 +319,11 @@ namespace Honey {
         globals().pending_globals().lightUBO = lights;
     }
 
+    void VulkanRendererAPI::submit_environment(const EnvironmentUBO& environment) {
+        require_frame_begun();
+        globals().pending_globals().environmentUBO = environment;
+    }
+
     void VulkanRendererAPI::submit_tiled_lighting(const TiledLightingData& data) {
         require_frame_begun();
         globals().pending_globals().tiledLighting = data;

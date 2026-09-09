@@ -411,6 +411,7 @@ namespace Honey {
 
         copy_component<ClothComponent>              (dst_scene_registry, src_scene_registry, entt_map);
 
+        copy_component<SkyboxComponent>             (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<PointLightComponent>         (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<DirectionalLightComponent>   (dst_scene_registry, src_scene_registry, entt_map);
         copy_component<SpotLightComponent>          (dst_scene_registry, src_scene_registry, entt_map);
@@ -1122,7 +1123,26 @@ namespace Honey {
                 }
             }
 
+            EnvironmentUBO environment_ubo{};
+            {
+                bool skybox_enabled = false;
+                auto skybox_group = m_registry.group<SkyboxComponent>(entt::get<TransformComponent>);
+                for (auto entity : skybox_group) {
+                    auto& sc = skybox_group.get<SkyboxComponent>(entity);
+                    //auto& tc = skybox_group.get<TransformComponent>(entity); // Maybe this can be used later to rotate the skybox
+                    if (!sc.active) continue;
+
+                    if (sc.get_runtime_handle()) {
+                        environment_ubo.cubemap_index = sc.get_runtime_handle()->get_bindless_index();
+                        environment_ubo.intensity = sc.intensity;
+                        skybox_enabled = sc.active;
+                        break;
+                    }
+                }
+            }
+
             Renderer3D::submit_lights(lights_ubo);
+            Renderer3D::submit_environment(environment_ubo);
             Renderer3D::submit_tiled_lighting_data(tiled_data);
             Renderer3D::begin_scene(view_proj, camera_pos, view, projection, camera_exposure);
 
