@@ -65,6 +65,12 @@ namespace Honey {
 
         Renderer::init();
 
+        // BRDF LUT construction happened earlier (VulkanBackend::acquire_queue_lease(), during
+        // Window::create() above), but baking it needs the shader cache Renderer::init() just
+        // created -- see the VulkanBrdfLut class comment for why the two steps can't be merged.
+        if (m_vulkan_backend)
+            m_vulkan_backend->bake_brdf_lut();
+
         m_imgui_layer = new ImGuiLayer();
         push_overlay(m_imgui_layer);
 

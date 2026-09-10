@@ -265,6 +265,8 @@ add_library(engine STATIC
         src/platform/vulkan/vk_texture_cube.cpp
         src/platform/vulkan/vk_one_shot_compute_pass.h
         src/platform/vulkan/vk_one_shot_compute_pass.cpp
+        src/platform/vulkan/vk_brdf_lut.h
+        src/platform/vulkan/vk_brdf_lut.cpp
 )
 
 # Apply MSVC runtime to engine itself
