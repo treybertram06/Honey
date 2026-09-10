@@ -218,6 +218,8 @@ namespace Honey {
             flush_stream_uploads_blocking();
             flush_deferred_destroys();
 
+            m_one_shot_compute_passes.clear();
+
             shutdown_imgui_resources();
             shutdown_stream_uploader();
 
@@ -281,6 +283,23 @@ namespace Honey {
         }
 
         m_initialized = false;
+    }
+
+    OneShotComputePass& VulkanBackend::get_or_create_one_shot_compute_pass(
+        const std::filesystem::path& shader_path,
+        const std::vector<VkDescriptorSetLayoutBinding>& bindings,
+        uint32_t push_constant_size) {
+        HN_PROFILE_FUNCTION();
+        assert_render_thread();
+
+        std::string key = shader_path.string();
+        auto it = m_one_shot_compute_passes.find(key);
+        if (it != m_one_shot_compute_passes.end())
+            return *it->second;
+
+        auto [inserted, ok] = m_one_shot_compute_passes.emplace(
+            key, CreateScope<OneShotComputePass>(this, shader_path, bindings, push_constant_size));
+        return *inserted->second;
     }
 
     VulkanQueueLease VulkanBackend::acquire_queue_lease(VkSurfaceKHR surface) {

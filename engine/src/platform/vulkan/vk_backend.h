@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -9,6 +10,7 @@
 #include <condition_variable>
 #include <deque>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #define GLFW_INCLUDE_VULKAN
@@ -16,6 +18,7 @@
 #include <vulkan/vulkan.h>
 
 #include "vk_descriptor_heap.h"
+#include "vk_one_shot_compute_pass.h"
 #include "vk_pipeline_cache_blob.h"
 #include "vk_queue_lease.h"
 
@@ -180,6 +183,11 @@ namespace Honey {
 
         bool is_rt_supported() const { return m_ray_tracing_supported; }
 
+        OneShotComputePass& get_or_create_one_shot_compute_pass(
+            const std::filesystem::path& shader_path,
+            const std::vector<VkDescriptorSetLayoutBinding>& bindings,
+            uint32_t push_constant_size = 0);
+
     private:
         struct QueueFamilyInfo {
             uint32_t graphics_family = UINT32_MAX;
@@ -299,6 +307,9 @@ namespace Honey {
         VkSampler m_sampler_nearest = VK_NULL_HANDLE;
         VkSampler m_sampler_linear = VK_NULL_HANDLE;
         VkSampler m_sampler_aniso = VK_NULL_HANDLE;
+
+        // Keyed by shader path string. See get_or_create_one_shot_compute_pass().
+        std::unordered_map<std::string, Scope<OneShotComputePass>> m_one_shot_compute_passes;
 
         static constexpr uint32_t k_desired_queues_per_family = 4;
 

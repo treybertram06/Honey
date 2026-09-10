@@ -3,13 +3,13 @@
 
 #include "vk_backend.h"
 #include "vk_descriptor_heap.h"
+#include "vk_one_shot_compute_pass.h"
 #include "vk_utils.h"
 #include "Honey/core/engine.h"
 #include "vendor/tinygltf/stb_image.h"
 
 #include <cmath>
-
-#include "Honey/renderer/renderer.h"
+#include <vector>
 
 namespace Honey {
 
@@ -212,111 +212,28 @@ namespace Honey {
         heap->write_bindless(m_bindless_index, m_image_view_ci, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
 
+    // Can the contents of this be further abstracted away? Hmmmm
     void VulkanTextureCube::convert_equirect_to_cube(VulkanBackend* backend, const HdrEquirectImage& src,
         VkImage dst_cube_image, uint32_t face_size, uint32_t mip_levels) {
-        // TODO(caching): this rebuilds the descriptor set layout/pool/pipeline from scratch on
-        // every call. Worth caching (mirroring PathTracerResources's s_res/*_built guard pattern
-        // in renderer_3d_pathtracer.cpp), but that cache should NOT be owned by VulkanTextureCube
-        // -- this is a one-shot conversion utility, not per-instance state, so a static here would
-        // tie pipeline lifetime to the wrong owner. Give it a home once the pipeline/dispatch code
-        // below is actually written (VulkanBackend is the likely owner, alongside immediate_submit).
         VkDevice device = reinterpret_cast<VkDevice>(m_device);
 
-        // Descriptors (ugh): a sampler2D and an image2DArray
-        VkDescriptorSetLayoutBinding bindings[2] = {};
+        // Descriptors (ugh): a sampler2D and an image2DArray. stageFlags is filled in by
+        // OneShotComputePass (compute-only by construction), so it's left unset here.
+        std::vector<VkDescriptorSetLayoutBinding> bindings(2);
         // sampler2D
         bindings[0].binding = 0;
         bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         bindings[0].descriptorCount = 1;
-        bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
         // image2DArray
         bindings[1].binding = 1;
         bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         bindings[1].descriptorCount = 1;
-        bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-        // Binding flags not needed as all descriptors will be updated before the synchronous compute pass is issued
-
-        VkDescriptorSetLayout descriptor_set_layout = VK_NULL_HANDLE;
-        // Descriptor set layout
-        VkDescriptorSetLayoutCreateInfo layout_ci{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-        layout_ci.bindingCount = 2;
-        layout_ci.pBindings = bindings;
-        VkResult r = vkCreateDescriptorSetLayout(device, &layout_ci, nullptr, &descriptor_set_layout);
-        HN_CORE_ASSERT(r == VK_SUCCESS, "Failed to create descriptor set layout");
-
-        // Pools
-        VkDescriptorPool descriptor_pool = VK_NULL_HANDLE;
-        VkDescriptorPoolSize pool_sizes[2] = {
-            { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 },
-            { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1 }
-        };
-        VkDescriptorPoolCreateInfo pool_ci{ VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
-        pool_ci.poolSizeCount = 2;
-        pool_ci.pPoolSizes = pool_sizes;
-        pool_ci.maxSets = 1;
-        // No flags - this descriptor is written to once for a single compute pass then torn down immediately
-        r = vkCreateDescriptorPool(device, &pool_ci, nullptr, &descriptor_pool);
-        HN_CORE_ASSERT(r == VK_SUCCESS, "Failed to create descriptor pool");
-
-        // Allocate the descriptor set
-        VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
-        VkDescriptorSetAllocateInfo alloc_info{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
-        alloc_info.descriptorPool = descriptor_pool;
-        alloc_info.descriptorSetCount = 1;
-        alloc_info.pSetLayouts = &descriptor_set_layout;
-        r = vkAllocateDescriptorSets(device, &alloc_info, &descriptor_set);
-        HN_CORE_ASSERT(r == VK_SUCCESS, "Failed to allocate descriptor set");
-
-        // Build pipeline
+        // Cached on VulkanBackend and shared with every future equirect->cube conversion (and, in
+        // time, the other one-shot IBL bakes) instead of rebuilding a pipeline per call.
         auto shader_path = std::filesystem::path(ASSET_ROOT) / "shaders" / "compute" / "EquirectToCube.comp";
-        auto spirv = Renderer::get_shader_cache()->get_or_compile_stage_spirv(shader_path);
-        if (spirv.empty()) {
-            HN_CORE_ERROR("[VulkanTextureCube] SPIRV compilation failed for {}", shader_path.string());
-            return;
-        }
-
-        VkShaderModuleCreateInfo sm_ci{ VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
-        sm_ci.codeSize = spirv.size() * sizeof(uint32_t);
-        sm_ci.pCode = spirv.data();
-        VkShaderModule shader_module = VK_NULL_HANDLE;
-        r = vkCreateShaderModule(device, &sm_ci, nullptr, &shader_module);
-        if (r != VK_SUCCESS) {
-            HN_CORE_ERROR("[VulkanTextureCube] Failed to create shader module");
-            return;
-        }
-
-        VkPipelineLayoutCreateInfo pl_ci{ VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
-        pl_ci.setLayoutCount = 1;
-        pl_ci.pSetLayouts = &descriptor_set_layout;
-
-        VkPushConstantRange pc_range{};
-        pc_range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-        pc_range.offset = 0;
-        pc_range.size = 4; // 4 bytes for single int
-        pl_ci.pushConstantRangeCount = 1;
-        pl_ci.pPushConstantRanges = &pc_range;
-
-        VkPipelineLayout layout = VK_NULL_HANDLE;
-        r = vkCreatePipelineLayout(device, &pl_ci, nullptr, &layout);
-        HN_CORE_ASSERT(r == VK_SUCCESS, "Failed to create pipeline layout for equirect->cube conversion");
-
-        VkComputePipelineCreateInfo cp_ci{ VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO };
-        cp_ci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        cp_ci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-        cp_ci.stage.module = shader_module;
-        cp_ci.stage.pName = "main";
-        cp_ci.layout = layout;
-
-        VkPipeline pipeline = VK_NULL_HANDLE;
-        r = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &cp_ci, nullptr, &pipeline);
-        if (r != VK_SUCCESS) {
-            HN_CORE_ERROR("Failed to create compute pipeline for equirect to cube");
-            return;
-        }
-        vkDestroyShaderModule(device, shader_module, nullptr);
-
-        HN_CORE_INFO("[VulkanTextureCube] Created compute pipeline for equirect to cube");
+        OneShotComputePass& pass = backend->get_or_create_one_shot_compute_pass(
+            shader_path, bindings, sizeof(int32_t) /* face_size push constant */);
 
         // Created inside the lambda, destroyed after immediate_submit returns (it's fence-blocked,
         // so the GPU is done with everything the moment the call comes back).
@@ -349,22 +266,17 @@ namespace Honey {
             dst_info.imageView = throwaway_array_view;
             dst_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
-            VkWriteDescriptorSet writes[2] = {};
-            writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[0].dstSet = descriptor_set;
+            std::vector<VkWriteDescriptorSet> writes(2);
             writes[0].dstBinding = 0;
             writes[0].descriptorCount = 1;
             writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             writes[0].pImageInfo = &src_info;
 
-            writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[1].dstSet = descriptor_set;
             writes[1].dstBinding = 1;
             writes[1].descriptorCount = 1;
             writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
             writes[1].pImageInfo = &dst_info;
-
-            vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
+            // sType/dstSet for both entries are filled in by OneShotComputePass::record() below.
 
             // 3. Barrier dst_cube_image: UNDEFINED -> GENERAL. Only mip 0 / all 6 layers get
             // written by this dispatch; mips 1..N stay undefined-content but get swept into the
@@ -391,17 +303,12 @@ namespace Honey {
                 0, nullptr,
                 1, &to_general);
 
-            // 4. Bind pipeline / descriptor set / push constant (face_size, matches PC.face_size
-            // in EquirectToCube.comp).
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, layout, 0, 1, &descriptor_set, 0, nullptr);
+            // 4-5. Bind pipeline / descriptor set / push constant (face_size, matches
+            // PC.face_size in EquirectToCube.comp) and dispatch -- local_size_x/y = 8 in the
+            // shader, one dispatch covers all 6 faces via gl_GlobalInvocationID.z.
             int32_t pc_face_size = static_cast<int32_t>(face_size);
-            vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc_face_size), &pc_face_size);
-
-            // 5. Dispatch: local_size_x/y = 8 in the shader, one dispatch covers all 6 faces via
-            // gl_GlobalInvocationID.z.
             uint32_t groups = (face_size + 7) / 8;
-            vkCmdDispatch(cmd, groups, groups, 6);
+            pass.record(cmd, writes, &pc_face_size, sizeof(pc_face_size), groups, groups, 6);
 
             // 6. Barrier dst_cube_image -> SHADER_READ_ONLY_OPTIMAL, matching the layout
             // update_bindless_descriptor() already registered this image's bindless slot as.
@@ -449,12 +356,8 @@ namespace Honey {
                 barrier_count, to_read);
         });
 
-        // Everything below is per-call state (nothing here is cached yet -- see the TODO above),
-        // so it all gets torn down now that the GPU work is done.
+        // Only the throwaway view was per-call state -- the pipeline/layout/pool are owned by the
+        // cached OneShotComputePass on VulkanBackend now and outlive this call.
         vkDestroyImageView(device, throwaway_array_view, nullptr);
-        vkDestroyPipeline(device, pipeline, nullptr);
-        vkDestroyPipelineLayout(device, layout, nullptr);
-        vkDestroyDescriptorPool(device, descriptor_pool, nullptr);
-        vkDestroyDescriptorSetLayout(device, descriptor_set_layout, nullptr);
     }
 }

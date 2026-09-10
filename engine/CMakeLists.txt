@@ -263,6 +263,8 @@ add_library(engine STATIC
         src/Honey/loaders/hdr_equirect_loader.h
         src/platform/vulkan/vk_texture_cube.h
         src/platform/vulkan/vk_texture_cube.cpp
+        src/platform/vulkan/vk_one_shot_compute_pass.h
+        src/platform/vulkan/vk_one_shot_compute_pass.cpp
 )
 
 # Apply MSVC runtime to engine itself
