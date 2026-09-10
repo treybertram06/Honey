@@ -123,6 +123,17 @@ namespace Honey {
         return nullptr;
     }
 
+    Ref<TextureCube> TextureCube::create(uint32_t face_size, uint32_t mip_levels) {
+        switch (Renderer::get_api()) {
+            case RendererAPI::API::opengl:
+            case RendererAPI::API::none:    HN_CORE_ASSERT(false, "RendererAPI::none is not supported."); return nullptr;
+            case RendererAPI::API::vulkan:  return CreateRef<VulkanTextureCube>(face_size, mip_levels);
+        }
+
+        HN_CORE_ASSERT(false, "Unknown RendererAPI.");
+        return nullptr;
+    }
+
     Ref<Texture2D> Texture2D::create(uint32_t width, uint32_t height) {
         switch (Renderer::get_api()) {
         case RendererAPI::API::none:     HN_CORE_ASSERT(false, "RendererAPI::none is not supported."); return nullptr;

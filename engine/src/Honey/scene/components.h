@@ -418,17 +418,40 @@ namespace Honey {
                 runtime_handle = TextureCube::create(file_path.string());
             else
                 runtime_handle = nullptr;
+
+            if (runtime_handle) {
+                // Event-driven IBL precompute (sanctioned exception to "frame graph is the only
+                // per-frame driver" -- see todos/deferred_renderer/ibl_implementation.md
+                // invariant 2): bakes once here, not per-frame.
+                irradiance_map = TextureCube::create(k_irradiance_face_size);
+                irradiance_map->convolve_irradiance(runtime_handle);
+
+                prefiltered_map = TextureCube::create(k_prefilter_face_size, k_prefilter_mip_count);
+                prefiltered_map->prefilter_specular(runtime_handle);
+            } else {
+                irradiance_map = nullptr;
+                prefiltered_map = nullptr;
+            }
         }
         const std::filesystem::path& get_file_path() const { return file_path; }
         bool is_loaded() const { return runtime_handle != nullptr; }
         const Ref<TextureCube> get_runtime_handle() const { return runtime_handle; }
+        const Ref<TextureCube> get_irradiance_map() const { return irradiance_map; }
+        const Ref<TextureCube> get_prefiltered_map() const { return prefiltered_map; }
+        static constexpr uint32_t get_prefiltered_mip_count() { return k_prefilter_mip_count; }
 
         bool active = true;
         float intensity = 1.0f;
 
     private:
+        static constexpr uint32_t k_irradiance_face_size = 32;
+        static constexpr uint32_t k_prefilter_face_size = 256;
+        static constexpr uint32_t k_prefilter_mip_count = 9; // log2(256) + 1
+
         std::filesystem::path file_path;
         Ref<TextureCube> runtime_handle = nullptr;
+        Ref<TextureCube> irradiance_map = nullptr;
+        Ref<TextureCube> prefiltered_map = nullptr;
 
     };
 

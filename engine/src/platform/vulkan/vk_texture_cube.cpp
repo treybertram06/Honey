@@ -53,6 +53,31 @@ namespace Honey {
         destroy_hdr_equirect(src, reinterpret_cast<VkDevice>(m_device));
     }
 
+    VulkanTextureCube::VulkanTextureCube(uint32_t face_size, uint32_t mip_levels) {
+        HN_PROFILE_FUNCTION();
+
+        fetch_device_handles();
+
+        m_face_size = face_size;
+        m_mip_levels = mip_levels;
+        HN_CORE_ASSERT(m_face_size > 0, "VulkanTextureCube: degenerate face size");
+
+        // Unlike the HDR-loaded skybox cube (which only ever gets mip 0 populated by
+        // convert_equirect_to_cube), a blank cube's caller is responsible for filling every mip
+        // it declares (see convolve_irradiance() / prefilter_specular()), so the sampler should
+        // be allowed to read all of them -- see create_sampler().
+        m_sample_all_mips = true;
+
+        create_image();
+        create_image_view();
+        create_sampler();
+        update_bindless_descriptor();
+
+        // Contents are undefined until something (e.g. convolve_irradiance()) dispatches into
+        // this image and transitions it to SHADER_READ_ONLY_OPTIMAL -- matches the optimistic
+        // layout update_bindless_descriptor() already registered above.
+    }
+
     VulkanTextureCube::~VulkanTextureCube() {
         HN_PROFILE_FUNCTION();
         if (!m_backend || !m_backend->initialized() || !m_device)
@@ -182,12 +207,13 @@ namespace Honey {
         si.compareOp = VK_COMPARE_OP_ALWAYS;
         si.mipLodBias = 0.0f;
         si.minLod = 0.0f;
-        // Only mip 0 is ever written (see convert_equirect_to_cube) -- mips 1..N-1 are
-        // transitioned to SHADER_READ_ONLY_OPTIMAL alongside it (a layout transition doesn't
-        // require valid content) but never get real data until mip-chain generation exists.
-        // Clamp sampling to mip 0 so nothing reads that uninitialized memory; raise this back
-        // to (m_mip_levels - 1) once the mip chain is actually generated.
-        si.maxLod = 0.0f;
+        // The HDR-loaded skybox cube only ever gets mip 0 populated by convert_equirect_to_cube
+        // -- mips 1..N-1 are transitioned to SHADER_READ_ONLY_OPTIMAL alongside it (a layout
+        // transition doesn't require valid content) but never get real data, so sampling must
+        // stay clamped to mip 0 for that path (m_sample_all_mips == false). Blank cubes created
+        // via the (face_size, mip_levels) ctor are fully populated mip-by-mip by their caller
+        // (convolve_irradiance, prefilter_specular), so they get the full range.
+        si.maxLod = m_sample_all_mips ? static_cast<float>(m_mip_levels - 1) : 0.0f;
         si.anisotropyEnable = VK_FALSE;
         si.magFilter = VK_FILTER_LINEAR;
         si.minFilter = VK_FILTER_LINEAR;
@@ -359,5 +385,257 @@ namespace Honey {
         // Only the throwaway view was per-call state -- the pipeline/layout/pool are owned by the
         // cached OneShotComputePass on VulkanBackend now and outlive this call.
         vkDestroyImageView(device, throwaway_array_view, nullptr);
+    }
+
+    void VulkanTextureCube::convolve_irradiance(const Ref<TextureCube>& source) {
+        HN_PROFILE_FUNCTION();
+        HN_CORE_ASSERT(m_mip_levels == 1, "convolve_irradiance: destination must be a single-mip cube");
+
+        // This backend only ever produces VulkanTextureCube instances (TextureCube::create()
+        // asserts on any other RendererAPI), so this is safe without an RTTI check.
+        auto* src = static_cast<VulkanTextureCube*>(source.get());
+
+        VkDevice device = reinterpret_cast<VkDevice>(m_device);
+        VkImage dst_image = reinterpret_cast<VkImage>(m_image);
+
+        // Descriptors: a samplerCube source and an image2DArray destination (see the cube-as-2D-
+        // array note in convert_equirect_to_cube -- same reason it's needed here).
+        std::vector<VkDescriptorSetLayoutBinding> bindings(2);
+        bindings[0].binding = 0;
+        bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bindings[0].descriptorCount = 1;
+        bindings[1].binding = 1;
+        bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        bindings[1].descriptorCount = 1;
+
+        auto shader_path = std::filesystem::path(ASSET_ROOT) / "shaders" / "compute" / "IrradianceConvolve.comp";
+        OneShotComputePass& pass = m_backend->get_or_create_one_shot_compute_pass(
+            shader_path, bindings, sizeof(int32_t) /* face_size push constant */);
+
+        VkImageView throwaway_array_view = VK_NULL_HANDLE;
+
+        m_backend->immediate_submit("IrradianceConvolve", [&](VkCommandBuffer cmd) {
+            // Throwaway 2D-array view over this (destination) cube's single mip, all 6 layers --
+            // lets the compute shader address it as image2DArray while everything else still
+            // sees it as a cubemap.
+            VkImageViewCreateInfo array_view_ci{ VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+            array_view_ci.image = dst_image;
+            array_view_ci.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+            array_view_ci.format = k_cube_format;
+            array_view_ci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            array_view_ci.subresourceRange.baseMipLevel = 0;
+            array_view_ci.subresourceRange.levelCount = 1;
+            array_view_ci.subresourceRange.baseArrayLayer = 0;
+            array_view_ci.subresourceRange.layerCount = 6;
+            VkResult vr = vkCreateImageView(device, &array_view_ci, nullptr, &throwaway_array_view);
+            HN_CORE_ASSERT(vr == VK_SUCCESS, "Failed to create throwaway 2D array view for irradiance convolution");
+
+            // Source is already a fully-baked cube sitting at SHADER_READ_ONLY_OPTIMAL (the
+            // layout convert_equirect_to_cube's final barrier leaves it in).
+            VkDescriptorImageInfo src_info{};
+            src_info.sampler = reinterpret_cast<VkSampler>(src->get_vk_sampler());
+            src_info.imageView = reinterpret_cast<VkImageView>(src->get_vk_image_view());
+            src_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+            VkDescriptorImageInfo dst_info{};
+            dst_info.imageView = throwaway_array_view;
+            dst_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+            std::vector<VkWriteDescriptorSet> writes(2);
+            writes[0].dstBinding = 0;
+            writes[0].descriptorCount = 1;
+            writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[0].pImageInfo = &src_info;
+
+            writes[1].dstBinding = 1;
+            writes[1].descriptorCount = 1;
+            writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[1].pImageInfo = &dst_info;
+            // sType/dstSet for both entries are filled in by OneShotComputePass::record() below.
+
+            // Barrier this (destination) cube: UNDEFINED -> GENERAL. Unlike
+            // convert_equirect_to_cube, there's no "untouched higher mip" case to handle --
+            // convolve_irradiance() only ever targets a single-mip cube (asserted above).
+            VkImageMemoryBarrier to_general{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+            to_general.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            to_general.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+            to_general.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            to_general.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            to_general.image = dst_image;
+            to_general.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            to_general.subresourceRange.baseMipLevel = 0;
+            to_general.subresourceRange.levelCount = 1;
+            to_general.subresourceRange.baseArrayLayer = 0;
+            to_general.subresourceRange.layerCount = 6;
+            to_general.srcAccessMask = 0;
+            to_general.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+
+            vkCmdPipelineBarrier(cmd,
+                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                0,
+                0, nullptr,
+                0, nullptr,
+                1, &to_general);
+
+            // local_size_x/y = 8 in the shader, one dispatch covers all 6 faces via
+            // gl_GlobalInvocationID.z, matching EquirectToCube.comp's dispatch shape.
+            int32_t pc_face_size = static_cast<int32_t>(m_face_size);
+            uint32_t groups = (m_face_size + 7) / 8;
+            pass.record(cmd, writes, &pc_face_size, sizeof(pc_face_size), groups, groups, 6);
+
+            // Barrier this cube -> SHADER_READ_ONLY_OPTIMAL, matching the layout
+            // update_bindless_descriptor() already registered its bindless slot as.
+            VkImageMemoryBarrier to_read{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+            to_read.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+            to_read.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            to_read.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            to_read.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            to_read.image = dst_image;
+            to_read.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            to_read.subresourceRange.baseMipLevel = 0;
+            to_read.subresourceRange.levelCount = 1;
+            to_read.subresourceRange.baseArrayLayer = 0;
+            to_read.subresourceRange.layerCount = 6;
+            to_read.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            to_read.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+            vkCmdPipelineBarrier(cmd,
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                0,
+                0, nullptr,
+                0, nullptr,
+                1, &to_read);
+        });
+
+        vkDestroyImageView(device, throwaway_array_view, nullptr);
+    }
+
+    void VulkanTextureCube::prefilter_specular(const Ref<TextureCube>& source) {
+        HN_PROFILE_FUNCTION();
+        HN_CORE_ASSERT(m_mip_levels > 1, "prefilter_specular: destination needs a real mip chain");
+
+        // See convolve_irradiance() -- this backend only ever produces VulkanTextureCube.
+        auto* src = static_cast<VulkanTextureCube*>(source.get());
+
+        VkDevice device = reinterpret_cast<VkDevice>(m_device);
+        VkImage dst_image = reinterpret_cast<VkImage>(m_image);
+
+        std::vector<VkDescriptorSetLayoutBinding> bindings(2);
+        bindings[0].binding = 0;
+        bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bindings[0].descriptorCount = 1;
+        bindings[1].binding = 1;
+        bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        bindings[1].descriptorCount = 1;
+
+        struct PrefilterPushConstants {
+            int32_t face_size;
+            float roughness;
+        };
+
+        auto shader_path = std::filesystem::path(ASSET_ROOT) / "shaders" / "compute" / "PrefilterEnv.comp";
+        OneShotComputePass& pass = m_backend->get_or_create_one_shot_compute_pass(
+            shader_path, bindings, sizeof(PrefilterPushConstants));
+
+        // Source is the same fully-baked skybox cube for every mip -- only the destination mip
+        // (and the roughness pushed to the shader) changes per iteration.
+        VkDescriptorImageInfo src_info{};
+        src_info.sampler = reinterpret_cast<VkSampler>(src->get_vk_sampler());
+        src_info.imageView = reinterpret_cast<VkImageView>(src->get_vk_image_view());
+        src_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        // One immediate_submit per mip -- OneShotComputePass::record() resets its descriptor pool
+        // on every call, which is only safe across separate, GPU-idle-blocked submissions (see
+        // its header comment), not multiple records into the same command buffer.
+        for (uint32_t mip = 0; mip < m_mip_levels; ++mip) {
+            uint32_t mip_face_size = m_face_size >> mip;
+            HN_CORE_ASSERT(mip_face_size > 0, "prefilter_specular: mip_levels too high for face_size");
+            float roughness = static_cast<float>(mip) / static_cast<float>(m_mip_levels - 1);
+
+            VkImageView mip_array_view = VK_NULL_HANDLE;
+
+            m_backend->immediate_submit("PrefilterEnv", [&](VkCommandBuffer cmd) {
+                // Throwaway 2D-array view over just this mip, all 6 layers -- same trick as
+                // convolve_irradiance(), scoped to one mip instead of the whole (single-mip) image.
+                VkImageViewCreateInfo array_view_ci{ VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+                array_view_ci.image = dst_image;
+                array_view_ci.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+                array_view_ci.format = k_cube_format;
+                array_view_ci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                array_view_ci.subresourceRange.baseMipLevel = mip;
+                array_view_ci.subresourceRange.levelCount = 1;
+                array_view_ci.subresourceRange.baseArrayLayer = 0;
+                array_view_ci.subresourceRange.layerCount = 6;
+                VkResult vr = vkCreateImageView(device, &array_view_ci, nullptr, &mip_array_view);
+                HN_CORE_ASSERT(vr == VK_SUCCESS, "Failed to create throwaway 2D array view for prefilter mip {0}", mip);
+
+                VkDescriptorImageInfo dst_info{};
+                dst_info.imageView = mip_array_view;
+                dst_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+                std::vector<VkWriteDescriptorSet> writes(2);
+                writes[0].dstBinding = 0;
+                writes[0].descriptorCount = 1;
+                writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                writes[0].pImageInfo = &src_info;
+
+                writes[1].dstBinding = 1;
+                writes[1].descriptorCount = 1;
+                writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+                writes[1].pImageInfo = &dst_info;
+
+                // Each mip is a distinct subresource with its own layout state, so this barrier
+                // is scoped to just baseMipLevel=mip regardless of what's already happened to
+                // other mips this loop.
+                VkImageMemoryBarrier to_general{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+                to_general.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                to_general.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+                to_general.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                to_general.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                to_general.image = dst_image;
+                to_general.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                to_general.subresourceRange.baseMipLevel = mip;
+                to_general.subresourceRange.levelCount = 1;
+                to_general.subresourceRange.baseArrayLayer = 0;
+                to_general.subresourceRange.layerCount = 6;
+                to_general.srcAccessMask = 0;
+                to_general.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+
+                vkCmdPipelineBarrier(cmd,
+                    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                    0,
+                    0, nullptr,
+                    0, nullptr,
+                    1, &to_general);
+
+                // local_size_x/y = 8 in the shader, matching every other one-shot pass here.
+                PrefilterPushConstants pc{ static_cast<int32_t>(mip_face_size), roughness };
+                uint32_t groups = (mip_face_size + 7) / 8;
+                pass.record(cmd, writes, &pc, sizeof(pc), groups, groups, 6);
+
+                VkImageMemoryBarrier to_read{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+                to_read.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+                to_read.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                to_read.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                to_read.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                to_read.image = dst_image;
+                to_read.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                to_read.subresourceRange.baseMipLevel = mip;
+                to_read.subresourceRange.levelCount = 1;
+                to_read.subresourceRange.baseArrayLayer = 0;
+                to_read.subresourceRange.layerCount = 6;
+                to_read.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+                to_read.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+                vkCmdPipelineBarrier(cmd,
+                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                    0,
+                    0, nullptr,
+                    0, nullptr,
+                    1, &to_read);
+            });
+
+            vkDestroyImageView(device, mip_array_view, nullptr);
+        }
     }
 }

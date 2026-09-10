@@ -65,9 +65,22 @@ namespace Honey {
     public:
         virtual ~TextureCube() = default;
         static Ref<TextureCube> create(const std::string& hdr_path);
+        // Blank, compute-writable cube (contents undefined until something dispatches into it) --
+        // for baked-from-another-cube resources like an irradiance or prefiltered map, not
+        // HDR-loaded skyboxes.
+        static Ref<TextureCube> create(uint32_t face_size, uint32_t mip_levels = 1);
 
         virtual uint32_t get_width() const = 0;
         virtual uint32_t get_bindless_index() const = 0;
+
+        // Convolves `source`'s radiance over the hemisphere into this cube. `this` must have been
+        // created via create(face_size, mip_levels) above, not the HDR-path overload.
+        virtual void convolve_irradiance(const Ref<TextureCube>& source) = 0;
+
+        // GGX-importance-samples `source` into every mip of this cube, one dispatch per mip with
+        // roughness = mip / (mip_count - 1). `this` must have been created via create(face_size,
+        // mip_levels) with mip_levels > 1.
+        virtual void prefilter_specular(const Ref<TextureCube>& source) = 0;
     };
 
 }
