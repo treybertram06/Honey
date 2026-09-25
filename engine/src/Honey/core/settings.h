@@ -52,6 +52,7 @@ namespace Honey {
 
         float dir_shadow_distance = 50.0f;
         float editor_camera_exposure = 1.0f;
+        float ibl_intensity = 1.0f;
 
     };
 

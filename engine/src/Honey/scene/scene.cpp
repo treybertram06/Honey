@@ -20,6 +20,7 @@
 #include "cloth_system.h"
 #include "platform/vulkan/vk_renderer_api.h"
 #include "../renderer/gpu_types.h"
+#include "Honey/core/engine.h"
 #include "Honey/physics/physics_engine_3d.h"
 //#include "Honey/scripting/mono_script_engine.h"
 
@@ -1137,9 +1138,17 @@ namespace Honey {
                         environment_ubo.cubemap_index = sc.get_runtime_handle()->get_bindless_index();
                         environment_ubo.intensity = sc.intensity;
                         skybox_enabled = sc.active;
+
+                        if (sc.get_irradiance_map() && sc.get_prefiltered_map()) {
+                            environment_ubo.irradiance_cubemap_index = sc.get_irradiance_map()->get_bindless_index();
+                            environment_ubo.prefiltered_cubemap_index = sc.get_prefiltered_map()->get_bindless_index();
+                            environment_ubo.prefiltered_mip_count = sc.get_prefiltered_mip_count();
+                            environment_ubo.ibl_intensity = Settings::get().renderer.ibl_intensity;
+                        }
                         break;
                     }
                 }
+                environment_ubo.brdf_lut_index = Application::get().get_vulkan_backend().get_brdf_lut_bindless_index();
             }
 
             Renderer3D::submit_lights(lights_ubo);

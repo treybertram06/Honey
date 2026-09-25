@@ -206,6 +206,10 @@ namespace Honey {
             if (auto n = renderer_node["EditorCameraExposure"]) {
                 s.renderer.editor_camera_exposure = n.as<float>(s.renderer.editor_camera_exposure);
             }
+
+            if (auto n = renderer_node["IBLIntensity"]) {
+                s.renderer.ibl_intensity = n.as<float>(s.renderer.ibl_intensity);
+            }
         }
 
         // ---------------- Physics ----------------
@@ -288,6 +292,7 @@ namespace Honey {
 
         out << YAML::Key << "DirShadowDistance"       << YAML::Value << s.renderer.dir_shadow_distance;
         out << YAML::Key << "EditorCameraExposure"    << YAML::Value << s.renderer.editor_camera_exposure;
+        out << YAML::Key << "IBLIntensity"            << YAML::Value << s.renderer.ibl_intensity;
 
         out << YAML::EndMap; // Renderer
 

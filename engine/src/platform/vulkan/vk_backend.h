@@ -266,7 +266,7 @@ namespace Honey {
         VkDevice m_device = VK_NULL_HANDLE;
 
         Scope<VulkanDescriptorHeap> m_descriptor_heap;
-        Scope<VulkanBrdfLut> m_brdf_lut;
+        Scope<VulkanBrdfLut> m_brdf_lut; // TODO: Should this instead be owned by an IBL renderer component? I think so...
 
         VulkanPipelineCacheBlob m_pipeline_cache{};
 

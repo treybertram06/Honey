@@ -30,9 +30,16 @@ namespace Honey {
     };
 
     struct EnvironmentUBO {
-        int32_t cubemap_index = -1;
-        float intensity = 0.0f;
+        int32_t cubemap_index               = -1;
+        float   intensity                   = 0.0f;
+        int32_t irradiance_cubemap_index    = -1;
+        int32_t prefiltered_cubemap_index   = -1;
+        int32_t prefiltered_mip_count       = 0;
+        int32_t brdf_lut_index              = -1;
+        float   ibl_intensity               = 1.0f;
+        int32_t _pad = 0;
     };
+    static_assert(sizeof(EnvironmentUBO) == 32, "EnvironmentUBO layout mismatch");
 
     // Per-frame tiled lighting data — uploaded as an SSBO to set=0 binding=5.
     // sorted_light_indices[i] is the original LightsUBO index of the i-th front-to-back light.
