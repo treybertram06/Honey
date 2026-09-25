@@ -21,7 +21,7 @@ namespace Honey {
         uint32_t            size;
         const char*         debug_name;
     };
-
+    // TODO: Why are bindings 3 and 4 excluded from this?
     inline constexpr std::array<GlobalBindingDesc, (size_t)GlobalBinding::Count> k_global_bindings = {{
         { GlobalBinding::Camera,         0, "HN_GBIND_CAMERA",          GlobalBufferKind::Uniform, sizeof(CameraUBO),             "Camera"        },
         { GlobalBinding::Lights,         1, "HN_GBIND_LIGHTS",          GlobalBufferKind::Uniform, sizeof(LightsUBO),             "Lights"        },

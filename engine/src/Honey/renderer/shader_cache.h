@@ -59,7 +59,7 @@ namespace Honey {
         };
 
         bool needs_recompilation(const ShaderAsset& asset);
-        void compile_shader_to_spirv(const std::filesystem::path& shader_path);
+        bool compile_shader_to_spirv(const std::filesystem::path& shader_path);
         std::filesystem::path get_spirv_cache_path(const std::filesystem::path& shader_path, const std::string& stage);
 
         std::filesystem::path m_spirv_cache_dir;
