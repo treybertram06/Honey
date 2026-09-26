@@ -217,11 +217,6 @@ namespace Honey {
             // Ensure queued uploads complete and callbacks run before resource teardown.
             flush_stream_uploads_blocking();
 
-            // Reset before flush_deferred_destroys() below -- its destructor calls
-            // defer_destroy_texture_resources() (frame-fenced), not an immediate vkDestroy*, so
-            // it must be queued before the flush that actually processes the queue, not after
-            // (a later flush never comes -- notify_frame_completed() has no more frames to see).
-            m_brdf_lut.reset();
             flush_deferred_destroys();
 
             m_one_shot_compute_passes.clear();
@@ -337,16 +332,6 @@ namespace Honey {
             init_immediate_context();
             init_imgui_resources();
 
-            // BRDF LUT is universal (not per-skybox) -- created here, right after the descriptor
-            // heap exists, since that's all VulkanBrdfLut's constructor needs. It is NOT baked
-            // here: this runs during the first window's construction, before Application has
-            // called Renderer::init(), and baking needs the shader cache Renderer::init() sets
-            // up. See VulkanBackend::bake_brdf_lut() (called from Application::Application()
-            // right after Renderer::init()) and the VulkanBrdfLut class comment for the full
-            // story. Without descriptor heap support, bindless IBL sampling isn't available
-            // anyway, so there's nothing to create.
-            if (m_descriptor_heap_supported)
-                m_brdf_lut = CreateScope<VulkanBrdfLut>(this, 512);
         }
 
         // For every surface (including first), compute the best present family:

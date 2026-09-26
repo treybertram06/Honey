@@ -16,6 +16,7 @@
 #include "Honey/core/task_system.h"
 #include "Honey/math/math.h"
 #include "../renderer/renderer_3d/renderer_3d.h"
+#include "../renderer/renderer_3d/renderer_3d_ibl.h"
 #include "../scripting/csharp_script_engine.h"
 #include "cloth_system.h"
 #include "platform/vulkan/vk_renderer_api.h"
@@ -1148,7 +1149,7 @@ namespace Honey {
                         break;
                     }
                 }
-                environment_ubo.brdf_lut_index = Application::get().get_vulkan_backend().get_brdf_lut_bindless_index();
+                environment_ubo.brdf_lut_index = Renderer3DIBL::get_brdf_lut_bindless_index();
             }
 
             Renderer3D::submit_lights(lights_ubo);

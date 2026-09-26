@@ -247,6 +247,8 @@ add_library(engine STATIC
         src/Honey/physics/jolt_debug_renderer.h
         src/Honey/renderer/renderer_3d/renderer_3d_ssao.h
         src/Honey/renderer/renderer_3d/renderer_3d_ssao.cpp
+        src/Honey/renderer/renderer_3d/renderer_3d_ibl.h
+        src/Honey/renderer/renderer_3d/renderer_3d_ibl.cpp
         src/platform/vulkan/vk_types.h
         src/platform/vulkan/vk_descriptor_heap.h
         src/platform/vulkan/vk_descriptor_heap.cpp

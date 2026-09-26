@@ -9,12 +9,14 @@
 #include "Honey/renderer/renderer.h"
 #include "Honey/renderer/renderer_2d.h"
 #include "Honey/renderer/renderer_3d/renderer_3d.h"
+#include "Honey/renderer/renderer_3d/renderer_3d_ibl.h"
 #include "Honey/renderer/renderer_3d/renderer_3d_shadow.h"
 #include "Honey/renderer/renderer_3d/renderer_3d_pathtracer.h"
 #include "Honey/renderer/renderer_3d/renderer_3d_ssao.h"
 #include "Honey/renderer/gpu_types.h"
 #include "Honey/scene/components.h"
 #include "Honey/scene/scene.h"
+#include "platform/vulkan/vk_backend.h"
 #include "platform/vulkan/vk_context.h"
 
 #include <filesystem>
@@ -88,12 +90,19 @@ namespace Honey {
             auto* base   = Application::get().get_window().get_context();
             auto* vk_ctx = dynamic_cast<VulkanContext*>(base);
             if (vk_ctx) {
-                if (Application::get().get_vulkan_backend().supports_mesh_shader()) {
+                auto& backend = Application::get().get_vulkan_backend();
+                if (backend.supports_mesh_shader()) {
                     Renderer3DShadow::init(vk_ctx);
                     Renderer3DPathTracer::init(vk_ctx);
                 }
                 Renderer3DSSAO::init(vk_ctx);
                 Renderer3DVectorIcon::init(vk_ctx);
+
+                // Universal BRDF LUT for IBL. Renderer::init() has already run by this point,
+                // so construct + bake happen back-to-back — see VulkanBrdfLut's class comment
+                // for why those are two separate steps at the platform layer.
+                Renderer3DIBL::init(&backend);
+                Renderer3DIBL::bake();
             }
         }
 
@@ -125,6 +134,7 @@ namespace Honey {
         Renderer3DPathTracer::shutdown();
         Renderer3DSSAO::shutdown();
         Renderer3DVectorIcon::shutdown();
+        Renderer3DIBL::shutdown();
         m_frame_graph.reset();
         m_output_framebuffer.reset();
         m_gbuffer_framebuffer.reset();

@@ -17,7 +17,6 @@
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.h>
 
-#include "vk_brdf_lut.h"
 #include "vk_descriptor_heap.h"
 #include "vk_one_shot_compute_pass.h"
 #include "vk_pipeline_cache_blob.h"
@@ -65,22 +64,6 @@ namespace Honey {
 
         VulkanDescriptorHeap* get_descriptor_heap() { return m_descriptor_heap.get(); }
         void bind_descriptor_heaps(VkCommandBuffer cmd) { m_descriptor_heap->bind(cmd); }
-
-        // Universal split-sum BRDF LUT. The VulkanBrdfLut object (image + bindless registration)
-        // is created early, from acquire_queue_lease() -- but its actual bake dispatch must wait
-        // until Renderer::init() has created the shader cache a OneShotComputePass needs, which
-        // happens later in the same Application::Application() call. bake_brdf_lut() is that
-        // second step; call it exactly once, right after Renderer::init() returns. See the
-        // VulkanBrdfLut class comment (vk_brdf_lut.h) for the full ordering explanation.
-        void bake_brdf_lut() {
-            if (m_brdf_lut) m_brdf_lut->bake();
-        }
-
-        // UINT32_MAX if the descriptor heap isn't supported on this device (bindless IBL
-        // sampling isn't available either way then) or bake_brdf_lut() hasn't run yet.
-        uint32_t get_brdf_lut_bindless_index() const {
-            return m_brdf_lut ? m_brdf_lut->get_bindless_index() : UINT32_MAX;
-        }
 
         const VulkanPipelineCacheBlob& get_pipeline_cache() const { return m_pipeline_cache; }
         VkInstance get_instance() const { return m_instance; }
@@ -266,8 +249,6 @@ namespace Honey {
         VkDevice m_device = VK_NULL_HANDLE;
 
         Scope<VulkanDescriptorHeap> m_descriptor_heap;
-        Scope<VulkanBrdfLut> m_brdf_lut; // TODO: Should this instead be owned by an IBL renderer component? I think so...
-
         VulkanPipelineCacheBlob m_pipeline_cache{};
 
         // Chosen families (based on the first created surface; must remain compatible with all later surfaces)
