@@ -5,12 +5,12 @@
 #include "coreclr_delegates.h"
 #include <climits>
 
-#if defined(HN_PLATFORM_LINUX)
+#if defined(HN_PLATFORM_LINUX) || defined(HN_PLATFORM_MACOS)
     #include <dlfcn.h>
 #elif defined(HN_PLATFORM_WINDOWS)
     #include <windows.h>
 #else
-    #error "Only Linux and Windows support C# scripting; macOS support coming eventually."
+    #warning "Only Linux and Windows support C# scripting; macOS support coming eventually.\nScripting will be disabled."
 #endif
 
 namespace Honey {
@@ -39,7 +39,7 @@ namespace Honey {
             return false;
         }
 
-#if defined(HN_PLATFORM_LINUX)
+#if defined(HN_PLATFORM_LINUX) || defined(HN_PLATFORM_MACOS)
         m_hostfxr_lib = dlopen(hostfxr_path, RTLD_LAZY | RTLD_LOCAL);
         if (!m_hostfxr_lib) {
             HN_CORE_ERROR("[DotNetHost] failed to load hostfxr: {}", dlerror());
@@ -81,7 +81,7 @@ namespace Honey {
         init_params.size = sizeof(init_params);
         init_params.dotnet_root = dotnet_root.c_str();
 
-#if defined(HN_PLATFORM_LINUX)
+#if defined(HN_PLATFORM_LINUX) || defined(HN_PLATFORM_MACOS)
         const std::string config_str = runtime_config_path.string();
         int32_t rc = init_fn(config_str.c_str(), &init_params, &m_host_ctx);
 #elif defined(HN_PLATFORM_WINDOWS)
