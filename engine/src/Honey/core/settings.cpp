@@ -210,6 +210,16 @@ namespace Honey {
             if (auto n = renderer_node["IBLIntensity"]) {
                 s.renderer.ibl_intensity = n.as<float>(s.renderer.ibl_intensity);
             }
+
+            if (auto n = renderer_node["BloomStrength"]) {
+                s.renderer.bloom.strength = n.as<float>(s.renderer.bloom.strength);
+            }
+            if (auto n = renderer_node["BloomThreshold"]) {
+                s.renderer.bloom.strength = n.as<float>(s.renderer.bloom.threshold);
+            }
+            if (auto n = renderer_node["BloomSoftKnee"]) {
+                s.renderer.bloom.strength = n.as<float>(s.renderer.bloom.soft_knee);
+            }
         }
 
         // ---------------- Physics ----------------
@@ -293,6 +303,10 @@ namespace Honey {
         out << YAML::Key << "DirShadowDistance"       << YAML::Value << s.renderer.dir_shadow_distance;
         out << YAML::Key << "EditorCameraExposure"    << YAML::Value << s.renderer.editor_camera_exposure;
         out << YAML::Key << "IBLIntensity"            << YAML::Value << s.renderer.ibl_intensity;
+
+        out << YAML::Key << "BloomStrength"           << YAML::Value << s.renderer.bloom.strength;
+        out << YAML::Key << "BloomThreshold"          << YAML::Value << s.renderer.bloom.threshold;
+        out << YAML::Key << "BloomSoftKnee"           << YAML::Value << s.renderer.bloom.soft_knee;
 
         out << YAML::EndMap; // Renderer
 

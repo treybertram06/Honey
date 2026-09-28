@@ -25,11 +25,11 @@ namespace Honey {
             if (it != s_res->postprocess_pipelines.end())
                 return it->second;
 
-            auto spec = PipelineSpec::from_shader(asset_root / "shaders" / "Renderer3D_PostProcessComposite.glsl");
+            auto spec = PipelineSpec::from_shader(asset_root / "shaders" / "postprocessing" / "Renderer3D_PostProcessComposite.glsl");
             spec.depthStencil.depthTest  = false;
             spec.depthStencil.depthWrite = false;
             spec.perColorAttachmentBlend.clear();
-            spec.perColorAttachmentBlend.resize(1, AttachmentBlendState{});
+            spec.perColorAttachmentBlend.resize(2, AttachmentBlendState{});
 
             auto pipeline = Pipeline::create_heap_mode(spec, rp_native);
             s_res->postprocess_pipelines.emplace(rp_native, pipeline);

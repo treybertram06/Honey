@@ -271,6 +271,8 @@ add_library(engine STATIC
         src/platform/vulkan/vk_brdf_lut.cpp
         src/Honey/renderer/renderer_3d/renderer_3d_postprocess.h
         src/Honey/renderer/renderer_3d/renderer_3d_postprocess.cpp
+        src/Honey/renderer/renderer_3d/renderer_3d_bloom.cpp
+        src/Honey/renderer/renderer_3d/renderer_3d_bloom.h
 )
 
 # Apply MSVC runtime to engine itself

@@ -21,6 +21,7 @@
 
 #include <filesystem>
 
+#include "renderer_3d/renderer_3d_bloom.h"
 #include "renderer_3d/renderer_3d_postprocess.h"
 #include "renderer_3d/renderer_3d_vector_icon.h"
 
@@ -45,6 +46,7 @@ namespace Honey {
             Renderer3DSSAO::register_frame_graph_executors();
             Renderer3DVectorIcon::register_frame_graph_executors();
             Renderer3DPostProcess::register_frame_graph_executors();
+            Renderer3DBloom::register_frame_graph_executors();
 
             auto& registry = FrameGraphRegistry::get();
 
@@ -100,6 +102,7 @@ namespace Honey {
                 Renderer3DSSAO::init(vk_ctx);
                 Renderer3DVectorIcon::init(vk_ctx);
                 Renderer3DPostProcess::init(vk_ctx);
+                Renderer3DBloom::init(vk_ctx);
 
                 // Universal BRDF LUT for IBL. Renderer::init() has already run by this point,
                 // so construct + bake happen back-to-back — see VulkanBrdfLut's class comment
@@ -138,6 +141,7 @@ namespace Honey {
         Renderer3DSSAO::shutdown();
         Renderer3DVectorIcon::shutdown();
         Renderer3DPostProcess::shutdown();
+        Renderer3DBloom::shutdown();
         Renderer3DIBL::shutdown();
         m_frame_graph.reset();
         m_output_framebuffer.reset();

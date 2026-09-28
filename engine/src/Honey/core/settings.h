@@ -18,6 +18,14 @@ namespace Honey {
 
     struct RendererSettings {
 
+        struct BloomSettings { // I think this hierarchical approach to organizing the settings will be beneficial
+            float threshold = 1.0f;
+            float soft_knee = 0.5f;
+            float strength = 1.0;
+
+            bool operator==(const BloomSettings&) const = default;
+        };
+
         enum class TextureFilter {
             nearest = 0,
             linear,
@@ -53,6 +61,8 @@ namespace Honey {
         float dir_shadow_distance = 50.0f;
         float editor_camera_exposure = 1.0f;
         float ibl_intensity = 1.0f;
+
+        BloomSettings bloom;
 
     };
 

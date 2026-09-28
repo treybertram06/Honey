@@ -185,6 +185,13 @@ namespace Honey {
     };
     static_assert(sizeof(SSAOKernelUBOData) == 528, "SSAOKernelUBOData size mismatch");
 
+    struct BloomParamsUBOData {
+        float threshold;
+        float soft_knee;
+        float strength;
+        int32_t _pad;
+    };
+    static_assert(sizeof(BloomParamsUBOData) == 16, "BloomParamsUBOData size mismatch");
     // One instance per SlugIcon *shape* (a multi-shape SVG fans out into one GPUIconInstance per
     // shape, all sharing the same world_pos/tint/entity_id/sizemode — see VectorIcon::get_shapes()).
     struct alignas(16) GPUIconInstance {
