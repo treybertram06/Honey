@@ -101,6 +101,28 @@ namespace Honey::VulkanUtils {
         return si;
     }
 
+    static VkSamplerCreateInfo make_linear_clamp_sampler_ci() {
+        VkSamplerCreateInfo si{};
+        si.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        si.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        si.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        si.borderColor  = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+        si.unnormalizedCoordinates = VK_FALSE;
+        si.compareEnable = VK_FALSE;
+        si.compareOp     = VK_COMPARE_OP_ALWAYS;
+        si.mipLodBias    = 0.0f;
+        si.minLod        = 0.0f;
+        si.maxLod        = VK_LOD_CLAMP_NONE;
+
+        si.magFilter  = VK_FILTER_LINEAR;
+        si.minFilter  = VK_FILTER_LINEAR;
+        si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        si.anisotropyEnable = VK_FALSE;
+        si.maxAnisotropy    = 1.0f;
+        return si;
+    }
+
     static VkDeviceSize align_up(VkDeviceSize value, VkDeviceSize alignment) {
         return (value + alignment - 1) & ~(alignment - 1);
     }

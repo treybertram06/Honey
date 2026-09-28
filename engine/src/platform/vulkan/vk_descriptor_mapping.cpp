@@ -65,6 +65,7 @@ namespace Honey {
         if (n.find("shadow") != std::string::npos || n.find("cmp") != std::string::npos) return SS::ShadowCmp;
         if (n.find("nearest") != std::string::npos) return SS::Nearest;
         if (n.find("aniso")   != std::string::npos) return SS::Anisotropic;
+        if (n.find("linearclamp") != std::string::npos) return SS::LinearClamp;
 
         // General-purpose samplers (e.g. u_Sampler in the material shaders) aren't named after a
         // specific filter mode — honor the user's texture-filter setting instead of silently

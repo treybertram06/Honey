@@ -379,6 +379,7 @@ namespace Honey {
         m_static_sampler_ci[(uint32_t)StaticSampler::Nearest]     = VulkanUtils::make_nearest_sampler_ci();
         m_static_sampler_ci[(uint32_t)StaticSampler::Anisotropic] = VulkanUtils::make_anisotropic_sampler_ci(max_anisotropy);
         m_static_sampler_ci[(uint32_t)StaticSampler::ShadowCmp]   = VulkanUtils::make_shadow_cmp_sampler_ci();
+        m_static_sampler_ci[(uint32_t)StaticSampler::LinearClamp] = VulkanUtils::make_linear_clamp_sampler_ci();
     }
 
     void VulkanDescriptorHeap::push_pass_data(VkCommandBuffer cmd, const void* data, uint32_t size) {

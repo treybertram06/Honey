@@ -64,7 +64,7 @@ namespace Honey {
         void begin_frame(uint32_t frame_in_flight); // reset that slot's bump cursor
         void bind(VkCommandBuffer cmd);             // bind both heaps
 
-        enum class StaticSampler : uint32_t { Linear = 0, Nearest, Anisotropic, ShadowCmp, Count, };
+        enum class StaticSampler : uint32_t { Linear = 0, Nearest, Anisotropic, ShadowCmp, LinearClamp, Count, };
 
         // resource accessors
         VkDeviceAddress resource_device_address() const { return m_resource_heap_addr; }
