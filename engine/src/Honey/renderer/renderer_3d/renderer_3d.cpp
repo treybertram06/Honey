@@ -5,6 +5,8 @@
 #include "Honey/core/settings.h"
 #include "Honey/renderer/renderer.h"
 #include "platform/vulkan/vk_texture.h"
+#include "platform/vulkan/vk_backend.h"
+#include "Honey/core/engine.h"
 
 namespace Honey {
 
@@ -74,10 +76,12 @@ namespace Honey {
         data.scene_camera_fov          = camera.get_fov();
         data.scene_camera_aspect_ratio = camera.get_aspect_ratio();
 
-        auto state = VulkanRendererAPI::get_globals_state();
-        state.source = VulkanRendererAPI::GlobalsState::Source::Renderer3D;
-        data.vk_globals_stack.push_back(state);
-        VulkanRendererAPI::submit_camera(camera_ubo);
+        if (VulkanRendererAPI::has_globals()) {
+            auto state = VulkanRendererAPI::get_globals_state();
+            state.source = VulkanRendererAPI::GlobalsState::Source::Renderer3D;
+            data.vk_globals_stack.push_back(state);
+            VulkanRendererAPI::submit_camera(camera_ubo);
+        }
 
         data.unique_meshes_this_frame.clear();
         data.meshlet_draws.clear();
@@ -94,10 +98,12 @@ namespace Honey {
         camera_ubo.position = camera.get_position();
         camera_ubo.view_proj = camera.get_view_projection_matrix();
 
-        auto state = VulkanRendererAPI::get_globals_state();
-        state.source = VulkanRendererAPI::GlobalsState::Source::Renderer3D;
-        data.vk_globals_stack.push_back(state);
-        VulkanRendererAPI::submit_camera(camera_ubo);
+        if (VulkanRendererAPI::has_globals()) {
+            auto state = VulkanRendererAPI::get_globals_state();
+            state.source = VulkanRendererAPI::GlobalsState::Source::Renderer3D;
+            data.vk_globals_stack.push_back(state);
+            VulkanRendererAPI::submit_camera(camera_ubo);
+        }
 
         data.unique_meshes_this_frame.clear();
         data.meshlet_draws.clear();
@@ -123,10 +129,12 @@ namespace Honey {
         data.scene_camera_pos = position;
         data.scene_camera_exposure = exposure;
 
-        auto state = VulkanRendererAPI::get_globals_state();
-        state.source = VulkanRendererAPI::GlobalsState::Source::Renderer3D;
-        data.vk_globals_stack.push_back(state);
-        VulkanRendererAPI::submit_camera(camera_ubo);
+        if (VulkanRendererAPI::has_globals()) {
+            auto state = VulkanRendererAPI::get_globals_state();
+            state.source = VulkanRendererAPI::GlobalsState::Source::Renderer3D;
+            data.vk_globals_stack.push_back(state);
+            VulkanRendererAPI::submit_camera(camera_ubo);
+        }
 
         data.unique_meshes_this_frame.clear();
         data.meshlet_draws.clear();
@@ -150,15 +158,20 @@ namespace Honey {
         case RendererSettings::RendererType::deferred:
             Renderer3DInternal::flush_meshlet_draws();
             break;
+        case RendererSettings::RendererType::lite:
+            Renderer3DInternal::flush_lite_draws();
+            break;
         default:
             HN_CORE_ASSERT(false, "Renderer3D::end_scene: unknown renderer type");
             break;
         }
 
-        HN_CORE_ASSERT(!data.vk_globals_stack.empty(),
-                       "Renderer3D Vulkan globals stack underflow (end_scene without matching begin_scene)");
-        VulkanRendererAPI::set_globals_state(data.vk_globals_stack.back());
-        data.vk_globals_stack.pop_back();
+        if (VulkanRendererAPI::has_globals()) {
+            HN_CORE_ASSERT(!data.vk_globals_stack.empty(),
+                           "Renderer3D Vulkan globals stack underflow (end_scene without matching begin_scene)");
+            VulkanRendererAPI::set_globals_state(data.vk_globals_stack.back());
+            data.vk_globals_stack.pop_back();
+        }
     }
 
     void Renderer3D::submit_lights(const LightsUBO& lights) {
@@ -170,7 +183,8 @@ namespace Honey {
 
         auto& data = *Renderer3DInternal::g_renderer3d_data;
         data.scene_lights = lights;
-        VulkanRendererAPI::submit_lights(lights);
+        if (VulkanRendererAPI::has_globals())
+            VulkanRendererAPI::submit_lights(lights);
     }
 
     void Renderer3D::submit_environment(const EnvironmentUBO& environment) {
@@ -181,7 +195,8 @@ namespace Honey {
         }
         auto& data = *Renderer3DInternal::g_renderer3d_data;
         data.scene_environment = environment;
-        VulkanRendererAPI::submit_environment(environment);
+        if (VulkanRendererAPI::has_globals())
+            VulkanRendererAPI::submit_environment(environment);
     }
 
     void Renderer3D::submit_tiled_lighting_data(const TiledLightingData& data) {
@@ -191,7 +206,8 @@ namespace Honey {
             return;
         }
         Renderer3DInternal::g_renderer3d_data->scene_tiled_lighting = data;
-        VulkanRendererAPI::submit_tiled_lighting(data);
+        if (VulkanRendererAPI::has_globals())
+            VulkanRendererAPI::submit_tiled_lighting(data);
     }
 
     void Renderer3D::submit_submesh(const Submesh& submesh,
@@ -234,6 +250,11 @@ namespace Honey {
             return;
 
         HN_CORE_ASSERT(native_render_pass, "Renderer3D::prewarm_pipelines: native_render_pass is null");
+    }
+
+    bool Renderer3D::is_lite() {
+        return !Application::get().get_vulkan_backend().supports_full_renderer() ||
+               Settings::get().renderer.renderer_type == RendererSettings::RendererType::lite;
     }
 
     void Renderer3D::set_directional_shadow_enabled(bool enabled, float shadow_distance) {

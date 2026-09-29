@@ -1383,10 +1383,10 @@ namespace Honey {
                                      if (r.imgui_descriptor_set != VK_NULL_HANDLE && m_imgui_initialized) {
                                          ImGui_ImplVulkan_RemoveTexture(r.imgui_descriptor_set);
                                      }
-                                     if (r.bindless_index != UINT32_MAX) {
+                                     if (r.bindless_index != UINT32_MAX && m_descriptor_heap) {
                                          m_descriptor_heap->free_bindless_index(r.bindless_index);
                                      }
-                                     if (r.persistent_block.size != 0) {
+                                     if (r.persistent_block.size != 0 && m_descriptor_heap) {
                                          m_descriptor_heap->free_persistent_block(r.persistent_block);
                                      }
 
@@ -1820,22 +1820,28 @@ namespace Honey {
                                     vk12_features.bufferDeviceAddress == VK_TRUE);
         m_descriptor_heap_supported = (descriptor_heap_features.descriptorHeap == VK_TRUE);
 
-        if (!m_mesh_shader_supported)
-            HN_CORE_WARN("VK_EXT_mesh_shader not available — mesh/shadow passes will be disabled.");
+        if (!m_mesh_shader_supported) {
+            HN_CORE_WARN("VK_EXT_mesh_shader not available - full renderer will be disabled.");
+            m_render_tier = RenderTier::lite;
+        }
+        if (!m_descriptor_heap_supported) {
+            HN_CORE_WARN("Descriptor heap features are not supported by this device - full renderer will be disabled.");
+            m_render_tier = RenderTier::lite;
+        }
 
         if (!m_ray_tracing_supported)
             HN_CORE_WARN("At least one required hardware ray tracing feature is not available - hardware ray tracing passes will be disabled.");
 
-        if (!m_descriptor_heap_supported)
-            HN_CORE_ASSERT(false, "Descriptor heap features are not supported by this device");
-
-        // Enable the descriptor indexing features we want (assert support first)
-        HN_CORE_ASSERT(vk12_features.runtimeDescriptorArray == VK_TRUE,
-                       "Bindless requires runtimeDescriptorArray (VK_EXT_descriptor_indexing)");
-        HN_CORE_ASSERT(vk12_features.descriptorBindingPartiallyBound == VK_TRUE,
-                       "Bindless requires descriptorBindingPartiallyBound (VK_EXT_descriptor_indexing)");
-        HN_CORE_ASSERT(vk12_features.shaderSampledImageArrayNonUniformIndexing == VK_TRUE,
-                       "Bindless requires shaderSampledImageArrayNonUniformIndexing (VK_EXT_descriptor_indexing)");
+        // Enable the descriptor indexing features we want (assert support first).
+        // Bindless is a full-tier requirement only; lite binds plain descriptor sets.
+        if (m_render_tier == RenderTier::full) {
+            HN_CORE_ASSERT(vk12_features.runtimeDescriptorArray == VK_TRUE,
+                           "Bindless requires runtimeDescriptorArray (VK_EXT_descriptor_indexing)");
+            HN_CORE_ASSERT(vk12_features.descriptorBindingPartiallyBound == VK_TRUE,
+                           "Bindless requires descriptorBindingPartiallyBound (VK_EXT_descriptor_indexing)");
+            HN_CORE_ASSERT(vk12_features.shaderSampledImageArrayNonUniformIndexing == VK_TRUE,
+                           "Bindless requires shaderSampledImageArrayNonUniformIndexing (VK_EXT_descriptor_indexing)");
+        }
         HN_CORE_ASSERT(m_timeline_semaphore_supported,
                        "Async upload sync requires timelineSemaphore feature support");
 
@@ -1855,8 +1861,10 @@ namespace Honey {
             mesh_features.primitiveFragmentShadingRateMeshShader = VK_FALSE;
         }
 
-        vk11_features.shaderDrawParameters = VK_TRUE; // required for gl_DrawID in task/mesh shaders
-        vk12_features.drawIndirectCount = VK_TRUE; // required for vkCmdDrawMeshTasksIndirectCountEXT()
+        if (m_render_tier == RenderTier::full) {
+            vk11_features.shaderDrawParameters = VK_TRUE; // required for gl_DrawID in task/mesh shaders
+            vk12_features.drawIndirectCount = VK_TRUE; // required for vkCmdDrawMeshTasksIndirectCountEXT()
+        }
 
         if (m_ray_tracing_supported) {
             accel_features.accelerationStructure = VK_TRUE;

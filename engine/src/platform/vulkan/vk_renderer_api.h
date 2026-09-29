@@ -68,6 +68,10 @@ namespace Honey {
         // lifetime, unlike the per-frame recording context above.
         static void set_globals(VulkanRendererGlobals* globals);
 
+        // False in the lite tier (no descriptor heap => no globals object). Callers that feed the
+        // globals must skip every submit_* / get_globals_state call when this is false.
+        static bool has_globals();
+
         static void submit_camera(const CameraUBO& camera);
         static void submit_lights(const LightsUBO& lights);
         static void submit_environment(const EnvironmentUBO& environment);

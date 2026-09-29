@@ -34,6 +34,8 @@ namespace Honey {
             return RendererSettings::RendererType::deferred;
         if (s == "pathtracing")
             return RendererSettings::RendererType::pathtracing;
+        if (s == "lite")
+            return RendererSettings::RendererType::lite;
 
         HN_CORE_WARN("Unknown Renderer Type '{}', using fallback", type_str);
         return fallback;
@@ -44,6 +46,7 @@ namespace Honey {
         case RendererSettings::RendererType::forward: return "Forward";
         case RendererSettings::RendererType::deferred: return "Deferred";
         case RendererSettings::RendererType::pathtracing: return "PathTracing";
+        case RendererSettings::RendererType::lite: return "Lite";
         }
         return "Forward";
     }

@@ -36,6 +36,7 @@ namespace Honey {
             forward = 0,
             deferred,
             pathtracing,
+            lite,
         };
 
         RendererAPI::API api = RendererAPI::API::vulkan;

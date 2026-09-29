@@ -225,7 +225,7 @@ namespace Honey {
     }
 
     Ref<Texture2D> Renderer3DSSAO::get_noise_texture() {
-        return s_res->noise_texture ? s_res->noise_texture : nullptr;
+        return (s_res && s_res->noise_texture) ? s_res->noise_texture : nullptr; // s_res is null in the lite tier
     }
 
     void Renderer3DSSAO::register_frame_graph_executors() {

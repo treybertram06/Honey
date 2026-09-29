@@ -134,4 +134,5 @@ namespace Honey::Renderer3DInternal {
     Ref<Pipeline> get_or_create_meshlet_pipeline(void* rp_native, bool blend, bool cull_none);
     Ref<Pipeline> get_or_create_meshlet_gbuffer_pipeline(void* rp_native, bool cull_none);
     void flush_meshlet_draws();
+    void flush_lite_draws();
 }

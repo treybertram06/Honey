@@ -40,6 +40,10 @@ namespace Honey {
         s_globals = g;
     }
 
+    bool VulkanRendererAPI::has_globals() {
+        return s_globals != nullptr;
+    }
+
     void VulkanRendererAPI::init() {
         HN_PROFILE_FUNCTION();
         HN_CORE_INFO("VulkanRendererAPI::init");
@@ -69,7 +73,7 @@ namespace Honey {
             VkRect2D sc{ { 0, 0 }, { ext.width, ext.height } };
             vkCmdSetViewport(cmd, 0, 1, &vp);
             vkCmdSetScissor(cmd, 0, 1, &sc);
-            heap->bind(cmd);
+            if (heap) heap->bind(cmd);
         });
     }
 
@@ -385,6 +389,7 @@ namespace Honey {
         auto* ctx = get_vulkan_context();
         HN_CORE_ASSERT(ctx, "allocate_meshlet_heap_blocks: no active VulkanContext");
         auto* heap = ctx->get_backend()->get_descriptor_heap();
+        if (!heap) return; // lite tier: meshlet heap blocks are unused, buffers are still kept
 
         // Bindings 0-4 are stable for the mesh's lifetime; binding 5 (draw data) is written
         // separately per frame slot by update_mesh_draw_data_binding as it grows.

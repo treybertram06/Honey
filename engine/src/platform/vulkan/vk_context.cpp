@@ -608,8 +608,10 @@ namespace Honey {
             VkResult res = vkBeginCommandBuffer(cmd, &cb_begin);
             HN_CORE_ASSERT(res == VK_SUCCESS, "vkBeginCommandBuffer failed: {0}", vk_result_to_string(res));
 
-            m_backend->get_descriptor_heap()->begin_frame(m_current_frame);
-            m_backend->bind_descriptor_heaps(cmd);
+            if (auto* heap = m_backend->get_descriptor_heap()) {
+                heap->begin_frame(m_current_frame);
+                m_backend->bind_descriptor_heaps(cmd);
+            }
         }
 
         m_gpu_profiler.reset_frame(cmd);

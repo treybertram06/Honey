@@ -48,12 +48,18 @@ namespace Honey {
         case RendererAPI::API::vulkan:
             // Must precede Renderer3D::init(): pipeline creation asserts that every set-0 global
             // binding is registered in the descriptor heap, and registration happens here.
-            s_globals = CreateScope<VulkanRendererGlobals>();
-            s_globals->init(&Application::get().get_vulkan_backend());
-            VulkanRendererAPI::set_globals(s_globals.get());
+            // Both register descriptor-heap slots, so they only exist in the full tier.
+            if (Application::get().get_vulkan_backend().supports_full_renderer() &&
+                Application::get().get_vulkan_backend().get_descriptor_heap()) {
+                s_globals = CreateScope<VulkanRendererGlobals>();
+                s_globals->init(&Application::get().get_vulkan_backend());
+                VulkanRendererAPI::set_globals(s_globals.get());
 
-            s_icon_globals = CreateScope<VulkanIconGlobals>();
-            s_icon_globals->init(&Application::get().get_vulkan_backend());
+                s_icon_globals = CreateScope<VulkanIconGlobals>();
+                s_icon_globals->init(&Application::get().get_vulkan_backend());
+            } else {
+                HN_CORE_WARN("Renderer::init: lite render tier - skipping renderer/icon globals");
+            }
 
             //Renderer2D::init();
             Renderer3D::init();
@@ -142,7 +148,7 @@ namespace Honey {
         // begin_frame_recording bails without starting a command buffer on a fence-wait failure or
         // an out-of-date swapchain; end_frame() carries the same guard so the begin/snapshot
         // pairing stays exact.
-        if (vk->is_recording())
+        if (vk->is_recording() && s_globals)
             s_globals->begin_frame(vk->get_recording_cmd(), vk->get_current_frame());
 
         if (!s_pipelines_prewarmed) {
@@ -164,7 +170,7 @@ namespace Honey {
         // Snapshot after every globals producer has run and before swap_buffers() →
         // end_frame_recording() submits the frame. The copy recorded at the top of the frame reads
         // this staging buffer at execution time, i.e. after submit.
-        if (vk->is_recording())
+        if (vk->is_recording() && s_globals)
             s_globals->snapshot(vk->get_current_frame());
     }
 

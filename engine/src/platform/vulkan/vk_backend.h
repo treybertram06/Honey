@@ -63,7 +63,7 @@ namespace Honey {
         VkDevice device() const { return m_device; }
 
         VulkanDescriptorHeap* get_descriptor_heap() { return m_descriptor_heap.get(); }
-        void bind_descriptor_heaps(VkCommandBuffer cmd) { m_descriptor_heap->bind(cmd); }
+        void bind_descriptor_heaps(VkCommandBuffer cmd) { if (m_descriptor_heap) m_descriptor_heap->bind(cmd); }
 
         const VulkanPipelineCacheBlob& get_pipeline_cache() const { return m_pipeline_cache; }
         VkInstance get_instance() const { return m_instance; }
@@ -188,6 +188,10 @@ namespace Honey {
             const std::vector<VkDescriptorSetLayoutBinding>& bindings,
             uint32_t push_constant_size = 0);
 
+        enum class RenderTier { full, lite };
+        RenderTier get_render_tier() const { return m_render_tier; }
+        bool supports_full_renderer() const { return m_render_tier == RenderTier::full; }
+
     private:
         struct QueueFamilyInfo {
             uint32_t graphics_family = UINT32_MAX;
@@ -241,6 +245,7 @@ namespace Honey {
     private:
         bool m_initialized = false;
         bool m_validation_enabled = false;
+        RenderTier m_render_tier = RenderTier::full;
 
         VkInstance m_instance = VK_NULL_HANDLE;
         VkDebugUtilsMessengerEXT m_debug_messenger = VK_NULL_HANDLE;

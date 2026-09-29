@@ -123,6 +123,7 @@ namespace Honey {
 
     void VulkanBrdfLut::update_bindless_descriptor() {
         auto* heap = m_backend->get_descriptor_heap();
+        if (!heap) return; // lite tier: no descriptor heap, bindless index stays UINT32_MAX
         if (m_bindless_index == UINT32_MAX)
             m_bindless_index = heap->alloc_bindless_index();
 

@@ -1021,8 +1021,10 @@ namespace Honey {
             //TODO: Spot lights!
 
             // Build sorted index array (front-to-back by camera-space Z) and tile bitmasks.
+            // Lite has no tiled lighting or IBL: skip both CPU builds (heap/bindless-dependent).
+            const bool lite = Renderer3D::is_lite();
             TiledLightingData tiled_data{};
-            {
+            if (!lite) {
                 HN_PROFILE_SCOPE("BuildTiledLightingData");
                 const int light_count = lights_ubo.directional_light.point_light_count;
                 tiled_data.light_count = static_cast<uint32_t>(light_count);
@@ -1127,7 +1129,7 @@ namespace Honey {
             }
 
             EnvironmentUBO environment_ubo{};
-            {
+            if (!lite) {
                 bool skybox_enabled = false;
                 auto skybox_group = m_registry.group<SkyboxComponent>(entt::get<TransformComponent>);
                 for (auto entity : skybox_group) {
@@ -1186,7 +1188,8 @@ namespace Honey {
         }
 
         //glm::mat4 vp = ;
-        m_cloth_system->on_render(m_registry, view_proj);
+        if (!Renderer3D::is_lite()) // cloth render pipeline is heap-mode
+            m_cloth_system->on_render(m_registry, view_proj);
     }
 
     void Scene::rebuild_transform_order() {

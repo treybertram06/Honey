@@ -462,6 +462,7 @@ namespace Honey {
 
     void VulkanTexture2D::update_bindless_descriptor() {
         auto* heap = m_backend->get_descriptor_heap();
+        if (!heap) return; // lite tier: no descriptor heap, bindless index stays UINT32_MAX
         if (m_bindless_index == UINT32_MAX)
             m_bindless_index = heap->alloc_bindless_index();
 
@@ -471,6 +472,7 @@ namespace Honey {
     void VulkanTexture2D::write_bindless_fallback_slot() {
         HN_CORE_ASSERT(m_image_view, "write_bindless_fallback_slot: image view not created yet");
         auto* heap = m_backend->get_descriptor_heap();
+        if (!heap) return;
         heap->write_bindless(0, m_image_view_ci, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
 

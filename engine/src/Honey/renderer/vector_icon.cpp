@@ -10,6 +10,7 @@ namespace Honey {
         if (!parsed.is_valid()) return nullptr;
 
         auto* globals = Renderer::icon_globals();
+        if (!globals) return nullptr; // lite tier: no icon globals
         auto slot = globals->allocate_icon_slot(
             (uint32_t)parsed.get_band_table().size(), (uint32_t)parsed.get_curves().size());
 
@@ -36,10 +37,11 @@ namespace Honey {
     }
 
     VectorIcon::~VectorIcon() {
-        Renderer::icon_globals()->free_icon_slot(
-            {m_band_slot_offset, m_band_slot_count,
-            m_curve_slot_offset, m_curve_slot_count }
-        );
+        if (auto* globals = Renderer::icon_globals())
+            globals->free_icon_slot(
+                {m_band_slot_offset, m_band_slot_count,
+                m_curve_slot_offset, m_curve_slot_count }
+            );
     }
 
 }

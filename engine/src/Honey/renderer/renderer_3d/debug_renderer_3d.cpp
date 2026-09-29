@@ -140,6 +140,11 @@ void DebugRenderer3D::end_scene()
     if (Renderer::get_api() != RendererAPI::API::vulkan)
         return; // OpenGL path not implemented
 
+    // Lite tier: no globals/heap, so the heap pipeline below can't run.
+    // TODO(lite phase 4): hand cpu_buffer to Renderer3DLite::submit_debug_lines instead.
+    if (!VulkanRendererAPI::has_globals())
+        return;
+
     // Upload CPU buffer to GPU
     s_data->vertex_buffer->set_data(
         s_data->cpu_buffer.data(),

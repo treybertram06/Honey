@@ -95,20 +95,25 @@ namespace Honey {
             auto* vk_ctx = dynamic_cast<VulkanContext*>(base);
             if (vk_ctx) {
                 auto& backend = Application::get().get_vulkan_backend();
-                if (backend.supports_mesh_shader()) {
-                    Renderer3DShadow::init(vk_ctx);
-                    Renderer3DPathTracer::init(vk_ctx);
-                }
-                Renderer3DSSAO::init(vk_ctx);
-                Renderer3DVectorIcon::init(vk_ctx);
-                Renderer3DPostProcess::init(vk_ctx);
-                Renderer3DBloom::init(vk_ctx);
+                // Everything below needs the descriptor heap; the lite tier has none.
+                if (backend.supports_full_renderer()) {
+                    if (backend.supports_mesh_shader()) {
+                        Renderer3DShadow::init(vk_ctx);
+                        Renderer3DPathTracer::init(vk_ctx);
+                    }
+                    Renderer3DSSAO::init(vk_ctx);
+                    Renderer3DVectorIcon::init(vk_ctx);
+                    Renderer3DPostProcess::init(vk_ctx);
+                    Renderer3DBloom::init(vk_ctx);
 
-                // Universal BRDF LUT for IBL. Renderer::init() has already run by this point,
-                // so construct + bake happen back-to-back — see VulkanBrdfLut's class comment
-                // for why those are two separate steps at the platform layer.
-                Renderer3DIBL::init(&backend);
-                Renderer3DIBL::bake();
+                    // Universal BRDF LUT for IBL. Renderer::init() has already run by this point,
+                    // so construct + bake happen back-to-back — see VulkanBrdfLut's class comment
+                    // for why those are two separate steps at the platform layer.
+                    Renderer3DIBL::init(&backend);
+                    Renderer3DIBL::bake();
+                } else {
+                    HN_CORE_WARN("SceneViewportRenderer: lite render tier - skipping shadow/SSAO/icon/post-process/bloom/IBL init");
+                }
             }
         }
 
@@ -297,11 +302,11 @@ namespace Honey {
         options.requested_output_resources.emplace_back("editorViewport");
 
 #ifdef HN_PLATFORM_MACOS
-        if (m_settings.renderer_type != RendererSettings::RendererType::forward) {
+        if (m_settings.renderer_type != RendererSettings::RendererType::lite) {
             auto& renderer_settings = Settings::get().renderer;
-            renderer_settings.renderer_type = RendererSettings::RendererType::forward;
-            m_settings.renderer_type = RendererSettings::RendererType::forward;
-            HN_CORE_WARN("Only Forward renderer is supported on MacOS, renderer type selection will not be respected.");
+            renderer_settings.renderer_type = RendererSettings::RendererType::lite;
+            m_settings.renderer_type = RendererSettings::RendererType::lite;
+            HN_CORE_WARN("Only Lite renderer is supported on MacOS, renderer type selection will not be respected.");
         }
 #endif
 
@@ -315,6 +320,9 @@ namespace Honey {
                 break;
             case RendererSettings::RendererType::pathtracing:
                 fg_file = "pathtracing.hnfg";
+                break;
+            case RendererSettings::RendererType::lite:
+                fg_file = "lite.hnfg";
                 break;
         }
 

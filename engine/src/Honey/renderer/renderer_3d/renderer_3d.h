@@ -65,6 +65,10 @@ namespace Honey {
 		//static void set_geometry_render_path(GeometryPath path);
 
 		// Directional shadow settings — call each frame before the shadow pass executes.
+		// True when the lite path is active: either the device lacks the full-tier features or the
+		// lite renderer type is selected. Gates every heap/bindless-dependent CPU-side step.
+		static bool is_lite();
+
 		static void set_directional_shadow_enabled(bool enabled, float shadow_distance = 50.0f);
 
 		static Statistics get_stats();
