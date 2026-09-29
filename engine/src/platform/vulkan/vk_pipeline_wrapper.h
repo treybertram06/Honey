@@ -11,8 +11,9 @@ namespace Honey {
     public:
         VulkanPipelineWrapper(const PipelineSpec& spec,
                               VulkanContext* ctx,
-                              VkRenderPass rp)
-            : m_ctx(ctx)
+                              VkRenderPass rp,
+                              VkPipelineLayout layout = VK_NULL_HANDLE) // non-null => layout mode (lite tier)
+            : m_ctx(ctx), m_layout_mode(layout != VK_NULL_HANDLE)
         {
             HN_CORE_ASSERT(m_ctx, "VulkanPipelineWrapper: ctx is null");
             m_spec = spec;
@@ -27,6 +28,7 @@ namespace Honey {
             const VulkanDescriptorHeap* heap = m_ctx->get_backend()->get_descriptor_heap();
 
             if (spirv.has_mesh()) {
+                HN_CORE_ASSERT(!m_layout_mode, "VulkanPipelineWrapper: layout mode does not support mesh pipelines");
                 m_vk.create_mesh(
                     device,
                     rp,
@@ -45,7 +47,8 @@ namespace Honey {
                     spirv.fragment.string(),
                     spec,
                     pipeline_cache,
-                    heap
+                    heap,
+                    layout
                 );
             }
         }
@@ -59,9 +62,11 @@ namespace Honey {
         }
 
         void* get_native_pipeline() const override { return m_vk.pipeline(); }
+        bool is_heap_mode() const override { return !m_layout_mode; }
 
     private:
         VulkanContext* m_ctx = nullptr;
+        bool m_layout_mode = false;
         VulkanPipeline m_vk;
     };
 }

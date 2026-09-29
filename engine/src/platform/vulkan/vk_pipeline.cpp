@@ -197,13 +197,14 @@ namespace Honey {
         const std::string& fragment_spirv_path,
         const PipelineSpec& spec,
         VkPipelineCache pipeline_cache,
-        const VulkanDescriptorHeap* heap
+        const VulkanDescriptorHeap* heap,
+        VkPipelineLayout layout
     ) {
         HN_PROFILE_FUNCTION();
 
         HN_CORE_ASSERT(device, "VulkanPipeline::create called with null device");
         HN_CORE_ASSERT(render_pass, "VulkanPipeline::create called with null render pass");
-        HN_CORE_ASSERT(heap, "VulkanPipeline::create requires a descriptor heap");
+        HN_CORE_ASSERT(heap || layout, "VulkanPipeline::create requires a descriptor heap or a pipeline layout");
         HN_CORE_ASSERT(!vertex_spirv_path.empty() && !fragment_spirv_path.empty(),
                        "VulkanPipeline::create called with empty SPIR-V paths");
 
@@ -341,7 +342,8 @@ namespace Honey {
         VkShaderDescriptorSetAndBindingMappingInfoEXT mapping_info{};
         VkPipelineCreateFlags2CreateInfo flags2{};
 
-
+        // Layout mode (lite tier): caller-supplied VkPipelineLayout, no heap mapping, no flags2.
+        if (!layout) {
             const uint32_t expected_push_size = spec.expected_push_constant_size != 0
                 ? spec.expected_push_constant_size : (uint32_t)sizeof(PassPushData);
             HN_CORE_ASSERT(expected_push_size <= heap->max_push_data_size(),
@@ -369,11 +371,11 @@ namespace Honey {
             flags2.sType = VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO;
             flags2.flags = VK_PIPELINE_CREATE_2_DESCRIPTOR_HEAP_BIT_EXT;
             flags2.pNext = nullptr;
-
+        }
 
         VkGraphicsPipelineCreateInfo pipe{};
         pipe.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-        pipe.pNext = static_cast<const void*>(&flags2);
+        pipe.pNext = layout ? nullptr : static_cast<const void*>(&flags2);
         pipe.stageCount = 2;
         pipe.pStages = stages;
         pipe.pVertexInputState   = &vertex_input;
@@ -384,7 +386,7 @@ namespace Honey {
         pipe.pDepthStencilState  = &depth;
         pipe.pColorBlendState    = &blend;
         pipe.pDynamicState       = &dynamic_state;
-        pipe.layout    = VK_NULL_HANDLE; // VK_NULL_HANDLE in heap mode
+        pipe.layout    = layout; // VK_NULL_HANDLE in heap mode
         pipe.renderPass = render_pass;
         pipe.subpass   = 0;
 

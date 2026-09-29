@@ -22,6 +22,7 @@
 #include <filesystem>
 
 #include "renderer_3d/renderer_3d_bloom.h"
+#include "renderer_3d/renderer_3d_lite.h"
 #include "renderer_3d/renderer_3d_postprocess.h"
 #include "renderer_3d/renderer_3d_vector_icon.h"
 
@@ -55,6 +56,14 @@ namespace Honey {
                 HN_CORE_ASSERT(exec && exec->renderer && exec->render_context,
                     "editor.scene executor requires SceneViewportFrameGraphExecutionContext");
                 exec->renderer->execute_scene_pass(*exec->render_context);
+            });
+
+            registry.register_executor("lite.scene", [](FrameGraphPassContext& ctx) {
+                auto* exec = ctx.user_context_as<SceneViewportFrameGraphExecutionContext>();
+                HN_CORE_ASSERT(exec && exec->renderer && exec->render_context,
+                    "lite.scene executor requires SceneViewportFrameGraphExecutionContext");
+                exec->renderer->execute_scene_pass(*exec->render_context); // collects draws
+                Renderer3DLite::record(ctx);
             });
 
             registry.register_executor("deferred.gbuffer", [](FrameGraphPassContext& ctx) {
@@ -113,6 +122,7 @@ namespace Honey {
                     Renderer3DIBL::bake();
                 } else {
                     HN_CORE_WARN("SceneViewportRenderer: lite render tier - skipping shadow/SSAO/icon/post-process/bloom/IBL init");
+                    Renderer3DLite::init(vk_ctx);
                 }
             }
         }
@@ -147,6 +157,7 @@ namespace Honey {
         Renderer3DVectorIcon::shutdown();
         Renderer3DPostProcess::shutdown();
         Renderer3DBloom::shutdown();
+        Renderer3DLite::shutdown();
         Renderer3DIBL::shutdown();
         m_frame_graph.reset();
         m_output_framebuffer.reset();

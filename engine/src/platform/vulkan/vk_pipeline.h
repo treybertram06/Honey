@@ -21,7 +21,8 @@ namespace Honey {
             const std::string& fragment_spirv_path,
             const PipelineSpec& spec,
             VkPipelineCache pipeline_cache  = nullptr,
-            const VulkanDescriptorHeap* heap = nullptr
+            const VulkanDescriptorHeap* heap = nullptr,
+            VkPipelineLayout layout = VK_NULL_HANDLE // non-null => layout mode (lite tier), heap is ignored
         );
 
         void create_mesh(

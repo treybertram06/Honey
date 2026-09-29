@@ -78,4 +78,25 @@ namespace Honey {
             return CreateRef<NullPipeline>(spec);
         }
     }
+
+    Ref<Pipeline> Pipeline::create_layout_mode(const PipelineSpec& spec, void* native_render_pass, void* native_pipeline_layout) {
+        switch (RendererAPI::get_api()) {
+        case RendererAPI::API::vulkan: {
+                auto* base = Application::get().get_window().get_context();
+                auto* vk = dynamic_cast<VulkanContext*>(base);
+                HN_CORE_ASSERT(vk, "Pipeline::create_layout_mode expected VulkanContext when Vulkan is active");
+
+                VkRenderPass rp = reinterpret_cast<VkRenderPass>(native_render_pass);
+                VkPipelineLayout layout = reinterpret_cast<VkPipelineLayout>(native_pipeline_layout);
+                HN_CORE_ASSERT(rp, "Pipeline::create_layout_mode: render pass is null");
+                HN_CORE_ASSERT(layout, "Pipeline::create_layout_mode: pipeline layout is null");
+
+                return CreateRef<VulkanPipelineWrapper>(spec, vk, rp, layout);
+        }
+        case RendererAPI::API::opengl:
+        case RendererAPI::API::none:
+        default:
+            return CreateRef<NullPipeline>(spec);
+        }
+    }
 }

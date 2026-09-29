@@ -18,6 +18,10 @@ namespace Honey {
         // from the bound heaps via reflection. Drive its descriptors with FrameGraphPassContext.
         static Ref<Pipeline> create_heap_mode(const PipelineSpec& spec, void* native_render_pass);
 
+        // Creates a layout-mode pipeline (lite tier): uses the caller's VkPipelineLayout and plain
+        // vkCmdBindDescriptorSets. Never mix with heap-mode pipelines inside one frame-graph pass.
+        static Ref<Pipeline> create_layout_mode(const PipelineSpec& spec, void* native_render_pass, void* native_pipeline_layout);
+
         virtual void* get_native_pipeline() const = 0;
 
         // Defaults true - non-heap pipelines no longer supported
