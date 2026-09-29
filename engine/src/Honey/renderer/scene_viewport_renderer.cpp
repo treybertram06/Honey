@@ -122,8 +122,9 @@ namespace Honey {
                     Renderer3DIBL::bake();
                 } else {
                     HN_CORE_WARN("SceneViewportRenderer: lite render tier - skipping shadow/SSAO/icon/post-process/bloom/IBL init");
-                    Renderer3DLite::init(vk_ctx);
                 }
+                // Cheap, and always available so the editor can switch to Lite at runtime on capable devices.
+                Renderer3DLite::init(vk_ctx);
             }
         }
 
@@ -312,14 +313,12 @@ namespace Honey {
             options.imported_textures.emplace("ssaoNoise", noise);
         options.requested_output_resources.emplace_back("editorViewport");
 
-#ifdef HN_PLATFORM_MACOS
-        if (m_settings.renderer_type != RendererSettings::RendererType::lite) {
-            auto& renderer_settings = Settings::get().renderer;
-            renderer_settings.renderer_type = RendererSettings::RendererType::lite;
+        if (!Application::get().get_vulkan_backend().supports_full_renderer() &&
+            m_settings.renderer_type != RendererSettings::RendererType::lite) {
+            Settings::get().renderer.renderer_type = RendererSettings::RendererType::lite;
             m_settings.renderer_type = RendererSettings::RendererType::lite;
-            HN_CORE_WARN("Only Lite renderer is supported on MacOS, renderer type selection will not be respected.");
+            HN_CORE_WARN("This device only supports the Lite renderer; renderer type selection will not be respected.");
         }
-#endif
 
         std::string fg_file;
         switch (m_settings.renderer_type) {

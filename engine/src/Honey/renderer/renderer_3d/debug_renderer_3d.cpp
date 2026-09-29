@@ -9,6 +9,7 @@
 #include "Honey/renderer/renderer.h"
 #include "Honey/renderer/shader_cache.h"
 #include "Honey/renderer/vertex_array.h"
+#include "renderer_3d.h"
 #include "renderer_3d_lite.h"
 #include "platform/vulkan/vk_framebuffer.h"
 #include "platform/vulkan/vk_renderer_api.h"
@@ -141,8 +142,9 @@ void DebugRenderer3D::end_scene()
     if (Renderer::get_api() != RendererAPI::API::vulkan)
         return; // OpenGL path not implemented
 
-    // Lite tier: no globals/heap, so the heap pipeline below can't run. Lite draws the lines itself.
-    if (!VulkanRendererAPI::has_globals()) {
+    // Lite (no heap on this device, or Lite selected at runtime): the heap pipeline below can't run
+    // inside the lite pass. Lite draws the lines itself.
+    if (Renderer3D::is_lite()) {
         Renderer3DLite::submit_debug_lines(s_data->cpu_buffer.data(), s_data->vertex_count);
         s_data->stats.draw_calls++;
         return;
