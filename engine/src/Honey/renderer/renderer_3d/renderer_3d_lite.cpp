@@ -28,7 +28,11 @@ namespace Honey {
             glm::vec4 light_dir;   // xyz = direction the light travels, w = intensity
             glm::vec4 light_color;
             glm::vec4 ambient;
+            glm::vec4 viewport;    // xy = render target size in pixels
         };
+
+        // Matches DebugVertex in debug_renderer_3d.cpp (shader reads it as 7 floats)
+        constexpr uint32_t k_debug_vertex_size = 28;
 
         // Matches PC in Renderer3D_Lite.glsl
         struct LitePush {
@@ -52,7 +56,13 @@ namespace Honey {
             Ref<Texture2D> white_texture;
 
             std::unordered_map<PipelineVariantKey, Ref<Pipeline>, PipelineVariantKeyHash> pipelines;
+            std::unordered_map<void*, Ref<Pipeline>> line_pipelines;
+            std::unordered_map<void*, Ref<Pipeline>> icon_pipelines;
             bool warned_pool_exhausted = false;
+
+            // Overlay intake for this frame; consumed and cleared by record().
+            std::vector<uint8_t> debug_lines;
+            Ref<StorageBuffer> line_buffers[k_frames]{};
         };
         static LiteRendererResources* s_res = nullptr;
 
@@ -87,6 +97,26 @@ namespace Honey {
             HN_CORE_INFO("Renderer3DLite: creating pipeline (blend={0}, cull_none={1}, color attachments={2})", blend, cull_none, color_attachment_count);
             auto pipeline = Pipeline::create_layout_mode(spec, rp_native, s_res->pipeline_layout);
             s_res->pipelines.emplace(key, pipeline);
+            return pipeline;
+        }
+
+        // Lines / icons: alpha blend on attachment 0, never writes depth, no culling.
+        Ref<Pipeline> get_or_create_overlay_pipeline(std::unordered_map<void*, Ref<Pipeline>>& cache, void* rp_native,
+                                                     uint32_t color_attachment_count, PrimitiveTopology topology, bool depth_test) {
+            auto it = cache.find(rp_native);
+            if (it != cache.end())
+                return it->second;
+
+            auto spec = PipelineSpec::from_shader(asset_root / "shaders" / "Renderer3D_Lite.glsl");
+            spec.topology = topology;
+            spec.cullMode = CullMode::None;
+            spec.depthStencil.depthTest = depth_test;
+            spec.depthStencil.depthWrite = false;
+            spec.perColorAttachmentBlend.assign(color_attachment_count, AttachmentBlendState{});
+            spec.perColorAttachmentBlend[0].enabled = true;
+
+            auto pipeline = Pipeline::create_layout_mode(spec, rp_native, s_res->pipeline_layout);
+            cache.emplace(rp_native, pipeline);
             return pipeline;
         }
     }
@@ -140,7 +170,10 @@ namespace Honey {
     void Renderer3DLite::shutdown() {
         if (!s_res) return;
         vkDeviceWaitIdle(s_res->device);
-        s_res->pipelines.clear(); // pipelines reference the layout; destroy them first
+        // pipelines reference the layout; destroy them first
+        s_res->pipelines.clear();
+        s_res->line_pipelines.clear();
+        s_res->icon_pipelines.clear();
         for (auto pool : s_res->pools)
             vkDestroyDescriptorPool(s_res->device, pool, nullptr);
         vkDestroyPipelineLayout(s_res->device, s_res->pipeline_layout, nullptr);
@@ -159,7 +192,13 @@ namespace Honey {
         if (!s_res) return;
 
         auto* data = Renderer3DInternal::g_renderer3d_data;
-        if (data->meshlet_draws.empty()) return;
+
+        // Take this frame's debug lines; they are consumed whether or not anything gets drawn.
+        std::vector<uint8_t> lines = std::move(s_res->debug_lines);
+        s_res->debug_lines.clear();
+        const uint32_t line_vertex_count = (uint32_t)(lines.size() / k_debug_vertex_size);
+
+        if (data->meshlet_draws.empty() && line_vertex_count == 0 && data->icon_draws.empty()) return;
 
         auto target = ctx.get_pass_target_framebuffer();
         auto* vk_fb = dynamic_cast<VulkanFramebuffer*>(target.get());
@@ -174,7 +213,13 @@ namespace Honey {
 
         // Frame UBO. Directional light falls back to a fixed headlight-ish light if the scene has none.
         LiteFrameUBO frame{};
-        frame.view_proj = data->scene_view_proj;
+        // The camera matrices are GL-style; same GL -> Vulkan clip correction as make_gpu_camera() in
+        // vk_renderer_globals.cpp (flip Y, remap z from [-1,1] to [0,1]).
+        glm::mat4 clip_correction(1.0f);
+        clip_correction[1][1] = -1.0f;
+        clip_correction[2][2] = 0.5f;
+        clip_correction[3][2] = 0.5f;
+        frame.view_proj = clip_correction * data->scene_view_proj;
         frame.cam_pos = glm::vec4(data->scene_camera_pos, 1.0f);
         const auto& dl = data->scene_lights.directional_light;
         if (dl.intensity > 0.0f) {
@@ -185,7 +230,17 @@ namespace Honey {
             frame.light_color = glm::vec4(1.0f);
         }
         frame.ambient = glm::vec4(0.15f, 0.15f, 0.15f, 1.0f);
+        const VkExtent2D ext = s_res->vk_ctx->get_current_pass_extent();
+        frame.viewport = glm::vec4((float)ext.width, (float)ext.height, 0.0f, 0.0f);
         s_res->frame_ubos[slot]->set_data(&frame, sizeof(frame));
+
+        // Line vertices as an SSBO (always at least a little, so set 1 is valid for icon draws too).
+        auto& line_buffer = s_res->line_buffers[slot];
+        const uint32_t line_bytes = std::max(line_vertex_count * k_debug_vertex_size, 256u);
+        if (!line_buffer || line_buffer->get_size() < line_bytes)
+            line_buffer = StorageBuffer::create(line_bytes, StorageBufferUsage::Dynamic);
+        if (line_vertex_count > 0)
+            line_buffer->set_data(lines.data(), line_vertex_count * k_debug_vertex_size);
 
         auto alloc_set = [&](VkDescriptorSetLayout layout) -> VkDescriptorSet {
             VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
@@ -231,7 +286,6 @@ namespace Honey {
         };
         std::stable_sort(blended.begin(), blended.end(), [&](uint32_t a, uint32_t b) { return dist2(a) > dist2(b); });
 
-        const VkExtent2D ext = s_res->vk_ctx->get_current_pass_extent();
         VkViewport vp{0, 0, (float)ext.width, (float)ext.height, 0.0f, 1.0f};
         VkRect2D sc{{0, 0}, {ext.width, ext.height}};
 
@@ -251,7 +305,26 @@ namespace Honey {
             void* bound_view = nullptr;
             VkPipeline bound_pipeline = VK_NULL_HANDLE;
 
-            auto draw = [&](uint32_t idx, bool blend) {
+            // set 2: one descriptor set per texture view per frame
+            auto texture_set_for = [&](void* view) -> VkDescriptorSet {
+                auto tit = texture_sets.find(view);
+                if (tit != texture_sets.end())
+                    return tit->second;
+                VkDescriptorSet set = alloc_set(s_res->set_layouts[2]);
+                if (set) {
+                    VkDescriptorImageInfo ii{sampler, reinterpret_cast<VkImageView>(view), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+                    VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+                    w.dstSet = set;
+                    w.descriptorCount = 1;
+                    w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                    w.pImageInfo = &ii;
+                    vkUpdateDescriptorSets(device, 1, &w, 0, nullptr);
+                }
+                texture_sets.emplace(view, set);
+                return set;
+            };
+
+            auto draw =[&](uint32_t idx, bool blend) {
                 const MeshletDrawCommand& dc = data->meshlet_draws[idx];
                 if (!dc.mesh || !dc.mesh->meshlet_buffers || !dc.mesh->meshlet_buffers->flat_index_buffer) return;
                 const auto& bufs = *dc.mesh->meshlet_buffers;
@@ -286,21 +359,8 @@ namespace Honey {
                 const bool has_tex = tex && tex->get_vk_image_view();
                 if (!has_tex) tex = white_vk;
                 void* view = tex->get_vk_image_view();
-                auto tit = texture_sets.find(view);
-                if (tit == texture_sets.end()) {
-                    VkDescriptorSet set = alloc_set(s_res->set_layouts[2]);
-                    if (set) {
-                        VkDescriptorImageInfo ii{sampler, reinterpret_cast<VkImageView>(view), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-                        VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-                        w.dstSet = set;
-                        w.descriptorCount = 1;
-                        w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-                        w.pImageInfo = &ii;
-                        vkUpdateDescriptorSets(device, 1, &w, 0, nullptr);
-                    }
-                    tit = texture_sets.emplace(view, set).first;
-                }
-                if (!tit->second) return;
+                VkDescriptorSet tex_set = texture_set_for(view);
+                if (!tex_set) return;
 
                 const bool cull_none = blend || (dc.material && dc.material->get_double_sided());
                 VkPipeline pipe = reinterpret_cast<VkPipeline>(get_or_create_pipeline(rp_native, color_count, blend, cull_none)->get_native_pipeline());
@@ -314,8 +374,7 @@ namespace Honey {
                     bound_mesh = dc.mesh;
                 }
                 if (view != bound_view) {
-                    VkDescriptorSet s = tit->second;
-                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, s_res->pipeline_layout, 2, 1, &s, 0, nullptr);
+                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, s_res->pipeline_layout, 2, 1, &tex_set, 0, nullptr);
                     bound_view = view;
                 }
 
@@ -334,10 +393,66 @@ namespace Honey {
 
             for (uint32_t i : opaque)  draw(i, false);
             for (uint32_t i : blended) draw(i, true);
+
+            // Overlay (debug lines, then icons): shares set 1 (line buffer) and set 2 (white texture).
+            if (line_vertex_count == 0 && data->icon_draws.empty())
+                return;
+
+            VkDescriptorSet overlay_set = alloc_set(s_res->set_layouts[1]);
+            VkDescriptorSet white_set = texture_set_for(white_vk->get_vk_image_view());
+            if (!overlay_set || !white_set)
+                return;
+            {
+                VkDescriptorBufferInfo bi{reinterpret_cast<VkBuffer>(line_buffer->get_native_buffer()), 0, VK_WHOLE_SIZE};
+                VkWriteDescriptorSet w[2]{};
+                for (uint32_t b = 0; b < 2; ++b) {
+                    w[b].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                    w[b].dstSet = overlay_set;
+                    w[b].dstBinding = b;
+                    w[b].descriptorCount = 1;
+                    w[b].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                    w[b].pBufferInfo = &bi;
+                }
+                vkUpdateDescriptorSets(device, 2, w, 0, nullptr);
+            }
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, s_res->pipeline_layout, 1, 1, &overlay_set, 0, nullptr);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, s_res->pipeline_layout, 2, 1, &white_set, 0, nullptr);
+
+            constexpr VkShaderStageFlags k_push_stages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+
+            if (line_vertex_count > 0) {
+                auto pipe = get_or_create_overlay_pipeline(s_res->line_pipelines, rp_native, color_count, PrimitiveTopology::Lines, false);
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, reinterpret_cast<VkPipeline>(pipe->get_native_pipeline()));
+                LitePush pc{};
+                pc.mode = 1;
+                pc.entity_id = -1;
+                vkCmdPushConstants(cmd, s_res->pipeline_layout, k_push_stages, 0, sizeof(pc), &pc);
+                vkCmdDraw(cmd, line_vertex_count, 1, 0, 0);
+                data->stats.draw_calls++;
+            }
+
+            if (!data->icon_draws.empty()) {
+                auto pipe = get_or_create_overlay_pipeline(s_res->icon_pipelines, rp_native, color_count, PrimitiveTopology::Triangles, true); // depth-tested at the icon centre's depth, so geometry occludes it
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, reinterpret_cast<VkPipeline>(pipe->get_native_pipeline()));
+                for (const auto& icon : data->icon_draws) {
+                    // Flat tinted disc with a constant pixel size (world-space sizing is not supported in lite).
+                    LitePush pc{};
+                    pc.model[0] = icon.world_pos; // xyz = position, w = size in pixels
+                    pc.base_color = icon.tint;
+                    pc.entity_id = icon.entity_id;
+                    pc.mode = 2;
+                    vkCmdPushConstants(cmd, s_res->pipeline_layout, k_push_stages, 0, sizeof(pc), &pc);
+                    vkCmdDraw(cmd, 6, 1, 0, 0); // two triangles
+                    data->stats.draw_calls++;
+                }
+            }
         });
     }
 
     void Renderer3DLite::submit_debug_lines(const void *vertices, uint32_t vertex_count) {
+        if (!s_res) return;
+        const auto* bytes = static_cast<const uint8_t*>(vertices);
+        s_res->debug_lines.insert(s_res->debug_lines.end(), bytes, bytes + (size_t)vertex_count * k_debug_vertex_size);
     }
 
     void Renderer3DLite::submit_icon(const Renderer3DInternal::IconDrawCommand &) {

@@ -10,7 +10,14 @@ namespace Honey {
         if (!parsed.is_valid()) return nullptr;
 
         auto* globals = Renderer::icon_globals();
-        if (!globals) return nullptr; // lite tier: no icon globals
+        if (!globals) {
+            // Lite tier: no icon globals, so no Slug data on the GPU. Return a shell so callers still
+            // submit the icon; the lite renderer draws a flat disc and never reads the shapes.
+            Ref<VectorIcon> icon = CreateRef<VectorIcon>();
+            icon->m_width = parsed.get_width();
+            icon->m_height = parsed.get_height();
+            return icon;
+        }
         auto slot = globals->allocate_icon_slot(
             (uint32_t)parsed.get_band_table().size(), (uint32_t)parsed.get_curves().size());
 
