@@ -16,6 +16,9 @@ namespace Honey {
         struct PostProcessResources {
             VulkanContext* vk_ctx = nullptr;
 
+            std::weak_ptr<StorageBuffer> filled_fxaa_params_buffer;
+            RendererSettings::AntiAliasingSettings last_fxaa_settings;
+
             std::unordered_map<void*, Ref<Pipeline>> composite_pipelines;
             std::unordered_map<void*, Ref<Pipeline>> output_pipelines;
         };
@@ -117,6 +120,29 @@ namespace Honey {
         Ref<Pipeline> pipe = get_or_create_output_pipeline(rp_native);
         VkPipeline vk_pipe = reinterpret_cast<VkPipeline>(pipe->get_native_pipeline());
         HN_CORE_ASSERT(vk_pipe, "execute_draw: heap-mode pipeline is null");
+
+        if (auto kernel_buf = ctx.get_buffer("fxaaParams")) {
+            const auto& settings = Settings::get().renderer.anti_aliasing;
+
+            if (s_res->filled_fxaa_params_buffer.lock() != kernel_buf
+                || settings != s_res->last_fxaa_settings) {
+                s_res->last_fxaa_settings = settings;
+
+                FxaaParamsUBOData ubo{};
+                ubo.subpix = settings.subpix;
+                ubo.edge_threshold = settings.edge_threshold;
+                ubo.edge_threshold_min = settings.edge_threshold_min;
+                ubo.mode = static_cast<int32_t>(settings.type);
+                ubo.debug_view = static_cast<int32_t>(settings.debug_view);
+
+                kernel_buf->set_data(&ubo, sizeof(ubo), 0);
+                s_res->filled_fxaa_params_buffer = kernel_buf;
+
+                //HN_CORE_INFO("[FXAA] FXAA parameters uploaded to frame-graph buffer "
+                //             "(subpix={}, edge_threshold={}, edge_threshold_min={}, mode={}",
+                //             ubo.subpix, ubo.edge_threshold, ubo.edge_threshold_min, ubo.mode);
+                }
+        }
 
         const VkExtent2D ext = s_res->vk_ctx->get_current_pass_extent();
         VkViewport vp{ 0, 0, (float)ext.width, (float)ext.height, 0.0f, 1.0f };

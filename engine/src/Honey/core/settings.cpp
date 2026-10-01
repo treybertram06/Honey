@@ -107,6 +107,25 @@ namespace Honey {
         return GeometryPath::Meshlet;
     }
 
+    using AntiAliasingType = RendererSettings::AntiAliasingSettings::AAType;
+    static std::string aatype_to_string(AntiAliasingType path) {
+        switch (path) {
+        case AntiAliasingType::none: return "None";
+        case AntiAliasingType::fxaa: return "FXAA";
+        case AntiAliasingType::taa:  return "TAA";
+        }
+        return "None";
+    }
+
+    static AntiAliasingType string_to_aatype(const std::string& str) {
+        std::string s = str;
+        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
+        if (s == "none") return AntiAliasingType::none;
+        if (s == "fxaa") return AntiAliasingType::fxaa;
+        if (s == "taa")  return AntiAliasingType::taa;
+        return AntiAliasingType::none;
+    }
+
     bool Settings::load_from_file(const std::filesystem::path& filepath) {
         if (!std::filesystem::exists(filepath)) {
             HN_CORE_WARN("Settings file does not exist: {}", filepath.string());
@@ -215,10 +234,28 @@ namespace Honey {
                 s.renderer.bloom.strength = n.as<float>(s.renderer.bloom.strength);
             }
             if (auto n = renderer_node["BloomThreshold"]) {
-                s.renderer.bloom.strength = n.as<float>(s.renderer.bloom.threshold);
+                s.renderer.bloom.threshold = n.as<float>(s.renderer.bloom.threshold);
             }
             if (auto n = renderer_node["BloomSoftKnee"]) {
-                s.renderer.bloom.strength = n.as<float>(s.renderer.bloom.soft_knee);
+                s.renderer.bloom.soft_knee = n.as<float>(s.renderer.bloom.soft_knee);
+            }
+
+            // Clamped to the same ranges as the renderer debug panel sliders (FXAA 3.11's documented limits),
+            // so a hand-edited settings.yaml can't bypass them
+            if (auto n = renderer_node["AASubpix"]) {
+                s.renderer.anti_aliasing.subpix =
+                    std::clamp(n.as<float>(s.renderer.anti_aliasing.subpix), 0.0f, 1.0f);
+            }
+            if (auto n = renderer_node["AAEdgeThreshold"]) {
+                s.renderer.anti_aliasing.edge_threshold =
+                    std::clamp(n.as<float>(s.renderer.anti_aliasing.edge_threshold), 0.063f, 0.333f);
+            }
+            if (auto n = renderer_node["AAEdgeThresholdMin"]) {
+                s.renderer.anti_aliasing.edge_threshold_min =
+                    std::clamp(n.as<float>(s.renderer.anti_aliasing.edge_threshold_min), 0.0312f, 0.0833f);
+            }
+            if (auto n = renderer_node["AAType"]) {
+                s.renderer.anti_aliasing.type = string_to_aatype(n.as<std::string>("None"));
             }
         }
 
@@ -307,6 +344,11 @@ namespace Honey {
         out << YAML::Key << "BloomStrength"           << YAML::Value << s.renderer.bloom.strength;
         out << YAML::Key << "BloomThreshold"          << YAML::Value << s.renderer.bloom.threshold;
         out << YAML::Key << "BloomSoftKnee"           << YAML::Value << s.renderer.bloom.soft_knee;
+
+        out << YAML::Key << "AASubpix"                << YAML::Value << s.renderer.anti_aliasing.subpix;
+        out << YAML::Key << "AAEdgeThreshold"         << YAML::Value << s.renderer.anti_aliasing.edge_threshold;
+        out << YAML::Key << "AAEdgeThresholdMin"      << YAML::Value << s.renderer.anti_aliasing.edge_threshold_min;
+        out << YAML::Key << "AAType"                  << YAML::Value << aatype_to_string(s.renderer.anti_aliasing.type);
 
         out << YAML::EndMap; // Renderer
 

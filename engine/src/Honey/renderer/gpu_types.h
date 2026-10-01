@@ -192,6 +192,19 @@ namespace Honey {
         int32_t _pad;
     };
     static_assert(sizeof(BloomParamsUBOData) == 16, "BloomParamsUBOData size mismatch");
+
+    struct FxaaParamsUBOData {
+        float subpix;
+        float edge_threshold;
+        float edge_threshold_min;
+        int32_t mode;
+        int32_t debug_view;
+        int32_t _pad0;
+        int32_t _pad1;
+        int32_t _pad2;
+    };
+    static_assert(sizeof(FxaaParamsUBOData) == 32, "FxaaParamsUBOData size mismatch");
+
     // One instance per SlugIcon *shape* (a multi-shape SVG fans out into one GPUIconInstance per
     // shape, all sharing the same world_pos/tint/entity_id/sizemode — see VectorIcon::get_shapes()).
     struct alignas(16) GPUIconInstance {

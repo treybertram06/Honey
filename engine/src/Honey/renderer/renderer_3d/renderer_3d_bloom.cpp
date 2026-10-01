@@ -114,8 +114,8 @@ namespace Honey {
                 kernel_buf->set_data(&ubo, sizeof(ubo), 0);
                 s_res->filled_bloom_params_buffer = kernel_buf;
 
-                HN_CORE_INFO("[Bloom] Bloom parameters uploaded to frame-graph buffer "
-                             "(threshold={}, soft knee={}, strength={}", ubo.threshold, ubo.soft_knee, ubo.strength);
+                //HN_CORE_INFO("[Bloom] Bloom parameters uploaded to frame-graph buffer "
+                //             "(threshold={}, soft knee={}, strength={}", ubo.threshold, ubo.soft_knee, ubo.strength);
             }
         }
 
