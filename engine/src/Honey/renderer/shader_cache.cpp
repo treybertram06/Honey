@@ -7,10 +7,13 @@
 #include <sstream>
 
 #include "renderer.h"
+#include "global_bindings.h"
+#include <regex>
+#include <unordered_set>
 #include "../../../../vendor/yaml-cpp/src/contrib/dragonbox.h"
 
 namespace {
-    constexpr uint32_t kShaderCacheVersion = 1;
+    constexpr uint32_t kShaderCacheVersion = 2;
 
     static std::string read_text_file(const std::filesystem::path& p) {
         std::ifstream ifs(p, std::ios::binary);
@@ -62,6 +65,33 @@ namespace {
 
         return spirv;
     }
+
+    // Collects every file transitively #included by 'main', resolved the same way FSIncluder in
+    // shader_compiler.cpp does (ASSET_ROOT/shaders/<requested>). The virtual global_bindings.glsli
+    // is skipped here; its generated content is hashed separately.
+    static void collect_shader_dependencies(const std::filesystem::path& file,
+                                            std::vector<std::filesystem::path>& out,
+                                            std::unordered_set<std::string>& visited) {
+        static const std::regex include_re(R"(^\s*#\s*include\s*[<"]([^>"]+)[>"])");
+
+        std::istringstream in(read_text_file(file));
+        std::string line;
+        while (std::getline(in, line)) {
+            std::smatch m;
+            if (!std::regex_search(line, m, include_re)) continue;
+
+            const std::string requested = m[1].str();
+            if (requested == "global_bindings.glsli") continue;
+
+            const std::filesystem::path candidate = std::filesystem::path(ASSET_ROOT) / "shaders" / requested;
+            std::error_code ec;
+            if (!std::filesystem::exists(candidate, ec)) continue;
+            if (!visited.insert(candidate.lexically_normal().string()).second) continue;
+
+            out.push_back(candidate);
+            collect_shader_dependencies(candidate, out, visited);
+        }
+    }
 }
 
 namespace Honey {
@@ -100,12 +130,14 @@ namespace Honey {
             }
         }
 
+        const std::string source_hash = compute_source_hash(shader_path);
+
         // Disk-first: if the expected SPIR-V cache files exist, reuse them without compiling.
-        const auto vert_path = get_spirv_cache_path(shader_path, "vert");
-        const auto frag_path = get_spirv_cache_path(shader_path, "frag");
-        const auto comp_path = get_spirv_cache_path(shader_path, "comp");
-        const auto task_path = get_spirv_cache_path(shader_path, "task");
-        const auto mesh_path = get_spirv_cache_path(shader_path, "mesh");
+        const auto vert_path = get_spirv_cache_path(shader_path, source_hash, "vert");
+        const auto frag_path = get_spirv_cache_path(shader_path, source_hash, "frag");
+        const auto comp_path = get_spirv_cache_path(shader_path, source_hash, "comp");
+        const auto task_path = get_spirv_cache_path(shader_path, source_hash, "task");
+        const auto mesh_path = get_spirv_cache_path(shader_path, source_hash, "mesh");
 
         const bool has_graphics_on_disk = file_exists_nonempty(vert_path) && file_exists_nonempty(frag_path);
         const bool has_compute_on_disk = file_exists_nonempty(comp_path);
@@ -115,6 +147,7 @@ namespace Honey {
         if (has_graphics_on_disk || has_compute_on_disk || has_mesh_on_disk || has_task_on_disk) {
             ShaderAsset asset;
             asset.source_path = shader_path;
+            asset.dependencies = get_shader_dependencies(shader_path);
             asset.vertex_spirv_path = vert_path;
             asset.fragment_spirv_path = frag_path;
             asset.compute_spirv_path = comp_path;
@@ -147,7 +180,7 @@ namespace Honey {
         // Fallback: compile (no usable cache entry on disk).
         HN_CORE_INFO("Compiling shader: {0}", shader_path.string());
 
-        if (!compile_shader_to_spirv(shader_path)) {
+        if (!compile_shader_to_spirv(shader_path, source_hash)) {
             if (it != m_shader_assets.end()) {
                 HN_CORE_ERROR("Shader compilation failed for {0}; falling back to previously cached shader",
                               shader_path.string());
@@ -160,6 +193,7 @@ namespace Honey {
 
         ShaderAsset asset;
         asset.source_path = shader_path;
+            asset.dependencies = get_shader_dependencies(shader_path);
         asset.vertex_spirv_path = vert_path;
         asset.fragment_spirv_path = frag_path;
         asset.compute_spirv_path = comp_path;
@@ -186,11 +220,12 @@ namespace Honey {
     }
 
     ShaderCache::SpirvPaths ShaderCache::get_or_compile_spirv_paths(const std::filesystem::path& shader_path) {
-        const auto vert_path = get_spirv_cache_path(shader_path, "vert");
-        const auto frag_path = get_spirv_cache_path(shader_path, "frag");
-        const auto comp_path = get_spirv_cache_path(shader_path, "comp");
-        const auto mesh_path = get_spirv_cache_path(shader_path, "mesh");
-        const auto task_path = get_spirv_cache_path(shader_path, "task");
+        const std::string source_hash = compute_source_hash(shader_path);
+        const auto vert_path = get_spirv_cache_path(shader_path, source_hash, "vert");
+        const auto frag_path = get_spirv_cache_path(shader_path, source_hash, "frag");
+        const auto comp_path = get_spirv_cache_path(shader_path, source_hash, "comp");
+        const auto mesh_path = get_spirv_cache_path(shader_path, source_hash, "mesh");
+        const auto task_path = get_spirv_cache_path(shader_path, source_hash, "task");
 
         const bool has_graphics_on_disk = file_exists_nonempty(vert_path) && file_exists_nonempty(frag_path);
         const bool has_compute_on_disk = file_exists_nonempty(comp_path);
@@ -206,6 +241,7 @@ namespace Honey {
             // live edit that introduces a syntax error) has a known-good entry to fall back to.
             ShaderAsset asset;
             asset.source_path = shader_path;
+            asset.dependencies = get_shader_dependencies(shader_path);
             asset.vertex_spirv_path = vert_path;
             asset.fragment_spirv_path = frag_path;
             asset.compute_spirv_path = comp_path;
@@ -229,9 +265,10 @@ namespace Honey {
         if (it == m_shader_assets.end() || needs_recompilation(it->second)) {
             HN_CORE_INFO("Compiling shader (SPIR-V only): {0}", shader_path.string());
 
-            if (compile_shader_to_spirv(shader_path)) {
+            if (compile_shader_to_spirv(shader_path, source_hash)) {
                 ShaderAsset asset;
                 asset.source_path = shader_path;
+            asset.dependencies = get_shader_dependencies(shader_path);
                 asset.vertex_spirv_path = vert_path;
                 asset.fragment_spirv_path = frag_path;
                 asset.compute_spirv_path = comp_path;
@@ -289,8 +326,9 @@ namespace Honey {
             return {};
         }
 
+        const std::string source_hash = compute_source_hash(shader_path);
         const std::string stage_suffix = shader_path.extension().string().substr(1);
-        const std::filesystem::path cache_path = get_spirv_cache_path(shader_path, stage_suffix);
+        const std::filesystem::path cache_path = get_spirv_cache_path(shader_path, source_hash, stage_suffix);
         if (file_exists_nonempty(cache_path)) {
             return read_spirv_file(cache_path);
         }
@@ -313,18 +351,12 @@ namespace Honey {
                 return true;
             }
 
-            // Basic include-change detection: if any file in the same directory is newer, recompile.
-            try {
-                auto dir = asset.source_path.parent_path();
-                for (const auto& entry : std::filesystem::directory_iterator(dir)) {
-                    if (!entry.is_regular_file()) continue;
-                    auto t = std::filesystem::last_write_time(entry.path());
-                    if (t > asset.last_modified) {
-                        return true;
-                    }
+            // Include edits are caught by the content hash in compute_source_hash(); also check
+            // mtimes of includes so the in-memory cached_shader fast path notices them.
+            for (const auto& dep : asset.dependencies) {
+                if (std::filesystem::last_write_time(dep) > asset.last_modified) {
+                    return true;
                 }
-            } catch (const std::exception&) {
-                // Ignore directory scan errors and fall back to existing checks
             }
 
             const bool has_graphics =
@@ -349,7 +381,7 @@ namespace Honey {
         }
     }
 
-    bool ShaderCache::compile_shader_to_spirv(const std::filesystem::path& shader_path) {
+    bool ShaderCache::compile_shader_to_spirv(const std::filesystem::path& shader_path, const std::string& source_hash) {
         auto result = ShaderCompiler::compile_glsl_to_spirv(shader_path);
 
         if (!result.success) {
@@ -358,11 +390,11 @@ namespace Honey {
         }
 
         // Write SPIR-V files to cache
-        auto vert_path = get_spirv_cache_path(shader_path, "vert");
-        auto frag_path = get_spirv_cache_path(shader_path, "frag");
-        auto comp_path = get_spirv_cache_path(shader_path, "comp");
-        auto mesh_path = get_spirv_cache_path(shader_path, "mesh");
-        auto task_path = get_spirv_cache_path(shader_path, "task");
+        auto vert_path = get_spirv_cache_path(shader_path, source_hash, "vert");
+        auto frag_path = get_spirv_cache_path(shader_path, source_hash, "frag");
+        auto comp_path = get_spirv_cache_path(shader_path, source_hash, "comp");
+        auto mesh_path = get_spirv_cache_path(shader_path, source_hash, "mesh");
+        auto task_path = get_spirv_cache_path(shader_path, source_hash, "task");
 
         if (result.has_graphics_stages()) {
             if (!write_spirv_file(vert_path, result.vertex_spirv)) {
@@ -418,9 +450,15 @@ namespace Honey {
         return true;
     }
 
-    std::filesystem::path ShaderCache::get_spirv_cache_path(const std::filesystem::path& shader_path, const std::string& stage) {
-        std::string base = shader_path.stem().string();
+    std::vector<std::filesystem::path> ShaderCache::get_shader_dependencies(const std::filesystem::path& shader_path) {
+        std::vector<std::filesystem::path> deps;
+        std::unordered_set<std::string> visited{shader_path.lexically_normal().string()};
+        collect_shader_dependencies(shader_path, deps, visited);
+        return deps;
+    }
 
+    std::string ShaderCache::compute_source_hash(const std::filesystem::path& shader_path) {
+        HN_PROFILE_FUNCTION();
         std::string contents = read_text_file(shader_path);
 
         // Include compile target in the hash so Vulkan/OpenGL don't collide.
@@ -432,9 +470,23 @@ namespace Honey {
         }
 
         std::string hash_input = target_tag + "\n" + contents;
-        std::string hash = hash_input.empty() ? std::string("0") : fnv1a64_hex(hash_input);
 
-        std::string filename = base + ".v" + std::to_string(kShaderCacheVersion) + "." + hash + "." + stage + ".spv";
+        // Fold in every included file so edits to an include invalidate the cache entry.
+        for (const auto& dep : get_shader_dependencies(shader_path)) {
+            hash_input += "\n//@include " + dep.string() + "\n";
+            hash_input += read_text_file(dep);
+        }
+
+        // global_bindings.glsli is synthesized from k_global_bindings, not read from disk.
+        for (const auto& binding : k_global_bindings) {
+            hash_input += std::format("\n//@gbind {} {}", binding.glsl_macro, binding.shader_binding);
+        }
+
+        return fnv1a64_hex(hash_input);
+    }
+
+    std::filesystem::path ShaderCache::get_spirv_cache_path(const std::filesystem::path& shader_path, const std::string& hash, const std::string& stage) {
+        std::string filename = shader_path.stem().string() + ".v" + std::to_string(kShaderCacheVersion) + "." + hash + "." + stage + ".spv";
         return m_spirv_cache_dir / filename;
     }
 
@@ -452,7 +504,7 @@ namespace Honey {
 
         // This could scan the assets/shaders directory and precompile everything
         for (auto& [key, asset] : m_shader_assets) {
-            if (compile_shader_to_spirv(asset.source_path)) {
+            if (compile_shader_to_spirv(asset.source_path, compute_source_hash(asset.source_path))) {
                 HN_CORE_INFO("Precompiled: {0}", asset.source_path.string());
             } else {
                 HN_CORE_ERROR("Failed to precompile {0}", asset.source_path.string());

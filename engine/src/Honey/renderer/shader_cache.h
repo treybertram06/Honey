@@ -4,7 +4,9 @@
 #include "shader.h"
 
 #include <filesystem>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace Honey {
 
@@ -54,13 +56,16 @@ namespace Honey {
             std::filesystem::path compute_spirv_path;
             std::filesystem::path mesh_spirv_path;
             std::filesystem::path task_spirv_path;
+            std::vector<std::filesystem::path> dependencies;
             std::filesystem::file_time_type last_modified{};
             Ref<Shader> cached_shader;
         };
 
         bool needs_recompilation(const ShaderAsset& asset);
-        bool compile_shader_to_spirv(const std::filesystem::path& shader_path);
-        std::filesystem::path get_spirv_cache_path(const std::filesystem::path& shader_path, const std::string& stage);
+        bool compile_shader_to_spirv(const std::filesystem::path& shader_path, const std::string& source_hash);
+        std::vector<std::filesystem::path> get_shader_dependencies(const std::filesystem::path& shader_path);
+        std::string compute_source_hash(const std::filesystem::path& shader_path);
+        std::filesystem::path get_spirv_cache_path(const std::filesystem::path& shader_path, const std::string& hash, const std::string& stage);
 
         std::filesystem::path m_spirv_cache_dir;
         std::unordered_map<std::string, ShaderAsset> m_shader_assets;

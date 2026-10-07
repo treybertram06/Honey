@@ -26,6 +26,18 @@ namespace Honey {
             bool operator==(const BloomSettings&) const = default;
         };
 
+        struct AntiAliasingSettings {
+            enum class AAType { none = 0, fxaa, taa, };
+            enum class FxaaDebugView { off = 0, edge_mask, orientation, edge_side, };
+            float subpix = 0.75f;
+            float edge_threshold = 0.166f;
+            float edge_threshold_min = 0.0833f;
+            AAType type = AAType::fxaa;
+            FxaaDebugView debug_view = FxaaDebugView::off; // Not serialized; debug views shouldn't survive a restart
+
+            bool operator==(const AntiAliasingSettings&) const = default;
+        };
+
         enum class TextureFilter {
             nearest = 0,
             linear,
@@ -64,6 +76,7 @@ namespace Honey {
         float ibl_intensity = 1.0f;
 
         BloomSettings bloom;
+        AntiAliasingSettings anti_aliasing;
 
     };
 
