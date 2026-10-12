@@ -53,6 +53,8 @@ add_library(engine STATIC
         src/Honey/core/entry_point.h
         src/Honey/core/log.h
         src/Honey/core/log.cpp
+        src/Honey/core/notify.h
+        src/Honey/core/notify.cpp
         src/Honey/events/event.h
         src/Honey/events/key_event.h
         src/Honey/events/mouse_event.h

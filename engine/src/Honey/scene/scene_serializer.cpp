@@ -5,6 +5,7 @@
 #include "scriptable_entity.h"
 #include "Honey/math/yaml_glm.h"
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <yaml-cpp/yaml.h>
@@ -201,7 +202,11 @@ namespace Honey {
                 // Common camera properties
                 out << YAML::Key << "Position";
                 out << YAML::BeginSeq;
-                out << camera->get_position();
+                // Internal camera state (the transform overrides it); sanitize so denormals/NaNs never hit disk.
+                glm::vec3 cam_pos = camera->get_position();
+                for (int i = 0; i < 3; ++i)
+                    if (!std::isnormal(cam_pos[i])) cam_pos[i] = 0.0f;
+                out << cam_pos;
                 out << YAML::EndSeq;
 
                 out << YAML::Key << "AspectRatio" << YAML::Value << camera->get_aspect_ratio();
@@ -526,30 +531,69 @@ namespace Honey {
         HN_CORE_ASSERT(false, "Not implemented!");
     }
 
-    Entity SceneSerializer::deserialize_entity_node(YAML::Node& entity_node, bool generate_new_uuid) {
-        UUID uuid = generate_new_uuid
-        ? UUID()
-        : (UUID)entity_node["Entity"].as<uint64_t>();
+    std::vector<std::string> SceneLoadReport::to_lines() const {
+        std::vector<std::string> lines;
+        for (const auto& i : issues) {
+            std::string line;
+            if (!i.entity.empty()) line += i.entity;
+            if (!i.component.empty()) line += (line.empty() ? "" : " / ") + i.component;
+            line += (line.empty() ? "" : ": ") + i.message;
+            lines.push_back(std::move(line));
+        }
+        return lines;
+    }
 
+    void SceneSerializer::add_issue(std::string component, std::string message, bool missing_asset) {
+        HN_CORE_WARN("Scene load issue [{} / {}]: {}", m_current_entity_label, component, message);
+        m_report.issues.push_back({m_current_entity_label, std::move(component), std::move(message), missing_asset});
+    }
+
+    bool SceneSerializer::check_asset_exists(const char* component, const std::string& path) {
+        if (path.empty() || std::filesystem::exists(path))
+            return true;
+        add_issue(component, "Missing asset: " + path, true);
+        return false;
+    }
+
+    void SceneSerializer::try_component(const char* component, const std::function<void()>& fn) {
+        try {
+            fn();
+        } catch (const YAML::Exception& e) {
+            add_issue(component, "bad value at line " + std::to_string(e.mark.line + 1) + ": " + e.msg);
+        } catch (const std::exception& e) {
+            add_issue(component, e.what());
+        }
+    }
+
+    Entity SceneSerializer::deserialize_entity_node(YAML::Node& entity_node, bool generate_new_uuid) {
+        UUID uuid;
         std::string name;
-        auto tag_node = entity_node["TagComponent"];
-        if (tag_node)
-            name = tag_node["Tag"].as<std::string>();
+        m_current_entity_label.clear();
+        try {
+            if (!generate_new_uuid)
+                uuid = (UUID)entity_node["Entity"].as<uint64_t>();
+            if (auto tag_node = entity_node["TagComponent"])
+                name = tag_node["Tag"].as<std::string>();
+        } catch (const YAML::Exception& e) {
+            add_issue("", "Entity skipped, bad header at line " + std::to_string(e.mark.line + 1) + ": " + e.msg);
+            return {};
+        }
+        m_current_entity_label = name.empty() ? std::to_string((uint64_t)uuid) : name;
 
         Entity deserialized_entity = m_scene->create_entity(name, uuid);
 
         auto transform_node = entity_node["TransformComponent"];
-        if (transform_node) {
+        if (transform_node) try_component("TransformComponent", [&] {
             m_pending_transforms.push_back({
                 deserialized_entity,
                 transform_node["Translation"].as<glm::vec3>(),
                 transform_node["Rotation"].as<glm::vec3>(),
                 transform_node["Scale"].as<glm::vec3>()
             });
-        }
+        });
 
         auto sprite_node = entity_node["SpriteRendererComponent"];
-        if (sprite_node) {
+        if (sprite_node) try_component("SpriteRendererComponent", [&] {
             auto& sprite = deserialized_entity.add_component<SpriteRendererComponent>();
             sprite.color = sprite_node["Color"].as<glm::vec4>();
 
@@ -608,10 +652,10 @@ namespace Honey {
                 // store TaskHandle(s). In many cases you can just let it run to completion.
                 (void)wait_task;
             }
-        }
+        });
 
         auto mesh_node = entity_node["MeshRendererComponent"];
-        if (mesh_node) {
+        if (mesh_node) try_component("MeshRendererComponent", [&] {
             auto& mr = deserialized_entity.add_component<MeshRendererComponent>();
             mr.color = mesh_node["Color"].as<glm::vec4>();
 
@@ -622,21 +666,28 @@ namespace Honey {
             if (!gltf_source_path_str.empty() && !gltf_node_name_str.empty()) {
                 mr.gltf_source_path = gltf_source_path_str;
                 mr.gltf_node_name   = gltf_node_name_str;
+                if (!check_asset_exists("MeshRendererComponent", gltf_source_path_str))
+                    return;
+                mr.gltf_source_path = gltf_source_path_str;
+                mr.gltf_node_name   = gltf_node_name_str;
 
                 if (!m_gltf_tree_cache.contains(gltf_source_path_str))
                     m_gltf_tree_cache[gltf_source_path_str] = load_gltf_scene_tree_async(gltf_source_path_str);
                 mr.gltf_async_handle = m_gltf_tree_cache.at(gltf_source_path_str);
             } else if (!mesh_path_str.empty()) {
                 // Legacy flat-mesh import
+                mr.mesh_path = mesh_path_str;
+                if (!check_asset_exists("MeshRendererComponent", mesh_path_str))
+                    return;
                 mr.async_load_handle = load_gltf_mesh_async(mesh_path_str);
                 mr.mesh_path = mesh_path_str;
             }
 
             // Optionally: material overrides
-        }
+        });
 
         auto circle_node = entity_node["CircleRendererComponent"];
-        if (circle_node) {
+        if (circle_node) try_component("CircleRendererComponent", [&] {
             auto& sprite = deserialized_entity.add_component<CircleRendererComponent>();
             sprite.color = circle_node["Color"].as<glm::vec4>();
             sprite.thickness = circle_node["Thickness"].as<float>();
@@ -647,10 +698,10 @@ namespace Honey {
                 sprite.texture_path = std::filesystem::path(texture_path_str); // <-- keep it!
                 sprite.texture = Texture2D::create_async(texture_path_str);
             }
-        }
+        });
 
         auto line_node = entity_node["LineRendererComponent"];
-        if (line_node) {
+        if (line_node) try_component("LineRendererComponent", [&] {
             auto& sprite = deserialized_entity.add_component<LineRendererComponent>();
             sprite.color = line_node["Color"].as<glm::vec4>();
             sprite.fade = line_node["Fade"].as<float>();
@@ -660,10 +711,10 @@ namespace Honey {
                 sprite.texture_path = std::filesystem::path(texture_path_str); // <-- keep it!
                 sprite.texture = Texture2D::create_async(texture_path_str);
             }
-        }
+        });
 
         auto text_node = entity_node["TextRendererComponent"];
-        if (text_node) {
+        if (text_node) try_component("TextRendererComponent", [&] {
             auto& trc = deserialized_entity.add_component<TextRendererComponent>();
             trc.text         = text_node["Text"].as<std::string>("");
             trc.color        = text_node["Color"].as<glm::vec4>(glm::vec4{1.0f});
@@ -673,20 +724,20 @@ namespace Honey {
             std::string font_path_str = text_node["FontPath"].as<std::string>("");
             if (!font_path_str.empty())
                 trc.font_path = std::filesystem::path(font_path_str);
-        }
+        });
 
         auto icon_node = entity_node["IconRendererComponent"];
-        if (icon_node) {
+        if (icon_node) try_component("IconRendererComponent", [&] {
             auto& irc = deserialized_entity.add_component<IconRendererComponent>();
             irc.color = icon_node["Color"].as<glm::vec4>(glm::vec4{1.0f});
 
             std::string icon_path_str = icon_node["IconPath"].as<std::string>("");
             if (!icon_path_str.empty())
                 irc.icon_path = std::filesystem::path(icon_path_str);
-        }
+        });
 
         auto camera_node = entity_node["CameraComponent"];
-        if (camera_node) {
+        if (camera_node) try_component("CameraComponent", [&] {
             auto& camera_component = deserialized_entity.add_component<CameraComponent>();
 
             // Deserialize component parameters
@@ -728,7 +779,9 @@ namespace Honey {
                     // Fix the position parsing - your YAML has nested array
                     auto position_node = camera_data_node["Position"];
                     if (position_node && position_node.IsSequence() && position_node[0].IsSequence()) {
-                        auto pos_array = position_node[0].as<std::vector<float>>();
+                        std::vector<float> pos_array;
+                        for (const auto& v : position_node[0])
+                            pos_array.push_back(yaml::read_float(v));
                         if (pos_array.size() >= 3) {
                             camera->set_position(glm::vec3(pos_array[0], pos_array[1], pos_array[2]));
                         }
@@ -780,10 +833,10 @@ namespace Honey {
                     }
                 }
             }
-        }
+        });
 
         auto native_script = entity_node["NativeScriptComponent"];
-        if (native_script) {
+        if (native_script) try_component("NativeScriptComponent", [&] {
             auto& nsc = deserialized_entity.add_component<NativeScriptComponent>();
 
             std::string script_name = native_script["ScriptName"].as<std::string>("");
@@ -795,83 +848,85 @@ namespace Honey {
             // if (auto props = native_script["Properties"]) {
             //     nsc.deserialize_properties(props);
             // }
-        }
+        });
 
         auto script_component = entity_node["ScriptComponent"];
-        if (script_component) {
+        if (script_component) try_component("ScriptComponent", [&] {
 
             std::string script_name = script_component["ScriptName"].as<std::string>("");
             if (!script_name.empty()) {
                 auto& sc = deserialized_entity.add_component<ScriptComponent>();
                 sc.script_name = script_name;
             }
-        }
+        });
 
         auto relationship_node = entity_node["RelationshipComponent"];
-        if (relationship_node && relationship_node["Parent"] && !relationship_node["Parent"].IsNull()) {
+        if (relationship_node && relationship_node["Parent"] && !relationship_node["Parent"].IsNull()) try_component("RelationshipComponent", [&] {
             UUID parent_uuid = relationship_node["Parent"].as<uint64_t>();
             m_pending_relationships.push_back({
                 deserialized_entity,
                 parent_uuid
             });
-        }
+        });
 
 
         auto rigidbody_node = entity_node["Rigidbody2DComponent"];
-        if (rigidbody_node) {
+        if (rigidbody_node) try_component("Rigidbody2DComponent", [&] {
             auto& rb = deserialized_entity.add_component<Rigidbody2DComponent>();
             rb.body_type = (Rigidbody2DComponent::BodyType)rigidbody_node["BodyType"].as<int>();
             rb.fixed_rotation = rigidbody_node["FixedRotation"].as<bool>();
-        }
+        });
 
         auto box_collider_node = entity_node["BoxCollider2DComponent"];
-        if (box_collider_node) {
+        if (box_collider_node) try_component("BoxCollider2DComponent", [&] {
             auto& bc = deserialized_entity.add_component<BoxCollider2DComponent>();
             bc.offset = box_collider_node["Offset"].as<glm::vec2>();
             bc.size = box_collider_node["Size"].as<glm::vec2>();
             bc.density = box_collider_node["Density"].as<float>();
             bc.friction = box_collider_node["Friction"].as<float>();
             bc.restitution = box_collider_node["Restitution"].as<float>();
-        }
+        });
 
         auto circle_collider_node = entity_node["CircleCollider2DComponent"];
-        if (circle_collider_node) {
+        if (circle_collider_node) try_component("CircleCollider2DComponent", [&] {
             auto& cc = deserialized_entity.add_component<CircleCollider2DComponent>();
             cc.offset = circle_collider_node["Offset"].as<glm::vec2>();
             cc.radius = circle_collider_node["Radius"].as<float>();
             cc.density = circle_collider_node["Density"].as<float>();
             cc.friction = circle_collider_node["Friction"].as<float>();
             cc.restitution = circle_collider_node["Restitution"].as<float>();
-        }
+        });
 
         auto audio_source_node = entity_node["AudioSourceComponent"];
-        if (audio_source_node) {
+        if (audio_source_node) try_component("AudioSourceComponent", [&] {
             auto& as = deserialized_entity.add_component<AudioSourceComponent>();
             as.file_path = audio_source_node["FilePath"].as<std::string>();
             as.loop = audio_source_node["Loop"].as<bool>();
             as.pitch = audio_source_node["Pitch"].as<float>();
             as.play_on_scene_start = audio_source_node["PlayOnSceneStart"].as<bool>();
             as.volume = audio_source_node["Volume"].as<float>();
-        }
+        });
 
         auto cloth_node = entity_node["ClothComponent"];
-        if (cloth_node) {
+        if (cloth_node) try_component("ClothComponent", [&] {
             auto& cc = deserialized_entity.add_component<ClothComponent>();
             cc.grid_width  = cloth_node["GridWidth"].as<uint32_t>();
             cc.grid_height = cloth_node["GridHeight"].as<uint32_t>();
             cc.substeps    = cloth_node["Substeps"].as<uint32_t>();
-        }
+        });
 
         auto skybox_node = entity_node["SkyboxComponent"];
-        if (skybox_node) {
+        if (skybox_node) try_component("SkyboxComponent", [&] {
             auto& sc = deserialized_entity.add_component<SkyboxComponent>();
-            sc.update_file_synchronous(skybox_node["FilePath"].as<std::string>());
+            const std::string hdr_path = skybox_node["FilePath"].as<std::string>();
+            if (check_asset_exists("SkyboxComponent", hdr_path))
+                sc.update_file_synchronous(hdr_path);
             sc.active = skybox_node["Active"].as<bool>();
             sc.intensity = skybox_node["Intensity"].as<float>();
-        }
+        });
 
         auto point_light_node = entity_node["PointLightComponent"];
-        if (point_light_node) {
+        if (point_light_node) try_component("PointLightComponent", [&] {
             auto& plc = deserialized_entity.add_component<PointLightComponent>();
             plc.color = point_light_node["Color"].as<glm::vec3>();
             plc.intensity = point_light_node["Intensity"].as<float>();
@@ -879,20 +934,20 @@ namespace Honey {
 
             plc.enabled = point_light_node["Enabled"].as<bool>();
             plc.shadows = point_light_node["Shadows"].as<bool>();
-        }
+        });
 
         auto directional_light_node = entity_node["DirectionalLightComponent"];
-        if (directional_light_node) {
+        if (directional_light_node) try_component("DirectionalLightComponent", [&] {
             auto& plc = deserialized_entity.add_component<DirectionalLightComponent>();
             plc.color = directional_light_node["Color"].as<glm::vec3>();
             plc.intensity = directional_light_node["Intensity"].as<float>();
 
             plc.enabled = directional_light_node["Enabled"].as<bool>();
             plc.shadows = directional_light_node["Shadows"].as<bool>();
-        }
+        });
 
         auto spot_light_node = entity_node["SpotLightComponent"];
-        if (spot_light_node) {
+        if (spot_light_node) try_component("SpotLightComponent", [&] {
             auto& plc = deserialized_entity.add_component<SpotLightComponent>();
             plc.color = spot_light_node["Color"].as<glm::vec3>();
             plc.intensity = spot_light_node["Intensity"].as<float>();
@@ -903,10 +958,10 @@ namespace Honey {
 
             plc.enabled = spot_light_node["Enabled"].as<bool>();
             plc.shadows = spot_light_node["Shadows"].as<bool>();
-        }
+        });
 
         auto rigidbody_3d_node = entity_node["RigidbodyComponent"];
-        if (rigidbody_3d_node) {
+        if (rigidbody_3d_node) try_component("RigidbodyComponent", [&] {
             auto& rb = deserialized_entity.add_component<RigidbodyComponent>();
             rb.body_type        = (RigidbodyComponent::BodyType)rigidbody_3d_node["BodyType"].as<int>();
             rb.mass             = rigidbody_3d_node["Mass"].as<float>();
@@ -918,30 +973,30 @@ namespace Honey {
             rb.is_sensor        = rigidbody_3d_node["IsSensor"].as<bool>();
             rb.initial_linear_velocity  = rigidbody_3d_node["InitialLinearVelocity"].as<glm::vec3>();
             rb.initial_angular_velocity = rigidbody_3d_node["InitialAngularVelocity"].as<glm::vec3>();
-        }
+        });
 
         auto box_collider_3d_node = entity_node["BoxCollider3DComponent"];
-        if (box_collider_3d_node) {
+        if (box_collider_3d_node) try_component("BoxCollider3DComponent", [&] {
             auto& bc = deserialized_entity.add_component<BoxCollider3DComponent>();
             bc.offset      = box_collider_3d_node["Offset"].as<glm::vec3>();
             bc.half_size   = box_collider_3d_node["HalfSize"].as<glm::vec3>();
             bc.density     = box_collider_3d_node["Density"].as<float>();
             bc.friction    = box_collider_3d_node["Friction"].as<float>();
             bc.restitution = box_collider_3d_node["Restitution"].as<float>();
-        }
+        });
 
         auto sphere_collider_3d_node = entity_node["SphereCollider3DComponent"];
-        if (sphere_collider_3d_node) {
+        if (sphere_collider_3d_node) try_component("SphereCollider3DComponent", [&] {
             auto& sc = deserialized_entity.add_component<SphereCollider3DComponent>();
             sc.offset      = sphere_collider_3d_node["Offset"].as<glm::vec3>();
             sc.radius      = sphere_collider_3d_node["Radius"].as<float>();
             sc.density     = sphere_collider_3d_node["Density"].as<float>();
             sc.friction    = sphere_collider_3d_node["Friction"].as<float>();
             sc.restitution = sphere_collider_3d_node["Restitution"].as<float>();
-        }
+        });
 
         auto capsule_collider_3d_node = entity_node["CapsuleCollider3DComponent"];
-        if (capsule_collider_3d_node) {
+        if (capsule_collider_3d_node) try_component("CapsuleCollider3DComponent", [&] {
             auto& cc = deserialized_entity.add_component<CapsuleCollider3DComponent>();
             cc.offset      = capsule_collider_3d_node["Offset"].as<glm::vec3>();
             cc.radius      = capsule_collider_3d_node["Radius"].as<float>();
@@ -949,26 +1004,53 @@ namespace Honey {
             cc.density     = capsule_collider_3d_node["Density"].as<float>();
             cc.friction    = capsule_collider_3d_node["Friction"].as<float>();
             cc.restitution = capsule_collider_3d_node["Restitution"].as<float>();
-        }
+        });
 
         return deserialized_entity;
     }
 
     bool SceneSerializer::deserialize(const std::filesystem::path &path) {
+        m_report = {};
+        m_current_entity_label.clear();
+
         std::ifstream stream(path);
+        if (!stream.is_open()) {
+            m_report.fatal = true;
+            add_issue("", "Could not open file: " + path.string());
+            return false;
+        }
         std::stringstream str_stream;
         str_stream << stream.rdbuf();
 
-        YAML::Node data = YAML::Load(str_stream.str());
-        if (!data["Scene"])
+        YAML::Node data;
+        std::string scene_name;
+        YAML::Node entities_node;
+        try {
+            data = YAML::Load(str_stream.str());
+            if (!data["Scene"]) {
+                m_report.fatal = true;
+                add_issue("", "Not a valid scene file (missing 'Scene' key)");
+                return false;
+            }
+            scene_name = data["Scene"].as<std::string>();
+            entities_node = data["Entities"];
+        } catch (const YAML::Exception& e) {
+            m_report.fatal = true;
+            add_issue("", "YAML error at line " + std::to_string(e.mark.line + 1) + ": " + e.msg);
             return false;
-
-        std::string scene_name = data["Scene"].as<std::string>();
+        }
         HN_CORE_INFO("Deserializing scene '{0}'", scene_name);
 
-        auto entities_node = data["Entities"];
-        for (auto entity_node : entities_node)
-            deserialize_entity_node(entity_node);
+        if (entities_node && entities_node.IsSequence()) {
+            for (auto entity_node : entities_node) {
+                try {
+                    deserialize_entity_node(entity_node);
+                } catch (const std::exception& e) {
+                    add_issue("", std::string("Entity skipped: ") + e.what());
+                }
+            }
+        }
+        m_current_entity_label.clear();
 
         for (auto& rel : m_pending_relationships) {
             Entity parent = m_scene->get_entity(rel.parent_uuid);
@@ -995,7 +1077,8 @@ namespace Honey {
         m_pending_transforms.clear();
 
         m_loaded_editor_meta = EditorSceneMeta{};
-        if (YAML::Node editor_node = data["Editor"]) {
+        try_component("Editor", [&] {
+          if (YAML::Node editor_node = data["Editor"]) {
             if (YAML::Node cam_node = editor_node["Camera"]) {
                 m_loaded_editor_meta.has_camera = true;
 
@@ -1012,7 +1095,8 @@ namespace Honey {
                 if (auto far_clip = cam_node["Far"])
                     m_loaded_editor_meta.camera_far = far_clip.as<float>();
             }
-        }
+          }
+        });
 
         return true;
     }
@@ -1027,13 +1111,21 @@ namespace Honey {
         std::stringstream str_stream;
         str_stream << stream.rdbuf();
 
-        YAML::Node data = YAML::Load(str_stream.str());
+        m_report = {};
+        YAML::Node data;
+        try {
+            data = YAML::Load(str_stream.str());
+        } catch (const YAML::Exception& e) {
+            m_report.fatal = true;
+            add_issue("", "YAML error at line " + std::to_string(e.mark.line + 1) + ": " + e.msg);
+            return {};
+        }
         if (!data["Prefab"]) {
             HN_CORE_ERROR("Invalid prefab file: missing 'Prefab' node");
             return {};
         }
 
-        std::string prefab_name = data["Prefab"].as<std::string>();
+        std::string prefab_name = data["Prefab"].as<std::string>("");
         //HN_CORE_INFO("Deserializing prefab '{}'", prefab_name);
 
         // This must exist
@@ -1043,7 +1135,14 @@ namespace Honey {
             return {};
         }
 
-        Entity entity = deserialize_entity_node(entity_node, true);
+        Entity entity;
+        try {
+            entity = deserialize_entity_node(entity_node, true);
+        } catch (const std::exception& e) {
+            m_report.fatal = true;
+            add_issue("", std::string("Prefab failed: ") + e.what());
+            return {};
+        }
 
         for (auto& t : m_pending_transforms) {
             if (!t.entity.is_valid())

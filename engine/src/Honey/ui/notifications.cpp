@@ -7,6 +7,7 @@
 #include <imgui.h>
 
 #include "Honey/core/engine.h"
+#include "Honey/core/notify.h"
 
 namespace Honey::UI {
     namespace {
@@ -129,8 +130,62 @@ namespace Honey::UI {
         dlg.open = true;
     }
 
+    void NotificationCenter::pump_notifications() {
+        for (auto& n : Notify::drain()) {
+            ToastType type = ToastType::Info;
+            switch (n.severity) {
+                case NotifySeverity::success: type = ToastType::Success; break;
+                case NotifySeverity::warning: type = ToastType::Warning; break;
+                case NotifySeverity::error:   type = ToastType::Error; break;
+                default: break;
+            }
+            std::string message = n.message;
+            if (n.count > 1)
+                message += " (x" + std::to_string(n.count) + ")";
+
+            Toast hist;
+            hist.type = type;
+            hist.title = n.title;
+            hist.message = message;
+            m_history.push_back(hist);
+            if (m_history.size() > 200)
+                m_history.pop_front();
+
+            push_toast(type, std::move(n.title), std::move(message), type == ToastType::Error ? 6.0f : 3.0f);
+        }
+    }
+
+    void NotificationCenter::open_report(std::string popup_id, std::string title, std::vector<std::string> lines) {
+        auto& r = m_reports[popup_id];
+        r.title = std::move(title);
+        r.lines = std::move(lines);
+        r.open = true;
+    }
+
+    void NotificationCenter::show_history_window(bool* open) {
+        if (!ImGui::Begin("Notifications", open)) {
+            ImGui::End();
+            return;
+        }
+        if (ImGui::Button("Clear"))
+            m_history.clear();
+        ImGui::Separator();
+        for (auto it = m_history.rbegin(); it != m_history.rend(); ++it) {
+            ImGui::PushStyleColor(ImGuiCol_Text, toast_accent_color(it->type));
+            ImGui::TextUnformatted(it->title.empty() ? toast_type_label(it->type) : it->title.c_str());
+            ImGui::PopStyleColor();
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextUnformatted(it->message.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::Separator();
+        }
+        ImGui::End();
+    }
+
     void NotificationCenter::render(float dt) {
         dt = std::max(0.0f, dt);
+
+        pump_notifications();
 
         auto* imgui_layer = Application::get().get_imgui_layer();
         const auto theme = imgui_layer ? imgui_layer->get_accent_palette() : Honey::ImGuiLayer::UIAccentPalette{};
@@ -216,6 +271,44 @@ namespace Honey::UI {
 
             // Stable stacking increment (avoid relying on GetItemRectSize)
             y += estimate_toast_height(!t.title.empty(), !t.message.empty()) + 6.0f;
+        }
+
+        for (auto& [id, rep] : m_reports) {
+            if (!rep.open)
+                continue;
+
+            const std::string label = rep.title + "###report_" + id;
+            ImGui::OpenPopup(label.c_str());
+            ImGui::SetNextWindowViewport(vp->ID);
+            ImGui::SetNextWindowPos(
+                ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.5f),
+                ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+            ImGui::SetNextWindowSize(ImVec2(640.0f, 360.0f), ImGuiCond_Appearing);
+
+            bool open_flag = true;
+            if (ImGui::BeginPopupModal(label.c_str(), &open_flag, ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking)) {
+                const float footer = ImGui::GetFrameHeightWithSpacing() + 8.0f;
+                if (ImGui::BeginChild("##report_lines", ImVec2(0, -footer), true)) {
+                    ImGui::PushTextWrapPos(0.0f);
+                    for (const auto& line : rep.lines)
+                        ImGui::BulletText("%s", line.c_str());
+                    ImGui::PopTextWrapPos();
+                }
+                ImGui::EndChild();
+
+                if (ImGui::Button("Copy to clipboard")) {
+                    std::string all;
+                    for (const auto& line : rep.lines)
+                        all += line + "\n";
+                    ImGui::SetClipboardText(all.c_str());
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Close") || !open_flag) {
+                    rep.open = false;
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndPopup();
+            }
         }
 
         for (auto& [id, dlg] : m_confirms) {

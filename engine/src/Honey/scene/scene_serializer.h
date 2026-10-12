@@ -7,6 +7,8 @@
 #include "yaml-cpp/node/node.h"
 #include <unordered_map>
 #include <string>
+#include <vector>
+#include <functional>
 
 namespace Honey {
 
@@ -18,6 +20,21 @@ namespace Honey {
         float camera_near  = 0.1f;
         float camera_far   = 1000.0f;
         bool  has_camera   = false;
+    };
+
+    struct SceneLoadIssue {
+        std::string entity;     // tag (or UUID) of the offending entity, empty for file-level issues
+        std::string component;  // component name, empty for entity/file-level issues
+        std::string message;
+        bool missing_asset = false;
+    };
+
+    struct SceneLoadReport {
+        std::vector<SceneLoadIssue> issues;
+        bool fatal = false;
+
+        bool has_issues() const { return !issues.empty(); }
+        std::vector<std::string> to_lines() const;
     };
 
     class SceneSerializer {
@@ -34,7 +51,13 @@ namespace Honey {
         bool deserialize_runtime(const std::filesystem::path& path);
 
         const EditorSceneMeta& get_loaded_editor_meta() const { return m_loaded_editor_meta; }
+        const SceneLoadReport& get_load_report() const { return m_report; }
     private:
+        // Runs fn; on YAML/std exceptions records an issue against the current entity and continues.
+        void try_component(const char* component, const std::function<void()>& fn);
+        void add_issue(std::string component, std::string message, bool missing_asset = false);
+        // Records a missing-asset issue and returns false if the path doesn't exist.
+        bool check_asset_exists(const char* component, const std::string& path);
 
         struct PendingRelationship {
             Entity child;
@@ -55,5 +78,7 @@ namespace Honey {
 
         const EditorSceneMeta* m_editor_meta = nullptr;
         EditorSceneMeta m_loaded_editor_meta;
+        SceneLoadReport m_report;
+        std::string m_current_entity_label;
     };
 }

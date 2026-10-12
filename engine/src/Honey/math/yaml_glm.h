@@ -3,6 +3,23 @@
 #include <glm/glm.hpp>
 #include <yaml-cpp/yaml.h>
 
+#include <cstdlib>
+
+namespace Honey::yaml {
+    // Tolerant float parse: yaml-cpp's stream-based as<float>() rejects denormals (and fails on some libc++ builds).
+    // Throws YAML::TypedBadConversion<float> on genuinely invalid scalars.
+    inline float read_float(const YAML::Node& node) {
+        if (!node.IsScalar())
+            throw YAML::TypedBadConversion<float>(node.Mark());
+        const std::string& s = node.Scalar();
+        char* end = nullptr;
+        const float v = std::strtof(s.c_str(), &end);
+        if (s.empty() || end == s.c_str() || *end != '\0')
+            throw YAML::TypedBadConversion<float>(node.Mark());
+        return v;
+    }
+}
+
 namespace YAML {
 
     template<>
@@ -18,8 +35,8 @@ namespace YAML {
             if (!node.IsSequence() || node.size() != 2)
                 return false;
 
-            rhs.x = node[0].as<float>();
-            rhs.y = node[1].as<float>();
+            rhs.x = Honey::yaml::read_float(node[0]);
+            rhs.y = Honey::yaml::read_float(node[1]);
             return true;
         }
     };
@@ -38,9 +55,9 @@ namespace YAML {
             if (!node.IsSequence() || node.size() != 3)
                 return false;
 
-            rhs.x = node[0].as<float>();
-            rhs.y = node[1].as<float>();
-            rhs.z = node[2].as<float>();
+            rhs.x = Honey::yaml::read_float(node[0]);
+            rhs.y = Honey::yaml::read_float(node[1]);
+            rhs.z = Honey::yaml::read_float(node[2]);
             return true;
         }
     };
@@ -60,10 +77,10 @@ namespace YAML {
             if (!node.IsSequence() || node.size() != 4)
                 return false;
 
-            rhs.x = node[0].as<float>();
-            rhs.y = node[1].as<float>();
-            rhs.z = node[2].as<float>();
-            rhs.w = node[3].as<float>();
+            rhs.x = Honey::yaml::read_float(node[0]);
+            rhs.y = Honey::yaml::read_float(node[1]);
+            rhs.z = Honey::yaml::read_float(node[2]);
+            rhs.w = Honey::yaml::read_float(node[3]);
             return true;
         }
     };

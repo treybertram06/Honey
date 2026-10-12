@@ -1,4 +1,6 @@
 #pragma once
+#include <deque>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -46,12 +48,28 @@ namespace Honey::UI {
                           std::string accept_button_text = "OK",
                           std::string reject_button_text = "Cancel");
 
+        // Scrollable report modal (e.g. scene load issues) with a copy-to-clipboard button.
+        void open_report(std::string popup_id, std::string title, std::vector<std::string> lines);
+
+        // Draws toasts, dialogs, reports; drains Honey::Notify first.
         void render(float dt);
+
+        void show_history_window(bool* open);
 
         ConfirmResult consume_confirm_result(const std::string& popup_id);
 
     private:
+        struct Report {
+            bool open = false;
+            std::string title;
+            std::vector<std::string> lines;
+        };
+
+        void pump_notifications();
+
         std::vector<Toast> m_toasts;
+        std::deque<Toast> m_history;
+        std::unordered_map<std::string, Report> m_reports;
         std::unordered_map<std::string, ConfirmDialog> m_confirms;
     };
 }
