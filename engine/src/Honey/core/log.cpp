@@ -1,5 +1,6 @@
 #include "log.h"
 #include "notify.h"
+#include "console_buffer.h"
 
 #include <chrono>
 #include <spdlog/sinks/base_sink.h>
@@ -46,6 +47,40 @@ namespace Honey {
             int m_window_count = 0;
             int m_suppressed = 0;
         };
+
+
+        // HN_*_WARN/ERROR/FATAL emit "[function] message". Split the prefix off (brackets may nest in template signatures).
+        void split_function_prefix(ConsoleEntry& entry) {
+            if (entry.level < spdlog::level::warn || entry.text.size() < 2 || entry.text[0] != '[')
+                return;
+            int depth = 0;
+            for (size_t i = 0; i < entry.text.size(); ++i) {
+                if (entry.text[i] == '[') ++depth;
+                else if (entry.text[i] == ']' && --depth == 0) {
+                    if (i + 1 < entry.text.size() && entry.text[i + 1] == ' ') {
+                        entry.function = entry.text.substr(1, i - 1);
+                        entry.text.erase(0, i + 2);
+                    }
+                    return;
+                }
+            }
+        }
+
+        // Records every log line into the ConsoleBuffer for the editor console panel.
+        class ConsoleSink final : public spdlog::sinks::base_sink<std::mutex> {
+        protected:
+            void sink_it_(const spdlog::details::log_msg& msg) override {
+                ConsoleEntry entry;
+                entry.level = msg.level;
+                entry.logger.assign(msg.logger_name.data(), msg.logger_name.size());
+                entry.text.assign(msg.payload.data(), msg.payload.size());
+                split_function_prefix(entry);
+                entry.time = msg.time;
+                ConsoleBuffer::push(std::move(entry));
+            }
+
+            void flush_() override {}
+        };
     }
 
     void Log::init() {
@@ -53,9 +88,11 @@ namespace Honey {
         s_core_logger = spdlog::stdout_color_mt("HONEY");
         s_core_logger->set_level(spdlog::level::trace);
         s_core_logger->sinks().push_back(std::make_shared<NotifySink>());
+        s_core_logger->sinks().push_back(std::make_shared<ConsoleSink>());
 
         s_client_logger = spdlog::stdout_color_mt("APP");
         s_client_logger->set_level(spdlog::level::trace);
+        s_client_logger->sinks().push_back(std::make_shared<ConsoleSink>());
 
     }
 

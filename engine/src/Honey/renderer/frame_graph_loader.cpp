@@ -639,7 +639,7 @@ namespace Honey {
             }
         }
 
-        HN_CORE_INFO("[{0}] diagnostics: {1} error(s), {2} warning(s), {3} info", context_label, error_count, warning_count, info_count);
+        HN_CORE_TRACE("[{0}] diagnostics: {1} error(s), {2} warning(s), {3} info", context_label, error_count, warning_count, info_count);
 
         for (const auto& d : diagnostics.entries) {
             std::string msg = std::string("[") + std::string(diag_severity_label(d.severity)) + "] " + d.message;
