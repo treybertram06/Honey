@@ -66,8 +66,9 @@ namespace Honey {
         void create_sampler();
         void update_bindless_descriptor();
 
-        void transition_image_layout(uint32_t old_layout, uint32_t new_layout);
-        void copy_buffer_to_image(void* staging_buffer);
+        // Synchronous upload: staging -> mip 0, then blits the rest of the chain. Leaves every mip
+        // in SHADER_READ_ONLY_OPTIMAL.
+        void upload_from_staging(void* staging_buffer);
 
         void create_staging_buffer(uint32_t size_bytes, void*& out_buffer, void*& out_memory);
         void destroy_buffer(void*& buffer, void*& memory);
@@ -77,6 +78,7 @@ namespace Honey {
     private:
         uint32_t m_width = 0;
         uint32_t m_height = 0;
+        uint32_t m_mip_levels = 1;
         std::string m_path;
 
         VulkanBackend* m_backend = nullptr;

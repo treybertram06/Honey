@@ -996,6 +996,12 @@ namespace Honey {
                        "queue_image_upload: dstImage is null (w={}, h={})",
                        desc.width, desc.height);
 
+        // The upload barriers cover levels [0, mip_levels) of the layer, so a partial upload into
+        // a single non-zero mip is not supported.
+        HN_CORE_ASSERT(desc.mip_level == 0 && desc.mip_levels >= 1,
+                       "queue_image_upload: uploads must target mip 0 (mip_level={}, mip_levels={})",
+                       desc.mip_level, desc.mip_levels);
+
         if (!desc.dst_image || !desc.src_data || desc.size == 0 || desc.width == 0 || desc.height == 0)
             return;
 
@@ -1060,31 +1066,8 @@ namespace Honey {
             vkUnmapMemory(m_device, tmpMem);
 
             immediate_submit([&](VkCommandBuffer cmd) {
-                if (desc.initial_layout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
-                    VkImageMemoryBarrier barrier{};
-                    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                    barrier.oldLayout = desc.initial_layout;
-                    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-                    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                    barrier.image = desc.dst_image;
-                    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-                    barrier.subresourceRange.baseMipLevel = desc.mip_level;
-                    barrier.subresourceRange.levelCount   = 1;
-                    barrier.subresourceRange.baseArrayLayer = desc.array_layer;
-                    barrier.subresourceRange.layerCount     = 1;
-
-                    barrier.srcAccessMask = 0;
-                    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-
-                    vkCmdPipelineBarrier(cmd,
-                                         VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                                         VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                         0,
-                                         0, nullptr,
-                                         0, nullptr,
-                                         1, &barrier);
-                }
+                VulkanUtils::record_to_transfer_dst(cmd, desc.dst_image, desc.initial_layout,
+                                                    desc.mip_levels, desc.array_layer);
 
                 VkBufferImageCopy region{};
                 region.bufferOffset                    = 0;
@@ -1105,29 +1088,8 @@ namespace Honey {
                                        &region);
 
                 if (desc.final_layout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
-                    VkImageMemoryBarrier barrier{};
-                    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-                    barrier.newLayout = desc.final_layout;
-                    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                    barrier.image = desc.dst_image;
-                    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-                    barrier.subresourceRange.baseMipLevel = desc.mip_level;
-                    barrier.subresourceRange.levelCount   = 1;
-                    barrier.subresourceRange.baseArrayLayer = desc.array_layer;
-                    barrier.subresourceRange.layerCount     = 1;
-
-                    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-                    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-                    vkCmdPipelineBarrier(cmd,
-                                         VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                                         0,
-                                         0, nullptr,
-                                         0, nullptr,
-                                         1, &barrier);
+                    VulkanUtils::record_mip_chain(cmd, desc.dst_image, desc.width, desc.height,
+                                                  desc.mip_levels, desc.array_layer, desc.final_layout);
                 }
             });
 
@@ -1232,31 +1194,8 @@ namespace Honey {
             } else {
                 const auto& d = job.img;
 
-                if (d.initial_layout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
-                    VkImageMemoryBarrier barrier{};
-                    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                    barrier.oldLayout = d.initial_layout;
-                    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-                    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                    barrier.image = d.dst_image;
-                    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-                    barrier.subresourceRange.baseMipLevel = d.mip_level;
-                    barrier.subresourceRange.levelCount   = 1;
-                    barrier.subresourceRange.baseArrayLayer = d.array_layer;
-                    barrier.subresourceRange.layerCount     = 1;
-
-                    barrier.srcAccessMask = 0;
-                    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-
-                    vkCmdPipelineBarrier(cmd,
-                                         VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                                         VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                         0,
-                                         0, nullptr,
-                                         0, nullptr,
-                                         1, &barrier);
-                }
+                VulkanUtils::record_to_transfer_dst(cmd, d.dst_image, d.initial_layout,
+                                                    d.mip_levels, d.array_layer);
 
                 VkBufferImageCopy region{};
                 region.bufferOffset                    = job.staging_offset;
@@ -1277,29 +1216,8 @@ namespace Honey {
                                        &region);
 
                 if (d.final_layout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
-                    VkImageMemoryBarrier barrier{};
-                    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-                    barrier.newLayout = d.final_layout;
-                    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                    barrier.image = d.dst_image;
-                    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-                    barrier.subresourceRange.baseMipLevel = d.mip_level;
-                    barrier.subresourceRange.levelCount   = 1;
-                    barrier.subresourceRange.baseArrayLayer = d.array_layer;
-                    barrier.subresourceRange.layerCount     = 1;
-
-                    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-                    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-                    vkCmdPipelineBarrier(cmd,
-                                         VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                                         0,
-                                         0, nullptr,
-                                         0, nullptr,
-                                         1, &barrier);
+                    VulkanUtils::record_mip_chain(cmd, d.dst_image, d.width, d.height,
+                                                  d.mip_levels, d.array_layer, d.final_layout);
                 }
             }
         }

@@ -63,6 +63,7 @@ namespace Honey {
         desc.width         = m_width;
         desc.height        = m_height;
         desc.mip_level      = 0;
+        desc.mip_levels     = m_mip_levels;
         desc.array_layer    = 0;
         desc.initial_layout = static_cast<VkImageLayout>(initial_layout);
         desc.final_layout   = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -128,11 +129,7 @@ namespace Honey {
             std::memcpy(mapped, empty.data(), size);
             vkUnmapMemory(dev, reinterpret_cast<VkDeviceMemory>(staging_memory));
 
-            transition_image_layout(VK_IMAGE_LAYOUT_UNDEFINED,
-                                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-            copy_buffer_to_image(staging_buffer);
-            transition_image_layout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            upload_from_staging(staging_buffer);
 
             destroy_buffer(staging_buffer, staging_memory);
         } else {
@@ -266,10 +263,7 @@ namespace Honey {
         std::memcpy(mapped, data, size);
         vkUnmapMemory(dev, reinterpret_cast<VkDeviceMemory>(staging_memory));
 
-        transition_image_layout(m_current_layout.load(std::memory_order_acquire),
-                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-        copy_buffer_to_image(staging_buffer);
-        transition_image_layout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        upload_from_staging(staging_buffer);
 
         destroy_buffer(staging_buffer, staging_memory);
     }
@@ -344,18 +338,25 @@ namespace Honey {
     }
 
     void VulkanTexture2D::create_image(uint32_t width, uint32_t height) {
+        // Full mip chain: without it every minified lookup point-samples mip 0, so distant
+        // high-frequency normal/roughness maps alias into per-frame specular fireflies.
+        // TODO: albedo is UNORM and linearized in the shader, so these mips are box-filtered in
+        // gamma space (slightly dark). Moving color textures to an _SRGB format fixes that.
+        m_mip_levels = VulkanUtils::mip_count_for(width, height);
+
         VkImageCreateInfo ci{};
         ci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
         ci.imageType = VK_IMAGE_TYPE_2D;
         ci.extent.width = width;
         ci.extent.height = height;
         ci.extent.depth = 1;
-        ci.mipLevels = 1;
+        ci.mipLevels = m_mip_levels;
         ci.arrayLayers = 1;
         ci.format = VK_FORMAT_R8G8B8A8_UNORM;
         ci.tiling = VK_IMAGE_TILING_OPTIMAL;
         ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        ci.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        // TRANSFER_SRC: each mip is blitted from the one above it (VulkanUtils::record_mip_chain).
+        ci.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         ci.samples = VK_SAMPLE_COUNT_1_BIT;
         ci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
@@ -395,7 +396,7 @@ namespace Honey {
         view.format = VK_FORMAT_R8G8B8A8_UNORM;
         view.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         view.subresourceRange.baseMipLevel = 0;
-        view.subresourceRange.levelCount = 1;
+        view.subresourceRange.levelCount = m_mip_levels;
         view.subresourceRange.baseArrayLayer = 0;
         view.subresourceRange.layerCount = 1;
         m_image_view_ci = view;
@@ -423,7 +424,7 @@ namespace Honey {
         si.compareOp     = VK_COMPARE_OP_ALWAYS;
         si.mipLodBias    = 0.0f;
         si.minLod        = 0.0f;
-        si.maxLod        = 0.0f;
+        si.maxLod        = VK_LOD_CLAMP_NONE;
         si.anisotropyEnable = VK_FALSE;
         si.maxAnisotropy    = current_af;
 
@@ -476,61 +477,17 @@ namespace Honey {
         heap->write_bindless(0, m_image_view_ci, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
 
-    void VulkanTexture2D::transition_image_layout(uint32_t old_layout, uint32_t new_layout) {
-        HN_CORE_ASSERT(m_backend, "VulkanTexture2D::transition_image_layout: backend is null");
+    void VulkanTexture2D::upload_from_staging(void* staging_buffer) {
+        HN_CORE_ASSERT(m_backend, "VulkanTexture2D::upload_from_staging: backend is null");
+
+        // Every mip shares one layout (record_mip_chain finalizes them together), so the tracked
+        // layout is valid for the whole chain: UNDEFINED when fresh, SHADER_READ_ONLY on re-upload.
+        const VkImageLayout old_layout = static_cast<VkImageLayout>(m_current_layout.load(std::memory_order_acquire));
+        VkImage image = reinterpret_cast<VkImage>(m_image);
 
         m_backend->immediate_submit([&](VkCommandBuffer cmd) {
-            VkImageMemoryBarrier barrier{};
-            barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-            barrier.oldLayout = static_cast<VkImageLayout>(old_layout);
-            barrier.newLayout = static_cast<VkImageLayout>(new_layout);
-            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            barrier.image = reinterpret_cast<VkImage>(m_image);
-            barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-            barrier.subresourceRange.baseMipLevel = 0;
-            barrier.subresourceRange.levelCount = 1;
-            barrier.subresourceRange.baseArrayLayer = 0;
-            barrier.subresourceRange.layerCount = 1;
+            VulkanUtils::record_to_transfer_dst(cmd, image, old_layout, m_mip_levels, 0);
 
-            VkPipelineStageFlags src_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-            VkPipelineStageFlags dst_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-
-            if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED && new_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
-                barrier.srcAccessMask = 0;
-                barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-                src_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-                dst_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-            } else if (old_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && new_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
-                barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-                barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-                src_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-                dst_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-            } else if (old_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL && new_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
-                barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-                barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-                src_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-                dst_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-            } else {
-                HN_CORE_ASSERT(false, "Unsupported image layout transition");
-            }
-
-            vkCmdPipelineBarrier(cmd,
-                                 src_stage, dst_stage,
-                                 0,
-                                 0, nullptr,
-                                 0, nullptr,
-                                 1, &barrier);
-        });
-
-        m_current_layout.store(new_layout, std::memory_order_release);
-        m_stream_upload_pending.store(false, std::memory_order_release);
-    }
-
-    void VulkanTexture2D::copy_buffer_to_image(void* staging_buffer) {
-        HN_CORE_ASSERT(m_backend, "VulkanTexture2D::copy_buffer_to_image: backend is null");
-
-        m_backend->immediate_submit([&](VkCommandBuffer cmd) {
             VkBufferImageCopy region{};
             region.bufferOffset = 0;
             region.bufferRowLength = 0;
@@ -544,11 +501,17 @@ namespace Honey {
 
             vkCmdCopyBufferToImage(cmd,
                                    reinterpret_cast<VkBuffer>(staging_buffer),
-                                   reinterpret_cast<VkImage>(m_image),
+                                   image,
                                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                                    1,
                                    &region);
+
+            VulkanUtils::record_mip_chain(cmd, image, m_width, m_height, m_mip_levels, 0,
+                                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         });
+
+        m_current_layout.store(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, std::memory_order_release);
+        m_stream_upload_pending.store(false, std::memory_order_release);
     }
 
     void VulkanTexture2D::init_from_pixels_rgba8(const void* rgba_pixels,
@@ -587,11 +550,7 @@ namespace Honey {
         vkUnmapMemory(reinterpret_cast<VkDevice>(m_device),
                       reinterpret_cast<VkDeviceMemory>(staging_memory));
 
-        transition_image_layout(VK_IMAGE_LAYOUT_UNDEFINED,
-                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-        copy_buffer_to_image(staging_buffer);
-        transition_image_layout(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        upload_from_staging(staging_buffer);
 
         destroy_buffer(staging_buffer, staging_memory);
     }

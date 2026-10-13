@@ -132,6 +132,9 @@ namespace Honey {
             uint32_t      height     = 0;
             uint32_t      mip_level   = 0;
             uint32_t      array_layer = 0;
+            // >1: src_data fills mip 0 and the remaining levels are blitted down from it on the
+            // upload queue (requires mip_level == 0). Every level ends up in final_layout.
+            uint32_t      mip_levels  = 1;
             VkImageLayout initial_layout = VK_IMAGE_LAYOUT_UNDEFINED;
             VkImageLayout final_layout   = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             const void*   src_data       = nullptr;
