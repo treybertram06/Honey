@@ -4,10 +4,11 @@
 namespace Honey {
     LayerStack::LayerStack() {}
 
-    LayerStack::~LayerStack() {
-        for (Layer* layer : m_layers) {
+    void LayerStack::clear() {
+        for (auto layer : m_layers)
             delete layer;
-        }
+        m_layers.clear();
+        m_layer_insert_index = 0;
     }
 
     void LayerStack::push_layer(Layer *layer) {

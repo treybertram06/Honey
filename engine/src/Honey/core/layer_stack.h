@@ -10,7 +10,12 @@ namespace Honey {
     class HONEY_API LayerStack {
     public:
         LayerStack();
-        ~LayerStack();
+        ~LayerStack() {
+            clear();
+        }
+
+        LayerStack(const LayerStack&) = delete;
+        LayerStack& operator=(const LayerStack&) = delete;
 
         void push_layer(Layer* layer);
         void push_overlay(Layer* overlay);
@@ -23,7 +28,7 @@ namespace Honey {
         std::vector<Layer*>::reverse_iterator rbegin() { return m_layers.rbegin(); }
         std::vector<Layer*>::reverse_iterator rend() { return m_layers.rend(); }
 
-        void clear() { m_layers.clear(); }
+        void clear();
 
     private:
         std::vector<Layer*> m_layers;

@@ -71,4 +71,8 @@ namespace Honey {
         LightsUBO m_last_pt_lights_ubo{};  // full light state snapshot for change detection
     };
 
+    // Fills scene/timestep/camera fields from the scene's primary camera. Shared by editor Play and
+    // the runtime so both drive the same camera path. Returns false if there is no usable camera.
+    bool fill_runtime_camera(SceneViewportRenderContext& ctx, Scene& scene, Timestep ts);
+
 } // namespace Honey

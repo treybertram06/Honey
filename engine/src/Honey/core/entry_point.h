@@ -10,15 +10,15 @@ int main(int argc, char** argv) {
 #elif defined(HN_PLATFORM_WINDOWS)
     // Windows‑only init (if anything special)
 #endif
-
+    int exit_code = 0;
     auto app = Honey::create_application();
     HN_PROFILE_END_SESSION();
     HN_PROFILE_BEGIN_SESSION("Runtime", "HoneyProfiler-Runtime.json");
-    app->run();
+    exit_code = app->run();
     HN_PROFILE_END_SESSION();
     HN_PROFILE_BEGIN_SESSION("Shutdown", "HoneyProfiler-Shutdown.json");
     delete app;
     HN_PROFILE_END_SESSION();
 
-    return 0;
+    return exit_code;
 }

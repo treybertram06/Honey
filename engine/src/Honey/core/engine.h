@@ -26,7 +26,7 @@ namespace Honey {
         Application();
         virtual ~Application();
 
-        void run();
+        int run();
 
         void on_event(Event& e);
 
@@ -36,7 +36,7 @@ namespace Honey {
         inline static Application& get() { return *s_instance; }
         inline Window& get_window() { return *m_window; }
 
-        inline static void quit() { m_running = false; }
+        inline static void quit(int exit_code = 0) { m_exit_code = exit_code; m_running = false; }
 
         ImGuiLayer* get_imgui_layer() { return m_imgui_layer; }
 
@@ -53,6 +53,7 @@ namespace Honey {
         std::unique_ptr<VulkanBackend> m_vulkan_backend;
 
         static bool m_running;
+        static int m_exit_code;
         bool m_minimized = false;
         LayerStack m_layer_stack;
         float m_last_frame_time = 0.0f;

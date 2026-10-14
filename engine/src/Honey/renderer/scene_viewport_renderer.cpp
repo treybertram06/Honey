@@ -345,6 +345,30 @@ namespace Honey {
         m_frame_graph_dirty = false;
     }
 
+    bool fill_runtime_camera(SceneViewportRenderContext& ctx, Scene& scene, Timestep ts) {
+        HN_PROFILE_FUNCTION();
+
+        ctx.scene = &scene;
+        ctx.timestep = ts;
+
+        Entity camera_entity = scene.get_primary_camera();
+        if (!camera_entity.is_valid())
+            return false;
+
+        auto& cc = camera_entity.get_component<CameraComponent>();
+        Camera* primary_camera = cc.get_camera();
+        if (!primary_camera)
+            return false;
+
+        const glm::mat4 world = camera_entity.get_world_transform();
+        ctx.view = glm::inverse(world);
+        ctx.projection = primary_camera->get_projection_matrix();
+        ctx.camera_position = glm::vec3(world[3]); // world-space, so parented cameras light correctly
+        ctx.camera_exposure = cc.exposure;
+        ctx.scene_is_runtime_camera = true;
+        return true;
+    }
+
     void SceneViewportRenderer::execute_scene_pass(const SceneViewportRenderContext& context) const {
         HN_CORE_ASSERT(context.scene, "SceneViewportRenderer requires a valid scene");
         context.scene->render(context.view, context.projection, context.projection * context.view, context.camera_position, m_width, m_height, context.camera_exposure);

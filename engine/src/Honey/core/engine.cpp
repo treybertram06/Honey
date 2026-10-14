@@ -8,6 +8,7 @@
 #include "task_system.h"
 
 #include <GLFW/glfw3.h>
+#include <ranges>
 
 #include "Honey/physics/physics_engine_3d.h"
 
@@ -18,6 +19,7 @@ namespace Honey {
 
     Application* Application::s_instance = nullptr;
     bool Application::m_running = true;
+    int Application::m_exit_code = 0;
 
 
 
@@ -97,23 +99,25 @@ namespace Honey {
             if (ctx) ctx->wait_idle();
         }
 
-        Renderer::shutdown();
-        CSharpScriptEngine::shutdown();
-        Texture2D::shutdown_cache();
-
-        for (Layer* layer : m_layer_stack) {
+        for (Layer* layer : std::views::reverse(m_layer_stack)) {
             layer->on_detach();
         }
         m_layer_stack.clear();
 
+        CSharpScriptEngine::shutdown();
+        Renderer::shutdown();
+        Texture2D::shutdown_cache();
+
         m_window.reset();
+
+        // Should be gated on editor / runtime target
+        Settings::save_to_file(std::filesystem::path(ASSET_ROOT) / ".." / "config" / "settings.yaml");
 
         if (m_vulkan_backend) {
             m_vulkan_backend->shutdown();
             m_vulkan_backend.reset();
         }
 
-        Settings::save_to_file(std::filesystem::path(ASSET_ROOT) / ".." / "config" / "settings.yaml");
 
         PhysicsEngine3D::shutdown();
         TaskSystem::shutdown();
@@ -164,7 +168,7 @@ namespace Honey {
 
     }
 
-    void Application::run() {
+    int Application::run() {
         HN_PROFILE_FUNCTION();
 
         while (m_running)
@@ -216,12 +220,14 @@ namespace Honey {
             m_window->on_update();
             HN_FRAME_MARK();
         }
+        return m_exit_code;
     }
 
     bool Application::on_window_close(WindowCloseEvent &e) {
         if (e.handled())
             return true;
 
+        m_exit_code = 0;
         m_running = false;
         return true;
     }
