@@ -13,8 +13,8 @@
 
 #define GLFW_INCLUDE_VULKAN
 #include <vulkan/vulkan.h>
+#include "Honey/core/asset_paths.h"
 
-static const std::filesystem::path s_asset_root = ASSET_ROOT;
 
 namespace Honey {
 
@@ -293,7 +293,7 @@ namespace Honey {
         ShaderCache::SpirvPaths spirv{};
         try {
             spirv = shader_cache->get_or_compile_spirv_paths(
-                s_asset_root / "shaders" / "ClothRender.glsl");
+                AssetPaths::asset_root() / "shaders" / "ClothRender.glsl");
         } catch (const std::exception& e) {
             HN_CORE_ERROR("VulkanClothRenderer: shader compile failed: {0}", e.what());
             return false;

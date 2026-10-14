@@ -1,4 +1,5 @@
 #include "hnpch.h"
+#include "Honey/core/asset_paths.h"
 #include "vk_cloth_sim.h"
 
 #include "Honey/core/engine.h"
@@ -221,8 +222,8 @@ namespace Honey {
         decltype(shader_cache->get_or_compile_spirv_paths(std::filesystem::path{})) seed_spirv{};
         decltype(shader_cache->get_or_compile_spirv_paths(std::filesystem::path{})) sim_spirv{};
         try {
-            seed_spirv = shader_cache->get_or_compile_spirv_paths(std::filesystem::path(ASSET_ROOT) / "shaders" / "ClothSeed.comp.glsl");
-            sim_spirv = shader_cache->get_or_compile_spirv_paths(std::filesystem::path(ASSET_ROOT) / "shaders" / "ClothSim.comp.glsl");
+            seed_spirv = shader_cache->get_or_compile_spirv_paths(AssetPaths::asset_root() / "shaders" / "ClothSeed.comp.glsl");
+            sim_spirv = shader_cache->get_or_compile_spirv_paths(AssetPaths::asset_root() / "shaders" / "ClothSim.comp.glsl");
         } catch (const std::exception& e) {
             HN_CORE_ERROR("VulkanClothSim: failed compiling/loading cloth shader SPIR-V: {0}", e.what());
             return false;

@@ -2,6 +2,7 @@
 #include "texture.h"
 
 #include "texture_cache.h"
+#include "Honey/core/asset_paths.h"
 #include "Honey/core/task_system.h"
 #include "Honey/renderer/renderer.h"
 #include "platform/opengl/opengl_texture.h"
@@ -24,19 +25,9 @@ namespace Honey {
         }
 
         static Ref<Texture2D> create_missing_texture_fallback() {
-            // Try common runtime locations first.
-            static const char* k_candidates[] = {
-                "resources/textures/missing.png",
-                "../resources/textures/missing.png",
-                "../../resources/textures/missing.png",
-                "assets/textures/missing.png"
-            };
-
-            for (const char* candidate : k_candidates) {
-                if (texture_file_exists(candidate)) {
-                    return Texture2D::create(candidate);
-                }
-            }
+            const std::string missing_path = AssetPaths::resolve("textures/missing.png").string();
+            if (texture_file_exists(missing_path))
+                return Texture2D::create(missing_path);
 
             HN_CORE_ERROR("Texture2D: failed to locate missing.png fallback; using built-in magenta texture");
             return create_builtin_missing_texture();

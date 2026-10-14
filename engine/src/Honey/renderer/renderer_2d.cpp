@@ -16,9 +16,9 @@
 #include "platform/vulkan/vk_renderer_api.h"
 
 #include <unordered_map>
+#include "Honey/core/asset_paths.h"
 
 #if HN_RENDERER_2D_ENABLED
-static const std::filesystem::path asset_root = ASSET_ROOT;
 
 namespace Honey {
     struct QuadInstance {
@@ -209,8 +209,8 @@ namespace Honey {
         auto it = cache.find(renderPassNative);
         if (it == cache.end()) {
             const auto shader_path = debugPick
-                ? (asset_root / "shaders" / "Renderer2D_DebugPick.glsl")
-                : (asset_root / "shaders" / "Renderer2D_Quad.glsl");
+                ? (AssetPaths::asset_root() / "shaders" / "Renderer2D_DebugPick.glsl")
+                : (AssetPaths::asset_root() / "shaders" / "Renderer2D_Quad.glsl");
             it = cache.emplace(renderPassNative, Pipeline::create(shader_path, renderPassNative)).first;
         }
 
@@ -224,7 +224,7 @@ namespace Honey {
         auto it = cache.find(renderPassNative);
         if (it == cache.end()) {
             it = cache.emplace(renderPassNative,
-                               Pipeline::create(asset_root / "shaders" / "Renderer2D_QuadNoPick.glsl", renderPassNative)).first;
+                               Pipeline::create(AssetPaths::asset_root() / "shaders" / "Renderer2D_QuadNoPick.glsl", renderPassNative)).first;
         }
         return it->second;
     }
@@ -237,7 +237,7 @@ namespace Honey {
         auto it = cache.find(renderPassNative);
         if (it == cache.end()) {
             it = cache.emplace(renderPassNative,
-                               Pipeline::create(asset_root / "shaders" / "Renderer2D_Circle.glsl", renderPassNative)).first;
+                               Pipeline::create(AssetPaths::asset_root() / "shaders" / "Renderer2D_Circle.glsl", renderPassNative)).first;
         }
 
         return it->second;
@@ -251,7 +251,7 @@ namespace Honey {
         auto it = cache.find(renderPassNative);
         if (it == cache.end()) {
             it = cache.emplace(renderPassNative,
-                               Pipeline::create(asset_root / "shaders" / "Renderer2D_Line.glsl", renderPassNative)).first;
+                               Pipeline::create(AssetPaths::asset_root() / "shaders" / "Renderer2D_Line.glsl", renderPassNative)).first;
         }
 
         return it->second;
@@ -268,7 +268,7 @@ namespace Honey {
             HN_CORE_ASSERT(vk, "get_or_create_vk_offscreen_glyph_pipeline: expected VulkanContext");
             void* font_set_layout = vk->get_font_set_layout();
             it = cache.emplace(renderPassNative,
-                Pipeline::create(asset_root / "shaders" / "Renderer2D_Text.glsl",
+                Pipeline::create(AssetPaths::asset_root() / "shaders" / "Renderer2D_Text.glsl",
                                  renderPassNative, font_set_layout)).first;
         }
 
@@ -357,10 +357,10 @@ namespace Honey {
         }
         s_data->texture_slots[0] = s_data->white_texture;
 
-        auto shader_path = asset_root / "shaders" / "Renderer2D_Quad.glsl";
+        auto shader_path = AssetPaths::asset_root() / "shaders" / "Renderer2D_Quad.glsl";
         s_data->quad_shader = s_data->shader_cache->get_or_compile_shader(shader_path);
 
-        auto debug_shader_path = asset_root / "shaders" / "Renderer2D_DebugPick.glsl";
+        auto debug_shader_path = AssetPaths::asset_root() / "shaders" / "Renderer2D_DebugPick.glsl";
         s_data->quad_shader_picking_debug = s_data->shader_cache->get_or_compile_shader(debug_shader_path);
 
         ////////////////// CIRCLES //////////////////////////
@@ -412,7 +412,7 @@ namespace Honey {
             s_data->white_texture->set_data(&white, sizeof(uint32_t));
         }
 
-        auto circle_shader_path = asset_root / "shaders" / "Renderer2D_Circle.glsl";
+        auto circle_shader_path = AssetPaths::asset_root() / "shaders" / "Renderer2D_Circle.glsl";
         s_data->circle_shader = s_data->shader_cache->get_or_compile_shader(circle_shader_path);
 
         ////////////////// LINES //////////////////////////
@@ -464,7 +464,7 @@ namespace Honey {
             s_data->white_texture->set_data(&white, sizeof(uint32_t));
         }
 
-        auto line_shader_path = asset_root / "shaders" / "Renderer2D_Line.glsl";
+        auto line_shader_path = AssetPaths::asset_root() / "shaders" / "Renderer2D_Line.glsl";
         s_data->line_shader = s_data->shader_cache->get_or_compile_shader(line_shader_path);
 
 
@@ -505,7 +505,7 @@ namespace Honey {
         s_data->glyph_instances.reserve(Renderer2DData::max_quads);
         s_data->glyph_sorted_instances.reserve(Renderer2DData::max_quads);
 
-        auto glyph_shader_path = asset_root / "shaders" / "Renderer2D_Text.glsl";
+        auto glyph_shader_path = AssetPaths::asset_root() / "shaders" / "Renderer2D_Text.glsl";
         s_data->glyph_shader = s_data->shader_cache->get_or_compile_shader(glyph_shader_path);
 
 
@@ -862,7 +862,7 @@ namespace Honey {
             HN_CORE_ASSERT(vk, "get_or_create_vk_offscreen_icon_pipeline: expected VulkanContext");
             void* font_set_layout = vk->get_font_set_layout();
             it = cache.emplace(renderPassNative,
-                Pipeline::create(asset_root / "shaders" / "Renderer2D_Text.glsl",
+                Pipeline::create(AssetPaths::asset_root() / "shaders" / "Renderer2D_Text.glsl",
                                  renderPassNative, font_set_layout)).first;
         }
 

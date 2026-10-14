@@ -6,6 +6,8 @@
 #include <vector>
 #include <algorithm>
 #include <cstdlib> // free
+#include <climits>
+#include <mach-o/dyld.h>
 
 // Bridge functions implemented in macos_file_dialog_bridge.mm
 extern "C" {
@@ -106,6 +108,19 @@ namespace Honey {
         std::string path(result);
         std::free((void*)result);
         return path;
+    }
+
+
+    std::filesystem::path Platform::get_executable_path() {
+        uint32_t size = 0;
+        _NSGetExecutablePath(nullptr, &size); // query required size
+        std::string buf(size, '\0');
+        if (_NSGetExecutablePath(buf.data(), &size) != 0)
+            return {};
+        char resolved[PATH_MAX];
+        if (!realpath(buf.c_str(), resolved))
+            return std::filesystem::path(buf.c_str());
+        return std::filesystem::path(resolved);
     }
 
 } // namespace Honey

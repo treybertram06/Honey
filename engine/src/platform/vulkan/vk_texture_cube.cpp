@@ -1,4 +1,5 @@
 #include "hnpch.h"
+#include "Honey/core/asset_paths.h"
 #include "vk_texture_cube.h"
 
 #include "vk_backend.h"
@@ -258,7 +259,7 @@ namespace Honey {
 
         // Cached on VulkanBackend and shared with every future equirect->cube conversion (and, in
         // time, the other one-shot IBL bakes) instead of rebuilding a pipeline per call.
-        auto shader_path = std::filesystem::path(ASSET_ROOT) / "shaders" / "compute" / "EquirectToCube.comp";
+        auto shader_path = AssetPaths::asset_root() / "shaders" / "compute" / "EquirectToCube.comp";
         OneShotComputePass& pass = backend->get_or_create_one_shot_compute_pass(
             shader_path, bindings, sizeof(int32_t) /* face_size push constant */);
 
@@ -409,7 +410,7 @@ namespace Honey {
         bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         bindings[1].descriptorCount = 1;
 
-        auto shader_path = std::filesystem::path(ASSET_ROOT) / "shaders" / "compute" / "IrradianceConvolve.comp";
+        auto shader_path = AssetPaths::asset_root() / "shaders" / "compute" / "IrradianceConvolve.comp";
         OneShotComputePass& pass = m_backend->get_or_create_one_shot_compute_pass(
             shader_path, bindings, sizeof(int32_t) /* face_size push constant */);
 
@@ -534,7 +535,7 @@ namespace Honey {
             float roughness;
         };
 
-        auto shader_path = std::filesystem::path(ASSET_ROOT) / "shaders" / "compute" / "PrefilterEnv.comp";
+        auto shader_path = AssetPaths::asset_root() / "shaders" / "compute" / "PrefilterEnv.comp";
         OneShotComputePass& pass = m_backend->get_or_create_one_shot_compute_pass(
             shader_path, bindings, sizeof(PrefilterPushConstants));
 

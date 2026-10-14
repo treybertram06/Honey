@@ -1,4 +1,5 @@
 #include "hnpch.h"
+#include "Honey/core/asset_paths.h"
 #include "vk_brdf_lut.h"
 
 #include "vk_backend.h"
@@ -147,7 +148,7 @@ namespace Honey {
         bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         bindings[0].descriptorCount = 1;
 
-        auto shader_path = std::filesystem::path(ASSET_ROOT) / "shaders" / "compute" / "BrdfLut.comp";
+        auto shader_path = AssetPaths::asset_root() / "shaders" / "compute" / "BrdfLut.comp";
         OneShotComputePass& pass = m_backend->get_or_create_one_shot_compute_pass(shader_path, bindings);
 
         m_backend->immediate_submit("BrdfLut", [&](VkCommandBuffer cmd) {

@@ -25,10 +25,10 @@
 #include "renderer_3d/renderer_3d_lite.h"
 #include "renderer_3d/renderer_3d_postprocess.h"
 #include "renderer_3d/renderer_3d_vector_icon.h"
+#include "Honey/core/asset_paths.h"
 
 namespace Honey {
 
-    static const std::filesystem::path asset_root = ASSET_ROOT;
 
     namespace {
         struct SceneViewportFrameGraphExecutionContext {
@@ -337,7 +337,7 @@ namespace Honey {
         }
 
         m_frame_graph = FrameGraphLoader::load_and_compile_from_file(
-            asset_root / "frame_graphs" / fg_file,
+            AssetPaths::asset_root() / "frame_graphs" / fg_file,
             diags,
             &options);
 

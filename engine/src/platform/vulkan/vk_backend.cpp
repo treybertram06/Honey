@@ -1,4 +1,5 @@
 #include "hnpch.h"
+#include "Honey/core/asset_paths.h"
 #include "vk_backend.h"
 #include "vk_utils.h"
 
@@ -1821,7 +1822,7 @@ namespace Honey {
         m_device = device;
 
         { // Init pipeline cache
-            const std::filesystem::path cache_dir = std::filesystem::path(ASSET_ROOT) / "cache" / "pipelines" / "vk";
+            const std::filesystem::path cache_dir = AssetPaths::cache_dir() / "pipelines" / "vk";
             m_pipeline_cache.init(m_physical_device, m_device, cache_dir);
         }
 

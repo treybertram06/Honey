@@ -15,8 +15,8 @@
 #include <ImGuizmo.h>
 
 #include "platform/vulkan/vk_context.h"
+#include "Honey/core/asset_paths.h"
 
-static const std::filesystem::path asset_root = ASSET_ROOT;
 
 namespace Honey {
 
@@ -42,9 +42,9 @@ namespace Honey {
          //io.ConfigFlags |= ImGuiConfigFlags_ViewportsNoTaskBarIcons;
          //io.ConfigFlags |= ImGuiConfigFlags_ViewPortsNoMerge;
 
-         io.Fonts->AddFontFromFileTTF((asset_root / "fonts/JetBrains_Mono/static/JetBrainsMono-ExtraBold.ttf").string().c_str(), 18.0f);
-         io.Fonts->AddFontFromFileTTF((asset_root / "fonts/JetBrains_Mono/static/JetBrainsMono-Bold.ttf").string().c_str(), 18.0f);
-         io.FontDefault = io.Fonts->AddFontFromFileTTF((asset_root / "fonts/JetBrains_Mono/static/JetBrainsMono-Regular.ttf").string().c_str(), 18.0f);
+         io.Fonts->AddFontFromFileTTF((AssetPaths::asset_root() / "fonts/JetBrains_Mono/static/JetBrainsMono-ExtraBold.ttf").string().c_str(), 18.0f);
+         io.Fonts->AddFontFromFileTTF((AssetPaths::asset_root() / "fonts/JetBrains_Mono/static/JetBrainsMono-Bold.ttf").string().c_str(), 18.0f);
+         io.FontDefault = io.Fonts->AddFontFromFileTTF((AssetPaths::asset_root() / "fonts/JetBrains_Mono/static/JetBrainsMono-Regular.ttf").string().c_str(), 18.0f);
 
          //setup style
          ImGui::StyleColorsDark();

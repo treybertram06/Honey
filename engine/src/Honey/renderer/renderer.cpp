@@ -1,4 +1,5 @@
 #include "hnpch.h"
+#include "Honey/core/asset_paths.h"
 #include "renderer.h"
 #include "renderer_2d.h"
 #include "renderer_3d/renderer_3d.h"
@@ -34,7 +35,7 @@ namespace Honey {
     void Renderer::init() {
         HN_PROFILE_FUNCTION();
 
-        m_shader_cache = CreateRef<ShaderCache>();
+        m_shader_cache = CreateRef<ShaderCache>(AssetPaths::cache_dir() / "shaders");
 
         RenderCommand::init();
 

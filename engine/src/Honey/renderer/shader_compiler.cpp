@@ -1,4 +1,5 @@
 #include "hnpch.h"
+#include "Honey/core/asset_paths.h"
 #include "shader_compiler.h"
 #include "Honey/core/log.h"
 
@@ -247,7 +248,7 @@ namespace Honey {
                     data->content = synth_global_bindings();
                 } else {
                     namespace fs = std::filesystem;
-                    fs::path base = fs::path(ASSET_ROOT) / "shaders";
+                    fs::path base = AssetPaths::asset_root() / "shaders";
                     fs::path candidate = base / requested_source;
                     std::error_code ec;
                     if (fs::exists(candidate, ec)) {

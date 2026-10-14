@@ -10,11 +10,17 @@
 #include <fstream>
 #include <yaml-cpp/yaml.h>
 
+#include "Honey/core/asset_paths.h"
 #include "Honey/core/task_system.h"
 #include "Honey/loaders/gltf_loader.h"
 
 
 namespace Honey {
+
+    // Asset paths are absolute in memory and asset-relative on disk (see AssetPaths::to_portable).
+    static std::string portable_to_string(const std::string& stored) {
+        return AssetPaths::from_portable(stored).string();
+    }
 
     YAML::Emitter& operator<<(YAML::Emitter& out, const glm::vec2& v) {
         out << YAML::Flow;
@@ -75,7 +81,7 @@ namespace Honey {
 
             if (sprite.sprite) {
                 out << YAML::Key << "Texture" << YAML::Value
-                    << (sprite.sprite_path.empty() ? "" : sprite.sprite_path.string());
+                    << AssetPaths::to_portable(sprite.sprite_path);
 
                 out << YAML::Key << "PPU" << YAML::Value << sprite.sprite->get_pixels_per_unit();
                 out << YAML::Key << "Pivot" << YAML::Value << sprite.sprite->get_pivot();
@@ -95,8 +101,8 @@ namespace Honey {
             auto& mr = entity.get_component<MeshRendererComponent>();
             out << YAML::Key << "Color" << YAML::Value << mr.color;
             out << YAML::Key << "MeshPath" << YAML::Value
-                << (mr.mesh_path.empty() ? "" : mr.mesh_path.string());
-            out << YAML::Key << "GltfSourcePath" << YAML::Value << mr.gltf_source_path.string();
+                << AssetPaths::to_portable(mr.mesh_path);
+            out << YAML::Key << "GltfSourcePath" << YAML::Value << AssetPaths::to_portable(mr.gltf_source_path);
             out << YAML::Key << "GltfNodeName" << YAML::Value << mr.gltf_node_name;
 
             // Optionally: material overrides here
@@ -115,7 +121,7 @@ namespace Honey {
 
             if (sprite.texture) {
                 out << YAML::Key << "Texture" << YAML::Value
-                    << (sprite.texture_path.empty() ? "" : sprite.texture_path.string());
+                    << AssetPaths::to_portable(sprite.texture_path);
             } else {
                 out << YAML::Key << "Texture" << YAML::Value << "";
             }
@@ -134,7 +140,7 @@ namespace Honey {
 
             if (sprite.texture) {
                 out << YAML::Key << "Texture" << YAML::Value
-                    << (sprite.texture_path.empty() ? "" : sprite.texture_path.string());
+                    << AssetPaths::to_portable(sprite.texture_path);
             } else {
                 out << YAML::Key << "Texture" << YAML::Value << "";
             }
@@ -149,7 +155,7 @@ namespace Honey {
 
             auto& trc = entity.get_component<TextRendererComponent>();
             out << YAML::Key << "Text"        << YAML::Value << trc.text;
-            out << YAML::Key << "FontPath"    << YAML::Value << (trc.font_path.empty() ? "" : trc.font_path.string());
+            out << YAML::Key << "FontPath"    << YAML::Value << AssetPaths::to_portable(trc.font_path);
             out << YAML::Key << "Color"       << YAML::Value << trc.color;
             out << YAML::Key << "FontSize"    << YAML::Value << trc.font_size;
             out << YAML::Key << "LineSpacing" << YAML::Value << trc.line_spacing;
@@ -162,7 +168,7 @@ namespace Honey {
             out << YAML::BeginMap; // IconRendererComponent
 
             auto& irc = entity.get_component<IconRendererComponent>();
-            out << YAML::Key << "IconPath" << YAML::Value << (irc.icon_path.empty() ? "" : irc.icon_path.string());
+            out << YAML::Key << "IconPath" << YAML::Value << AssetPaths::to_portable(irc.icon_path);
             out << YAML::Key << "Color"    << YAML::Value << irc.color;
 
             out << YAML::EndMap; // IconRendererComponent
@@ -315,7 +321,7 @@ namespace Honey {
             out << YAML::BeginMap;
 
             auto& audio = entity.get_component<AudioSourceComponent>();
-            out << YAML::Key << "FilePath" << YAML::Value << (audio.file_path.empty() ? "" : audio.file_path.string());
+            out << YAML::Key << "FilePath" << YAML::Value << AssetPaths::to_portable(audio.file_path);
             out << YAML::Key << "Loop" << YAML::Value << audio.loop;
             out << YAML::Key << "Pitch" << YAML::Value << audio.pitch;
             out << YAML::Key << "PlayOnSceneStart" << YAML::Value << audio.play_on_scene_start;
@@ -339,7 +345,7 @@ namespace Honey {
             out << YAML::BeginMap;
 
             auto& sc = entity.get_component<SkyboxComponent>();
-            out << YAML::Key << "FilePath" << YAML::Value << sc.get_file_path().string();
+            out << YAML::Key << "FilePath" << YAML::Value << AssetPaths::to_portable(sc.get_file_path());
             out << YAML::Key << "Active" << YAML::Value << sc.active;
             out << YAML::Key << "Intensity" << YAML::Value << sc.intensity;
 
@@ -597,7 +603,7 @@ namespace Honey {
             auto& sprite = deserialized_entity.add_component<SpriteRendererComponent>();
             sprite.color = sprite_node["Color"].as<glm::vec4>();
 
-            std::string texture_path_str = sprite_node["Texture"].as<std::string>("");
+            std::string texture_path_str = portable_to_string(sprite_node["Texture"].as<std::string>(""));
             int ppu = sprite_node["PPU"].as<int>(100);
             glm::vec2 pivot = sprite_node["Pivot"].as<glm::vec2>(glm::vec2(0.5f));
 
@@ -659,8 +665,8 @@ namespace Honey {
             auto& mr = deserialized_entity.add_component<MeshRendererComponent>();
             mr.color = mesh_node["Color"].as<glm::vec4>();
 
-            std::string mesh_path_str = mesh_node["MeshPath"].as<std::string>("");
-            std::string gltf_source_path_str = mesh_node["GltfSourcePath"].as<std::string>("");
+            std::string mesh_path_str = portable_to_string(mesh_node["MeshPath"].as<std::string>(""));
+            std::string gltf_source_path_str = portable_to_string(mesh_node["GltfSourcePath"].as<std::string>(""));
             std::string gltf_node_name_str = mesh_node["GltfNodeName"].as<std::string>("");
 
             if (!gltf_source_path_str.empty() && !gltf_node_name_str.empty()) {
@@ -693,7 +699,7 @@ namespace Honey {
             sprite.thickness = circle_node["Thickness"].as<float>();
             sprite.fade = circle_node["Fade"].as<float>();
 
-            std::string texture_path_str = circle_node["Texture"].as<std::string>("");
+            std::string texture_path_str = portable_to_string(circle_node["Texture"].as<std::string>(""));
             if (!texture_path_str.empty()) {
                 sprite.texture_path = std::filesystem::path(texture_path_str); // <-- keep it!
                 sprite.texture = Texture2D::create_async(texture_path_str);
@@ -706,7 +712,7 @@ namespace Honey {
             sprite.color = line_node["Color"].as<glm::vec4>();
             sprite.fade = line_node["Fade"].as<float>();
 
-            std::string texture_path_str = line_node["Texture"].as<std::string>("");
+            std::string texture_path_str = portable_to_string(line_node["Texture"].as<std::string>(""));
             if (!texture_path_str.empty()) {
                 sprite.texture_path = std::filesystem::path(texture_path_str); // <-- keep it!
                 sprite.texture = Texture2D::create_async(texture_path_str);
@@ -721,7 +727,7 @@ namespace Honey {
             trc.font_size    = text_node["FontSize"].as<float>(48.0f);
             trc.line_spacing = text_node["LineSpacing"].as<float>(1.0f);
 
-            std::string font_path_str = text_node["FontPath"].as<std::string>("");
+            std::string font_path_str = portable_to_string(text_node["FontPath"].as<std::string>(""));
             if (!font_path_str.empty())
                 trc.font_path = std::filesystem::path(font_path_str);
         });
@@ -731,7 +737,7 @@ namespace Honey {
             auto& irc = deserialized_entity.add_component<IconRendererComponent>();
             irc.color = icon_node["Color"].as<glm::vec4>(glm::vec4{1.0f});
 
-            std::string icon_path_str = icon_node["IconPath"].as<std::string>("");
+            std::string icon_path_str = portable_to_string(icon_node["IconPath"].as<std::string>(""));
             if (!icon_path_str.empty())
                 irc.icon_path = std::filesystem::path(icon_path_str);
         });
@@ -900,7 +906,7 @@ namespace Honey {
         auto audio_source_node = entity_node["AudioSourceComponent"];
         if (audio_source_node) try_component("AudioSourceComponent", [&] {
             auto& as = deserialized_entity.add_component<AudioSourceComponent>();
-            as.file_path = audio_source_node["FilePath"].as<std::string>();
+            as.file_path = AssetPaths::from_portable(audio_source_node["FilePath"].as<std::string>());
             as.loop = audio_source_node["Loop"].as<bool>();
             as.pitch = audio_source_node["Pitch"].as<float>();
             as.play_on_scene_start = audio_source_node["PlayOnSceneStart"].as<bool>();
@@ -918,7 +924,7 @@ namespace Honey {
         auto skybox_node = entity_node["SkyboxComponent"];
         if (skybox_node) try_component("SkyboxComponent", [&] {
             auto& sc = deserialized_entity.add_component<SkyboxComponent>();
-            const std::string hdr_path = skybox_node["FilePath"].as<std::string>();
+            const std::string hdr_path = portable_to_string(skybox_node["FilePath"].as<std::string>());
             if (check_asset_exists("SkyboxComponent", hdr_path))
                 sc.update_file_synchronous(hdr_path);
             sc.active = skybox_node["Active"].as<bool>();

@@ -101,9 +101,6 @@ target_compile_definitions(glm INTERFACE
         $<$<CONFIG:Release>:GLM_FORCE_SIMD_AVX2>
 )
 
-target_compile_definitions(engine PUBLIC
-        ASSET_ROOT="${CMAKE_SOURCE_DIR}/assets"
-)
 
 
 # Optional but often helpful: keep vectors naturally aligned (16 B) for faster loads/stores

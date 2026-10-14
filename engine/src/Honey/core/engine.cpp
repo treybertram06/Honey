@@ -1,6 +1,7 @@
 #include "hnpch.h"
 #include <Honey.h>
 #include "engine.h"
+#include "asset_paths.h"
 #include "input.h"
 #include "Honey/renderer/renderer.h"
 #include "../scripting/csharp_script_engine.h"
@@ -37,8 +38,7 @@ namespace Honey {
 
         PhysicsEngine3D::init();
 
-        const std::filesystem::path asset_root = ASSET_ROOT;
-        Settings::load_from_file( asset_root / ".." / "config" / "settings.yaml" );
+        Settings::load_from_file(AssetPaths::settings_path());
 
         auto& renderer_settings = Settings::get().renderer; // I'm not sure if this is the best place to do this, but I'm also not sure where else I could...
         RendererAPI::set_api(renderer_settings.api);
@@ -111,7 +111,7 @@ namespace Honey {
         m_window.reset();
 
         // Should be gated on editor / runtime target
-        Settings::save_to_file(std::filesystem::path(ASSET_ROOT) / ".." / "config" / "settings.yaml");
+        Settings::save_to_file(AssetPaths::settings_path());
 
         if (m_vulkan_backend) {
             m_vulkan_backend->shutdown();

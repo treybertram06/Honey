@@ -173,6 +173,12 @@ namespace Honey {
         if (auto p = try_save_kdialog(filter); !p.empty()) return p;
         return run_gtk_file_dialog(GTK_FILE_CHOOSER_ACTION_SAVE, "Save File", filter);
     }
+
+    std::filesystem::path Platform::get_executable_path() {
+        std::error_code ec;
+        std::filesystem::path p = std::filesystem::read_symlink("/proc/self/exe", ec);
+        return ec ? std::filesystem::path{} : p;
+    }
 }
 
 #endif

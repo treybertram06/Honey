@@ -49,6 +49,8 @@ endfunction()
 add_library(engine STATIC
         src/Honey/core/engine.cpp
         src/Honey/core/engine.h
+        src/Honey/core/asset_paths.h
+        src/Honey/core/asset_paths.cpp
         src/Honey/core/base.h
         src/Honey/core/entry_point.h
         src/Honey/core/log.h
@@ -411,6 +413,13 @@ endif()
 target_compile_definitions(engine PRIVATE
         STBI_NO_SIMD
 )
+
+# Dev-only fallback for AssetPaths (assets/, config/, managed build output in the source tree).
+# PRIVATE on purpose: only asset_paths.cpp reads it. Turn off for exported/shipped builds.
+option(HONEY_DEV_PATHS "Allow AssetPaths to fall back to the source tree" ON)
+if(HONEY_DEV_PATHS)
+    target_compile_definitions(engine PRIVATE HN_DEV_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+endif()
 
 # Public headers for consumers (Honey_Editor is a consumer of engine)
 target_include_directories(engine PUBLIC

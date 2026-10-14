@@ -8,8 +8,8 @@
 #include "platform/vulkan/vk_backend.h"
 #include "platform/vulkan/vk_framebuffer.h"
 #include "platform/vulkan/vk_texture.h"
+#include "Honey/core/asset_paths.h"
 
-static const std::filesystem::path asset_root = ASSET_ROOT;
 
 namespace Honey {
 
@@ -82,7 +82,7 @@ namespace Honey {
             if (it != s_res->pipelines.end())
                 return it->second;
 
-            auto spec = PipelineSpec::from_shader(asset_root / "shaders" / "Renderer3D_Lite.glsl");
+            auto spec = PipelineSpec::from_shader(AssetPaths::asset_root() / "shaders" / "Renderer3D_Lite.glsl");
             // Keep from_shader's cull mode (the settings value, same as the full tier) unless the
             // material needs none.
             if (cull_none)
@@ -107,7 +107,7 @@ namespace Honey {
             if (it != cache.end())
                 return it->second;
 
-            auto spec = PipelineSpec::from_shader(asset_root / "shaders" / "Renderer3D_Lite.glsl");
+            auto spec = PipelineSpec::from_shader(AssetPaths::asset_root() / "shaders" / "Renderer3D_Lite.glsl");
             spec.topology = topology;
             spec.cullMode = CullMode::None;
             spec.depthStencil.depthTest = depth_test;

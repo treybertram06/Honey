@@ -3,12 +3,12 @@
 #include "imgui.h"
 #include "glm/gtc/type_ptr.hpp"
 #include "hnpch.h"
+#include "Honey/core/asset_paths.h"
 #include "Honey/core/settings.h"
 #include "Honey/renderer/texture_cache.h"
 #include "../../engine/src/Honey/loaders/gltf_loader.h"
 
 namespace Honey {
-    static const std::filesystem::path asset_root = ASSET_ROOT;
 
     Application2D::Application2D()
         : Layer("Application2D") {
@@ -17,7 +17,7 @@ namespace Honey {
 
     void Application2D::on_attach() {
 
-        auto texture_path_prefix = asset_root / "textures";
+        auto texture_path_prefix = AssetPaths::asset_root() / "textures";
         m_chuck_texture = Texture2D::create((texture_path_prefix / "bung.png").string());
 
         auto& win = Application::get().get_window();
@@ -25,11 +25,11 @@ namespace Honey {
         uint32_t h = win.get_height();
         m_camera = EditorCamera(w/h, 45.0f, 0.1f, 10000.0f);
 
-        //m_test_mesh = load_gltf_mesh(asset_root / "models" / "Box" / "glTF" / "Box.gltf");
-        //m_test_mesh = load_gltf_mesh(asset_root / "models" / "ABeautifulGame" / "glTF" / "ABeautifulGame.gltf");
-        //m_test_mesh = load_gltf_mesh(asset_root / "models" / "Sponza" / "glTF" / "Sponza.gltf");
-        //m_test_mesh = load_gltf_mesh(asset_root / "models" / "FlightHelmet" / "glTF" / "FlightHelmet.gltf");
-        m_test_mesh = load_gltf_mesh(asset_root / "models" / "DragonAttenuation" / "glTF" / "DragonAttenuation.gltf");
+        //m_test_mesh = load_gltf_mesh(AssetPaths::asset_root() / "models" / "Box" / "glTF" / "Box.gltf");
+        //m_test_mesh = load_gltf_mesh(AssetPaths::asset_root() / "models" / "ABeautifulGame" / "glTF" / "ABeautifulGame.gltf");
+        //m_test_mesh = load_gltf_mesh(AssetPaths::asset_root() / "models" / "Sponza" / "glTF" / "Sponza.gltf");
+        //m_test_mesh = load_gltf_mesh(AssetPaths::asset_root() / "models" / "FlightHelmet" / "glTF" / "FlightHelmet.gltf");
+        m_test_mesh = load_gltf_mesh(AssetPaths::asset_root() / "models" / "DragonAttenuation" / "glTF" / "DragonAttenuation.gltf");
 
         if (!m_test_mesh) {
             HN_CORE_ERROR("Failed to load mesh!");
@@ -254,7 +254,7 @@ namespace Honey {
             if (ImGui::Combo("Renderer API", &api_index, api_names, IM_ARRAYSIZE(api_names))) {
                 renderer.api = static_cast<RendererAPI::API>(++api_index);
                 // Show small tooltip or text: "Takes effect on next restart"
-                Settings::write_renderer_api_to_file( asset_root / ".." / "config" / "settings.yaml" );
+                Settings::write_renderer_api_to_file(AssetPaths::settings_path());
             }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Renderer API changes will take effect after restarting the editor.");

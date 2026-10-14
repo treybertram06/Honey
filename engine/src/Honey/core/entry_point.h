@@ -1,8 +1,14 @@
 #pragma once
 #include "Honey.h"
+#include "Honey/core/asset_paths.h"
 
 int main(int argc, char** argv) {
     Honey::Log::init();
+
+    // Must run before anything touches assets/config, including Application's constructor.
+    if (!Honey::AssetPaths::init(argc, argv))
+        return 1;
+
     HN_PROFILE_BEGIN_SESSION("Startup", "HoneyProfiler-Startup.json");
 
 #if defined(HN_PLATFORM_MACOS)

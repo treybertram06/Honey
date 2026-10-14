@@ -7,8 +7,8 @@
 #include "Honey/renderer/renderer.h"
 #include "platform/vulkan/vk_framebuffer.h"
 #include "platform/vulkan/vk_gpu_profiler.h"
+#include "Honey/core/asset_paths.h"
 
-static const std::filesystem::path asset_root = ASSET_ROOT;
 
 namespace Honey::Renderer3DInternal {
 
@@ -19,7 +19,7 @@ namespace Honey::Renderer3DInternal {
             if (it != g_renderer3d_data->vk_lighting_pipelines.end())
                 return it->second;
 
-            auto spec = PipelineSpec::from_shader(asset_root / "shaders" / "Renderer3D_DeferredLighting.glsl");
+            auto spec = PipelineSpec::from_shader(AssetPaths::asset_root() / "shaders" / "Renderer3D_DeferredLighting.glsl");
             spec.depthStencil.depthTest = false;
             spec.depthStencil.depthWrite = false;
             spec.perColorAttachmentBlend.clear();

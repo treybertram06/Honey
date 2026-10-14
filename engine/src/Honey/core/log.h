@@ -30,7 +30,7 @@ namespace Honey {
 
 //core log macros
 #ifdef BUILD_DEBUG
-#define HN_CORE_FATAL(...)   ::Honey::Log::get_core_logger()->fatal("[{}] {}", CURRENT_FUNCTION, fmt::format(__VA_ARGS__))
+#define HN_CORE_FATAL(...)   ::Honey::Log::get_core_logger()->critical("[{}] {}", CURRENT_FUNCTION, fmt::format(__VA_ARGS__))
 #define HN_CORE_ERROR(...)   ::Honey::Log::get_core_logger()->error("[{}] {}", CURRENT_FUNCTION, fmt::format(__VA_ARGS__))
 #define HN_CORE_WARN(...)    ::Honey::Log::get_core_logger()->warn ("[{}] {}", CURRENT_FUNCTION, fmt::format(__VA_ARGS__))
 #define HN_CORE_INFO(...)    ::Honey::Log::get_core_logger()->info (fmt::format(__VA_ARGS__))
@@ -44,7 +44,7 @@ namespace Honey {
 #endif
 
 // client log macros
-#define HN_FATAL(...)        ::Honey::Log::get_client_logger()->fatal("[{}] {}", CURRENT_FUNCTION, fmt::format(__VA_ARGS__))
+#define HN_FATAL(...)        ::Honey::Log::get_client_logger()->critical("[{}] {}", CURRENT_FUNCTION, fmt::format(__VA_ARGS__))
 #define HN_ERROR(...)        ::Honey::Log::get_client_logger()->error("[{}] {}", CURRENT_FUNCTION, fmt::format(__VA_ARGS__))
 #define HN_WARN(...)         ::Honey::Log::get_client_logger()->warn ("[{}] {}", CURRENT_FUNCTION, fmt::format(__VA_ARGS__))
 #define HN_INFO(...)         ::Honey::Log::get_client_logger()->info (fmt::format(__VA_ARGS__))

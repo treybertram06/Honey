@@ -16,9 +16,9 @@
 
 #include "Honey/core/settings.h"
 #include "platform/vulkan/vk_gpu_profiler.h"
+#include "Honey/core/asset_paths.h"
 
 namespace Honey {
-    static const std::filesystem::path asset_root = ASSET_ROOT;
 
     namespace {
         struct ShadowResources {
@@ -171,7 +171,7 @@ namespace Honey {
                 return;
             }
 
-            auto spec = PipelineSpec::from_shader(asset_root / "shaders" / "Renderer3D_ShadowCubemap.glsl");
+            auto spec = PipelineSpec::from_shader(AssetPaths::asset_root() / "shaders" / "Renderer3D_ShadowCubemap.glsl");
             spec.pipelineKind = PipelineKind::MeshShading;
             spec.perColorAttachmentBlend.clear(); // depth-only — no color attachments
             spec.depthStencil.depthTest  = true;
@@ -522,7 +522,7 @@ namespace Honey {
                 return;
             }
 
-            auto spec = PipelineSpec::from_shader(asset_root / "shaders" / "Renderer3D_ShadowDirectional.glsl");
+            auto spec = PipelineSpec::from_shader(AssetPaths::asset_root() / "shaders" / "Renderer3D_ShadowDirectional.glsl");
             spec.pipelineKind = PipelineKind::MeshShading;
             spec.perColorAttachmentBlend.clear();
             spec.depthStencil.depthTest  = true;

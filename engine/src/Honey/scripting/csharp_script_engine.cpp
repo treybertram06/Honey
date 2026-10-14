@@ -2,6 +2,8 @@
 #include "csharp_script_engine.h"
 #include "csharp_script_glue.h"
 
+#include "Honey/core/asset_paths.h"
+
 #include "Honey/scene/scene.h"
 #include "Honey/scene/entity.h"
 #include "Honey/scene/components.h"
@@ -59,17 +61,10 @@ namespace Honey {
     void CSharpScriptEngine::init() {
         s_data = std::make_unique<Data>();
 
-        namespace fs = std::filesystem;
-
-        // Build absolute, normalized paths from CMake-injected defines.
-        const fs::path asset_root   = fs::path(ASSET_ROOT).lexically_normal();
-        const fs::path config_root  = fs::path(CONFIG_ROOT).lexically_normal();
-        const fs::path project_root = asset_root.parent_path();
-
-        const std::string runtimeconfig = (config_root / "HoneyScripting.runtimeconfig.json").string();
-        const std::string dotnet_root   = fs::path(HN_DOTNET_RUNTIME_ROOT).lexically_normal().string();
-        const std::string honey_dll     = (project_root / "Honey/managed/HoneyEngine/bin/Release/net10.0/HoneyEngine.dll").string();
-        s_data->user_scripts_dll        = (asset_root  / "scripts/bin/Debug/net10.0/UserScripts.dll").string();
+        const std::string runtimeconfig = (AssetPaths::config_root() / "HoneyScripting.runtimeconfig.json").string();
+        const std::string dotnet_root   = AssetPaths::dotnet_root().string();
+        const std::string honey_dll     = AssetPaths::engine_assembly_path().string();
+        s_data->user_scripts_dll        = AssetPaths::user_scripts_assembly_path().string();
 
         HN_CORE_INFO("[CSharpScriptEngine] init — runtimeconfig: {}", runtimeconfig);
         HN_CORE_INFO("[CSharpScriptEngine] init — HoneyEngine.dll: {}", honey_dll);
@@ -215,9 +210,8 @@ namespace Honey {
         if (!s_data || !s_data->initialized) return false;
 
         namespace fs = std::filesystem;
-        // user_scripts_dll: <project>/bin/Debug/net10.0/UserScripts.dll — go up 4 levels
-        fs::path project_dir = fs::path(s_data->user_scripts_dll)
-            .parent_path().parent_path().parent_path().parent_path();
+        // UserScripts.csproj lives in assets/scripts (dev tooling; shipped builds load a prebuilt dll).
+        const fs::path project_dir = AssetPaths::asset_root() / "scripts";
         std::string cmd = "dotnet build \"" + project_dir.string() + "\" -c Debug --nologo -v q 2>&1";
 
         HN_CORE_INFO("[CSharpScriptEngine] building scripts: {}", cmd);

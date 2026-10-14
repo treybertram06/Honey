@@ -12,7 +12,7 @@ namespace Honey {
 
     class ShaderCache {
     public:
-        ShaderCache(const std::filesystem::path& cache_dir = std::filesystem::path(ASSET_ROOT) / "cache" / "shaders");
+        explicit ShaderCache(const std::filesystem::path& cache_dir);
 
         void set_spirv_cache_directory(const std::filesystem::path& cache_dir);
 

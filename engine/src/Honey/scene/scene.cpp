@@ -12,6 +12,7 @@
 
 #include "scene_serializer.h"
 #include "Honey/audio/audio_system.h"
+#include "Honey/core/asset_paths.h"
 #include "Honey/core/settings.h"
 #include "Honey/core/task_system.h"
 #include "Honey/math/math.h"
@@ -521,7 +522,8 @@ namespace Honey {
         Ref<Scene> scene_ref = Ref<Scene>(this, [](Scene*){});
         SceneSerializer serializer(scene_ref);
 
-        auto entity = serializer.deserialize_entity_prefab(path);
+        // Accepts asset-relative ("prefabs/Bullet.hnp"), legacy "../assets/..." and absolute paths.
+        auto entity = serializer.deserialize_entity_prefab(AssetPaths::from_portable(path));
         if (!entity.is_valid()) {
             HN_CORE_ERROR("instantiate_prefab: failed to load prefab '{}'", path);
             return {};
@@ -537,7 +539,7 @@ namespace Honey {
         Ref<Scene> scene_ref = Ref<Scene>(this, [](Scene*){});
         SceneSerializer serializer(scene_ref);
 
-        auto entity = serializer.deserialize_entity_prefab(path);
+        auto entity = serializer.deserialize_entity_prefab(AssetPaths::from_portable(path));
         //ScriptEngine::on_create_entity(entity); // Now handled by on_update
         return entity;
     }

@@ -1,4 +1,5 @@
 #include "hnpch.h"
+#include "Honey/core/asset_paths.h"
 #include "shader_cache.h"
 #include "Honey/core/log.h"
 #include "shader_compiler.h"
@@ -67,7 +68,7 @@ namespace {
     }
 
     // Collects every file transitively #included by 'main', resolved the same way FSIncluder in
-    // shader_compiler.cpp does (ASSET_ROOT/shaders/<requested>). The virtual global_bindings.glsli
+    // shader_compiler.cpp does (AssetPaths::asset_root()/shaders/<requested>). The virtual global_bindings.glsli
     // is skipped here; its generated content is hashed separately.
     static void collect_shader_dependencies(const std::filesystem::path& file,
                                             std::vector<std::filesystem::path>& out,
@@ -83,7 +84,7 @@ namespace {
             const std::string requested = m[1].str();
             if (requested == "global_bindings.glsli") continue;
 
-            const std::filesystem::path candidate = std::filesystem::path(ASSET_ROOT) / "shaders" / requested;
+            const std::filesystem::path candidate = Honey::AssetPaths::asset_root() / "shaders" / requested;
             std::error_code ec;
             if (!std::filesystem::exists(candidate, ec)) continue;
             if (!visited.insert(candidate.lexically_normal().string()).second) continue;

@@ -47,6 +47,22 @@ namespace Honey {
         return std::string();
     }
 
+
+    std::filesystem::path Platform::get_executable_path() {
+        // MAX_PATH is not a real limit; grow until the path fits (return == size means truncated).
+        std::wstring buf(MAX_PATH, L'\0');
+        for (;;) {
+            const DWORD len = GetModuleFileNameW(nullptr, buf.data(), (DWORD)buf.size());
+            if (len == 0)
+                return {};
+            if (len < buf.size()) {
+                buf.resize(len);
+                return std::filesystem::path(buf);
+            }
+            buf.resize(buf.size() * 2);
+        }
+    }
+
 }
 
 #endif

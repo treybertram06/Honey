@@ -17,8 +17,8 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtc/constants.hpp>
 #include <glm/gtx/norm.hpp>
+#include "Honey/core/asset_paths.h"
 
-static const std::filesystem::path asset_root = ASSET_ROOT;
 
 namespace Honey {
 
@@ -60,7 +60,7 @@ Ref<Pipeline> get_or_create_pipeline(void* rp_native, uint32_t color_attachment_
     if (it != s_data->pipeline_cache.end())
         return it->second;
 
-    auto spec = PipelineSpec::from_shader(asset_root / "shaders" / "Renderer3D_Debug.glsl");
+    auto spec = PipelineSpec::from_shader(AssetPaths::asset_root() / "shaders" / "Renderer3D_Debug.glsl");
     spec.topology              = PrimitiveTopology::Lines;
     spec.cullMode              = CullMode::None;
     spec.depthStencil.depthTest  = false;
