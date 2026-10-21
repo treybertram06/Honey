@@ -90,7 +90,7 @@ namespace Honey {
 
         if (rc < 0) {
             HN_CORE_ERROR("[DotNetHost] hostfxr_initialize_for_runtime_config failed (0x{:x})", (uint32_t)rc);
-#if defined(HN_PLATFORM_LINUX)
+#if defined(HN_PLATFORM_LINUX) || defined(HN_PLATFORM_MACOS)
             dlclose(m_hostfxr_lib);
 #elif defined(HN_PLATFORM_WINDOWS)
             FreeLibrary((HMODULE)m_hostfxr_lib);
@@ -106,7 +106,7 @@ namespace Honey {
         if (rc != 0 || !m_load_assembly_fn) {
             HN_CORE_ERROR("[DotNetHost] get_runtime_delegate failed (0x{:x})", (uint32_t)rc);
             ((hostfxr_close_fn)m_close_fn)(m_host_ctx);
-#if defined(HN_PLATFORM_LINUX)
+#if defined(HN_PLATFORM_LINUX) || defined(HN_PLATFORM_MACOS)
             dlclose(m_hostfxr_lib);
 #elif defined(HN_PLATFORM_WINDOWS)
             FreeLibrary((HMODULE)m_hostfxr_lib);
@@ -126,7 +126,7 @@ namespace Honey {
             m_host_ctx = nullptr;
         }
         if (m_hostfxr_lib) {
-#if defined(HN_PLATFORM_LINUX)
+#if defined(HN_PLATFORM_LINUX) || defined(HN_PLATFORM_MACOS)
             dlclose(m_hostfxr_lib);
 #elif defined(HN_PLATFORM_WINDOWS)
             FreeLibrary((HMODULE)m_hostfxr_lib);
@@ -147,7 +147,7 @@ namespace Honey {
         void* fn_ptr = nullptr;
         int32_t rc;
 
-#if defined(HN_PLATFORM_LINUX)
+#if defined(HN_PLATFORM_LINUX) || defined(HN_PLATFORM_MACOS)
         const char_t* delegate_arg = delegate_type_name.empty()
             ? UNMANAGEDCALLERSONLY_METHOD
             : delegate_type_name.data();
