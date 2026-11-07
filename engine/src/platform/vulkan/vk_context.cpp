@@ -597,7 +597,7 @@ namespace Honey {
         vkResetFences(reinterpret_cast<VkDevice>(m_device), 1, &in_flight);
 
         // Begin recording the frame's primary command buffer.
-        VkCommandBuffer cmd = reinterpret_cast<VkCommandBuffer>(m_command_buffers[image_index]);
+        VkCommandBuffer cmd = reinterpret_cast<VkCommandBuffer>(m_command_buffers[m_current_frame]);
         {
             HN_PROFILE_SCOPE("BeginCommandBuffer");
             vkResetCommandBuffer(cmd, 0);
@@ -716,7 +716,7 @@ namespace Honey {
                 timeline_wait.pWaitSemaphoreValues = s_wait_values;
 
                 VkSemaphore signal_semaphores[] = { m_render_finished_semaphores[image_index] };
-                VkCommandBuffer cmd = reinterpret_cast<VkCommandBuffer>(m_command_buffers[image_index]);
+                VkCommandBuffer cmd = reinterpret_cast<VkCommandBuffer>(m_command_buffers[m_current_frame]);
 
                 validate_present_inputs(image_index, signal_semaphores[0]);
 
@@ -1488,7 +1488,7 @@ namespace Honey {
         HN_PROFILE_FUNCTION();
         assert_render_thread();
 
-        // If we recreate swapchain, command buffers must match swapchain image count.
+        // One per frame in flight (matches the fence), not per swapchain image.
         if (!m_command_buffers.empty()) {
             vkFreeCommandBuffers(
                 m_device,
@@ -1499,7 +1499,7 @@ namespace Honey {
             m_command_buffers.clear();
         }
 
-        m_command_buffers.resize(m_swapchain_images.size());
+        m_command_buffers.resize(k_max_frames_in_flight);
 
         VkCommandBufferAllocateInfo alloc{};
         alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
