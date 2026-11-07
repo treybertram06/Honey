@@ -9,6 +9,7 @@
 namespace Honey {
 
     class VulkanRendererGlobals;
+    enum class PresentFit { stretch, letterbox };
 
     class Renderer {
     public:
@@ -32,6 +33,9 @@ namespace Honey {
         static Ref<Framebuffer> get_render_target() { return s_current_target; }
         static void begin_pass(const char* name = nullptr);
         static void end_pass();
+
+        // Draws src's first colour attachment into the open swapchain pass
+        static void present(const Ref<Framebuffer>& src, PresentFit fit = PresentFit::letterbox);
 
         static void prewarm_pipelines(void* native_render_pass);
 

@@ -21,6 +21,7 @@
 
 #include <filesystem>
 
+#include "present_pass.h"
 #include "renderer_3d/renderer_3d_bloom.h"
 #include "renderer_3d/renderer_3d_lite.h"
 #include "renderer_3d/renderer_3d_postprocess.h"
@@ -106,6 +107,7 @@ namespace Honey {
                 auto& backend = Application::get().get_vulkan_backend();
                 // Everything below needs the descriptor heap; the lite tier has none.
                 if (backend.supports_full_renderer()) {
+                    PresentPass::init();
                     if (backend.supports_mesh_shader()) {
                         Renderer3DShadow::init(vk_ctx);
                         Renderer3DPathTracer::init(vk_ctx);
@@ -160,6 +162,7 @@ namespace Honey {
         Renderer3DBloom::shutdown();
         Renderer3DLite::shutdown();
         Renderer3DIBL::shutdown();
+        PresentPass::shutdown();
         m_frame_graph.reset();
         m_output_framebuffer.reset();
         m_gbuffer_framebuffer.reset();

@@ -1,6 +1,7 @@
 #include "hnpch.h"
 #include "Honey/core/asset_paths.h"
 #include "renderer.h"
+#include "present_pass.h"
 #include "renderer_2d.h"
 #include "renderer_3d/renderer_3d.h"
 #include "renderer_3d/debug_renderer_3d.h"
@@ -332,6 +333,18 @@ namespace Honey {
             HN_CORE_ASSERT(false, "Renderer::end_pass: unsupported RendererAPI");
             break;
         }
+    }
+
+    void Renderer::present(const Ref<Framebuffer>& src, PresentFit fit) {
+        HN_PROFILE_FUNCTION();
+        HN_CORE_ASSERT(s_pass_open && !s_current_target, "Renderer::present must be called inside the swapchain pass.");
+
+        if (get_api() != RendererAPI::API::vulkan) {
+            HN_CORE_WARN("Renderer::present is only implemented for Vulkan.");
+            return;
+        }
+
+        PresentPass::record(src, fit);
     }
 
     void Renderer::prewarm_pipelines(void* native_render_pass) {

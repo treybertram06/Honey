@@ -283,6 +283,8 @@ add_library(engine STATIC
         src/Honey/renderer/renderer_3d/renderer_3d_bloom.h
         src/Honey/renderer/renderer_3d/renderer_3d_lite.cpp
         src/Honey/renderer/renderer_3d/renderer_3d_lite.h
+        src/Honey/renderer/present_pass.cpp
+        src/Honey/renderer/present_pass.h
 )
 
 # Apply MSVC runtime to engine itself
