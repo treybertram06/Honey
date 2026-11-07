@@ -36,6 +36,9 @@ namespace Honey {
         virtual uint32_t get_width() const = 0;
         virtual uint32_t get_height() const = 0;
 
+        // Pixels, not screen points; differs from get_width/height on HiDPI displays.
+        virtual std::pair<uint32_t, uint32_t> get_framebuffer_size() const = 0;
+
         //window attributes
         virtual void set_event_callback(const event_callback_fn& callback) = 0;
         virtual void set_vsync(bool enabled) = 0;

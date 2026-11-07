@@ -16,6 +16,11 @@ namespace Honey {
 
         inline unsigned int get_width() const override { return m_data.width; }
         inline unsigned int get_height() const override { return m_data.height; }
+        std::pair<uint32_t, uint32_t> get_framebuffer_size() const override {
+            int w = 0, h = 0;
+            glfwGetFramebufferSize(m_window, &w, &h);
+            return { (uint32_t)w, (uint32_t)h };
+        }
 
         //window attributes
         inline void set_event_callback(const event_callback_fn &callback) override { m_data.event_callback = callback; }

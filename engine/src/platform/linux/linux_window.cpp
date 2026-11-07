@@ -136,6 +136,9 @@ namespace Honey {
             // Keep emitting resize as well (some systems might depend on it)
             WindowResizeEvent event(width, height);
             data.event_callback(event);
+
+            FramebufferResizeEvent fb_event(width, height);
+            data.event_callback(fb_event);
         });
 
         glfwSetWindowCloseCallback(m_window, [](GLFWwindow* window) {

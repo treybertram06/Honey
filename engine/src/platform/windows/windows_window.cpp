@@ -121,6 +121,13 @@ namespace Honey {
 
         });
 
+        glfwSetFramebufferSizeCallback(m_window, [](GLFWwindow* window, int width, int height) {
+            WindowData& data = *(WindowData*)glfwGetWindowUserPointer(window);
+
+            FramebufferResizeEvent event(width, height);
+            data.event_callback(event);
+        });
+
         glfwSetWindowCloseCallback(m_window, [](GLFWwindow* window) {
             WindowData& data = *(WindowData*)glfwGetWindowUserPointer(window);
             WindowCloseEvent event;
