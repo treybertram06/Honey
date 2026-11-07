@@ -210,7 +210,12 @@ namespace Honey {
                     // nullptr => main window / swapchain
                     Renderer::set_render_target(nullptr);
                     Renderer::begin_pass();
-                    // Any future direct window-space rendering would go here
+                    {
+                        HN_PROFILE_SCOPE("LayerStack on_window_render");
+                        for (Layer* layer : m_layer_stack) {
+                            layer->on_window_render();
+                        }
+                    }
                     Renderer::end_pass();
                 }
 
