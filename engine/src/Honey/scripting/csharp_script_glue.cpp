@@ -10,6 +10,7 @@
 #include <cstring>
 
 #include "csharp_script_engine.h"
+#include "Honey/core/engine.h"
 #include "Honey/physics/physics_engine_3d.h"
 #include "Jolt/Physics/Body/BodyID.h"
 
@@ -51,6 +52,12 @@ namespace Honey {
         uint64_t (*Scene_FindEntityByName)         (const char*);
         float   (*Input_GetMouseDeltaX)            ();
         float   (*Input_GetMouseDeltaY)            ();
+
+        void    (*Cursor_SetLocked)                (uint8_t);
+        void    (*Application_Quit)                ();
+        float   (*Time_GetDeltaTime)               ();
+        float   (*Time_GetElapsed)                 ();
+
     };
 
     // -----------------------------------------------------------------------
@@ -219,6 +226,13 @@ namespace Honey {
     static float glue_input_get_mouse_delta_x() { return Input::get_mouse_delta_x(); }
     static float glue_input_get_mouse_delta_y() { return Input::get_mouse_delta_y(); }
 
+    static void glue_set_cursor_locked(uint8_t locked) {
+        Application::get().get_window().set_cursor_captured(locked != 0);
+    }
+    static void glue_application_quit() { CSharpScriptEngine::s_quit_requested = true; }
+    static float glue_time_get_delta_time() { return Application::get_delta_time(); }
+    static float glue_time_get_elapsed() { return Application::get_elapsed_time(); }
+
     // -----------------------------------------------------------------------
     // Entity lifecycle glue
     // -----------------------------------------------------------------------
@@ -289,6 +303,11 @@ namespace Honey {
             // Mouse delta
             glue_input_get_mouse_delta_x,
             glue_input_get_mouse_delta_y,
+
+            glue_set_cursor_locked,
+            glue_application_quit,
+            glue_time_get_delta_time,
+            glue_time_get_elapsed,
         };
 
         using BootstrapFn = void(*)(NativeFunctionTable*);

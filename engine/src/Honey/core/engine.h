@@ -43,6 +43,9 @@ namespace Honey {
         VulkanBackend& get_vulkan_backend();
         const VulkanBackend& get_vulkan_backend() const;
 
+        static float get_delta_time() { return m_delta_time; }
+        static float get_elapsed_time() { return static_cast<float>(glfwGetTime()); }
+
     private:
         bool on_window_close(WindowCloseEvent& e);
         bool on_window_resize(WindowResizeEvent& e);
@@ -57,6 +60,8 @@ namespace Honey {
         bool m_minimized = false;
         LayerStack m_layer_stack;
         float m_last_frame_time = 0.0f;
+
+        static float m_delta_time;
 
         static Application* s_instance;
     };

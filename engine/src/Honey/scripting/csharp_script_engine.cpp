@@ -15,6 +15,7 @@
 namespace Honey {
     static constexpr const char* k_registry_type =
         "HoneyEngine.ScriptRegistry, HoneyEngine";
+    bool CSharpScriptEngine::s_quit_requested = false;
 
     // ---------------------------------------------------------------------------
     // Internal data

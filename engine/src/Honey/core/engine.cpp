@@ -21,6 +21,7 @@ namespace Honey {
     Application* Application::s_instance = nullptr;
     bool Application::m_running = true;
     int Application::m_exit_code = 0;
+    float Application::m_delta_time = 0.0f;
 
 
 
@@ -180,8 +181,9 @@ namespace Honey {
 
             Input::update_mouse_delta();
 
-            float time = (float)glfwGetTime();
+            float time = static_cast<float>(glfwGetTime());
             Timestep timestep = time - m_last_frame_time;
+            m_delta_time = timestep;
             m_last_frame_time = time;
 
             if (!m_minimized) {
@@ -233,6 +235,7 @@ namespace Honey {
             return true;
 
         m_exit_code = 0;
+        m_delta_time = 0.0f;
         m_running = false;
         return true;
     }

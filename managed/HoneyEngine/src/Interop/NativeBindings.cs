@@ -179,4 +179,9 @@ internal static unsafe class NativeBindings {
 
     internal static float Input_GetMouseDeltaX() => InternalCalls.s_table.Input_GetMouseDeltaX();
     internal static float Input_GetMouseDeltaY() => InternalCalls.s_table.Input_GetMouseDeltaY();
+
+    internal static void Cursor_SetLocked(bool locked) => InternalCalls.s_table.Cursor_SetLocked((byte)(locked ? 1 : 0));
+    internal static void Application_Quit() => InternalCalls.s_table.Application_Quit();
+    internal static float Time_GetDeltaTime() => InternalCalls.s_table.Time_GetDeltaTime();
+    internal static float Time_GetElapsed() => InternalCalls.s_table.Time_GetElapsed();
 }

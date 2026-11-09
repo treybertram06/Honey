@@ -32,6 +32,8 @@ namespace Honey {
         // Runs `dotnet build` on the user script project, then reloads. Returns true on success.
         static bool build_and_reload();
 
+        static bool s_quit_requested;
+
     private:
         struct Data;
         static std::unique_ptr<Data> s_data;
