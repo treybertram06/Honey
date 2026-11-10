@@ -287,6 +287,8 @@ add_library(engine STATIC
         src/Honey/renderer/present_pass.cpp
         src/Honey/renderer/present_pass.h
         src/Honey/core/game_manifest.h
+        src/Honey/scene/scene_manager.h
+        src/Honey/scene/scene_manager.cpp
 )
 
 # Apply MSVC runtime to engine itself
