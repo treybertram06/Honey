@@ -3,6 +3,7 @@
 #include "hnpch.h"
 
 #include "Honey/core/base.h"
+#include "Honey/core/settings.h"
 #include "Honey/events/event.h"
 #include "Honey/renderer/graphics_context.h"
 
@@ -11,16 +12,16 @@ namespace Honey {
         std::string title = "Unnamed Application";
         uint32_t width = 1280, height = 720;
         uint32_t pos_x = -1, pos_y = -1;
-        bool fullscreen = false;
+        WindowMode mode = WindowMode::windowed;
 
         WindowProps(std::string& title,
                     uint32_t width,
                     uint32_t height,
                     uint32_t pos_x,
                     uint32_t pos_y,
-                    bool fullscreen)
+                    WindowMode mode)
                         : title(title), width(width), height(height),
-        pos_x(pos_x), pos_y(pos_y), fullscreen(fullscreen) {}
+        pos_x(pos_x), pos_y(pos_y), mode(mode) {}
 
         WindowProps();
     };

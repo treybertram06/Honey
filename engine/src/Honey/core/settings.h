@@ -7,13 +7,15 @@
 
 namespace Honey {
 
+    enum class WindowMode { windowed = 0, maximized, fullscreen };
+
     struct WindowSettings {
         std::string title = "Honey Engine";
         uint32_t width = 1280;
         uint32_t height = 720;
         int pos_x = -1;
         int pos_y = -1;
-        bool fullscreen = false;
+        WindowMode mode = WindowMode::windowed;
     };
 
     struct RendererSettings {

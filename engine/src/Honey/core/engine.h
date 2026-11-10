@@ -46,7 +46,13 @@ namespace Honey {
         static float get_delta_time() { return m_delta_time; }
         static float get_elapsed_time() { return static_cast<float>(glfwGetTime()); }
 
+    protected:
+        // Player sets this false: manifest overrides must not be written back to settings.yaml.
+        void set_persist_settings(bool persist) { m_persist_settings = persist; }
+
     private:
+        bool m_persist_settings = true;
+
         bool on_window_close(WindowCloseEvent& e);
         bool on_window_resize(WindowResizeEvent& e);
 

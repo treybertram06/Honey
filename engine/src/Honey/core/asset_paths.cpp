@@ -22,6 +22,7 @@ namespace Honey {
             fs::path config_root;
             fs::path cache_dir;
             fs::path user_data_dir;
+            fs::path manifest_dir;
             fs::path engine_assembly;
             fs::path user_scripts_assembly;
             fs::path dotnet_root;
@@ -58,6 +59,14 @@ namespace Honey {
         std::optional<fs::path> find_cli_assets_arg(int argc, char** argv) {
             for (int i = 1; i + 1 < argc; ++i) {
                 if (std::string_view(argv[i]) == "--assets")
+                    return fs::path(argv[i + 1]);
+            }
+            return std::nullopt;
+        }
+
+        std::optional<fs::path> find_cli_manifest_arg(int argc, char** argv) {
+            for (int i = 1; i + 1 < argc; ++i) {
+                if (std::string_view(argv[i]) == "--manifest")
                     return fs::path(argv[i + 1]);
             }
             return std::nullopt;
@@ -104,7 +113,7 @@ namespace Honey {
         }
 
         if (!chosen) {
-            HN_CORE_FATAL("AssetPaths: no asset root found. Tried:{}", failures);
+            HN_CORE_FATAL("[AssetPaths] No asset root found, tried:{}", failures);
             return false;
         }
 
@@ -134,6 +143,14 @@ namespace Honey {
         s_data.dotnet_root = fs::path(HN_DOTNET_RUNTIME_ROOT).lexically_normal();
 #endif
 
+        // Pick one of two possible manifest locations
+        if (auto cli = find_cli_manifest_arg(argc, argv))
+            s_data.manifest_dir = normalized(*cli);
+        else if (!s_data.asset_root.empty())
+            s_data.manifest_dir = normalized(s_data.asset_root.parent_path() / "game.yaml");
+        else
+            HN_CORE_FATAL("[AssetPaths] Failure determining a valid location for the game manifest.");
+
         s_data.initialized = true;
 
         HN_CORE_INFO("AssetPaths: asset root = {} (rule: {})", s_data.asset_root.string(), chosen->rule);
@@ -146,7 +163,9 @@ namespace Honey {
     const fs::path& AssetPaths::config_root()                { return checked(s_data.config_root); }
     const fs::path& AssetPaths::cache_dir()                  { return checked(s_data.cache_dir); }
     const fs::path& AssetPaths::user_data_dir()              { return checked(s_data.user_data_dir); }
+    const fs::path& AssetPaths::manifest_path()              { return checked(s_data.manifest_dir); }
     const fs::path& AssetPaths::executable_dir()             { return checked(s_data.executable_dir); }
+
     const fs::path& AssetPaths::engine_assembly_path()       { return checked(s_data.engine_assembly); }
     const fs::path& AssetPaths::user_scripts_assembly_path() { return checked(s_data.user_scripts_assembly); }
     const fs::path& AssetPaths::dotnet_root()                { return checked(s_data.dotnet_root); }

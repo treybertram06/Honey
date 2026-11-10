@@ -51,6 +51,7 @@ add_library(engine STATIC
         src/Honey/core/engine.h
         src/Honey/core/asset_paths.h
         src/Honey/core/asset_paths.cpp
+        src/Honey/core/game_manifest.cpp
         src/Honey/core/base.h
         src/Honey/core/entry_point.h
         src/Honey/core/log.h
@@ -285,6 +286,7 @@ add_library(engine STATIC
         src/Honey/renderer/renderer_3d/renderer_3d_lite.h
         src/Honey/renderer/present_pass.cpp
         src/Honey/renderer/present_pass.h
+        src/Honey/core/game_manifest.h
 )
 
 # Apply MSVC runtime to engine itself

@@ -294,7 +294,9 @@ namespace Honey {
                 s.window.pos_y = n.as<uint32_t>(s.window.pos_y);
 
             if (auto n = window_node["Fullscreen"])
-                s.window.fullscreen = n.as<bool>(s.window.fullscreen);
+                // Legacy bool: the editor persists maximized-or-not. Real fullscreen is manifest-only.
+                s.window.mode = n.as<bool>(s.window.mode == WindowMode::maximized)
+                    ? WindowMode::maximized : WindowMode::windowed;
 
         }
 
@@ -373,7 +375,7 @@ namespace Honey {
         out << YAML::Key << "Height" << YAML::Value << s.window.height;
         out << YAML::Key << "PosX" << YAML::Value << s.window.pos_x;
         out << YAML::Key << "PosY" << YAML::Value << s.window.pos_y;
-        out << YAML::Key << "Fullscreen" << YAML::Value << s.window.fullscreen;
+        out << YAML::Key << "Fullscreen" << YAML::Value << (s.window.mode == WindowMode::maximized);
 
         out << YAML::EndMap; // Window
 

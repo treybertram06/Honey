@@ -26,6 +26,7 @@ namespace Honey {
         static const std::filesystem::path& config_root();
         static const std::filesystem::path& cache_dir();      // writable: shader + pipeline caches
         static const std::filesystem::path& user_data_dir();  // writable: settings (4.2 retargets this)
+        static const std::filesystem::path& manifest_path();
         static std::filesystem::path settings_path();           // user_data_dir()/settings.yaml
         static const std::filesystem::path& executable_dir();
 

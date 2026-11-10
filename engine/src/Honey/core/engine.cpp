@@ -6,6 +6,7 @@
 #include "Honey/renderer/renderer.h"
 #include "../scripting/csharp_script_engine.h"
 #include "settings.h"
+#include "game_manifest.h"
 #include "task_system.h"
 
 #include <GLFW/glfw3.h>
@@ -40,6 +41,8 @@ namespace Honey {
         PhysicsEngine3D::init();
 
         Settings::load_from_file(AssetPaths::settings_path());
+        // Player only (the editor never loads a manifest). Must precede window creation below.
+        GameManifest::apply_to(Settings::get());
 
         auto& renderer_settings = Settings::get().renderer; // I'm not sure if this is the best place to do this, but I'm also not sure where else I could...
         RendererAPI::set_api(renderer_settings.api);
@@ -56,7 +59,7 @@ namespace Honey {
 
         auto& window_settings = Settings::get().window;
         auto props = WindowProps(window_settings.title, window_settings.width, window_settings.height,
-            window_settings.pos_x, window_settings.pos_y, window_settings.fullscreen);
+            window_settings.pos_x, window_settings.pos_y, window_settings.mode);
         m_window = Window::create(props);
 
 
@@ -84,15 +87,17 @@ namespace Honey {
         int w, h, x, y;
         glfwGetWindowSize(native, &w, &h);
         glfwGetWindowPos(native, &x, &y);
-        int fullscreen = glfwGetWindowAttrib(native, GLFW_MAXIMIZED);
+        int maximized = glfwGetWindowAttrib(native, GLFW_MAXIMIZED);
 
         auto& window_settings = Settings::get().window;
-        window_settings.fullscreen = fullscreen == GLFW_TRUE;
-        if (!window_settings.fullscreen) {
-            window_settings.width = w;
-            window_settings.height = h;
-            window_settings.pos_x = x;
-            window_settings.pos_y = y;
+        if (m_persist_settings) {
+            window_settings.mode = maximized == GLFW_TRUE ? WindowMode::maximized : WindowMode::windowed;
+            if (window_settings.mode == WindowMode::windowed) {
+                window_settings.width = w;
+                window_settings.height = h;
+                window_settings.pos_x = x;
+                window_settings.pos_y = y;
+            }
         }
 
         if (RendererAPI::get_api() == RendererAPI::API::vulkan) {
@@ -111,8 +116,9 @@ namespace Honey {
 
         m_window.reset();
 
-        // Should be gated on editor / runtime target
-        Settings::save_to_file(AssetPaths::settings_path());
+        // The player runs with manifest overrides and must not write them into the editor's settings.
+        if (m_persist_settings)
+            Settings::save_to_file(AssetPaths::settings_path());
 
         if (m_vulkan_backend) {
             m_vulkan_backend->shutdown();

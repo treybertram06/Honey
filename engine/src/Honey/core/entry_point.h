@@ -18,6 +18,10 @@ int main(int argc, char** argv) {
 #endif
     int exit_code = 0;
     auto app = Honey::create_application();
+    if (!app) { // create_application already logged why
+        HN_PROFILE_END_SESSION();
+        return 1;
+    }
     HN_PROFILE_END_SESSION();
     HN_PROFILE_BEGIN_SESSION("Runtime", "HoneyProfiler-Runtime.json");
     exit_code = app->run();

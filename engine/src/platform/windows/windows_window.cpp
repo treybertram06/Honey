@@ -91,8 +91,28 @@ namespace Honey {
             {
                 glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 
-                m_window = glfwCreateWindow((int)props.width, (int)props.height, m_data.title.c_str(), nullptr, nullptr);
+                // Fullscreen = borderless at the monitor's current video mode (no mode switch).
+                GLFWmonitor* monitor = nullptr;
+                int create_width = (int)props.width, create_height = (int)props.height;
+                if (props.mode == WindowMode::fullscreen) {
+                    monitor = glfwGetPrimaryMonitor();
+                    if (const GLFWvidmode* vm = monitor ? glfwGetVideoMode(monitor) : nullptr) {
+                        glfwWindowHint(GLFW_RED_BITS, vm->redBits);
+                        glfwWindowHint(GLFW_GREEN_BITS, vm->greenBits);
+                        glfwWindowHint(GLFW_BLUE_BITS, vm->blueBits);
+                        glfwWindowHint(GLFW_REFRESH_RATE, vm->refreshRate);
+                        create_width = vm->width;
+                        create_height = vm->height;
+                    } else {
+                        monitor = nullptr;
+                        HN_CORE_WARN("Fullscreen requested but no primary monitor/video mode found; using a window");
+                    }
+                }
+
+                m_window = glfwCreateWindow(create_width, create_height, m_data.title.c_str(), monitor, nullptr);
                 HN_CORE_ASSERT(m_window, "GLFW window creation failed!");
+                m_data.width = (uint32_t)create_width;   // props size is stale for fullscreen
+                m_data.height = (uint32_t)create_height;
 
                 auto& backend = Application::get().get_vulkan_backend();
                 m_context = new VulkanContext(m_window, &backend);
