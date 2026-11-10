@@ -41,6 +41,8 @@ public unsafe struct NativeFunctionTable {
     public delegate* unmanaged<void>                         Application_Quit;
     public delegate* unmanaged<float>                        Time_GetDeltaTime;
     public delegate* unmanaged<float>                        Time_GetElapsed;
+
+    public delegate* unmanaged<byte*, void>                  Scene_Load;
 }
 
 public static unsafe class InternalCalls {

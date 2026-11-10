@@ -68,6 +68,25 @@ internal static unsafe class NativeBindings {
         }
     }
 
+    internal static void Scene_Load(string portable_path) {
+        int maxBytes = Encoding.UTF8.GetMaxByteCount(portable_path.Length) + 1;
+        if (maxBytes <= 512) {
+            byte* buf = stackalloc byte[512];
+            int written = Encoding.UTF8.GetBytes(portable_path, new Span<byte>(buf, 511));
+            buf[written] = 0;
+            InternalCalls.s_table.Scene_Load(buf);
+        } else {
+            byte[] bytes = Encoding.UTF8.GetBytes(portable_path);
+            fixed (byte* p = bytes) {
+                byte* buf = (byte*)Marshal.AllocHGlobal(bytes.Length + 1);
+                Buffer.MemoryCopy(p, buf, bytes.Length + 1, bytes.Length);
+                buf[bytes.Length] = 0;
+                InternalCalls.s_table.Scene_Load(buf);
+                Marshal.FreeHGlobal((nint)buf);
+            }
+        }
+    }
+
     // --- Physics ---
 
     internal static void Rigidbody2D_ApplyLinearImpulse(ulong id, float x, float y, float wake) {

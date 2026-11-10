@@ -12,6 +12,7 @@
 #include "csharp_script_engine.h"
 #include "Honey/core/engine.h"
 #include "Honey/physics/physics_engine_3d.h"
+#include "Honey/scene/scene_manager.h"
 #include "Jolt/Physics/Body/BodyID.h"
 
 namespace Honey {
@@ -57,6 +58,8 @@ namespace Honey {
         void    (*Application_Quit)                ();
         float   (*Time_GetDeltaTime)               ();
         float   (*Time_GetElapsed)                 ();
+
+        void    (*Scene_Load)                      (const char*);
 
     };
 
@@ -233,6 +236,8 @@ namespace Honey {
     static float glue_time_get_delta_time() { return Application::get_delta_time(); }
     static float glue_time_get_elapsed() { return Application::get_elapsed_time(); }
 
+    static void glue_scene_load(const char* portable_path) { SceneManager::request_load(portable_path); }
+
     // -----------------------------------------------------------------------
     // Entity lifecycle glue
     // -----------------------------------------------------------------------
@@ -308,6 +313,8 @@ namespace Honey {
             glue_application_quit,
             glue_time_get_delta_time,
             glue_time_get_elapsed,
+
+            glue_scene_load,
         };
 
         using BootstrapFn = void(*)(NativeFunctionTable*);

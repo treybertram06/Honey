@@ -13,4 +13,9 @@ public static class Scene {
         ulong id = NativeBindings.Scene_FindEntityByName(name);
         return new Entity(id);
     }
+
+    // Requests a scene to be loaded at the end of the frame
+    public static void Load(string path) {
+        NativeBindings.Scene_Load(path);
+    }
 }
