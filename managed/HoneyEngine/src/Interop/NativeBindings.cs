@@ -45,6 +45,32 @@ internal static unsafe class NativeBindings {
         InternalCalls.s_table.Entity_SetScale(id, xyz);
     }
 
+    internal static bool Entity_IsValid(ulong id) => InternalCalls.s_table.Entity_IsValid(id) != 0;
+
+    // Native returns the full UTF-8 length; if it doesn't fit the stack buffer, retry with a heap buffer.
+    internal static string Entity_GetName(ulong id) {
+        byte* stack = stackalloc byte[256];
+        int len = InternalCalls.s_table.Entity_GetName(id, stack, 256);
+        if (len <= 0) return string.Empty;
+        if (len < 256) return Encoding.UTF8.GetString(stack, len);
+
+        byte[] heap = new byte[len + 1];
+        fixed (byte* p = heap) {
+            InternalCalls.s_table.Entity_GetName(id, p, heap.Length);
+        }
+        return Encoding.UTF8.GetString(heap, 0, len);
+    }
+
+    internal static void Entity_SetName(ulong id, string name) {
+        byte[] bytes = Encoding.UTF8.GetBytes(name ?? string.Empty);
+        // Copy into a NUL-terminated native buffer (a pinned empty array would give a null pointer).
+        byte* buf = (byte*)Marshal.AllocHGlobal(bytes.Length + 1);
+        for (int i = 0; i < bytes.Length; i++) buf[i] = bytes[i];
+        buf[bytes.Length] = 0;
+        InternalCalls.s_table.Entity_SetName(id, buf);
+        Marshal.FreeHGlobal((nint)buf);
+    }
+
     // --- Scene ---
     internal static ulong Scene_InstantiatePrefab(string path) {
         // Encode the path as a null-terminated UTF-8 byte buffer.

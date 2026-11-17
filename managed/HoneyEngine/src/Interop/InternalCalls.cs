@@ -12,6 +12,9 @@ public unsafe struct NativeFunctionTable {
     public delegate* unmanaged<ulong, float*, void>          Entity_SetRotation;
     public delegate* unmanaged<ulong, float*, void>          Entity_GetScale;
     public delegate* unmanaged<ulong, float*, void>          Entity_SetScale;
+    public delegate* unmanaged<ulong, byte>                  Entity_IsValid;
+    public delegate* unmanaged<ulong, byte*, int, int>       Entity_GetName;
+    public delegate* unmanaged<ulong, byte*, void>           Entity_SetName;
 
     public delegate* unmanaged<byte*, ulong>                 Scene_InstantiatePrefab;
 

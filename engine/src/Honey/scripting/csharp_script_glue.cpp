@@ -8,6 +8,7 @@
 #include <box2d/box2d.h>
 #include <cstdint>
 #include <cstring>
+#include <algorithm>
 
 #include "csharp_script_engine.h"
 #include "Honey/core/engine.h"
@@ -29,6 +30,9 @@ namespace Honey {
         void    (*Entity_SetRotation)              (uint64_t, float*);
         void    (*Entity_GetScale)                 (uint64_t, float*);
         void    (*Entity_SetScale)                 (uint64_t, float*);
+        uint8_t (*Entity_IsValid)                  (uint64_t);
+        int     (*Entity_GetName)                  (uint64_t, char*, int);
+        void    (*Entity_SetName)                  (uint64_t, const char*);
 
         uint64_t (*Scene_InstantiatePrefab)         (const char*);
 
@@ -60,7 +64,6 @@ namespace Honey {
         float   (*Time_GetElapsed)                 ();
 
         void    (*Scene_Load)                      (const char*);
-
     };
 
     // -----------------------------------------------------------------------
@@ -81,6 +84,7 @@ namespace Honey {
         Scene* scene = get_scene();
         HN_CORE_ASSERT(scene, "CSharpScriptGlue: no active scene");
         Entity e = scene->get_entity(UUID{id});
+        if (!e.is_valid()) { out[0] = out[1] = out[2] = 0.0f; return; }
         auto& tc = e.get_component<TransformComponent>();
         out[0] = tc.translation.x;
         out[1] = tc.translation.y;
@@ -91,6 +95,7 @@ namespace Honey {
         Scene* scene = get_scene();
         HN_CORE_ASSERT(scene, "CSharpScriptGlue: no active scene");
         Entity e = scene->get_entity(UUID{id});
+        if (!e.is_valid()) return;
         auto& tc = e.get_component<TransformComponent>();
         tc.translation = { v[0], v[1], v[2] };
         tc.dirty = true;
@@ -100,6 +105,7 @@ namespace Honey {
         Scene* scene = get_scene();
         HN_CORE_ASSERT(scene, "CSharpScriptGlue: no active scene");
         Entity e = scene->get_entity(UUID{id});
+        if (!e.is_valid()) { out[0] = out[1] = out[2] = 0.0f; return; }
         auto& tc = e.get_component<TransformComponent>();
         out[0] = tc.rotation.x;
         out[1] = tc.rotation.y;
@@ -110,6 +116,7 @@ namespace Honey {
         Scene* scene = get_scene();
         HN_CORE_ASSERT(scene, "CSharpScriptGlue: no active scene");
         Entity e = scene->get_entity(UUID{id});
+        if (!e.is_valid()) return;
         auto& tc = e.get_component<TransformComponent>();
         tc.rotation = { v[0], v[1], v[2] };
         tc.dirty = true;
@@ -119,6 +126,7 @@ namespace Honey {
         Scene* scene = get_scene();
         HN_CORE_ASSERT(scene, "CSharpScriptGlue: no active scene");
         Entity e = scene->get_entity(UUID{id});
+        if (!e.is_valid()) { out[0] = out[1] = out[2] = 0.0f; return; }
         auto& tc = e.get_component<TransformComponent>();
         out[0] = tc.scale.x;
         out[1] = tc.scale.y;
@@ -129,6 +137,7 @@ namespace Honey {
         Scene* scene = get_scene();
         HN_CORE_ASSERT(scene, "CSharpScriptGlue: no active scene");
         Entity e = scene->get_entity(UUID{id});
+        if (!e.is_valid()) return;
         auto& tc = e.get_component<TransformComponent>();
         tc.scale = { v[0], v[1], v[2] };
         tc.dirty = true;
@@ -249,6 +258,38 @@ namespace Honey {
             scene->destroy_entity(e);
     }
 
+    // Tolerates a null scene (scripts can call during teardown) — no assert.
+    static uint8_t glue_entity_is_valid(uint64_t id) {
+        if (id == 0) return 0;
+        Scene* scene = get_scene();
+        if (!scene) return 0;
+        return scene->get_entity(UUID{id}).is_valid() ? 1 : 0;
+    }
+
+    // Returns the full UTF-8 length of the name (excluding NUL), or 0 if the entity is invalid.
+    // Writes at most cap-1 bytes plus a NUL, so the caller can retry with a larger buffer.
+    static int glue_entity_get_name(uint64_t id, char* buf, int cap) {
+        Scene* scene = get_scene();
+        if (!scene || id == 0) { if (buf && cap > 0) buf[0] = 0; return 0; }
+        Entity e = scene->get_entity(UUID{id});
+        if (!e.is_valid() || !e.has_component<TagComponent>()) { if (buf && cap > 0) buf[0] = 0; return 0; }
+        const std::string& name = e.get_component<TagComponent>().tag;
+        if (buf && cap > 0) {
+            size_t n = std::min(name.size(), (size_t)(cap - 1));
+            memcpy(buf, name.data(), n);
+            buf[n] = 0;
+        }
+        return (int)name.size();
+    }
+
+    static void glue_entity_set_name(uint64_t id, const char* name) {
+        Scene* scene = get_scene();
+        if (!scene || id == 0 || !name) return;
+        Entity e = scene->get_entity(UUID{id});
+        if (!e.is_valid() || !e.has_component<TagComponent>()) return;
+        e.get_component<TagComponent>().tag = name;
+    }
+
     // -----------------------------------------------------------------------
     // Scene query glue
     // -----------------------------------------------------------------------
@@ -275,6 +316,9 @@ namespace Honey {
             glue_entity_set_rotation,
             glue_entity_get_scale,
             glue_entity_set_scale,
+            glue_entity_is_valid,
+            glue_entity_get_name,
+            glue_entity_set_name,
 
             // Scene
             glue_scene_instantiate_prefab,
