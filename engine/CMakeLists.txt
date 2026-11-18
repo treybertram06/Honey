@@ -52,6 +52,7 @@ add_library(engine STATIC
         src/Honey/core/asset_paths.h
         src/Honey/core/asset_paths.cpp
         src/Honey/core/game_manifest.cpp
+        src/Honey/core/project_template.cpp
         src/Honey/core/base.h
         src/Honey/core/entry_point.h
         src/Honey/core/log.h
@@ -287,6 +288,7 @@ add_library(engine STATIC
         src/Honey/renderer/present_pass.cpp
         src/Honey/renderer/present_pass.h
         src/Honey/core/game_manifest.h
+        src/Honey/core/project_template.h
         src/Honey/scene/scene_manager.h
         src/Honey/scene/scene_manager.cpp
         src/Honey/ui/game_ui.h

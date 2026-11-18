@@ -242,6 +242,10 @@ namespace Honey {
         // UserScripts.csproj lives in the project's scripts dir (dev tooling; shipped builds load a prebuilt
         // dll). The engine dll is passed in so the csproj needs no path into the engine checkout.
         const fs::path project_dir = AssetPaths::scripts_dir();
+        if (project_dir.empty() || !fs::exists(project_dir / "UserScripts.csproj")) {
+            HN_CORE_ERROR("[CSharpScriptEngine] no Scripts/UserScripts.csproj to build (project dir: '{}')", project_dir.string());
+            return false;
+        }
         std::string cmd = "dotnet build \"" + project_dir.string() + "\" -c Debug --nologo -v q -p:HoneyEngineDll=\""
                         + AssetPaths::engine_assembly_path().string() + "\" 2>&1";
 
@@ -257,6 +261,47 @@ namespace Honey {
         return true;
     }
 
+    void CSharpScriptEngine::on_project_changed() {
+        if (!s_data || !s_data->initialized) return;
+        // The dll path follows the open project; drop whatever the previous project had loaded.
+        s_data->user_scripts_dll = AssetPaths::user_scripts_assembly_path().string();
+        reload_scripts();
+    }
+
+    bool CSharpScriptEngine::scripts_are_stale() {
+        namespace fs = std::filesystem;
+        const fs::path scripts_dir = AssetPaths::scripts_dir();
+        if (scripts_dir.empty() || !fs::exists(scripts_dir / "UserScripts.csproj"))
+            return false; // nothing to build
+
+        std::error_code ec;
+        const fs::path dll = AssetPaths::user_scripts_assembly_path();
+        if (!fs::exists(dll, ec))
+            return true;
+        const auto dll_time = fs::last_write_time(dll, ec);
+
+        // The engine's managed API changing is what causes MissingMethodException in old user dlls.
+        const fs::path engine_dll = AssetPaths::engine_assembly_path();
+        if (fs::exists(engine_dll, ec) && fs::last_write_time(engine_dll, ec) > dll_time)
+            return true;
+
+        // Any source or project file newer than the dll. bin/ and obj/ are skipped: build output is
+        // always newer than the dll it produced.
+        for (fs::recursive_directory_iterator it(scripts_dir, ec), end; !ec && it != end; it.increment(ec)) {
+            const fs::path& p = it->path();
+            if (it->is_directory(ec)) {
+                const std::string dir = p.filename().string();
+                if (dir == "bin" || dir == "obj")
+                    it.disable_recursion_pending();
+                continue;
+            }
+            const std::string ext = p.extension().string();
+            if ((ext == ".cs" || ext == ".csproj") && fs::last_write_time(p, ec) > dll_time)
+                return true;
+        }
+        return false;
+    }
+
     void CSharpScriptEngine::reload_scripts() {
         if (!s_data || !s_data->initialized) return;
 
@@ -270,10 +315,10 @@ namespace Honey {
         s_data->unload_assembly();
         s_data->assembly_loaded = false;
 
-        if (std::filesystem::exists(s_data->user_scripts_dll)) {
+        if (!s_data->user_scripts_dll.empty() && std::filesystem::exists(s_data->user_scripts_dll)) {
             s_data->register_assembly(s_data->user_scripts_dll.c_str());
             s_data->assembly_loaded = true;
-        } else {
+        } else if (!s_data->user_scripts_dll.empty()) {
             HN_CORE_WARN("[CSharpScriptEngine] reload: DLL not found at '{}'", s_data->user_scripts_dll);
         }
     }

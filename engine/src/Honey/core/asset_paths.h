@@ -33,8 +33,19 @@ namespace Honey {
     //   4. <HN_DEV_SOURCE_ROOT>/engine_content (dev builds only)
     class AssetPaths {
     public:
-        // Returns false if no asset root could be found; the caller should exit.
-        static bool init(int argc, char** argv);
+        // player: a project / asset root is mandatory (init fails without one). editor: starting with no
+        // project is fine (welcome state); a project is opened later with open_project().
+        enum class Mode { player, editor };
+
+        // Returns false if the player could not find a project/asset root; the caller should exit.
+        static bool init(int argc, char** argv, Mode mode = Mode::player);
+
+        // Editor: switch the active project at runtime. Main thread only, and the caller must first stop
+        // play mode and drop anything holding project paths (scene, pending async loads). `project` is a
+        // folder or a .honeyproj. On failure nothing changes and `error` says why.
+        static bool open_project(const std::filesystem::path& project, std::string& error);
+        static void close_project();   // back to "no project open"
+        static bool has_asset_root();  // false = nothing to resolve project assets against
 
         static const std::filesystem::path& asset_root();
         static const std::filesystem::path& engine_content_root();

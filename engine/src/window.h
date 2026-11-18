@@ -50,6 +50,8 @@ namespace Honey {
 
         virtual void request_close() = 0;
 
+        virtual void set_title(const std::string& title) = 0;
+
         virtual void set_cursor_captured(bool captured) = 0;
         virtual bool is_cursor_captured() const = 0;
 

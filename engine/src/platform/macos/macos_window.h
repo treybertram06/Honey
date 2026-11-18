@@ -31,6 +31,7 @@ namespace Honey {
         inline virtual GraphicsContext* get_context() const override { return m_context; }
 
         inline virtual void request_close() override;
+        void set_title(const std::string& title) override { m_data.title = title; glfwSetWindowTitle(m_window, title.c_str()); }
         void set_cursor_captured(bool captured) override;
         bool is_cursor_captured() const override;
 

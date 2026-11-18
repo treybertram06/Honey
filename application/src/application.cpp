@@ -23,6 +23,8 @@ public:
 
 };
 
+Honey::AssetPaths::Mode Honey::asset_paths_mode() { return Honey::AssetPaths::Mode::player; }
+
 Honey::Application* Honey::create_application() {
 
     return new Sandbox();

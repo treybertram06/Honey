@@ -30,6 +30,14 @@ namespace Honey {
         // Unloads and reloads UserScripts.dll without restarting the engine.
         static void reload_scripts();
 
+        // Editor: the open project changed. Re-targets UserScripts.dll at the new project and drops the
+        // old project's loaded scripts (stop play mode first).
+        static void on_project_changed();
+
+        // True if the project has a script project whose UserScripts.dll is missing or older than its
+        // sources or than HoneyEngine.dll. False when there is nothing to build.
+        static bool scripts_are_stale();
+
         // Runs `dotnet build` on the user script project, then reloads. Returns true on success.
         static bool build_and_reload();
 

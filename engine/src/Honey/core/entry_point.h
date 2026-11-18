@@ -2,11 +2,16 @@
 #include "Honey.h"
 #include "Honey/core/asset_paths.h"
 
+namespace Honey {
+    // Defined by each application next to create_application(): whether it may start with no project.
+    AssetPaths::Mode asset_paths_mode();
+}
+
 int main(int argc, char** argv) {
     Honey::Log::init();
 
     // Must run before anything touches assets/config, including Application's constructor.
-    if (!Honey::AssetPaths::init(argc, argv))
+    if (!Honey::AssetPaths::init(argc, argv, Honey::asset_paths_mode()))
         return 1;
 
     HN_PROFILE_BEGIN_SESSION("Startup", "HoneyProfiler-Startup.json");
