@@ -62,55 +62,46 @@ internal static unsafe class NativeBindings {
     }
 
     internal static void Entity_SetName(ulong id, string name) {
-        byte[] bytes = Encoding.UTF8.GetBytes(name ?? string.Empty);
-        // Copy into a NUL-terminated native buffer (a pinned empty array would give a null pointer).
-        byte* buf = (byte*)Marshal.AllocHGlobal(bytes.Length + 1);
-        for (int i = 0; i < bytes.Length; i++) buf[i] = bytes[i];
-        buf[bytes.Length] = 0;
-        InternalCalls.s_table.Entity_SetName(id, buf);
-        Marshal.FreeHGlobal((nint)buf);
+        byte* stack = stackalloc byte[k_utf8_stack_size];
+        byte* buf = EncodeUtf8(name, stack, k_utf8_stack_size);
+        try { InternalCalls.s_table.Entity_SetName(id, buf); }
+        finally { FreeUtf8(buf, stack); }
+    }
+
+    // --- UTF-8 string marshalling ---
+    // stackalloc memory dies with the method that allocated it, so each wrapper owns its stack buffer
+    // and passes it in; the helper only decides whether it is big enough. Pair every EncodeUtf8 with
+    // FreeUtf8 (in a finally). The returned pointer is NUL-terminated and valid only for the native call.
+    private const int k_utf8_stack_size = 512;
+
+    private static byte* EncodeUtf8(string s, byte* stack, int stack_size) {
+        s ??= string.Empty;
+        int count = Encoding.UTF8.GetByteCount(s);
+        byte* dst = stack;
+        if (count + 1 > stack_size)
+            dst = (byte*)Marshal.AllocHGlobal(count + 1);   // rare: oversized string
+        Encoding.UTF8.GetBytes(s, new Span<byte>(dst, count));
+        dst[count] = 0;
+        return dst;
+    }
+
+    private static void FreeUtf8(byte* buf, byte* stack) {
+        if (buf != stack) Marshal.FreeHGlobal((nint)buf);
     }
 
     // --- Scene ---
     internal static ulong Scene_InstantiatePrefab(string path) {
-        // Encode the path as a null-terminated UTF-8 byte buffer.
-        int maxBytes = Encoding.UTF8.GetMaxByteCount(path.Length) + 1;
-        if (maxBytes <= 512) {
-            byte* buf = stackalloc byte[512];
-            int written = Encoding.UTF8.GetBytes(path, new Span<byte>(buf, 511));
-            buf[written] = 0;
-            return InternalCalls.s_table.Scene_InstantiatePrefab(buf);
-        } else {
-            // Fallback for unusually long paths
-            byte[] bytes = Encoding.UTF8.GetBytes(path);
-            fixed (byte* p = bytes) {
-                byte* buf = (byte*)Marshal.AllocHGlobal(bytes.Length + 1);
-                Buffer.MemoryCopy(p, buf, bytes.Length + 1, bytes.Length);
-                buf[bytes.Length] = 0;
-                ulong result = InternalCalls.s_table.Scene_InstantiatePrefab(buf);
-                Marshal.FreeHGlobal((nint)buf);
-                return result;
-            }
-        }
+        byte* stack = stackalloc byte[k_utf8_stack_size];
+        byte* buf = EncodeUtf8(path, stack, k_utf8_stack_size);
+        try { return InternalCalls.s_table.Scene_InstantiatePrefab(buf); }
+        finally { FreeUtf8(buf, stack); }
     }
 
     internal static void Scene_Load(string portable_path) {
-        int maxBytes = Encoding.UTF8.GetMaxByteCount(portable_path.Length) + 1;
-        if (maxBytes <= 512) {
-            byte* buf = stackalloc byte[512];
-            int written = Encoding.UTF8.GetBytes(portable_path, new Span<byte>(buf, 511));
-            buf[written] = 0;
-            InternalCalls.s_table.Scene_Load(buf);
-        } else {
-            byte[] bytes = Encoding.UTF8.GetBytes(portable_path);
-            fixed (byte* p = bytes) {
-                byte* buf = (byte*)Marshal.AllocHGlobal(bytes.Length + 1);
-                Buffer.MemoryCopy(p, buf, bytes.Length + 1, bytes.Length);
-                buf[bytes.Length] = 0;
-                InternalCalls.s_table.Scene_Load(buf);
-                Marshal.FreeHGlobal((nint)buf);
-            }
-        }
+        byte* stack = stackalloc byte[k_utf8_stack_size];
+        byte* buf = EncodeUtf8(portable_path, stack, k_utf8_stack_size);
+        try { InternalCalls.s_table.Scene_Load(buf); }
+        finally { FreeUtf8(buf, stack); }
     }
 
     // --- Physics ---
@@ -150,26 +141,11 @@ internal static unsafe class NativeBindings {
     internal static void Log_Error(string msg) => LogNative(InternalCalls.s_table.Log_Error, msg);
 
     private static void LogNative(delegate* unmanaged<byte*, void> fn, string msg) {
-        // Encode to a stack buffer. 1024 bytes covers almost all log messages.
-        // For longer strings we fall back to a heap allocation via Marshal.
-        int maxBytes = Encoding.UTF8.GetMaxByteCount(msg.Length) + 1; // +1 for null terminator
-        if (maxBytes <= 1024) {
-            byte* buf = stackalloc byte[1024];
-            int written = Encoding.UTF8.GetBytes(msg, new Span<byte>(buf, 1023));
-            buf[written] = 0; // null terminate
-            fn(buf);
-        } else {
-            // Fallback: heap alloc for unusually long strings
-            byte[] bytes = Encoding.UTF8.GetBytes(msg);
-            fixed (byte* p = bytes) {
-                // Copy into a null-terminated buffer
-                byte* buf = (byte*)Marshal.AllocHGlobal(bytes.Length + 1);
-                Buffer.MemoryCopy(p, buf, bytes.Length + 1, bytes.Length);
-                buf[bytes.Length] = 0;
-                fn(buf);
-                Marshal.FreeHGlobal((nint)buf);
-            }
-        }
+        // 1024 bytes covers almost all log messages; longer ones fall back to the heap inside EncodeUtf8.
+        byte* stack = stackalloc byte[1024];
+        byte* buf = EncodeUtf8(msg, stack, 1024);
+        try { fn(buf); }
+        finally { FreeUtf8(buf, stack); }
     }
 
     // --- Entity lifecycle ---
@@ -181,23 +157,10 @@ internal static unsafe class NativeBindings {
     // --- Scene queries ---
 
     internal static ulong Scene_FindEntityByName(string name) {
-        int maxBytes = Encoding.UTF8.GetMaxByteCount(name.Length) + 1;
-        if (maxBytes <= 512) {
-            byte* buf = stackalloc byte[512];
-            int written = Encoding.UTF8.GetBytes(name, new Span<byte>(buf, 511));
-            buf[written] = 0;
-            return InternalCalls.s_table.Scene_FindEntityByName(buf);
-        } else {
-            byte[] bytes = Encoding.UTF8.GetBytes(name);
-            fixed (byte* p = bytes) {
-                byte* buf = (byte*)Marshal.AllocHGlobal(bytes.Length + 1);
-                Buffer.MemoryCopy(p, buf, bytes.Length + 1, bytes.Length);
-                buf[bytes.Length] = 0;
-                ulong result = InternalCalls.s_table.Scene_FindEntityByName(buf);
-                Marshal.FreeHGlobal((nint)buf);
-                return result;
-            }
-        }
+        byte* stack = stackalloc byte[k_utf8_stack_size];
+        byte* buf = EncodeUtf8(name, stack, k_utf8_stack_size);
+        try { return InternalCalls.s_table.Scene_FindEntityByName(buf); }
+        finally { FreeUtf8(buf, stack); }
     }
 
     // --- Input ---
@@ -229,4 +192,35 @@ internal static unsafe class NativeBindings {
     internal static void Application_Quit() => InternalCalls.s_table.Application_Quit();
     internal static float Time_GetDeltaTime() => InternalCalls.s_table.Time_GetDeltaTime();
     internal static float Time_GetElapsed() => InternalCalls.s_table.Time_GetElapsed();
+
+    // --- UI ---
+    internal static void UI_BeginPanel(string id, int anchor, float offset_x, float offset_y,
+                                       float size_w, float size_h, bool background) {
+        byte* stack = stackalloc byte[k_utf8_stack_size];
+        byte* buf = EncodeUtf8(id, stack, k_utf8_stack_size);
+        try {
+            InternalCalls.s_table.UI_BeginPanel(buf, anchor, offset_x, offset_y, size_w, size_h,
+                                                (byte)(background ? 1 : 0));
+        }
+        finally { FreeUtf8(buf, stack); }
+    }
+
+    internal static void UI_EndPanel() => InternalCalls.s_table.UI_EndPanel();
+
+    internal static void UI_Label(string text, float size, float r, float g, float b, float a) {
+        byte* stack = stackalloc byte[k_utf8_stack_size];
+        byte* buf = EncodeUtf8(text, stack, k_utf8_stack_size);
+        try { InternalCalls.s_table.UI_Label(buf, size, r, g, b, a); }
+        finally { FreeUtf8(buf, stack); }
+    }
+
+    internal static bool UI_Button(string text, float width) {
+        byte* stack = stackalloc byte[k_utf8_stack_size];
+        byte* buf = EncodeUtf8(text, stack, k_utf8_stack_size);
+        try { return InternalCalls.s_table.UI_Button(buf, width) != 0; }
+        finally { FreeUtf8(buf, stack); }
+    }
+
+    internal static void UI_Spacing(float h) => InternalCalls.s_table.UI_Spacing(h);
+    internal static bool UI_WantsMouse() => InternalCalls.s_table.UI_WantsMouse() != 0;
 }

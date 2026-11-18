@@ -14,6 +14,7 @@
 #include "Honey/core/engine.h"
 #include "Honey/physics/physics_engine_3d.h"
 #include "Honey/scene/scene_manager.h"
+#include "Honey/ui/game_ui.h"
 #include "Jolt/Physics/Body/BodyID.h"
 
 namespace Honey {
@@ -64,6 +65,13 @@ namespace Honey {
         float   (*Time_GetElapsed)                 ();
 
         void    (*Scene_Load)                      (const char*);
+
+        void    (*UI_BeginPanel)                   (const char*, uint32_t, float, float, float, float, uint8_t);
+        void    (*UI_EndPanel)                     ();
+        void    (*UI_Label)                        (const char*, float, float, float, float, float);
+        uint8_t (*UI_Button)                       (const char*, float);
+        void    (*UI_Spacing)                      (float);
+        uint8_t (*UI_WantsMouse)                   ();
     };
 
     // -----------------------------------------------------------------------
@@ -291,6 +299,40 @@ namespace Honey {
     }
 
     // -----------------------------------------------------------------------
+    // UI glue
+    // -----------------------------------------------------------------------
+    static void glue_ui_begin_panel(const char* id, uint32_t anchor,
+        float offset_x, float offset_y, float size_w, float size_h, uint8_t background) {
+        glm::vec2 offset(offset_x, offset_y);
+        glm::vec2 size(size_w, size_h);
+        GameUI::begin_panel(id, static_cast<GameUI::UIAnchor>(anchor), offset, size, background ? true : false);
+    }
+
+    static void glue_ui_end_panel() {
+        GameUI::end_panel();
+    }
+
+    static void glue_ui_label(const char* text, float size,
+        float color_r, float color_g, float color_b, float color_w) {
+        glm::vec4 color(color_r, color_g, color_b, color_w);
+        text = text ? text : ""; // Ensure text is not null
+        GameUI::label(text, size, color);
+    }
+
+    static uint8_t glue_ui_button(const char* text, float width) {
+        text = text ? text : ""; // Ensure text is not null
+        return GameUI::button(text, width) ? 1 : 0;
+    }
+
+    static void glue_ui_spacing(float h) {
+        GameUI::spacing(h);
+    }
+
+    static uint8_t glue_ui_wants_mouse() {
+        return GameUI::wants_mouse() ? 1 : 0;
+    }
+
+    // -----------------------------------------------------------------------
     // Scene query glue
     // -----------------------------------------------------------------------
     static uint64_t glue_scene_find_entity_by_name(const char* name) {
@@ -359,6 +401,13 @@ namespace Honey {
             glue_time_get_elapsed,
 
             glue_scene_load,
+
+            glue_ui_begin_panel,
+            glue_ui_end_panel,
+            glue_ui_label,
+            glue_ui_button,
+            glue_ui_spacing,
+            glue_ui_wants_mouse,
         };
 
         using BootstrapFn = void(*)(NativeFunctionTable*);
