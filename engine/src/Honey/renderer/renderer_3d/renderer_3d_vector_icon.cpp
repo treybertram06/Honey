@@ -28,7 +28,7 @@ namespace Honey {
             if (it != s_res->vector_icon_pipelines.end())
                 return it->second;
 
-            auto spec = PipelineSpec::from_shader(AssetPaths::asset_root() / "shaders" / "Renderer3D_VectorIcon.glsl");
+            auto spec = PipelineSpec::from_shader(AssetPaths::engine_content_root() / "shaders" / "Renderer3D_VectorIcon.glsl");
             spec.depthStencil.depthTest  = false; // Should be occluded by geometry - handled in the fragment shader
             spec.depthStencil.depthWrite = false; // Should not occlude geometry
             spec.perColorAttachmentBlend.clear();

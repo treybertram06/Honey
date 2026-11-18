@@ -29,7 +29,7 @@ namespace Honey {
             if (it != s_res->threshold_pipelines.end())
                 return it->second;
 
-            auto spec = PipelineSpec::from_shader(AssetPaths::asset_root() / "shaders" / "postprocessing" / "Renderer3D_BloomThreshold.glsl");
+            auto spec = PipelineSpec::from_shader(AssetPaths::engine_content_root() / "shaders" / "postprocessing" / "Renderer3D_BloomThreshold.glsl");
             spec.depthStencil.depthTest  = false;
             spec.depthStencil.depthWrite = false;
             spec.perColorAttachmentBlend.clear();
@@ -45,7 +45,7 @@ namespace Honey {
             if (it != s_res->downsample_pipelines.end())
                 return it->second;
 
-            auto spec = PipelineSpec::from_shader(AssetPaths::asset_root() / "shaders" / "postprocessing" / "Renderer3D_BloomDownsample.glsl");
+            auto spec = PipelineSpec::from_shader(AssetPaths::engine_content_root() / "shaders" / "postprocessing" / "Renderer3D_BloomDownsample.glsl");
             spec.depthStencil.depthTest  = false;
             spec.depthStencil.depthWrite = false;
             spec.perColorAttachmentBlend.clear();
@@ -61,7 +61,7 @@ namespace Honey {
             if (it != s_res->upsample_pipelines.end())
                 return it->second;
 
-            auto spec = PipelineSpec::from_shader(AssetPaths::asset_root() / "shaders" / "postprocessing" / "Renderer3D_BloomUpsample.glsl");
+            auto spec = PipelineSpec::from_shader(AssetPaths::engine_content_root() / "shaders" / "postprocessing" / "Renderer3D_BloomUpsample.glsl");
             spec.depthStencil.depthTest  = false;
             spec.depthStencil.depthWrite = false;
             spec.perColorAttachmentBlend.clear();

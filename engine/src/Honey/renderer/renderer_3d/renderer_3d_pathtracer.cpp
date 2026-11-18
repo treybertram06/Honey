@@ -1457,7 +1457,7 @@ namespace Honey {
         static void build_wavefront_compute_pipelines() {
             HN_PROFILE_FUNCTION();
 
-            std::filesystem::path shaders = AssetPaths::asset_root() / "shaders" / "PathTrace";
+            std::filesystem::path shaders = AssetPaths::engine_content_root() / "shaders" / "PathTrace";
 
             // Logic.comp uses sets 1, 2, 3. Set 0 is an empty placeholder so that
             // the layout indices align: pSetLayouts[0]=empty, [1]=set1, [2]=set2_logic, [3]=set3.
@@ -1560,7 +1560,7 @@ namespace Honey {
             plci.pPushConstantRanges    = &pc_range;
             vkCreatePipelineLayout(device, &plci, nullptr, &s_res->svgf_pipeline_layout);
 
-            const std::filesystem::path& assets_dir = AssetPaths::asset_root();
+            const std::filesystem::path& assets_dir = AssetPaths::engine_content_root();
             auto spirv = Renderer::get_shader_cache()->get_or_compile_stage_spirv(assets_dir / "shaders" / "PathTrace_SVGF.comp");
             if (spirv.empty()) {
                 HN_CORE_ERROR("[PathTracer] SPIRV compilation failed for PathTrace_SVGF.comp");
@@ -1652,7 +1652,7 @@ namespace Honey {
                 return mod;
             };
 
-            const std::filesystem::path& assets_dir = AssetPaths::asset_root();
+            const std::filesystem::path& assets_dir = AssetPaths::engine_content_root();
             VkShaderModule extend_module = make_module(
                 (assets_dir / "shaders" / "PathTrace" / "PathTrace_Extend.rgen").string(), "PathTrace_Extend");
             VkShaderModule miss_module = make_module(
@@ -1837,7 +1837,7 @@ namespace Honey {
                 return mod;
             };
 
-            const std::filesystem::path& assets_dir = AssetPaths::asset_root();
+            const std::filesystem::path& assets_dir = AssetPaths::engine_content_root();
             VkShaderModule shadow_module = make_module(
                 (assets_dir / "shaders" / "PathTrace" / "PathTrace_Shadow.rgen").string(), "PathTrace_Shadow");
             VkShaderModule miss_module = make_module(

@@ -340,7 +340,7 @@ namespace Honey {
         }
 
         m_frame_graph = FrameGraphLoader::load_and_compile_from_file(
-            AssetPaths::asset_root() / "frame_graphs" / fg_file,
+            AssetPaths::engine_content_root() / "frame_graphs" / fg_file,
             diags,
             &options);
 

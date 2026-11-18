@@ -47,7 +47,7 @@ namespace Honey {
             if (it != s_res->ssao_pipelines.end())
                 return it->second;
 
-            auto spec = PipelineSpec::from_shader(AssetPaths::asset_root() / "shaders" / "Renderer3D_SSAO.glsl");
+            auto spec = PipelineSpec::from_shader(AssetPaths::engine_content_root() / "shaders" / "Renderer3D_SSAO.glsl");
             spec.depthStencil.depthTest  = false;
             spec.depthStencil.depthWrite = false;
             spec.perColorAttachmentBlend.clear();
@@ -63,7 +63,7 @@ namespace Honey {
             if (it != s_res->blur_pipelines.end())
                 return it->second;
 
-            auto spec = PipelineSpec::from_shader(AssetPaths::asset_root() / "shaders" / "Renderer3D_SSAOBlur.glsl");
+            auto spec = PipelineSpec::from_shader(AssetPaths::engine_content_root() / "shaders" / "Renderer3D_SSAOBlur.glsl");
             spec.depthStencil.depthTest  = false;
             spec.depthStencil.depthWrite = false;
             spec.perColorAttachmentBlend.clear();

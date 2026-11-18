@@ -26,7 +26,7 @@ namespace Honey {
             if (it != s_res->pipelines.end())
                 return it->second;
 
-            auto spec = PipelineSpec::from_shader(AssetPaths::asset_root() / "shaders" / "Present.glsl");
+            auto spec = PipelineSpec::from_shader(AssetPaths::engine_content_root() / "shaders" / "Present.glsl");
             spec.cullMode = CullMode::None;
             spec.wireframe = false;
             spec.depthStencil.depthTest = false;

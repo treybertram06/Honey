@@ -19,7 +19,7 @@ namespace Honey::Renderer3DInternal {
         if (it != g_renderer3d_data->vk_meshlet_pipelines.end())
             return it->second;
 
-        auto spec = PipelineSpec::from_shader(AssetPaths::asset_root() / "shaders" / "Renderer3D_Meshlet.glsl");
+        auto spec = PipelineSpec::from_shader(AssetPaths::engine_content_root() / "shaders" / "Renderer3D_Meshlet.glsl");
         if (!spec.perColorAttachmentBlend.empty())
             spec.perColorAttachmentBlend[0].enabled = blend;
         if (cull_none)
@@ -38,7 +38,7 @@ namespace Honey::Renderer3DInternal {
         if (it != g_renderer3d_data->vk_meshlet_gbuffer_pipelines.end())
             return it->second;
 
-        auto spec = PipelineSpec::from_shader(AssetPaths::asset_root() / "shaders" / "Renderer3D_MeshletDeferred.glsl");
+        auto spec = PipelineSpec::from_shader(AssetPaths::engine_content_root() / "shaders" / "Renderer3D_MeshletDeferred.glsl");
         spec.perColorAttachmentBlend.clear();
         spec.perColorAttachmentBlend.resize(4, AttachmentBlendState{}); // 4 is the number of attachments excluding depth: albedo, oct-normal + emissive, metallic/roughness/AO, entity id
         if (cull_none)

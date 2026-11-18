@@ -293,7 +293,7 @@ namespace Honey {
         ShaderCache::SpirvPaths spirv{};
         try {
             spirv = shader_cache->get_or_compile_spirv_paths(
-                AssetPaths::asset_root() / "shaders" / "ClothRender.glsl");
+                AssetPaths::engine_content_root() / "shaders" / "ClothRender.glsl");
         } catch (const std::exception& e) {
             HN_CORE_ERROR("VulkanClothRenderer: shader compile failed: {0}", e.what());
             return false;

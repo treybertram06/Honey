@@ -19,7 +19,7 @@ namespace Honey::Renderer3DInternal {
             if (it != g_renderer3d_data->vk_lighting_pipelines.end())
                 return it->second;
 
-            auto spec = PipelineSpec::from_shader(AssetPaths::asset_root() / "shaders" / "Renderer3D_DeferredLighting.glsl");
+            auto spec = PipelineSpec::from_shader(AssetPaths::engine_content_root() / "shaders" / "Renderer3D_DeferredLighting.glsl");
             spec.depthStencil.depthTest = false;
             spec.depthStencil.depthWrite = false;
             spec.perColorAttachmentBlend.clear();

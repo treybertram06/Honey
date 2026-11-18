@@ -25,7 +25,7 @@ namespace Honey {
         }
 
         static Ref<Texture2D> create_missing_texture_fallback() {
-            const std::string missing_path = AssetPaths::resolve("textures/missing.png").string();
+            const std::string missing_path = AssetPaths::resolve("engine:textures/missing.png").string();
             if (texture_file_exists(missing_path))
                 return Texture2D::create(missing_path);
 

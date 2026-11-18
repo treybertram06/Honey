@@ -60,7 +60,7 @@ Ref<Pipeline> get_or_create_pipeline(void* rp_native, uint32_t color_attachment_
     if (it != s_data->pipeline_cache.end())
         return it->second;
 
-    auto spec = PipelineSpec::from_shader(AssetPaths::asset_root() / "shaders" / "Renderer3D_Debug.glsl");
+    auto spec = PipelineSpec::from_shader(AssetPaths::engine_content_root() / "shaders" / "Renderer3D_Debug.glsl");
     spec.topology              = PrimitiveTopology::Lines;
     spec.cullMode              = CullMode::None;
     spec.depthStencil.depthTest  = false;

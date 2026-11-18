@@ -43,9 +43,9 @@ namespace Honey {
          //io.ConfigFlags |= ImGuiConfigFlags_ViewportsNoTaskBarIcons;
          //io.ConfigFlags |= ImGuiConfigFlags_ViewPortsNoMerge;
 
-         io.Fonts->AddFontFromFileTTF((AssetPaths::asset_root() / "fonts/JetBrains_Mono/static/JetBrainsMono-ExtraBold.ttf").string().c_str(), 18.0f);
-         io.Fonts->AddFontFromFileTTF((AssetPaths::asset_root() / "fonts/JetBrains_Mono/static/JetBrainsMono-Bold.ttf").string().c_str(), 18.0f);
-         io.FontDefault = io.Fonts->AddFontFromFileTTF((AssetPaths::asset_root() / "fonts/JetBrains_Mono/static/JetBrainsMono-Regular.ttf").string().c_str(), 18.0f);
+         io.Fonts->AddFontFromFileTTF((AssetPaths::engine_content_root() / "fonts/JetBrains_Mono/static/JetBrainsMono-ExtraBold.ttf").string().c_str(), 18.0f);
+         io.Fonts->AddFontFromFileTTF((AssetPaths::engine_content_root() / "fonts/JetBrains_Mono/static/JetBrainsMono-Bold.ttf").string().c_str(), 18.0f);
+         io.FontDefault = io.Fonts->AddFontFromFileTTF((AssetPaths::engine_content_root() / "fonts/JetBrains_Mono/static/JetBrainsMono-Regular.ttf").string().c_str(), 18.0f);
 
          //setup style
          ImGui::StyleColorsDark();

@@ -19,6 +19,7 @@ namespace Honey {
             fs::path executable_dir;
             fs::path dev_source_root;
             fs::path asset_root;
+            fs::path engine_content_root;
             fs::path config_root;
             fs::path cache_dir;
             fs::path user_data_dir;
@@ -35,9 +36,9 @@ namespace Honey {
             return p;
         }
 
-        // A directory is only accepted as the asset root if it looks like one. Checking existence alone
-        // would happily accept an unrelated "assets" folder and fail much later on a missing shader.
-        bool is_asset_root(const fs::path& dir, std::string& why_not) {
+        // A directory is only accepted as the engine content root if it looks like one. Checking
+        // existence alone would accept an unrelated folder and fail much later on a missing shader.
+        bool is_engine_content_root(const fs::path& dir, std::string& why_not) {
             std::error_code ec;
             if (!fs::is_directory(dir, ec)) {
                 why_not = "not a directory";
@@ -56,12 +57,25 @@ namespace Honey {
             return ec ? p.lexically_normal() : out;
         }
 
-        std::optional<fs::path> find_cli_assets_arg(int argc, char** argv) {
+        bool is_asset_root(const fs::path& dir, std::string& why_not) {
+            std::error_code ec;
+            if (!fs::is_directory(dir, ec)) {
+                why_not = "not a directory";
+                return false;
+            }
+            return true;
+        }
+
+        std::optional<fs::path> find_cli_arg(int argc, char** argv, std::string_view flag) {
             for (int i = 1; i + 1 < argc; ++i) {
-                if (std::string_view(argv[i]) == "--assets")
+                if (std::string_view(argv[i]) == flag)
                     return fs::path(argv[i + 1]);
             }
             return std::nullopt;
+        }
+
+        std::optional<fs::path> find_cli_assets_arg(int argc, char** argv) {
+            return find_cli_arg(argc, argv, "--assets");
         }
 
         std::optional<fs::path> find_cli_manifest_arg(int argc, char** argv) {
@@ -118,9 +132,36 @@ namespace Honey {
         }
 
         s_data.asset_root = normalized(chosen->dir);
+
+        // Engine content root.
+        std::vector<Candidate> ec_candidates;
+        if (auto cli = find_cli_arg(argc, argv, "--engine-content"))
+            ec_candidates.push_back({ *cli, "cli --engine-content" });
+        if (const char* env = std::getenv("HONEY_ENGINE_CONTENT"); env && *env)
+            ec_candidates.push_back({ fs::path(env), "env HONEY_ENGINE_CONTENT" });
+        if (!s_data.executable_dir.empty())
+            ec_candidates.push_back({ s_data.executable_dir / "engine_content", "shipped (exe dir)" });
+        if (!s_data.dev_source_root.empty())
+            ec_candidates.push_back({ s_data.dev_source_root / "engine_content", "dev source tree" });
+
+        const Candidate* ec_chosen = nullptr;
+        std::string ec_failures;
+        for (const auto& c : ec_candidates) {
+            std::string why_not;
+            if (is_engine_content_root(c.dir, why_not)) {
+                ec_chosen = &c;
+                break;
+            }
+            ec_failures += fmt::format("\n  [{}] {} -> {}", c.rule, c.dir.string(), why_not);
+        }
+        if (!ec_chosen) {
+            HN_CORE_FATAL("[AssetPaths] No engine content root found, tried:{}", ec_failures);
+            return false;
+        }
+        s_data.engine_content_root = normalized(ec_chosen->dir);
         s_data.config_root = s_data.asset_root.parent_path() / "config";
-        s_data.cache_dir = s_data.asset_root / "cache";
         s_data.user_data_dir = s_data.config_root;
+        s_data.cache_dir = s_data.user_data_dir / "cache";
 
         // Managed assemblies: a shipped layout puts them next to the executable; otherwise use the
         // dotnet build output locations in the source tree.
@@ -154,12 +195,14 @@ namespace Honey {
         s_data.initialized = true;
 
         HN_CORE_INFO("AssetPaths: asset root = {} (rule: {})", s_data.asset_root.string(), chosen->rule);
+        HN_CORE_INFO("AssetPaths: engine content root = {} (rule: {})", s_data.engine_content_root.string(), ec_chosen->rule);
         HN_CORE_INFO("AssetPaths: config root = {}, managed layout = {}", s_data.config_root.string(),
                      s_data.dev_layout ? "dev" : "shipped");
         return true;
     }
 
     const fs::path& AssetPaths::asset_root()                 { return checked(s_data.asset_root); }
+    const fs::path& AssetPaths::engine_content_root()        { return checked(s_data.engine_content_root); }
     const fs::path& AssetPaths::config_root()                { return checked(s_data.config_root); }
     const fs::path& AssetPaths::cache_dir()                  { return checked(s_data.cache_dir); }
     const fs::path& AssetPaths::user_data_dir()              { return checked(s_data.user_data_dir); }
@@ -181,11 +224,21 @@ namespace Honey {
     }
 
     fs::path AssetPaths::resolve(const fs::path& asset_relative) {
-        const fs::path& root = checked(s_data.asset_root);
+        checked(s_data.asset_root);
+        fs::path root = s_data.asset_root;
+        fs::path rel = asset_relative;
+        if (const std::string g = asset_relative.generic_string(); is_engine_path(g)) {
+            root = s_data.engine_content_root;
+            rel = fs::path(g.substr(std::string_view(k_engine_prefix).size()));
+        }
+        return resolve_under(root, rel, asset_relative);
+    }
+
+    fs::path AssetPaths::resolve_under(const fs::path& root, const fs::path& asset_relative, const fs::path& original) {
         if (asset_relative.empty())
             return {};
         if (asset_relative.is_absolute() || has_parent_segment(asset_relative)) {
-            HN_CORE_WARN("AssetPaths::resolve: rejected non asset-relative path '{}'", asset_relative.generic_string());
+            HN_CORE_WARN("AssetPaths::resolve: rejected non asset-relative path '{}'", original.generic_string());
             return {};
         }
         return (root / asset_relative).lexically_normal();
@@ -200,9 +253,16 @@ namespace Honey {
         // legacy "../assets/x" is rewritten as "x".
         const fs::path absolute = path.is_absolute() ? path.lexically_normal() : from_portable(path.generic_string());
 
+        if (is_engine_path(absolute.generic_string()))
+            return absolute.generic_string();
+
+        const fs::path ec_relative = absolute.lexically_relative(s_data.engine_content_root);
+        if (!ec_relative.empty() && !has_parent_segment(ec_relative))
+            return std::string(k_engine_prefix) + ec_relative.generic_string();
+
         const fs::path relative = absolute.lexically_relative(root);
         if (relative.empty() || has_parent_segment(relative))
-            return absolute.generic_string(); // outside the asset root; keep as-is
+            return absolute.generic_string(); // outside both roots; keep as-is
 
         return relative.generic_string();
     }
@@ -211,6 +271,9 @@ namespace Honey {
         const fs::path& root = checked(s_data.asset_root);
         if (stored.empty())
             return {};
+
+        if (is_engine_path(stored))
+            return resolve(stored);
 
         fs::path p(stored);
         if (p.is_absolute())

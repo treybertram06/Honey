@@ -248,7 +248,7 @@ namespace Honey {
                     data->content = synth_global_bindings();
                 } else {
                     namespace fs = std::filesystem;
-                    fs::path base = AssetPaths::asset_root() / "shaders";
+                    fs::path base = AssetPaths::engine_content_root() / "shaders";
                     fs::path candidate = base / requested_source;
                     std::error_code ec;
                     if (fs::exists(candidate, ec)) {
