@@ -752,6 +752,26 @@ namespace Honey {
         });
     }
 
+    void Scene::on_gui() {
+        HN_PROFILE_FUNCTION();
+
+        // Snapshot like on_update_scripts: an OnGUI that destroys entities must not invalidate the iteration.
+        auto view = m_registry.view<ScriptComponent>();
+        std::vector<entt::entity> script_entities(view.begin(), view.end());
+
+        for (auto e : script_entities) {
+            if (!m_registry.valid(e))
+                continue;
+
+            Entity entity = { e, this };
+            // Uninitialized scripts have no instance yet; on_update_scripts creates it.
+            if (!entity.get_component<ScriptComponent>().initialized)
+                continue;
+
+            CSharpScriptEngine::on_gui_entity(entity);
+        }
+    }
+
     void Scene::on_update_audio(Timestep ts) {
         auto view = m_registry.view<AudioSourceComponent>();
         for (auto e : view) {

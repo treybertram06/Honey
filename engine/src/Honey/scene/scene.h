@@ -36,6 +36,9 @@ namespace Honey {
         void on_runtime_stop();
 
         void on_update_runtime(Timestep ts, bool paused = false);
+
+        // Dispatches OnGUI to scripts. Call between GameUI::begin_frame/end_frame (inside the ImGui frame).
+        void on_gui();
         void on_update_editor(Timestep ts, EditorCamera& camera);
         void on_update_simulation(Timestep ts, EditorCamera& camera, bool paused = false);
         void render(const glm::mat4& view, const glm::mat4& projection, const glm::mat4& view_proj, const glm::vec3& camera_pos,

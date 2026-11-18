@@ -19,6 +19,7 @@ namespace Honey {
         static bool entity_class_exists(const std::string& class_name);
         static void on_create_entity(Entity entity);
         static void on_update_entity(Entity entity, Timestep ts);
+        static void on_gui_entity(Entity entity); // immediate-mode UI; no-op for scripts without an OnGUI override
         static void on_destroy_entity(Entity entity);
 
         static void on_collision_begin(Entity a, Entity b);

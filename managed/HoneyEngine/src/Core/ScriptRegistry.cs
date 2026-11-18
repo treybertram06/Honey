@@ -9,6 +9,12 @@ public static unsafe class ScriptRegistry {
     // Maps class name (e.g. "PlayerController") → its Type, for fast instance creation.
     private static readonly Dictionary<string, Type> s_types = new();
 
+    // Per script type: does it override OnGUI? Lets native skip the interop call for scripts that don't.
+    private static readonly Dictionary<Type, bool> s_overrides_gui = new();
+
+    // Script types whose OnGUI already threw, so a per-frame exception logs once, not every frame.
+    private static readonly HashSet<Type> s_gui_failed = new();
+
     // Weak reference so the ALC can be garbage-collected after Unload() is called.
     // We don't want to keep the old assembly alive just because the registry saw it.
     private static WeakReference<AssemblyLoadContext>? s_scriptAlc;
@@ -38,6 +44,8 @@ public static unsafe class ScriptRegistry {
         }
 
         s_types.Clear();
+        s_overrides_gui.Clear();
+        s_gui_failed.Clear();
         foreach (var type in asm.GetTypes()) {
             if (!type.IsAbstract && type.IsSubclassOf(typeof(EntityScript)))
                 s_types[type.Name] = type;
@@ -52,6 +60,8 @@ public static unsafe class ScriptRegistry {
     [UnmanagedCallersOnly]
     public static void UnloadScriptAssembly() {
         s_types.Clear();
+        s_overrides_gui.Clear();
+        s_gui_failed.Clear();
         if (s_scriptAlc?.TryGetTarget(out var alc) == true) {
             alc.Unload();
             s_scriptAlc = null;
@@ -104,6 +114,33 @@ public static unsafe class ScriptRegistry {
     public static void CallOnUpdate(nint handle, ulong entityId, float dt) {
         var script = Unwrap(handle);
         script.OnUpdate(dt);
+    }
+
+    // Called once per instance at creation; native caches the answer. Reflection finds the most-derived
+    // OnGUI, so DeclaringType is EntityScript only when no script class overrides it.
+    [UnmanagedCallersOnly]
+    public static byte HasOnGUI(nint handle) {
+        var type = Unwrap(handle).GetType();
+        if (!s_overrides_gui.TryGetValue(type, out bool overrides)) {
+            var method = type.GetMethod(nameof(EntityScript.OnGUI), BindingFlags.Public | BindingFlags.Instance, Type.EmptyTypes);
+            overrides = method != null && method.DeclaringType != typeof(EntityScript);
+            s_overrides_gui[type] = overrides;
+        }
+        return overrides ? (byte)1 : (byte)0;
+    }
+
+    // An exception escaping an UnmanagedCallersOnly method kills the process, so this one catches.
+    // Logs once per script type; native GameUI::end_frame() unwinds any panel the script left open.
+    [UnmanagedCallersOnly]
+    public static void CallOnGUI(nint handle, ulong entityId) {
+        var script = Unwrap(handle);
+        try {
+            script.OnGUI();
+        } catch (Exception ex) {
+            var type = script.GetType();
+            if (s_gui_failed.Add(type))
+                Log.Error($"ScriptRegistry: exception in {type.Name}.OnGUI (further errors from this script suppressed): {ex}");
+        }
     }
 
     [UnmanagedCallersOnly]

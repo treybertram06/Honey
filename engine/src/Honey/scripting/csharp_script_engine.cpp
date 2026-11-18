@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace Honey {
     static constexpr const char* k_registry_type =
@@ -35,6 +36,8 @@ namespace Honey {
         using CallOnCreateFn      = void     (*)(intptr_t, uint64_t);
         using CallOnUpdateFn      = void     (*)(intptr_t, uint64_t, float);
         using CallOnDestroyFn     = void     (*)(intptr_t, uint64_t);
+        using HasOnGUIFn          = uint8_t  (*)(intptr_t);
+        using CallOnGUIFn         = void     (*)(intptr_t, uint64_t);
         using CallCollisionFn     = void     (*)(intptr_t, uint64_t, uint64_t);
 
         RegisterAssemblyFn  register_assembly    = nullptr;
@@ -45,11 +48,16 @@ namespace Honey {
         CallOnCreateFn      call_on_create       = nullptr;
         CallOnUpdateFn      call_on_update       = nullptr;
         CallOnDestroyFn     call_on_destroy      = nullptr;
+        HasOnGUIFn          has_on_gui           = nullptr;
+        CallOnGUIFn         call_on_gui          = nullptr;
         CallCollisionFn     call_collision_begin = nullptr;
         CallCollisionFn     call_collision_end   = nullptr;
 
         // Per-entity GCHandles (nint stored as intptr_t)
         std::unordered_map<UUID, intptr_t> entity_instances;
+
+        // Subset of entity_instances whose script overrides OnGUI (queried once at creation).
+        std::unordered_set<UUID> gui_entities;
 
         bool assembly_loaded = false;
     };
@@ -89,6 +97,8 @@ namespace Honey {
         s_data->call_on_create       = (Data::CallOnCreateFn)     load("CallOnCreate");
         s_data->call_on_update       = (Data::CallOnUpdateFn)     load("CallOnUpdate");
         s_data->call_on_destroy      = (Data::CallOnDestroyFn)    load("CallOnDestroy");
+        s_data->has_on_gui           = (Data::HasOnGUIFn)         load("HasOnGUI");
+        s_data->call_on_gui          = (Data::CallOnGUIFn)        load("CallOnGUI");
         s_data->call_collision_begin = (Data::CallCollisionFn)    load("CallCollisionBegin");
         s_data->call_collision_end   = (Data::CallCollisionFn)    load("CallCollisionEnd");
 
@@ -96,6 +106,7 @@ namespace Honey {
         if (!d.register_assembly || !d.unload_assembly || !d.class_exists
             || !d.create_instance || !d.destroy_instance
             || !d.call_on_create  || !d.call_on_update  || !d.call_on_destroy
+            || !d.has_on_gui || !d.call_on_gui
             || !d.call_collision_begin || !d.call_collision_end) {
             HN_CORE_ERROR("[CSharpScriptEngine] one or more managed fn ptrs failed to load");
             return;
@@ -137,6 +148,7 @@ namespace Honey {
             if (handle) s_data->destroy_instance(handle);
         }
         s_data->entity_instances.clear();
+        s_data->gui_entities.clear();
 
         s_data->unload_assembly();
         s_data->assembly_loaded = false;
@@ -163,6 +175,8 @@ namespace Honey {
 
         UUID uuid = entity.get_uuid();
         s_data->entity_instances[uuid] = handle;
+        if (s_data->has_on_gui(handle))
+            s_data->gui_entities.insert(uuid);
         s_data->call_on_create(handle, (uint64_t)uuid);
     }
 
@@ -177,6 +191,19 @@ namespace Honey {
         s_data->call_on_update(it->second, (uint64_t)uuid, (float)ts);
     }
 
+    void CSharpScriptEngine::on_gui_entity(Entity entity) {
+        if (!s_data || !s_data->initialized) return;
+        if (!entity.is_valid()) return;
+
+        UUID uuid = entity.get_uuid();
+        if (!s_data->gui_entities.count(uuid)) return;
+
+        auto it = s_data->entity_instances.find(uuid);
+        if (it == s_data->entity_instances.end()) return;
+
+        s_data->call_on_gui(it->second, (uint64_t)uuid);
+    }
+
     void CSharpScriptEngine::on_destroy_entity(Entity entity) {
         if (!s_data || !s_data->initialized) return;
 
@@ -187,6 +214,7 @@ namespace Honey {
         s_data->call_on_destroy(it->second, (uint64_t)uuid);
         s_data->destroy_instance(it->second);
         s_data->entity_instances.erase(it);
+        s_data->gui_entities.erase(uuid);
     }
 
     void CSharpScriptEngine::on_collision_begin(Entity a, Entity b) {
@@ -235,6 +263,7 @@ namespace Honey {
             if (handle) s_data->destroy_instance(handle);
         }
         s_data->entity_instances.clear();
+        s_data->gui_entities.clear();
 
         s_data->unload_assembly();
         s_data->assembly_loaded = false;
