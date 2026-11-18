@@ -68,10 +68,12 @@ namespace Honey {
 
         void    (*UI_BeginPanel)                   (const char*, uint32_t, float, float, float, float, uint8_t);
         void    (*UI_EndPanel)                     ();
-        void    (*UI_Label)                        (const char*, float, float, float, float, float);
+        void    (*UI_Label)                        (const char*, float, float, float, float, float, int32_t, int32_t);
         uint8_t (*UI_Button)                       (const char*, float);
         void    (*UI_Spacing)                      (float);
         uint8_t (*UI_WantsMouse)                   ();
+        void    (*UI_SetTheme)                     (const float*, int32_t, int32_t);
+        int32_t (*UI_LoadFont)                     (const char*);
     };
 
     // -----------------------------------------------------------------------
@@ -313,10 +315,10 @@ namespace Honey {
     }
 
     static void glue_ui_label(const char* text, float size,
-        float color_r, float color_g, float color_b, float color_w) {
+        float color_r, float color_g, float color_b, float color_w, int32_t font, int32_t align) {
         glm::vec4 color(color_r, color_g, color_b, color_w);
         text = text ? text : ""; // Ensure text is not null
-        GameUI::label(text, size, color);
+        GameUI::label(text, size, color, font, align);
     }
 
     static uint8_t glue_ui_button(const char* text, float width) {
@@ -330,6 +332,29 @@ namespace Honey {
 
     static uint8_t glue_ui_wants_mouse() {
         return GameUI::wants_mouse() ? 1 : 0;
+    }
+
+    // Flat float layout (must match UI.cs): panel rgba[0..3], text rgba[4..7], accent rgba[8..11],
+    // rounding, panel_padding, item_spacing, button_font_size, button_padding_x, button_padding_y.
+    static void glue_ui_set_theme(const float* v, int32_t count, int32_t font) {
+        constexpr int32_t k_theme_float_count = 18;
+        if (!v || count < k_theme_float_count) return;
+        GameUI::UITheme t;
+        t.panel_color  = {v[0], v[1], v[2], v[3]};
+        t.text_color   = {v[4], v[5], v[6], v[7]};
+        t.accent_color = {v[8], v[9], v[10], v[11]};
+        t.rounding = v[12];
+        t.panel_padding = v[13];
+        t.item_spacing = v[14];
+        t.button_font_size = v[15];
+        t.button_padding_x = v[16];
+        t.button_padding_y = v[17];
+        t.font = font;
+        GameUI::set_theme(t);
+    }
+
+    static int32_t glue_ui_load_font(const char* path) {
+        return GameUI::load_font(path ? path : "");
     }
 
     // -----------------------------------------------------------------------
@@ -408,6 +433,8 @@ namespace Honey {
             glue_ui_button,
             glue_ui_spacing,
             glue_ui_wants_mouse,
+            glue_ui_set_theme,
+            glue_ui_load_font,
         };
 
         using BootstrapFn = void(*)(NativeFunctionTable*);

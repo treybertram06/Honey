@@ -207,10 +207,10 @@ internal static unsafe class NativeBindings {
 
     internal static void UI_EndPanel() => InternalCalls.s_table.UI_EndPanel();
 
-    internal static void UI_Label(string text, float size, float r, float g, float b, float a) {
+    internal static void UI_Label(string text, float size, float r, float g, float b, float a, int font, int align) {
         byte* stack = stackalloc byte[k_utf8_stack_size];
         byte* buf = EncodeUtf8(text, stack, k_utf8_stack_size);
-        try { InternalCalls.s_table.UI_Label(buf, size, r, g, b, a); }
+        try { InternalCalls.s_table.UI_Label(buf, size, r, g, b, a, font, align); }
         finally { FreeUtf8(buf, stack); }
     }
 
@@ -223,4 +223,13 @@ internal static unsafe class NativeBindings {
 
     internal static void UI_Spacing(float h) => InternalCalls.s_table.UI_Spacing(h);
     internal static bool UI_WantsMouse() => InternalCalls.s_table.UI_WantsMouse() != 0;
+
+    internal static void UI_SetTheme(float* values, int count, int font) => InternalCalls.s_table.UI_SetTheme(values, count, font);
+
+    internal static int UI_LoadFont(string path) {
+        byte* stack = stackalloc byte[k_utf8_stack_size];
+        byte* buf = EncodeUtf8(path, stack, k_utf8_stack_size);
+        try { return InternalCalls.s_table.UI_LoadFont(buf); }
+        finally { FreeUtf8(buf, stack); }
+    }
 }

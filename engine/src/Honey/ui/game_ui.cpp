@@ -2,7 +2,12 @@
 #include "game_ui.h"
 
 #include "imgui.h"
+#include "Honey/core/asset_paths.h"
 #include <glm/common.hpp>
+#include <filesystem>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace Honey {
 
@@ -13,7 +18,7 @@ namespace Honey {
         constexpr float k_max_scale = 4.0f;
 
         // Number of theme pushes made in begin_frame; end_frame pops exactly this many.
-        constexpr int k_theme_color_count = 4;
+        constexpr int k_theme_color_count = 1;
 
         glm::vec2 anchor_to_pivot(GameUI::UIAnchor anchor) {
             // Calculate pivot based on enum integer values (enum is row-major order)
@@ -26,9 +31,24 @@ namespace Honey {
         // states without ImGui turn the whole API into no-ops instead of crashing.
         bool has_imgui() { return ImGui::GetCurrentContext() != nullptr; }
 
+        ImVec4 to_im(const glm::vec4& v) { return {v.r, v.g, v.b, v.a}; }
+        ImVec4 with_alpha(const glm::vec4& v, float a) { return {v.r, v.g, v.b, a}; }
+
+        // Font handle -> ImFont*. Slot 0 is the default font (nullptr = keep the current one).
+        std::vector<ImFont*> g_fonts{nullptr};
+        std::unordered_map<std::string, int> g_font_by_path;
+
+        ImFont* font_from_handle(int handle) {
+            return (handle > 0 && handle < int(g_fonts.size())) ? g_fonts[handle] : nullptr;
+        }
+
+        // Per-button hover fade (0..1), keyed by ImGui id. Read before drawing, updated after.
+        std::unordered_map<ImGuiID, float> g_hover_fade;
+
     }
 
-    UIRect GameUI::s_rect = {};
+    GameUI::UIRect GameUI::s_rect = {};
+    GameUI::UITheme GameUI::s_theme = {};
     float GameUI::s_scale = 1.0f;
     uint32_t GameUI::s_panel_depth = 0;
     bool GameUI::s_frame_active = false;
@@ -45,12 +65,7 @@ namespace Honey {
         s_scale = glm::clamp(size.y / k_reference_height, k_min_scale, k_max_scale);
         s_panel_depth = 0;
 
-        // TODO (Step 8): replace with a real theme struct. Panel/window background is not part of
-        // the theme yet: panels are transparent unless begin_panel asks for a background.
-        ImGui::PushStyleColor(ImGuiCol_Text,          { 1.00f, 1.00f, 1.00f, 1.00f });
-        ImGui::PushStyleColor(ImGuiCol_Button,        { 0.18f, 0.18f, 0.20f, 0.85f });
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, { 0.30f, 0.30f, 0.34f, 0.95f });
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  { 0.45f, 0.35f, 0.10f, 1.00f });
+        ImGui::PushStyleColor(ImGuiCol_Text, to_im(s_theme.text_color));
 
         s_frame_active = true;
     }
@@ -93,13 +108,19 @@ namespace Honey {
             | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
         if (!background) flags |= ImGuiWindowFlags_NoBackground;
 
-        // WindowPadding is read by Begin(), so it is pushed before and popped right after.
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, { 16.0f * s_scale, 16.0f * s_scale });
+        // Window-level style is read by Begin(), so it is pushed before and popped right after.
+        const float pad = s_theme.panel_padding * s_scale;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, { pad, pad });
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, s_theme.rounding * 1.5f * s_scale);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, to_im(s_theme.panel_color));
+        ImGui::PushStyleColor(ImGuiCol_Border, with_alpha(s_theme.accent_color, 0.35f)); // faint accent edge
         ImGui::Begin(name.c_str(), nullptr, flags);
-        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(2);
+        ImGui::PopStyleVar(3);
 
         // ItemSpacing applies to widgets submitted inside the window; popped in end_panel before End().
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { 8.0f * s_scale, 12.0f * s_scale });
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, { s_theme.item_spacing * 0.6f * s_scale, s_theme.item_spacing * s_scale });
 
         s_panel_depth++;
     }
@@ -118,11 +139,18 @@ namespace Honey {
         s_panel_depth--;
     }
 
-    void GameUI::label(const char* text, float size, glm::vec4 color) {
+    void GameUI::label(const char* text, float size, glm::vec4 color, int font, int align) {
         if (!has_imgui() || !s_frame_active) return;
 
-        ImGui::PushFont(nullptr, size * s_scale); // TODO: Replace font with a user specified one
+        ImGui::PushFont(font_from_handle(font), size * s_scale);
         ImGui::PushStyleColor(ImGuiCol_Text, {color.r, color.g, color.b, color.a});
+        if (align == 1 || align == 2) {
+            // Shift the cursor by the free space. On an auto-fit panel the widest item defines the
+            // width, so this settles to 0 offset for the widest item and centers the narrower ones.
+            const float free_space = ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(text).x;
+            if (free_space > 0.0f)
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + free_space * (align == 1 ? 0.5f : 1.0f));
+        }
         ImGui::TextUnformatted(text);
         ImGui::PopStyleColor();
         ImGui::PopFont();
@@ -132,23 +160,45 @@ namespace Honey {
         if (!has_imgui() || !s_frame_active) return false;
 
         // Sizes are in virtual pixels (1080-high reference) and scaled to the current rect.
-        // TODO: move these into the theme struct (Step 8)
-        constexpr float k_font_size = 28.0f;
-        constexpr float k_padding_x = 24.0f; // plain floats: glm::vec2 is not constexpr with GLM_FORCE_INTRINSICS
-        constexpr float k_padding_y = 14.0f;
-        constexpr float k_rounding = 8.0f;
+        const UITheme& t = s_theme;
+        const glm::vec4& accent = t.accent_color;
+        const float rounding = t.rounding * s_scale;
+
+        // Hover fade: colours are driven by last frame's fade value so hover eases in/out instead of
+        // snapping. ImGui's own hover/active colour swap is neutralised by pushing the same faded colour.
+        const ImGuiID id = ImGui::GetID(text);
+        if (g_hover_fade.size() > 512) g_hover_fade.clear(); // bound growth from dynamic labels
+        float& fade = g_hover_fade[id];
+
+        const ImVec4 idle  = {1.0f, 1.0f, 1.0f, 0.07f};
+        const ImVec4 hover = with_alpha(accent, 0.30f);
+        const ImVec4 faded = {idle.x + (hover.x - idle.x) * fade, idle.y + (hover.y - idle.y) * fade,
+                              idle.z + (hover.z - idle.z) * fade, idle.w + (hover.w - idle.w) * fade};
 
         // Every push below is popped before returning; never early-return between them.
-        ImGui::PushFont(nullptr, k_font_size * s_scale);
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, { k_padding_x * s_scale, k_padding_y * s_scale });
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, k_rounding * s_scale);
+        ImGui::PushFont(font_from_handle(t.font), t.button_font_size * s_scale);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, { t.button_padding_x * s_scale, t.button_padding_y * s_scale });
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, rounding);
+        ImGui::PushStyleColor(ImGuiCol_Button, faded);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, faded);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, with_alpha(accent, 0.65f));
 
         // width 0 => fit the text; height 0 => text height + vertical padding.
         // Button() returns true once, on the frame the mouse is released over it.
         const bool clicked = ImGui::Button(text, { width * s_scale, 0.0f });
 
+        ImGui::PopStyleColor(3);
         ImGui::PopStyleVar(2);
         ImGui::PopFont();
+
+        // Update the fade and draw an accent outline that grows with it.
+        const bool hovered = ImGui::IsItemHovered();
+        const float step = ImGui::GetIO().DeltaTime * 12.0f;
+        fade = glm::clamp(fade + (hovered ? step : -step), 0.0f, 1.0f);
+        if (fade > 0.01f) {
+            ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
+                ImGui::GetColorU32(with_alpha(accent, fade)), rounding, 0, 1.5f * s_scale);
+        }
         return clicked;
     }
 
@@ -162,6 +212,34 @@ namespace Honey {
         if (!has_imgui()) return false;
 
         return ImGui::GetIO().WantCaptureMouse; // Wrong, as this will always return true in the editor. Will fix in Step 7
+    }
+
+    void GameUI::set_theme(const UITheme& theme) {
+        s_theme = theme;
+    }
+
+    int GameUI::load_font(const char* path) {
+        HN_PROFILE_FUNCTION();
+        if (!has_imgui() || !path || !*path) return 0;
+
+        auto cached = g_font_by_path.find(path);
+        if (cached != g_font_by_path.end()) return cached->second;
+
+        std::filesystem::path file(path);
+        if (file.is_relative()) file = AssetPaths::resolve(file);
+
+        // ImGui asserts on a missing file, so check first and fall back to the default font.
+        int handle = 0;
+        if (!std::filesystem::exists(file)) {
+            HN_CORE_WARN("[GameUI] Font not found: {}", file.string());
+        } else if (ImFont* font = ImGui::GetIO().Fonts->AddFontFromFileTTF(file.string().c_str(), 0.0f)) {
+            g_fonts.push_back(font);
+            handle = int(g_fonts.size()) - 1;
+        } else {
+            HN_CORE_WARN("[GameUI] Failed to load font: {}", file.string());
+        }
+        g_font_by_path[path] = handle; // cache failures too, so a bad path warns once
+        return handle;
     }
 
 }

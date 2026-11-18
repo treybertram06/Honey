@@ -49,10 +49,12 @@ public unsafe struct NativeFunctionTable {
 
     public delegate* unmanaged<byte*, int, float, float, float, float, byte, void> UI_BeginPanel;
     public delegate* unmanaged<void>                         UI_EndPanel;
-    public delegate* unmanaged<byte*, float, float, float, float, float, void> UI_Label;
+    public delegate* unmanaged<byte*, float, float, float, float, float, int, int, void> UI_Label;
     public delegate* unmanaged<byte*, float, byte>           UI_Button;
     public delegate* unmanaged<float, void>                  UI_Spacing;
     public delegate* unmanaged<byte>                         UI_WantsMouse;
+    public delegate* unmanaged<float*, int, int, void>       UI_SetTheme;
+    public delegate* unmanaged<byte*, int>                   UI_LoadFont;
 
 }
 
