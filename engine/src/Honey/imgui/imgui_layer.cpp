@@ -7,6 +7,7 @@
 #include "backends/imgui_impl_vulkan.h"
 
 #include "../core/engine.h"
+#include "../core/input.h"
 
 // TEMPORARY
 #include <GLFW/glfw3.h>
@@ -173,6 +174,14 @@ namespace Honey {
          ImGuiIO& io = ImGui::GetIO();
          Application& app = Application::get();
          io.DisplaySize = ImVec2(app.get_window().get_width(), app.get_window().get_height());
+
+         // A locked (GLFW_CURSOR_DISABLED) cursor still reports a virtual position to the ImGui GLFW backend,
+         // so without this UI would keep hovering/clicking under an invisible cursor. NoMouse makes ImGui
+         // ignore the mouse entirely while locked.
+         if (Input::is_cursor_locked())
+             io.ConfigFlags |= ImGuiConfigFlags_NoMouse;
+         else
+             io.ConfigFlags &= ~ImGuiConfigFlags_NoMouse;
 
          switch (m_api) {
          case RendererAPI::API::opengl:
