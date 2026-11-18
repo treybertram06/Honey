@@ -69,6 +69,15 @@ namespace Honey {
                     manifest.scenes.push_back(scene.as<std::string>(""));
             }
 
+            // Optional Project block: unknown fields are ignored; a version mismatch only warns.
+            if (auto project_node = root["Project"]) {
+                if (auto n = project_node["EngineVersion"])
+                    manifest.engine_version = n.as<std::string>("");
+                if (!manifest.engine_version.empty() && manifest.engine_version != k_engine_version)
+                    HN_CORE_WARN("Project was saved with engine version {} (this is {}); it may need migration",
+                                 manifest.engine_version, k_engine_version);
+            }
+
             // ---------------- Window -----------------
             if (auto window_node = root["Window"]) {
                 if (auto n = window_node["Title"])

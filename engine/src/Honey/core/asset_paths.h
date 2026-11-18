@@ -16,7 +16,12 @@ namespace Honey {
     // editor, player and every project) and the asset root (today's stop-gap project content).
     // Engine content is addressed in paths with the "engine:" prefix ("engine:fonts/X.ttf").
     //
-    // Asset root resolution (first existing directory wins):
+    // Project (phase 1.5): `--project <dir|file.honeyproj>` (or shipped `<exe>/game/*.honeyproj`) selects a
+    // portable project folder {Name.honeyproj, Assets/, Scripts/}. Its Assets/ becomes the asset root,
+    // its .honeyproj is the manifest, Scripts/ holds the C# project. Without one, the legacy stop-gap
+    // layout applies (asset root below, scripts in <asset root>/scripts, manifest at <asset root>/../game.yaml).
+    //
+    // Asset root resolution when no project is given (first existing directory wins):
     //   1. --assets <dir> command-line flag
     //   2. HONEY_ASSET_ROOT environment variable
     //   3. <exe dir>/assets                   (shipped layout)
@@ -33,6 +38,9 @@ namespace Honey {
 
         static const std::filesystem::path& asset_root();
         static const std::filesystem::path& engine_content_root();
+        static bool has_project();                                 // false = legacy stop-gap layout
+        static const std::filesystem::path& project_root();        // empty when !has_project()
+        static const std::filesystem::path& scripts_dir();         // C# project dir (UserScripts.csproj)
         static const std::filesystem::path& config_root();
         static const std::filesystem::path& cache_dir();      // writable, per user: user_data_dir()/cache (shader + pipeline caches)
         static const std::filesystem::path& user_data_dir();  // writable: settings (4.2 retargets this)

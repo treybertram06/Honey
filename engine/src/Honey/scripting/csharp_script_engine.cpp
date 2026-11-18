@@ -239,9 +239,11 @@ namespace Honey {
         if (!s_data || !s_data->initialized) return false;
 
         namespace fs = std::filesystem;
-        // UserScripts.csproj lives in assets/scripts (dev tooling; shipped builds load a prebuilt dll).
-        const fs::path project_dir = AssetPaths::asset_root() / "scripts";
-        std::string cmd = "dotnet build \"" + project_dir.string() + "\" -c Debug --nologo -v q 2>&1";
+        // UserScripts.csproj lives in the project's scripts dir (dev tooling; shipped builds load a prebuilt
+        // dll). The engine dll is passed in so the csproj needs no path into the engine checkout.
+        const fs::path project_dir = AssetPaths::scripts_dir();
+        std::string cmd = "dotnet build \"" + project_dir.string() + "\" -c Debug --nologo -v q -p:HoneyEngineDll=\""
+                        + AssetPaths::engine_assembly_path().string() + "\" 2>&1";
 
         HN_CORE_INFO("[CSharpScriptEngine] building scripts: {}", cmd);
         int rc = std::system(cmd.c_str());

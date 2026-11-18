@@ -17,7 +17,10 @@ namespace Honey {
         static void apply_to(EngineSettings& settings);
 
     public:
+        static constexpr const char* k_engine_version = "0.1";
+
         std::string name;
+        std::string engine_version;   // version the project was last saved with (empty = unknown)
         std::string start_scene;
         std::vector<std::string> scenes;
 

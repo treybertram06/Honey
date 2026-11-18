@@ -20,6 +20,8 @@ namespace Honey {
             fs::path dev_source_root;
             fs::path asset_root;
             fs::path engine_content_root;
+            fs::path project_root;
+            fs::path scripts_dir;
             fs::path config_root;
             fs::path cache_dir;
             fs::path user_data_dir;
@@ -86,6 +88,24 @@ namespace Honey {
             return std::nullopt;
         }
 
+        // `--project` accepts a project folder or the .honeyproj file itself. Returns the .honeyproj path.
+        std::optional<fs::path> find_project_file(const fs::path& arg, std::string& why_not) {
+            std::error_code ec;
+            if (fs::is_regular_file(arg, ec)) {
+                if (arg.extension() != ".honeyproj") { why_not = "not a .honeyproj file"; return std::nullopt; }
+                return arg;
+            }
+            if (!fs::is_directory(arg, ec)) { why_not = "no such file or directory"; return std::nullopt; }
+            std::vector<fs::path> found;
+            for (const auto& e : fs::directory_iterator(arg, ec)) {
+                if (e.is_regular_file() && e.path().extension() == ".honeyproj")
+                    found.push_back(e.path());
+            }
+            if (found.empty()) { why_not = "no .honeyproj file in folder"; return std::nullopt; }
+            if (found.size() > 1) { why_not = "more than one .honeyproj file in folder"; return std::nullopt; }
+            return found.front();
+        }
+
         bool has_parent_segment(const fs::path& p) {
             for (const auto& part : p) {
                 if (part == "..")
@@ -105,33 +125,68 @@ namespace Honey {
 #endif
 
         struct Candidate { fs::path dir; const char* rule; };
-        std::vector<Candidate> candidates;
-        if (auto cli = find_cli_assets_arg(argc, argv))
-            candidates.push_back({ *cli, "cli --assets" });
-        if (const char* env = std::getenv("HONEY_ASSET_ROOT"); env && *env)
-            candidates.push_back({ fs::path(env), "env HONEY_ASSET_ROOT" });
-        if (!s_data.executable_dir.empty())
-            candidates.push_back({ s_data.executable_dir / "assets", "shipped (exe dir)" });
-        if (!s_data.dev_source_root.empty())
-            candidates.push_back({ s_data.dev_source_root / "assets", "dev source tree" });
 
-        const Candidate* chosen = nullptr;
-        std::string failures;
-        for (const auto& c : candidates) {
-            std::string why_not;
-            if (is_asset_root(c.dir, why_not)) {
-                chosen = &c;
-                break;
+        // Project (if any) decides the asset root; otherwise the legacy candidates below do.
+        std::optional<fs::path> project_arg;
+        const char* project_rule = nullptr;
+        if (auto cli = find_cli_arg(argc, argv, "--project")) {
+            project_arg = *cli;
+            project_rule = "cli --project";
+        } else if (!s_data.executable_dir.empty()) {
+            std::string ignored;
+            if (auto shipped = find_project_file(s_data.executable_dir / "game", ignored)) {
+                project_arg = shipped->parent_path();
+                project_rule = "shipped (exe dir/game)";
             }
-            failures += fmt::format("\n  [{}] {} -> {}", c.rule, c.dir.string(), why_not);
         }
 
-        if (!chosen) {
-            HN_CORE_FATAL("[AssetPaths] No asset root found, tried:{}", failures);
-            return false;
-        }
+        std::string asset_rule;
+        std::error_code ec;
+        if (project_arg) {
+            std::string why_not;
+            auto file = find_project_file(*project_arg, why_not);
+            if (!file) {
+                HN_CORE_FATAL("[AssetPaths] Cannot open project '{}': {}", project_arg->string(), why_not);
+                return false;
+            }
+            s_data.project_root = normalized(file->parent_path());
+            s_data.asset_root = s_data.project_root / "Assets";
+            s_data.scripts_dir = s_data.project_root / "Scripts";
+            s_data.manifest_dir = normalized(*file);
+            if (!fs::is_directory(s_data.asset_root, ec)) {
+                HN_CORE_FATAL("[AssetPaths] Project '{}' has no Assets/ folder", s_data.project_root.string());
+                return false;
+            }
+            asset_rule = std::string("project (") + project_rule + ")";
+        } else {
+            std::vector<Candidate> candidates;
+            if (auto cli = find_cli_assets_arg(argc, argv))
+                candidates.push_back({ *cli, "cli --assets" });
+            if (const char* env = std::getenv("HONEY_ASSET_ROOT"); env && *env)
+                candidates.push_back({ fs::path(env), "env HONEY_ASSET_ROOT" });
+            if (!s_data.executable_dir.empty())
+                candidates.push_back({ s_data.executable_dir / "assets", "shipped (exe dir)" });
+            if (!s_data.dev_source_root.empty())
+                candidates.push_back({ s_data.dev_source_root / "assets", "dev source tree" });
 
-        s_data.asset_root = normalized(chosen->dir);
+            const Candidate* chosen = nullptr;
+            std::string failures;
+            for (const auto& c : candidates) {
+                std::string why_not;
+                if (is_asset_root(c.dir, why_not)) {
+                    chosen = &c;
+                    break;
+                }
+                failures += fmt::format("\n  [{}] {} -> {}", c.rule, c.dir.string(), why_not);
+            }
+            if (!chosen) {
+                HN_CORE_FATAL("[AssetPaths] No asset root found, tried:{}", failures);
+                return false;
+            }
+            s_data.asset_root = normalized(chosen->dir);
+            s_data.scripts_dir = s_data.asset_root / "scripts";
+            asset_rule = chosen->rule;
+        }
 
         // Engine content root.
         std::vector<Candidate> ec_candidates;
@@ -159,14 +214,15 @@ namespace Honey {
             return false;
         }
         s_data.engine_content_root = normalized(ec_chosen->dir);
-        s_data.config_root = s_data.asset_root.parent_path() / "config";
+        // Per-user data must not depend on the project: it sits beside the engine (source tree in dev
+        // builds, next to the executable when shipped).
+        s_data.config_root = (s_data.dev_source_root.empty() ? s_data.executable_dir : s_data.dev_source_root) / "config";
         s_data.user_data_dir = s_data.config_root;
         s_data.cache_dir = s_data.user_data_dir / "cache";
 
         // Managed assemblies: a shipped layout puts them next to the executable; otherwise use the
         // dotnet build output locations in the source tree.
         const fs::path shipped_managed = s_data.executable_dir / "managed";
-        std::error_code ec;
         if (fs::exists(shipped_managed / "HoneyEngine.dll", ec)) {
             s_data.engine_assembly = shipped_managed / "HoneyEngine.dll";
             s_data.user_scripts_assembly = shipped_managed / "UserScripts.dll";
@@ -176,7 +232,7 @@ namespace Honey {
                 ? s_data.dev_source_root
                 : s_data.asset_root.parent_path();
             s_data.engine_assembly = source_root / "Honey/managed/HoneyEngine/bin/Release/net10.0/HoneyEngine.dll";
-            s_data.user_scripts_assembly = s_data.asset_root / "scripts/bin/Debug/net10.0/UserScripts.dll";
+            s_data.user_scripts_assembly = s_data.scripts_dir / "bin/Debug/net10.0/UserScripts.dll";
         }
 
 #ifdef HN_DOTNET_RUNTIME_ROOT
@@ -184,8 +240,10 @@ namespace Honey {
         s_data.dotnet_root = fs::path(HN_DOTNET_RUNTIME_ROOT).lexically_normal();
 #endif
 
-        // Pick one of two possible manifest locations
-        if (auto cli = find_cli_manifest_arg(argc, argv))
+        // Manifest: the project file, else --manifest, else the legacy game.yaml beside the asset root.
+        if (!s_data.project_root.empty())
+            ; // already set from the .honeyproj
+        else if (auto cli = find_cli_manifest_arg(argc, argv))
             s_data.manifest_dir = normalized(*cli);
         else if (!s_data.asset_root.empty())
             s_data.manifest_dir = normalized(s_data.asset_root.parent_path() / "game.yaml");
@@ -194,7 +252,7 @@ namespace Honey {
 
         s_data.initialized = true;
 
-        HN_CORE_INFO("AssetPaths: asset root = {} (rule: {})", s_data.asset_root.string(), chosen->rule);
+        HN_CORE_INFO("AssetPaths: asset root = {} (rule: {})", s_data.asset_root.string(), asset_rule);
         HN_CORE_INFO("AssetPaths: engine content root = {} (rule: {})", s_data.engine_content_root.string(), ec_chosen->rule);
         HN_CORE_INFO("AssetPaths: config root = {}, managed layout = {}", s_data.config_root.string(),
                      s_data.dev_layout ? "dev" : "shipped");
@@ -203,6 +261,9 @@ namespace Honey {
 
     const fs::path& AssetPaths::asset_root()                 { return checked(s_data.asset_root); }
     const fs::path& AssetPaths::engine_content_root()        { return checked(s_data.engine_content_root); }
+    bool AssetPaths::has_project()                           { checked(s_data.asset_root); return !s_data.project_root.empty(); }
+    const fs::path& AssetPaths::project_root()               { return checked(s_data.project_root); }
+    const fs::path& AssetPaths::scripts_dir()                { return checked(s_data.scripts_dir); }
     const fs::path& AssetPaths::config_root()                { return checked(s_data.config_root); }
     const fs::path& AssetPaths::cache_dir()                  { return checked(s_data.cache_dir); }
     const fs::path& AssetPaths::user_data_dir()              { return checked(s_data.user_data_dir); }
