@@ -108,6 +108,14 @@ namespace Honey {
         return "";
     }
 
+    static std::string try_open_folder_kdialog() {
+        if (!command_exists("kdialog")) return "";
+        int status = 0;
+        std::string out = exec_read_all("kdialog --getexistingdirectory \"$PWD\"", &status);
+        if (status == 0 && !out.empty() && out != "canceled") return out;
+        return "";
+    }
+
     // GTK fallback (reliable across DEs)
     static std::string run_gtk_file_dialog(GtkFileChooserAction action, const char* title, const char* filter) {
         if (!gtk_init_check(0, nullptr)) return "";
@@ -172,6 +180,11 @@ namespace Honey {
     std::string FileDialogs::save_file(const char* filter) {
         if (auto p = try_save_kdialog(filter); !p.empty()) return p;
         return run_gtk_file_dialog(GTK_FILE_CHOOSER_ACTION_SAVE, "Save File", filter);
+    }
+
+    std::string FileDialogs::open_folder() {
+        if (auto p = try_open_folder_kdialog(); !p.empty()) return p;
+        return run_gtk_file_dialog(GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER, "Select Folder", nullptr);
     }
 
     std::filesystem::path Platform::get_executable_path() {

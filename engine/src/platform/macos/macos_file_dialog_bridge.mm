@@ -51,6 +51,25 @@ extern "C" const char* hn_mac_open_file(const char* extensions_csv) {
     }
 }
 
+extern "C" const char* hn_mac_open_folder() {
+    @autoreleasepool {
+        NSOpenPanel* panel = [NSOpenPanel openPanel];
+        panel.canChooseFiles = NO;
+        panel.canChooseDirectories = YES;
+        panel.canCreateDirectories = YES;
+        panel.allowsMultipleSelection = NO;
+
+        if ([panel runModal] == NSModalResponseOK) {
+            NSURL* url = panel.URL;
+            if (url) {
+                const char* utf8 = url.path.UTF8String;
+                if (utf8) return strdup(utf8);
+            }
+        }
+        return nullptr;
+    }
+}
+
 extern "C" const char* hn_mac_save_file(const char* extensions_csv) {
     @autoreleasepool {
         NSSavePanel* panel = [NSSavePanel savePanel];

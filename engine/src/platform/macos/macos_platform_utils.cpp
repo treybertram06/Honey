@@ -15,6 +15,7 @@ extern "C" {
     // The caller must free() the returned pointer.
     const char* hn_mac_open_file(const char* extensions_csv);
     const char* hn_mac_save_file(const char* extensions_csv);
+    const char* hn_mac_open_folder();
 }
 
 namespace {
@@ -110,6 +111,14 @@ namespace Honey {
         return path;
     }
 
+    std::string FileDialogs::open_folder() {
+        const char* result = hn_mac_open_folder();
+        if (!result) return std::string();
+
+        std::string path(result);
+        std::free((void*)result);
+        return path;
+    }
 
     std::filesystem::path Platform::get_executable_path() {
         uint32_t size = 0;

@@ -3,6 +3,7 @@
 #include "Honey/utils/platform_utils.h"
 
 #include <commdlg.h>
+#include <shlobj.h>
 #include <GLFW/glfw3.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
@@ -47,6 +48,20 @@ namespace Honey {
         return std::string();
     }
 
+    std::string FileDialogs::open_folder() {
+        BROWSEINFOA bi = {};
+        bi.hwndOwner = glfwGetWin32Window(static_cast<GLFWwindow*>(Application::get().get_window().get_native_window()));
+        bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+        PIDLIST_ABSOLUTE pidl = SHBrowseForFolderA(&bi);
+        if (!pidl)
+            return std::string();
+        CHAR path[MAX_PATH] = { 0 };
+        std::string result;
+        if (SHGetPathFromIDListA(pidl, path))
+            result = path;
+        CoTaskMemFree(pidl);
+        return result;
+    }
 
     std::filesystem::path Platform::get_executable_path() {
         // MAX_PATH is not a real limit; grow until the path fits (return == size means truncated).
