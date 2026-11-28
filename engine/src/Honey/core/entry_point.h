@@ -10,7 +10,7 @@ namespace Honey {
 int main(int argc, char** argv) {
     Honey::Log::init();
 
-    // Must run before anything touches assets/config, including Application's constructor.
+    // Must run before anything touches project assets, engine content or config, including Application's constructor.
     if (!Honey::AssetPaths::init(argc, argv, Honey::asset_paths_mode()))
         return 1;
 

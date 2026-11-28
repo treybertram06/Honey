@@ -424,7 +424,7 @@ target_compile_definitions(engine PRIVATE
         STBI_NO_SIMD
 )
 
-# Dev-only fallback for AssetPaths (assets/, config/, managed build output in the source tree).
+# Dev-only fallback for AssetPaths (engine_content/, config/, managed build output in the source tree).
 # PRIVATE on purpose: only asset_paths.cpp reads it. Turn off for exported/shipped builds.
 option(HONEY_DEV_PATHS "Allow AssetPaths to fall back to the source tree" ON)
 if(HONEY_DEV_PATHS)

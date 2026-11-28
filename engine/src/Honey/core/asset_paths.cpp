@@ -59,30 +59,9 @@ namespace Honey {
             return ec ? p.lexically_normal() : out;
         }
 
-        bool is_asset_root(const fs::path& dir, std::string& why_not) {
-            std::error_code ec;
-            if (!fs::is_directory(dir, ec)) {
-                why_not = "not a directory";
-                return false;
-            }
-            return true;
-        }
-
         std::optional<fs::path> find_cli_arg(int argc, char** argv, std::string_view flag) {
             for (int i = 1; i + 1 < argc; ++i) {
                 if (std::string_view(argv[i]) == flag)
-                    return fs::path(argv[i + 1]);
-            }
-            return std::nullopt;
-        }
-
-        std::optional<fs::path> find_cli_assets_arg(int argc, char** argv) {
-            return find_cli_arg(argc, argv, "--assets");
-        }
-
-        std::optional<fs::path> find_cli_manifest_arg(int argc, char** argv) {
-            for (int i = 1; i + 1 < argc; ++i) {
-                if (std::string_view(argv[i]) == "--manifest")
                     return fs::path(argv[i + 1]);
             }
             return std::nullopt;
@@ -154,7 +133,7 @@ namespace Honey {
 
         struct Candidate { fs::path dir; const char* rule; };
 
-        // Project (if any) decides the asset root; otherwise the legacy candidates below do.
+        // The project (if any) is the only source of the asset root.
         std::optional<fs::path> project_arg;
         const char* project_rule = nullptr;
         if (auto cli = find_cli_arg(argc, argv, "--project")) {
@@ -185,41 +164,12 @@ namespace Honey {
                 return false;
             }
             asset_rule = std::string("project (") + project_rule + ")";
-        } else {
-            // Legacy stop-gap layout (removed in phase 1.5 step 5). The editor only honours an explicit
-            // --assets; the player also probes the environment / shipped / dev locations.
-            std::vector<Candidate> candidates;
-            if (auto cli = find_cli_assets_arg(argc, argv))
-                candidates.push_back({ *cli, "cli --assets" });
-            if (mode == Mode::player) {
-                if (const char* env = std::getenv("HONEY_ASSET_ROOT"); env && *env)
-                    candidates.push_back({ fs::path(env), "env HONEY_ASSET_ROOT" });
-                if (!s_data.executable_dir.empty())
-                    candidates.push_back({ s_data.executable_dir / "assets", "shipped (exe dir)" });
-                if (!s_data.dev_source_root.empty())
-                    candidates.push_back({ s_data.dev_source_root / "assets", "dev source tree" });
-            }
-
-            const Candidate* chosen = nullptr;
-            std::string failures;
-            for (const auto& c : candidates) {
-                std::string why_not;
-                if (is_asset_root(c.dir, why_not)) {
-                    chosen = &c;
-                    break;
-                }
-                failures += fmt::format("\n  [{}] {} -> {}", c.rule, c.dir.string(), why_not);
-            }
-            if (chosen) {
-                s_data.asset_root = normalized(chosen->dir);
-                s_data.scripts_dir = s_data.asset_root / "scripts";
-                asset_rule = chosen->rule;
-            } else if (mode == Mode::player) {
-                HN_CORE_FATAL("[AssetPaths] No asset root found, tried:{}", failures);
-                return false;
-            }
-            // Editor with nothing to open: start with no project (welcome state).
+        } else if (mode == Mode::player) {
+            HN_CORE_FATAL("[AssetPaths] No project to run: pass --project <folder|file.honeyproj>, or ship one as "
+                          "{}", (s_data.executable_dir / "game" / "<Name>.honeyproj").string());
+            return false;
         }
+        // Editor with no project: start in the welcome state; one is opened later with open_project().
 
         // Engine content root.
         std::vector<Candidate> ec_candidates;
@@ -260,10 +210,9 @@ namespace Honey {
             s_data.engine_assembly = shipped_managed / "HoneyEngine.dll";
             s_data.user_scripts_assembly = shipped_managed / "UserScripts.dll";
         } else {
-            const fs::path source_root = !s_data.dev_source_root.empty()
-                ? s_data.dev_source_root
-                : s_data.asset_root.parent_path();
-            s_data.engine_assembly = source_root / "Honey/managed/HoneyEngine/bin/Release/net10.0/HoneyEngine.dll";
+            // Without HN_DEV_SOURCE_ROOT there is no source tree to find the dotnet build output in.
+            if (!s_data.dev_source_root.empty())
+                s_data.engine_assembly = s_data.dev_source_root / "Honey/managed/HoneyEngine/bin/Release/net10.0/HoneyEngine.dll";
             if (!s_data.scripts_dir.empty())
                 s_data.user_scripts_assembly = s_data.scripts_dir / "bin/Debug/net10.0/UserScripts.dll";
         }
@@ -272,18 +221,6 @@ namespace Honey {
         // Still baked at configure time; 4.3 moves the vendored runtime next to the executable.
         s_data.dotnet_root = fs::path(HN_DOTNET_RUNTIME_ROOT).lexically_normal();
 #endif
-
-        // Manifest: the project file, else --manifest, else the legacy game.yaml beside the asset root.
-        if (!s_data.project_root.empty())
-            ; // already set from the .honeyproj
-        else if (auto cli = find_cli_manifest_arg(argc, argv))
-            s_data.manifest_dir = normalized(*cli);
-        else if (!s_data.asset_root.empty())
-            s_data.manifest_dir = normalized(s_data.asset_root.parent_path() / "game.yaml");
-        else if (mode == Mode::player) {
-            HN_CORE_FATAL("[AssetPaths] Failure determining a valid location for the game manifest.");
-            return false;
-        }
 
         s_data.initialized = true;
 
@@ -310,8 +247,6 @@ namespace Honey {
         clear_project();
         HN_CORE_INFO("AssetPaths: project closed");
     }
-
-    bool AssetPaths::has_asset_root() { checked(s_data.asset_root); return !s_data.asset_root.empty(); }
 
     const fs::path& AssetPaths::asset_root()                 { return checked(s_data.asset_root); }
     const fs::path& AssetPaths::engine_content_root()        { return checked(s_data.engine_content_root); }
@@ -370,8 +305,7 @@ namespace Honey {
         if (root.empty() && !is_engine_path(path.generic_string()) && !path.is_absolute())
             return path.generic_string(); // no project open: nothing to relativize against
 
-        // Relative input is already in some stored form; round-trip it through from_portable so
-        // legacy "../assets/x" is rewritten as "x".
+        // Relative input is already in some stored form; round-trip it through from_portable to make it absolute.
         const fs::path absolute = path.is_absolute() ? path.lexically_normal() : from_portable(path.generic_string());
 
         if (is_engine_path(absolute.generic_string()))
@@ -401,18 +335,6 @@ namespace Honey {
             return p.lexically_normal();
         if (root.empty())
             return {}; // no project open
-
-        // Legacy scenes stored cwd-relative paths ("../assets/x" from cmake-build-debug, or "assets/x").
-        // Strip a leading run of ".." segments followed by "assets"; anything else is asset-relative.
-        auto it = p.begin();
-        while (it != p.end() && *it == "..")
-            ++it;
-        if (it != p.end() && *it == "assets") {
-            fs::path rest;
-            for (++it; it != p.end(); ++it)
-                rest /= *it;
-            return (root / rest).lexically_normal();
-        }
 
         return (root / p).lexically_normal();
     }

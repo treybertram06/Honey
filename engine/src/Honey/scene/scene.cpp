@@ -522,7 +522,7 @@ namespace Honey {
         Ref<Scene> scene_ref = Ref<Scene>(this, [](Scene*){});
         SceneSerializer serializer(scene_ref);
 
-        // Accepts asset-relative ("prefabs/Bullet.hnp"), legacy "../assets/..." and absolute paths.
+        // Accepts asset-relative ("prefabs/Bullet.hnp"), "engine:" and absolute paths.
         auto entity = serializer.deserialize_entity_prefab(AssetPaths::from_portable(path));
         if (!entity.is_valid()) {
             HN_CORE_ERROR("instantiate_prefab: failed to load prefab '{}'", path);

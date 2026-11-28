@@ -503,7 +503,7 @@ namespace Honey {
     void ShaderCache::precompile_all_shaders() {
         HN_CORE_INFO("Precompiling all shaders...");
 
-        // This could scan the assets/shaders directory and precompile everything
+        // This could scan the engine_content/shaders directory and precompile everything
         for (auto& [key, asset] : m_shader_assets) {
             if (compile_shader_to_spirv(asset.source_path, compute_source_hash(asset.source_path))) {
                 HN_CORE_INFO("Precompiled: {0}", asset.source_path.string());

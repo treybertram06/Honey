@@ -5,27 +5,22 @@
 
 namespace Honey {
 
-    // Single source of truth for where the engine finds assets, config and managed assemblies at
-    // runtime. Replaces the old compile-time ASSET_ROOT / CONFIG_ROOT defines and cwd-relative
-    // "../assets" paths.
+    // Single source of truth for where the engine finds project assets, engine content, per-user config and
+    // managed assemblies at runtime.
     //
     // Threading: init() runs once from main(), before Application (and therefore TaskSystem) exists.
     // After that every member is read-only, so the getters need no locking.
     //
-    // Two roots (phase 1.5): engine content (shaders, frame graphs, default fonts/textures; needed by
-    // editor, player and every project) and the asset root (today's stop-gap project content).
-    // Engine content is addressed in paths with the "engine:" prefix ("engine:fonts/X.ttf").
+    // Two roots: engine content (shaders, frame graphs, default fonts/textures; needed by editor, player
+    // and every project) and the asset root (the open project's Assets/ folder). Engine content is
+    // addressed in paths with the "engine:" prefix ("engine:fonts/X.ttf").
     //
-    // Project (phase 1.5): `--project <dir|file.honeyproj>` (or shipped `<exe>/game/*.honeyproj`) selects a
-    // portable project folder {Name.honeyproj, Assets/, Scripts/}. Its Assets/ becomes the asset root,
-    // its .honeyproj is the manifest, Scripts/ holds the C# project. Without one, the legacy stop-gap
-    // layout applies (asset root below, scripts in <asset root>/scripts, manifest at <asset root>/../game.yaml).
+    // Project: `--project <dir|file.honeyproj>` (or shipped `<exe>/game/*.honeyproj`) selects a portable
+    // project folder {Name.honeyproj, Assets/, Scripts/}. Its Assets/ is the asset root, its .honeyproj is
+    // the manifest, Scripts/ holds the C# project. A project is the only source of an asset root: with none
+    // open there is nothing to resolve project assets against (the editor's welcome state; the player
+    // refuses to start).
     //
-    // Asset root resolution when no project is given (first existing directory wins):
-    //   1. --assets <dir> command-line flag
-    //   2. HONEY_ASSET_ROOT environment variable
-    //   3. <exe dir>/assets                   (shipped layout)
-    //   4. <HN_DEV_SOURCE_ROOT>/assets        (dev builds only)
     // Engine content root resolution (first directory containing shaders/ and frame_graphs/ wins):
     //   1. --engine-content <dir> command-line flag
     //   2. HONEY_ENGINE_CONTENT environment variable
@@ -33,11 +28,11 @@ namespace Honey {
     //   4. <HN_DEV_SOURCE_ROOT>/engine_content (dev builds only)
     class AssetPaths {
     public:
-        // player: a project / asset root is mandatory (init fails without one). editor: starting with no
+        // player: a project is mandatory (init fails without one). editor: starting with no
         // project is fine (welcome state); a project is opened later with open_project().
         enum class Mode { player, editor };
 
-        // Returns false if the player could not find a project/asset root; the caller should exit.
+        // Returns false if the player could not find a project; the caller should exit.
         static bool init(int argc, char** argv, Mode mode = Mode::player);
 
         // Editor: switch the active project at runtime. Main thread only, and the caller must first stop
@@ -45,11 +40,10 @@ namespace Honey {
         // folder or a .honeyproj. On failure nothing changes and `error` says why.
         static bool open_project(const std::filesystem::path& project, std::string& error);
         static void close_project();   // back to "no project open"
-        static bool has_asset_root();  // false = nothing to resolve project assets against
 
         static const std::filesystem::path& asset_root();
         static const std::filesystem::path& engine_content_root();
-        static bool has_project();                                 // false = legacy stop-gap layout
+        static bool has_project();                                 // false = nothing to resolve project assets against
         static const std::filesystem::path& project_root();        // empty when !has_project()
         static const std::filesystem::path& scripts_dir();         // C# project dir (UserScripts.csproj)
         static const std::filesystem::path& config_root();
@@ -82,8 +76,8 @@ namespace Honey {
         // Serialization boundary. Paths are absolute in memory and asset-relative on disk.
         // to_portable: absolute path under the asset root -> "models/Box/Box.gltf"; under the engine
         // content root -> "engine:fonts/X.ttf". Paths outside both are kept as-is (generic form).
-        // from_portable: stored string -> absolute path. Also accepts legacy cwd-relative
-        // "../assets/..." / "assets/..." strings and absolute paths, so old scenes still load.
+        // from_portable: stored string -> absolute path. Relative strings are asset-relative; absolute
+        // paths pass through unchanged.
         static std::string to_portable(const std::filesystem::path& path);
         static std::filesystem::path from_portable(const std::string& stored);
 

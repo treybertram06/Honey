@@ -233,7 +233,7 @@ namespace Honey {
         if (Renderer::get_api() == RendererAPI::API::vulkan)
             options.AddMacroDefinition("HN_VULKAN", "1");
 
-        // Provide a basic includer which resolves from assets/shaders for both <> and "" includes
+        // Provide a basic includer which resolves from engine_content/shaders for both <> and "" includes
         class FSIncluder : public shaderc::CompileOptions::IncluderInterface {
         public:
             struct IncludeData { std::string content; std::string source_name; };
