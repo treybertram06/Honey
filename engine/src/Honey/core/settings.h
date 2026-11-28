@@ -5,8 +5,13 @@
 #include "Honey/renderer/renderer_api.h"
 #include "Honey/renderer/pipeline_spec.h"
 
+#include <filesystem>
+
+namespace YAML { class Node; } // Keep yaml-cpp out of this widely included header
+
 namespace Honey {
 
+    enum class SettingOwner { user, project };
     enum class WindowMode { windowed = 0, maximized, fullscreen };
 
     struct WindowSettings {
@@ -106,9 +111,21 @@ namespace Honey {
             return s_instance;
         }
 
-        static bool load_from_file(const std::filesystem::path& filepath);
-        static bool save_to_file(const std::filesystem::path& filepath);
-        static bool write_renderer_api_to_file(const std::filesystem::path& filepath);
+        // Ownership of every persisted key lives in schema() in settings.cpp: each key is either per user or per
+        // project, never both, and nothing falls back across files.
+
+        // User layer: user_data_dir()/settings.yaml. Only user-owned keys are read or written.
+        static bool load_user(const std::filesystem::path& path);
+        static bool save_user(const std::filesystem::path& path);
+
+        // Project layer: the "Settings:" block of the open .honeyproj. Only project-owned keys.
+        static void load_project(const YAML::Node& settings_block); // null/missing node = engine defaults
+        static void reset_project();                                // project keys back to engine defaults
+        static bool save_project(const std::filesystem::path& honeyproj);
+        static bool project_dirty();                                // project keys changed since load/reset/save
+
+        // Writes only Renderer.API (the API switch needs a restart; don't persist other pending tweaks with it).
+        static bool write_renderer_api_to_file(const std::filesystem::path& path);
     };
 
 }

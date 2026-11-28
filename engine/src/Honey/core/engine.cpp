@@ -40,7 +40,7 @@ namespace Honey {
 
         PhysicsEngine3D::init();
 
-        Settings::load_from_file(AssetPaths::settings_path());
+        Settings::load_user(AssetPaths::settings_path());
         // Player only (the editor never loads a manifest). Must precede window creation below.
         GameManifest::apply_to(Settings::get());
 
@@ -116,9 +116,10 @@ namespace Honey {
 
         m_window.reset();
 
-        // The player runs with manifest overrides and must not write them into the editor's settings.
+        // save_user only writes user-owned keys, so project values can't leak into the user file either way;
+        // the player still opts out so a shipped game never writes the editor's per-user settings.
         if (m_persist_settings)
-            Settings::save_to_file(AssetPaths::settings_path());
+            Settings::save_user(AssetPaths::settings_path());
 
         if (m_vulkan_backend) {
             m_vulkan_backend->shutdown();

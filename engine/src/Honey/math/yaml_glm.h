@@ -26,6 +26,7 @@ namespace YAML {
     struct convert<glm::vec2> {
         static Node encode(const glm::vec2& rhs) {
             Node node;
+            node.SetStyle(EmitterStyle::Flow);
             node.push_back(rhs.x);
             node.push_back(rhs.y);
             return node;
@@ -45,6 +46,7 @@ namespace YAML {
     struct convert<glm::vec3> {
         static Node encode(const glm::vec3& rhs) {
             Node node;
+            node.SetStyle(EmitterStyle::Flow);
             node.push_back(rhs.x);
             node.push_back(rhs.y);
             node.push_back(rhs.z);
@@ -66,6 +68,7 @@ namespace YAML {
     struct convert<glm::vec4> {
         static Node encode(const glm::vec4& rhs) {
             Node node;
+            node.SetStyle(EmitterStyle::Flow);
             node.push_back(rhs.x);
             node.push_back(rhs.y);
             node.push_back(rhs.z);

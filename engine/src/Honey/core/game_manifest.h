@@ -13,6 +13,7 @@ namespace Honey {
         GameManifest() = default;
 
         static bool load(const std::filesystem::path& path);
+        static void unload(); // Clears the manifest and resets project-owned settings to engine defaults
         static const GameManifest* get();
         static void apply_to(EngineSettings& settings);
 

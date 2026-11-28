@@ -26,6 +26,7 @@ namespace Honey {
         HN_PROFILE_FUNCTION();
 
         s_manifest.reset(); // A failed load must never leave a stale manifest behind.
+        Settings::reset_project(); // ...nor the previous project's settings
 
         if (!std::filesystem::exists(path)) {
             HN_CORE_ERROR("Game manifest not found: {}", path.string());
@@ -125,10 +126,18 @@ namespace Honey {
             manifest.scenes.insert(manifest.scenes.begin(), manifest.start_scene);
         }
 
+        // Only a fully validated manifest applies its settings; a missing block means engine defaults.
+        Settings::load_project(static_cast<const YAML::Node&>(root)["Settings"]);
+
         s_manifest = std::move(manifest);
         HN_CORE_INFO("Game manifest loaded from {} (start scene: {}, {} scene(s))",
                      path.string(), s_manifest->start_scene, s_manifest->scenes.size());
         return true;
+    }
+
+    void GameManifest::unload() {
+        s_manifest.reset();
+        Settings::reset_project();
     }
 
     const GameManifest* GameManifest::get() {
